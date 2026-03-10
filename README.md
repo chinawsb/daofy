@@ -1,6 +1,21 @@
 # Delphi MCP Server
 
-一个为 AI 助手(如 Claude Desktop)提供 Delphi 工程编译能力的 MCP Server。如果您觉得有用，请不要吝啬您的 Star! ⭐
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Delphi](https://img.shields.io/badge/Delphi-2005%20to%2013-red.svg)](https://www.embarcadero.com/products/delphi)
+
+一个为 AI 助手(如 Claude Desktop、CodeArts Agent 等)提供 Delphi 工程编译能力的 MCP Server。如果您觉得有用，请不要吝啬您的 Star! ⭐
+
+## 项目简介
+
+Delphi MCP Server 是一个基于 Model Context Protocol (MCP) 的服务器,它允许 AI 助手直接编译 Delphi 项目。通过这个工具,您可以在与 AI 助手的对话中直接编译 Delphi 工程,无需手动切换到 IDE 或命令行。
+
+**主要优势:**
+- 无缝集成到 AI 助手工作流中
+- 自动检测和配置 Delphi 编译器
+- 支持所有主流 AI 助手平台
+- 完整的编译事件支持
+- 详细的错误诊断和日志
 
 ## 功能特性
 
@@ -510,6 +525,11 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
+### v2026.03.10 (2026-03-10)
+- 更新项目文档和 README
+- 添加项目徽章和简介
+- 优化项目结构
+- 发布到 GitHub
 ### v2026.03.09 (2026-03-09)
 - 初始版本发布
 - 支持项目编译和单文件编译
