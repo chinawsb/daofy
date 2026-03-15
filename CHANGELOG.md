@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.03.15] - 2026-03-15
+
+### Added
+
+#### 编码规则查询接口
+- 新增 `get_coding_rules` 工具,用于获取 Delphi 源码编码规则
+- 支持默认编码规则（config/CODING_RULES.mdc）
+- 支持项目自定义规则（项目目录下的 CODING_RULES.mdc）
+- 用户自定义规则优先于默认规则
+- 返回规则来源、文件路径等详细信息
+
+#### 文档
+- `docs/CODING_RULES_USAGE.md` - 编码规则接口使用说明
+- `docs/INTEGRATION_TEST_REPORT.md` - 集成测试报告
+- `config/CODING_RULES.mdc` - 默认编码规则文件
+
+### Changed
+- 更新 `src/server.py` 集成编码规则工具
+
+### Tested
+- 所有现有测试通过（4/4）
+- 新功能集成测试通过（4/4）
+- 无功能冲突或兼容性问题
+
 ## [2026.03.11] - 2026-03-11
 
 ### Added
