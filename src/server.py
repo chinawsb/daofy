@@ -3,6 +3,7 @@ Delphi MCP Server 主程序
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
+Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 提供 MCP 协议服务,注册所有工具并启动服务器
 """
@@ -33,10 +34,14 @@ from mcp.server.stdio import stdio_server
 from src.services.config_manager import ConfigManager
 from src.services.compiler_service import CompilerService
 from src.services.knowledge_base import DelphiKnowledgeBaseService
+from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
 from src.tools import compile_project, compile_file, get_args, config, environment
 from src.tools import knowledge_base as kb_tools
 from src.tools import project_knowledge_base as project_kb_tools
 from src.tools import help_knowledge_base as help_kb_tools
+from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
+from src.tools import analyze_dependencies as dep_tools
+from src.tools import read_source_file as source_tools
 from src.tools import coding_rules
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
@@ -62,6 +67,11 @@ async def run_server():
     kb_service = DelphiKnowledgeBaseService()
     logger.info("知识库服务初始化完成")
 
+    # 初始化第三方库知识库服务
+    thirdparty_kb_service = ThirdPartyKnowledgeBase()
+    thirdparty_kb_tools.set_thirdparty_knowledge_base_service(thirdparty_kb_service)
+    logger.info("第三方库知识库服务初始化完成")
+
     # 设置工具的服务实例
     compile_project.set_compiler_service(compiler_service)
     compile_file.set_compiler_service(compiler_service)
@@ -69,6 +79,7 @@ async def run_server():
     config.set_config_manager(config_manager)
     environment.set_config_manager(config_manager)
     kb_tools.set_knowledge_base_service(kb_service)
+    source_tools.set_knowledge_base_services(kb_service, thirdparty_kb_service)
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
@@ -319,25 +330,178 @@ async def run_server():
                     "required": ["project_path"]
                 }
             ),
-            # 帮助文档知识库工具
+            # 全局第三方库知识库工具
             Tool(
-                name="build_help_knowledge_base",
-                description="构建 Delphi 帮助文档知识库 (从 CHM 文件提取)",
+                name="build_thirdparty_knowledge_base",
+                description="构建第三方库知识库 (全局)",
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "version": {"type": "string", "description": "Delphi 版本 (可选)"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
                     },
                     "required": []
                 }
             ),
             Tool(
-                name="search_help",
-                description="搜索 Delphi 帮助文档",
+                name="search_thirdparty_class",
+                description="在第三方库中搜索类 (全局)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "class_name": {"type": "string", "description": "类名"}
+                    },
+                    "required": ["class_name"]
+                }
+            ),
+            Tool(
+                name="search_thirdparty_function",
+                description="在第三方库中搜索函数 (全局)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "function_name": {"type": "string", "description": "函数名"}
+                    },
+                    "required": ["function_name"]
+                }
+            ),
+            Tool(
+                name="semantic_search_thirdparty",
+                description="在第三方库中进行语义搜索 (全局)",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "搜索查询"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
+                    },
+                    "required": ["query"]
+                }
+            ),
+            Tool(
+                name="get_thirdparty_kb_stats",
+                description="获取第三方库知识库统计信息 (全局)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="get_thirdparty_paths_global",
+                description="获取第三方库路径列表 (全局)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "version": {"type": "string", "description": "Delphi 版本 (可选)"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="search_thirdparty_record",
+                description="在第三方库中搜索 record 类型 (全局)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "record_name": {"type": "string", "description": "record 类型名称"}
+                    },
+                    "required": ["record_name"]
+                }
+            ),
+            Tool(
+                name="search_by_filename",
+                description="按文件名搜索文件 (支持通配符)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string", "description": "文件名或通配符模式 (如: SuperCore*.pas)"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"}
+                    },
+                    "required": ["filename"]
+                }
+            ),
+            # 帮助文档知识库工具
+            Tool(
+                name="build_help_knowledge_base",
+                description="构建 Delphi 帮助文档知识库 (完整构建：解压+扫描+索引，支持异步模式)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否使用异步模式（推荐，避免超时）"},
+                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要构建的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
+                        "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
+                        "incremental": {"type": "boolean", "default": False, "description": "是否使用增量构建（跳过解压）"},
+                        "source_dir": {"type": "string", "description": "外部源目录路径（用于增量构建时指定外部extracted目录）"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="extract_help_chm",
+                description="解压 Delphi 帮助文档 CHM 文件（分步骤构建第1步）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要解压的帮助文件列表，如 ['fmx', 'vcl']，默认全部"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="scan_help_html",
+                description="扫描已解压的 HTML 文件（分步骤构建第2步）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要扫描的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
+                        "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
+                        "source_dir": {"type": "string", "description": "外部源目录路径（默认使用 kb_dir/extracted）"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="build_help_kb_index",
+                description="构建帮助文档向量索引（分步骤构建第3步）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要构建的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
+                        "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
+                        "source_dir": {"type": "string", "description": "外部源目录路径（默认使用 kb_dir/extracted）"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否使用异步模式"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="get_task_status",
+                description="获取后台任务状态（用于查询帮助知识库构建进度）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "任务ID"}
+                    },
+                    "required": ["task_id"]
+                }
+            ),
+            Tool(
+                name="list_tasks",
+                description="列出所有后台任务",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="search_help",
+                description="搜索 Delphi 帮助文档（支持语义搜索类、函数和文档）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索查询，如 'TStringList', 'Create 创建对象'"},
                         "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
                     },
                     "required": ["query"]
@@ -349,6 +513,62 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                    "required": []
+                }
+            ),
+            # 项目依赖分析工具
+            Tool(
+                name="analyze_project_dependencies",
+                description="分析 Delphi 项目的单元依赖关系",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径(.dpr 或 .dproj)"}
+                    },
+                    "required": ["project_path"]
+                }
+            ),
+            Tool(
+                name="resolve_smart_library_paths",
+                description="智能解析项目需要的第三方库路径",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径(.dpr 或 .dproj)"},
+                        "platform": {"type": "string", "default": "Win32", "description": "目标平台: Win32 或 Win64"}
+                    },
+                    "required": ["project_path"]
+                }
+            ),
+            # 源码文件读取工具
+            Tool(
+                name="read_source_file",
+                description="读取 Delphi 源码文件内容（先在知识库中定位文件，再从磁盘读取）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "文件路径（相对路径或完整路径）"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）"},
+                        "end_line": {"type": "integer", "description": "结束行号（可选，默认文件末尾）"},
+                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数（最大1000）"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"}
+                    },
+                    "required": ["file_path"]
+                }
+            ),
+            Tool(
+                name="search_and_read_file",
+                description="搜索类型（类/record/interface）或函数并读取所在文件内容",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "type_name": {"type": "string", "description": "类型名称（类、record、interface，可选）"},
+                        "record_name": {"type": "string", "description": "record 类型名称（可选）"},
+                        "function_name": {"type": "string", "description": "函数名（可选）"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号"},
+                        "max_lines": {"type": "integer", "default": 100, "description": "最大返回行数"}
+                    },
                     "required": []
                 }
             )
@@ -397,13 +617,50 @@ async def run_server():
                 result = await project_kb_tools.get_project_kb_stats(arguments)
             elif name == "get_thirdparty_paths":
                 result = await project_kb_tools.get_thirdparty_paths(arguments)
+            # 全局第三方库知识库工具
+            elif name == "build_thirdparty_knowledge_base":
+                result = await thirdparty_kb_tools.build_thirdparty_knowledge_base(arguments)
+            elif name == "search_thirdparty_class":
+                result = await thirdparty_kb_tools.search_thirdparty_class(arguments)
+            elif name == "search_thirdparty_function":
+                result = await thirdparty_kb_tools.search_thirdparty_function(arguments)
+            elif name == "semantic_search_thirdparty":
+                result = await thirdparty_kb_tools.semantic_search_thirdparty(arguments)
+            elif name == "get_thirdparty_kb_stats":
+                result = await thirdparty_kb_tools.get_thirdparty_kb_stats(arguments)
+            elif name == "get_thirdparty_paths_global":
+                result = await thirdparty_kb_tools.get_thirdparty_paths(arguments)
+            elif name == "search_thirdparty_record":
+                result = await thirdparty_kb_tools.search_record(arguments)
+            elif name == "search_by_filename":
+                result = await thirdparty_kb_tools.search_by_filename(arguments)
             # 帮助文档知识库工具
             elif name == "build_help_knowledge_base":
                 result = await help_kb_tools.build_help_knowledge_base(arguments)
+            elif name == "extract_help_chm":
+                result = await help_kb_tools.extract_help_chm(arguments)
+            elif name == "scan_help_html":
+                result = await help_kb_tools.scan_help_html(arguments)
+            elif name == "build_help_kb_index":
+                result = await help_kb_tools.build_help_kb_index(arguments)
+            elif name == "get_task_status":
+                result = await help_kb_tools.get_task_status(arguments)
+            elif name == "list_tasks":
+                result = await help_kb_tools.list_tasks(arguments)
             elif name == "search_help":
                 result = await help_kb_tools.search_help(arguments)
             elif name == "get_help_kb_stats":
                 result = await help_kb_tools.get_help_kb_stats(arguments)
+            # 项目依赖分析工具
+            elif name == "analyze_project_dependencies":
+                result = await dep_tools.analyze_project_dependencies(arguments)
+            elif name == "resolve_smart_library_paths":
+                result = await dep_tools.resolve_smart_library_paths(arguments)
+            # 源码文件读取工具
+            elif name == "read_source_file":
+                result = await source_tools.read_source_file(arguments)
+            elif name == "search_and_read_file":
+                result = await source_tools.search_and_read_file(arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
 

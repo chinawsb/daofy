@@ -86,40 +86,41 @@ class SQLiteVectorKnowledgeBase:
         return hashlib.md5(hash_str.encode()).hexdigest()
 
     def tokenize(self, text: str) -> List[str]:
-        """简单的分词函数"""
+        """简单的分词函数 - 支持驼峰命名和蛇形命名"""
+        import re
+
+        # 先处理驼峰命名（在转小写之前）
+        # 在大写字母前插入空格（除了单词开头）
+        text = re.sub(r'(?<!^)(?=[A-Z])', ' ', text)
+
+        # 替换下划线为空格（蛇形命名）
+        text = text.replace('_', ' ')
+
         # 转换为小写
         text = text.lower()
-        # 分割单词 (处理驼峰命名)
-        words = []
-        current_word = ""
-        for char in text:
-            if char.isalpha():
-                current_word += char
-            else:
-                if current_word:
-                    words.append(current_word)
-                    current_word = ""
-        if current_word:
-            words.append(current_word)
 
-        # 处理驼峰命名
+        # 提取单词（只保留字母）
+        words = re.findall(r'[a-z]+', text)
+
+        # 过滤太短和常见的停用词
+        stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been',
+                      'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
+                      'would', 'could', 'should', 'may', 'might', 'must', 'shall',
+                      'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in',
+                      'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
+                      'through', 'during', 'before', 'after', 'above', 'below',
+                      'between', 'under', 'and', 'but', 'or', 'yet', 'so',
+                      'if', 'because', 'although', 'though', 'while', 'where',
+                      'when', 'that', 'which', 'who', 'whom', 'whose', 'what',
+                      'this', 'these', 'those', 'i', 'me', 'my', 'myself', 'we',
+                      'our', 'ours', 'ourselves', 'you', 'your', 'yours',
+                      'yourself', 'yourselves', 'he', 'him', 'his', 'himself',
+                      'she', 'her', 'hers', 'herself', 'it', 'its', 'itself',
+                      'they', 'them', 'their', 'theirs', 'themselves', 's'}
+
         result = []
         for word in words:
-            # 简单的驼峰分割
-            if len(word) > 1:
-                new_words = []
-                i = 0
-                while i < len(word):
-                    if i > 0 and word[i].isupper():
-                        new_words.append(word[i])
-                    else:
-                        if new_words:
-                            new_words[-1] += word[i]
-                        else:
-                            new_words.append(word[i])
-                    i += 1
-                result.extend(new_words)
-            else:
+            if len(word) > 2 and word not in stop_words:
                 result.append(word)
 
         return result
@@ -218,8 +219,8 @@ class SQLiteVectorKnowledgeBase:
 
         cursor.execute("""
             CREATE TABLE files (
-                path TEXT PRIMARY KEY,
-                full_path TEXT,
+                full_path TEXT PRIMARY KEY,
+                path TEXT,
                 extension TEXT,
                 size INTEGER,
                 line_count INTEGER,
@@ -237,11 +238,12 @@ class SQLiteVectorKnowledgeBase:
                 name_lower TEXT,
                 name TEXT,
                 base_class TEXT,
+                type_kind TEXT DEFAULT 'class',
                 line INTEGER,
                 file_path TEXT,
                 description TEXT,
                 vector BLOB,
-                FOREIGN KEY (file_path) REFERENCES files(path)
+                FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
 
@@ -255,7 +257,7 @@ class SQLiteVectorKnowledgeBase:
                 file_path TEXT,
                 description TEXT,
                 vector BLOB,
-                FOREIGN KEY (file_path) REFERENCES files(path)
+                FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
 
@@ -266,7 +268,7 @@ class SQLiteVectorKnowledgeBase:
                 name TEXT,
                 file_path TEXT,
                 description TEXT,
-                FOREIGN KEY (file_path) REFERENCES files(path)
+                FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
 
@@ -276,7 +278,7 @@ class SQLiteVectorKnowledgeBase:
                 keyword_lower TEXT,
                 keyword TEXT,
                 file_path TEXT,
-                FOREIGN KEY (file_path) REFERENCES files(path)
+                FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
 
@@ -333,7 +335,28 @@ class SQLiteVectorKnowledgeBase:
 
         # 处理文件和插入数据 (批量插入,带进度显示)
         print("正在处理文件和构建向量...")
-        total_files = len(source_index['files'])
+        
+        # 去重：使用完整路径 (full_path) 作为唯一键，保留最后一个出现的
+        # 注意：不能使用相对路径 path，因为不同目录下可能有同名文件
+        unique_files = {}
+        duplicates = []
+        for file_info in source_index['files']:
+            full_path = file_info.get('full_path', file_info['path'])
+            if full_path in unique_files:
+                duplicates.append((full_path, file_info['path']))
+            unique_files[full_path] = file_info
+        
+        deduped_files = list(unique_files.values())
+        if len(deduped_files) < len(source_index['files']):
+            print(f"去重: 从 {len(source_index['files'])} 个文件减少到 {len(deduped_files)} 个")
+            if duplicates:
+                print(f"  发现 {len(duplicates)} 个重复项（基于完整路径）")
+                for full_path, path in duplicates[:5]:  # 只显示前5个
+                    print(f"    - {path}")
+                if len(duplicates) > 5:
+                    print(f"    ... 还有 {len(duplicates) - 5} 个")
+        
+        total_files = len(deduped_files)
         processed_files = 0
         last_progress = 0
 
@@ -343,14 +366,17 @@ class SQLiteVectorKnowledgeBase:
         units_data = []
         keywords_data = []
 
-        for file_info in source_index['files']:
+        for file_info in deduped_files:
             file_path = file_info['path']
+            full_path = file_info.get('full_path', file_path)
             file_desc = f"{file_info['path']} {file_info.get('units', [])} {len(file_info.get('classes', []))} classes {len(file_info.get('functions', []))} functions"
 
             # 收集文件数据
+            # 注意：使用完整路径作为唯一标识，避免同名不同目录的文件冲突
+            # path 存储相对路径，full_path 存储完整路径
             files_data.append((
-                file_info['path'],
-                file_info['full_path'],
+                full_path,  # 使用 full_path 作为 PRIMARY KEY
+                file_info['path'],  # 相对路径
                 file_info['extension'],
                 file_info['size'],
                 file_info['line_count'],
@@ -361,30 +387,43 @@ class SQLiteVectorKnowledgeBase:
                 file_desc
             ))
 
-            # 处理类
+            # 处理类（包含 class、record、interface、enum 等类型）
+            # 注意：使用 full_path 作为外键引用，因为 files 表的主键是 full_path
             for cls in file_info.get('classes', []):
-                class_desc = f"Class {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
+                type_kind = cls.get('type_kind', 'class')
+                # 使用提取的描述信息，如果没有则使用默认格式
+                user_desc = cls.get('description', '')
+                if user_desc:
+                    class_desc = f"{type_kind.capitalize()} {cls['name']}: {user_desc}"
+                else:
+                    class_desc = f"{type_kind.capitalize()} {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
                 vector = self.text_to_vector(class_desc)
                 classes_data.append((
                     cls['name'].lower(),
                     cls['name'],
                     cls['base_class'],
+                    type_kind,
                     cls['line'],
-                    file_path,
+                    full_path,  # 使用完整路径作为外键
                     class_desc,
                     json.dumps(vector)
                 ))
 
             # 处理函数
             for func in file_info.get('functions', []):
-                func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
+                # 使用提取的描述信息，如果没有则使用默认格式
+                user_desc = func.get('description', '')
+                if user_desc:
+                    func_desc = f"{func.get('type', 'function')} {func['name']}: {user_desc}"
+                else:
+                    func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
                 vector = self.text_to_vector(func_desc)
                 functions_data.append((
                     func['name'].lower(),
                     func['name'],
                     func['line'],
                     func.get('type', 'function'),
-                    file_path,
+                    full_path,  # 使用完整路径作为外键
                     func_desc,
                     json.dumps(vector)
                 ))
@@ -394,7 +433,7 @@ class SQLiteVectorKnowledgeBase:
                 units_data.append((
                     unit.lower(),
                     unit,
-                    file_path,
+                    full_path,  # 使用完整路径作为外键
                     f"Unit {unit} in {file_path}"
                 ))
 
@@ -408,7 +447,7 @@ class SQLiteVectorKnowledgeBase:
                 keywords.add(func['name'].lower())
 
             for keyword in keywords:
-                keywords_data.append((keyword, keyword, file_path))
+                keywords_data.append((keyword, keyword, full_path))  # 使用完整路径作为外键
 
             # 进度显示
             processed_files += 1
@@ -425,7 +464,7 @@ class SQLiteVectorKnowledgeBase:
         print(f"  - 插入文件数据 ({len(files_data)} 条)...")
         cursor.executemany("""
             INSERT INTO files (
-                path, full_path, extension, size, line_count,
+                full_path, path, extension, size, line_count,
                 hash, last_modified, units, uses, description
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, files_data)
@@ -433,8 +472,8 @@ class SQLiteVectorKnowledgeBase:
 
         print(f"  - 插入类数据 ({len(classes_data)} 条)...")
         cursor.executemany("""
-            INSERT INTO classes (name_lower, name, base_class, line, file_path, description, vector)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, vector)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, classes_data)
         print(f"  - 类数据插入完成")
 
@@ -528,8 +567,8 @@ class SQLiteVectorKnowledgeBase:
         cursor = self.conn.cursor()
 
         cursor.execute("""
-            SELECT c.name, c.base_class, c.line, f.* FROM classes c
-            INNER JOIN files f ON c.file_path = f.path
+            SELECT c.name, c.base_class, c.type_kind, c.line, f.* FROM classes c
+            INNER JOIN files f ON c.file_path = f.full_path
             WHERE c.name_lower = ?
         """, (class_name_lower,))
 
@@ -537,8 +576,8 @@ class SQLiteVectorKnowledgeBase:
         for row in cursor.fetchall():
             results.append({
                 'file': {
-                    'path': row['path'],
-                    'full_path': row['full_path'],
+                    'path': row['path'],  # 相对路径
+                    'full_path': row['full_path'],  # 完整路径
                     'extension': row['extension'],
                     'size': row['size'],
                     'line_count': row['line_count'],
@@ -550,6 +589,7 @@ class SQLiteVectorKnowledgeBase:
                 'class': {
                     'name': row['name'],
                     'base_class': row['base_class'],
+                    'type_kind': row['type_kind'],  # class/record/interface/enum
                     'line': row['line']
                 }
             })
@@ -563,7 +603,7 @@ class SQLiteVectorKnowledgeBase:
 
         cursor.execute("""
             SELECT func.name, func.line, func.type, f.* FROM functions func
-            INNER JOIN files f ON func.file_path = f.path
+            INNER JOIN files f ON func.file_path = f.full_path
             WHERE func.name_lower = ?
         """, (function_name_lower,))
 
@@ -571,8 +611,8 @@ class SQLiteVectorKnowledgeBase:
         for row in cursor.fetchall():
             results.append({
                 'file': {
-                    'path': row['path'],
-                    'full_path': row['full_path'],
+                    'path': row['path'],  # 相对路径
+                    'full_path': row['full_path'],  # 完整路径
                     'extension': row['extension'],
                     'size': row['size'],
                     'line_count': row['line_count'],
@@ -597,15 +637,15 @@ class SQLiteVectorKnowledgeBase:
 
         cursor.execute("""
             SELECT DISTINCT f.* FROM files f
-            INNER JOIN keywords k ON f.path = k.file_path
+            INNER JOIN keywords k ON f.full_path = k.file_path
             WHERE k.keyword_lower = ?
         """, (keyword_lower,))
 
         results = []
         for row in cursor.fetchall():
             results.append({
-                'path': row['path'],
-                'full_path': row['full_path'],
+                'path': row['path'],  # 相对路径
+                'full_path': row['full_path'],  # 完整路径
                 'extension': row['extension'],
                 'size': row['size'],
                 'line_count': row['line_count'],

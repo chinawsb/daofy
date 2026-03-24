@@ -4,7 +4,7 @@
 提供编译器环境检查功能
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from ..services.config_manager import ConfigManager
 from ..utils.validator import Validator
 from ..utils.logger import get_logger

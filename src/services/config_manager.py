@@ -3,6 +3,7 @@
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
+Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 负责编译器配置和编译历史的读写
 """

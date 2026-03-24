@@ -124,12 +124,12 @@ class DelphiSourceScanner:
         return units
 
     def extract_classes(self, content: str) -> List[Dict]:
-        """提取类定义"""
+        """提取类定义（包含 class、record、interface 等类型）"""
         classes = []
 
-        # 匹配 TClassName = class(TBaseClass)
-        pattern = r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract|public|private|protected|published)?'
-        matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
+        # 1. 匹配 class 类型: TClassName = class(TBaseClass)
+        class_pattern = r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract)?'
+        matches = re.finditer(class_pattern, content, re.MULTILINE | re.IGNORECASE)
 
         for match in matches:
             class_name = match.group(1)
@@ -139,8 +139,58 @@ class DelphiSourceScanner:
             classes.append({
                 'name': class_name,
                 'base_class': base_class,
-                'line': line_num
+                'line': line_num,
+                'type_kind': 'class'
             })
+
+        # 2. 匹配 record 类型: TRecordName = record 或 TRecordName = record(TBaseRecord)
+        record_pattern = r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
+        matches = re.finditer(record_pattern, content, re.MULTILINE | re.IGNORECASE)
+
+        for match in matches:
+            record_name = match.group(1)
+            base_record = match.group(2) if match.group(2) else None
+            line_num = content[:match.start()].count('\n') + 1
+
+            classes.append({
+                'name': record_name,
+                'base_class': base_record,
+                'line': line_num,
+                'type_kind': 'record'
+            })
+
+        # 3. 匹配 interface 类型: IInterfaceName = interface(IBaseInterface)
+        interface_pattern = r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
+        matches = re.finditer(interface_pattern, content, re.MULTILINE | re.IGNORECASE)
+
+        for match in matches:
+            interface_name = match.group(1)
+            base_interface = match.group(2) if match.group(2) else None
+            line_num = content[:match.start()].count('\n') + 1
+
+            classes.append({
+                'name': interface_name,
+                'base_class': base_interface,
+                'line': line_num,
+                'type_kind': 'interface'
+            })
+
+        # 4. 匹配 enum 类型: TEnumName = (value1, value2, ...)
+        enum_pattern = r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;'
+        matches = re.finditer(enum_pattern, content, re.MULTILINE | re.IGNORECASE)
+
+        for match in matches:
+            enum_name = match.group(1)
+            values = match.group(2).strip()
+            # 检查是否是枚举类型（包含逗号分隔的值）
+            if ',' in values:
+                line_num = content[:match.start()].count('\n') + 1
+                classes.append({
+                    'name': enum_name,
+                    'base_class': None,
+                    'line': line_num,
+                    'type_kind': 'enum'
+                })
 
         return classes
 

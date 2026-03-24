@@ -27,6 +27,7 @@ Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows 
 - **MSBuild Compilation**: Prioritizes MSBuild compilation, automatically handling dependencies and build events
 - **Single File Compilation**: Supports compiling individual Delphi unit files (.pas) for syntax checking
 - **Automatic Compiler Detection**: Automatically detects installed Delphi compilers from Windows registry, no manual configuration required
+- **Smart Library Path Resolution**: Automatically analyzes project dependencies and intelligently selects required third-party library paths to avoid command line length issues
 - **Build Event Support**: Supports PreBuildEvent, PostBuildEvent, PreLinkEvent with complete parameter substitution
 - **Command Line Argument Generation**: Supports generating Delphi compiler command line arguments for debugging and preview
 - **Compiler Configuration Management**: Supports configuring and managing multiple Delphi compiler versions
@@ -39,6 +40,7 @@ Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows 
 - **Third-party Library Knowledge Base**: Automatically extracts third-party library paths from .dproj files and builds knowledge base
 - **Incremental Updates**: Automatically detects source code changes and incrementally updates project knowledge base
 - **Help Documentation Knowledge Base**: Extracts content from Delphi CHM help files, supports API documentation queries
+- **Smart Deduplication**: Deduplicates based on full path, correctly handles files with same name in different directories
 
 ### Coding Standards Features
 - **Coding Rules Query**: Retrieves Delphi source code coding rules for AI assistants to use in code review and generation
@@ -155,6 +157,30 @@ If you need to manually configure or add a custom compiler, you can use the MCP 
 }
 ```
 
+### Configure Trae
+
+**Windows**: `C:\Users\<username>\.trae-cn\mcp_config.json`
+
+```json
+{
+  "mcpServers": {
+    "delphi-compiler": {
+      "command": "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\venv\\Scripts\\python.exe",
+      "args": [
+        "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\src\\server.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
+```
+
+**Note**: Please modify the paths to your actual installation paths.
+
 ### Configure CodeArts Agent
 
 **Windows**: `~/.codeartsdoer/mcp/mcp_settings.json`
@@ -182,18 +208,32 @@ If you need to manually configure or add a custom compiler, you can use the MCP 
 
 | Tool Name | Description |
 |-----------|-------------|
-| `compile_project` | Compile Delphi project |
+| `compile_project` | Compile Delphi project (supports smart library path resolution) |
 | `compile_file` | Compile single Delphi unit file (syntax check only) |
 | `get_compiler_args` | Get compiler command line arguments (no execution) |
 | `set_compiler_config` | Configure Delphi compiler |
 | `check_environment` | Check compiler environment status |
+
+### Project Dependency Analysis Tools
+
+| Tool Name | Description |
+|-----------|-------------|
+| `analyze_project_dependencies` | Analyze project unit dependencies |
+| `resolve_smart_library_paths` | Intelligently resolve required third-party library paths for project |
+
+### Source File Reading Tools
+
+| Tool Name | Description |
+|-----------|-------------|
+| `read_source_file` | Read Delphi source file content (locate file in knowledge base first, then read from disk) |
+| `search_and_read_file` | Search for class or function and read the file content |
 
 ### Knowledge Base Tools
 
 | Tool Name | Description |
 |-----------|-------------|
 | `build_knowledge_base` | Build Delphi source code knowledge base |
-| `search_class` | Search Delphi class definitions |
+| `search_class` | Search Delphi type definitions (supports class, record, interface, enum) |
 | `search_function` | Search Delphi function/procedure definitions |
 | `semantic_search` | Semantic search in Delphi code |
 | `get_knowledge_base_stats` | Get knowledge base statistics |
@@ -204,19 +244,70 @@ If you need to manually configure or add a custom compiler, you can use the MCP 
 | Tool Name | Description |
 |-----------|-------------|
 | `init_project_knowledge_base` | Initialize project knowledge base |
-| `search_project_class` | Search class definitions in project |
+| `search_project_class` | Search type definitions in project (supports class, record, interface, enum) |
 | `search_project_function` | Search function definitions in project |
 | `semantic_search_project` | Semantic search in project |
 | `get_project_kb_stats` | Get project knowledge base statistics |
 | `get_thirdparty_paths` | Get third-party library paths for project |
 
+### Global Third-party Library Knowledge Base Tools
+
+| Tool Name | Description |
+|-----------|-------------|
+| `build_thirdparty_knowledge_base` | Build third-party library knowledge base (global) |
+| `search_thirdparty_class` | Search classes (including record, interface, enum) in third-party libraries (global) |
+| `search_thirdparty_function` | Search functions in third-party libraries (global) |
+| `search_thirdparty_record` | Search record types in third-party libraries (global) |
+| `semantic_search_thirdparty` | Semantic search in third-party libraries (global) |
+| `search_by_filename` | Search files by filename (supports wildcards) (global) |
+| `get_thirdparty_kb_stats` | Get third-party library knowledge base statistics (global) |
+| `get_thirdparty_paths_global` | Get third-party library paths list (global) |
+
 ### Help Documentation Tools
 
 | Tool Name | Description |
 |-----------|-------------|
-| `build_help_knowledge_base` | Build Delphi help documentation knowledge base |
-| `search_help` | Search Delphi help documentation |
+| `build_help_knowledge_base` | Build Delphi help documentation knowledge base (full build: extract+scan+index, supports async mode) |
+| `extract_help_chm` | Extract Delphi help documentation CHM files (step 1 of incremental build) |
+| `scan_help_html` | Scan extracted HTML files (step 2 of incremental build) |
+| `build_help_kb_index` | Build help documentation vector index (step 3 of incremental build) |
+| `get_task_status` | Get background task status (for querying help knowledge base build progress) |
+| `list_tasks` | List all background tasks |
+| `search_help` | Search Delphi help documentation (supports semantic search for classes, functions, and documents) |
 | `get_help_kb_stats` | Get help documentation knowledge base statistics |
+
+#### Help Knowledge Base Build Methods
+
+**Method 1: Full Build (One-click)**
+```json
+{
+  "force_rebuild": false,
+  "async_mode": true,
+  "help_names": ["fmx", "vcl"],
+  "max_files_per_help": 100
+}
+```
+
+**Method 2: Step-by-step Build (More flexible, suitable for large knowledge bases)**
+```json
+// Step 1: Extract CHM
+{ "help_names": ["fmx", "vcl"] }
+
+// Step 2: Scan HTML
+{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100 }
+
+// Step 3: Build Index
+{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100, "async_mode": true }
+```
+
+**Method 3: Incremental Build (Skip extraction, scan already extracted HTML directly)**
+```json
+{
+  "help_names": ["fmx", "vcl"],
+  "max_files_per_help": 100,
+  "source_dir": "data/help-knowledge-base/extracted"
+}
+```
 
 ### Coding Standards Tools
 
@@ -272,6 +363,63 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 See [LICENSE](LICENSE) file for details.
 
 ## Version History
+
+### v2026.03.21 (2026-03-21)
+- Added help documentation knowledge base step-by-step build functionality
+  - Added `extract_help_chm` tool to extract CHM files separately (step 1)
+  - Added `scan_help_html` tool to scan HTML files separately (step 2)
+  - Added `build_help_kb_index` tool to build vector index separately (step 3)
+  - Supports incremental build, can specify external source directory to avoid repeated extraction
+  - Supports limiting the number of files processed for small-scale testing
+- Enhanced help documentation content extraction
+  - HTML to Markdown conversion for better structured information retention
+  - Extracts structured information such as classes, interfaces, types, functions, properties, events, constants
+  - Extracts method signatures (supports Delphi and C++ syntax), parameters, return types
+  - Extracts code examples (prioritizes extraction from HTML, supports syntax highlighting recognition)
+  - Extracts Uses unit references (code example pages)
+  - Saves complete document content (up to 3000 characters for indexing) to provide sufficient learning material for AI
+- Improved search functionality
+  - `search_help` supports semantic search for classes, functions, and documents
+  - Search results include description information and similarity scores
+- Added project dependency analysis functionality
+  - Added `analyze_project_dependencies` tool to analyze project unit dependencies
+  - Added `resolve_smart_library_paths` tool to intelligently resolve required third-party library paths
+- Optimized compilation features
+  - `compile_project` supports smart library path resolution, automatically analyzes project dependencies
+  - Dynamically retrieves Delphi installation path from registry, no longer hardcodes rsvars.bat path
+  - Prioritizes units in project directory, correctly handles files with same name
+- Optimized knowledge base deduplication logic
+  - Deduplicates based on full path, correctly handles files with same name in different directories
+  - Preserves both relative and full paths for more reasonable query results
+- Added incremental build scripts
+  - `build_help_kb_incremental.py` supports skipping CHM extraction, directly rebuilds vector index
+  - `rebuild_all_kbs.py` supports rebuilding all knowledge bases
+- Fixed third-party library knowledge base service initialization issue
+  - Fixed "service not initialized" error for `build_thirdparty_knowledge_base` and related tools
+- Added source file reading functionality
+  - Added `read_source_file` tool to locate file in knowledge base first, then read source content from disk
+  - Added `search_and_read_file` tool to search for types (class/record/interface) or functions and automatically read the file content
+  - Supports reading specified line ranges for viewing specific code segments
+- Enhanced type search functionality (all knowledge bases uniformly support)
+  - Added `search_thirdparty_record` tool to specifically search for record types
+  - Added `search_by_filename` tool to support wildcard filename search
+  - Extended knowledge base scanning to support class, record, interface, enum and other types
+  - Added `type_kind` field to search results showing type category (class/record/interface/enum)
+  - Official source, third-party library, and project knowledge bases all support record type search
+
+### v2026.03.20 (2026-03-20)
+- Added global third-party library knowledge base functionality
+  - Added `build_thirdparty_knowledge_base` tool to build global third-party library knowledge base
+  - Added `search_thirdparty_class` tool to search classes in third-party libraries
+  - Added `search_thirdparty_function` tool to search functions in third-party libraries
+  - Added `semantic_search_thirdparty` tool for semantic search in third-party libraries
+  - Added `get_thirdparty_kb_stats` tool to get third-party library knowledge base statistics
+  - Added `get_thirdparty_paths_global` tool to get third-party library paths list
+- Optimized help documentation knowledge base building
+  - `build_help_knowledge_base` supports async mode (enabled by default) to avoid timeout
+  - Added `get_task_status` tool to query background task status
+  - Added `list_tasks` tool to list all background tasks
+- Fully backward compatible
 
 ### v2026.03.15 (2026-03-15)
 - Added coding standards functionality

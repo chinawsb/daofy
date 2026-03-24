@@ -3,6 +3,7 @@
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
+Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 核心业务逻辑,协调参数生成、进程执行、结果解析等组件
 """
@@ -22,6 +23,7 @@ from .config_manager import ConfigManager
 from ..utils.parser import OutputParser
 from ..utils.validator import Validator
 from ..utils.dproj_parser import DprojParser
+from ..utils.unit_dependency_analyzer import SmartLibraryPathResolver
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -74,6 +76,90 @@ class CompilerService:
         
         logger.warning("未找到 MSBuild")
         return None
+
+    def _get_delphi_root_from_registry(self, version: Optional[str] = None) -> Optional[str]:
+        """
+        从注册表获取 Delphi 安装根目录
+        
+        Args:
+            version: Delphi 版本号(如 "22.0")，如果为 None 则使用最新版本
+            
+        Returns:
+            Delphi 安装根目录，如果未找到则返回 None
+        """
+        import winreg
+        
+        try:
+            # 打开 Delphi 注册表项
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"SOFTWARE\Embarcadero\BDS",
+                0,
+                winreg.KEY_READ | winreg.KEY_WOW64_32KEY
+            )
+            
+            versions = []
+            index = 0
+            while True:
+                try:
+                    version_key = winreg.EnumKey(key, index)
+                    index += 1
+                    
+                    # 打开版本子项
+                    version_path_key = winreg.OpenKey(key, version_key)
+                    try:
+                        root_dir, _ = winreg.QueryValueEx(version_path_key, "RootDir")
+                        if root_dir and Path(root_dir).exists():
+                            versions.append((version_key, root_dir))
+                    except:
+                        pass
+                    finally:
+                        winreg.CloseKey(version_path_key)
+                        
+                except OSError:
+                    break
+            
+            winreg.CloseKey(key)
+            
+            if not versions:
+                return None
+            
+            # 如果指定了版本，查找对应版本
+            if version:
+                for v, root in versions:
+                    if v == version:
+                        return root
+            
+            # 返回最新版本（版本号最大的）
+            versions.sort(key=lambda x: x[0], reverse=True)
+            return versions[0][1]
+            
+        except Exception as e:
+            logger.warning(f"从注册表获取 Delphi 路径失败: {e}")
+            return None
+
+    def _get_rsvars_path(self, version: Optional[str] = None) -> Optional[str]:
+        """
+        获取 rsvars.bat 路径
+        
+        Args:
+            version: Delphi 版本号，如果为 None 则使用最新版本
+            
+        Returns:
+            rsvars.bat 完整路径，如果未找到则返回 None
+        """
+        root_dir = self._get_delphi_root_from_registry(version)
+        if not root_dir:
+            logger.error("无法从注册表获取 Delphi 安装路径")
+            return None
+        
+        rsvars_path = Path(root_dir) / "bin" / "rsvars.bat"
+        if rsvars_path.exists():
+            logger.info(f"找到 rsvars.bat: {rsvars_path}")
+            return str(rsvars_path)
+        else:
+            logger.error(f"rsvars.bat 不存在: {rsvars_path}")
+            return None
 
     def _check_process_running(self, process_name: str) -> Optional[dict]:
         """
@@ -311,6 +397,37 @@ class CompilerService:
                 options.output_path = dproj_output
                 logger.info(f"从 .dproj 文件中提取了输出路径: {dproj_output}")
 
+        # 智能解析第三方库路径
+        # 注意：如果用户显式传入了 unit_search_paths，resolver 会直接返回，不会进行智能分析
+        try:
+            logger.info("开始解析第三方库路径...")
+            resolver = SmartLibraryPathResolver()
+            
+            # 传入用户显式指定的路径，resolver 会判断是否跳过智能分析
+            user_provided_paths = list(options.unit_search_paths) if options.unit_search_paths else None
+            resolved_paths, info = resolver.resolve_library_paths(
+                project_path, 
+                platform,
+                user_search_paths=user_provided_paths
+            )
+            
+            if info.get("mode") == "user_provided":
+                logger.info(f"使用用户显式传入的 {len(resolved_paths)} 个路径")
+            elif resolved_paths:
+                options.unit_search_paths = resolved_paths
+                logger.info(f"智能解析选择了 {len(resolved_paths)} 个第三方库路径"
+                           f"（从 {info.get('total_paths_count', 0)} 个全局路径中筛选，"
+                           f"解决了 {info.get('resolved_units', 0)} 个单元依赖）")
+                logger.debug(f"解析详情: {info}")
+            
+            # 记录未找到的单元
+            if info.get('still_missing_units'):
+                logger.warning(f"仍有 {len(info['still_missing_units'])} 个单元未找到: "
+                             f"{info['still_missing_units'][:5]}")
+                
+        except Exception as e:
+            logger.warning(f"智能解析第三方库路径失败: {e}，将使用默认方式")
+
         return options
 
     async def compile_project_with_msbuild(self, request: ProjectCompileRequest) -> CompileResult:
@@ -490,12 +607,24 @@ class CompilerService:
             
             logger.info(f"MSBuild 参数: {' '.join(args)}")
             
-            # 5. 创建临时批处理文件来设置环境并执行 MSBuild
+            # 5. 获取 rsvars.bat 路径
+            rsvars_path = self._get_rsvars_path()
+            if not rsvars_path:
+                error_msg = "无法找到 rsvars.bat，请检查 Delphi 安装"
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="RSVARS_NOT_FOUND",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+            
+            # 6. 创建临时批处理文件来设置环境并执行 MSBuild
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
                 # 设置 Delphi 环境变量
                 f.write('@echo off\n')
-                f.write('call "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\rsvars.bat"\n')
+                f.write(f'call "{rsvars_path}"\n')
                 # 调用 MSBuild
                 f.write(f'msbuild {" ".join(args)}\n')
                 batch_file = f.name

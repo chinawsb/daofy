@@ -3,6 +3,7 @@
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
+Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 为用户项目提供知识库功能:
 1. 从 .dproj 文件读取三方库目录并构建知识库
