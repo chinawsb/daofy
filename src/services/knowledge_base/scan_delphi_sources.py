@@ -10,16 +10,24 @@ import json
 import hashlib
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional, Callable
 import re
 
+try:
+    from ...utils.progress_tracker import ProgressTracker, ProgressInfo
+except ImportError:
+    # 如果相对导入失败，使用绝对导入
+    from src.utils.progress_tracker import ProgressTracker, ProgressInfo
+
+
 class DelphiSourceScanner:
-    def __init__(self, source_dir: str, output_dir: str):
+    def __init__(self, source_dir: str, output_dir: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None):
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.index_file = self.output_dir / "index" / "source_index.json"
         self.metadata_file = self.output_dir / "index" / "metadata.json"
         self.file_extensions = {'.pas', '.dpr', '.dpk', '.inc', '.hpp', '.h'}
+        self.progress_callback = progress_callback
 
         # 创建必要的目录
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -34,6 +42,20 @@ class DelphiSourceScanner:
         file_count = 0
         total_lines = 0
 
+        # 首先统计文件总数
+        total_files = 0
+        for root, dirs, files in os.walk(self.source_dir):
+            for file in files:
+                file_path = Path(root) / file
+                if file_path.suffix.lower() in self.file_extensions:
+                    total_files += 1
+
+        # 创建进度跟踪器
+        tracker = None
+        if self.progress_callback and total_files > 0:
+            tracker = ProgressTracker(total_files, self.progress_callback, update_interval=1.0)
+            print(f"预计扫描 {total_files} 个文件...")
+
         for root, dirs, files in os.walk(self.source_dir):
             for file in files:
                 file_path = Path(root) / file
@@ -44,8 +66,12 @@ class DelphiSourceScanner:
                         file_count += 1
                         total_lines += file_info.get('line_count', 0)
 
-                        if file_count % 100 == 0:
-                            print(f"已扫描 {file_count} 个文件...")
+                        # 更新进度
+                        if tracker:
+                            tracker.update(1, f"扫描: {file_path.name}")
+
+        if tracker:
+            tracker.finish(f"扫描完成: {file_count} 个文件")
 
         print(f"扫描完成! 共找到 {file_count} 个源文件, {total_lines} 行代码")
 

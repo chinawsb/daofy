@@ -15,7 +15,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
 
 from .scan_delphi_sources import DelphiSourceScanner
@@ -29,16 +29,18 @@ logger = get_logger(__name__)
 class ProjectKnowledgeBase:
     """项目知识库管理器"""
 
-    def __init__(self, project_path: str):
+    def __init__(self, project_path: str, progress_callback: Optional[Callable] = None):
         """
         初始化项目知识库
 
         Args:
             project_path: 项目文件路径 (.dproj 或 .dpr)
+            progress_callback: 进度回调函数
         """
         self.project_path = Path(project_path)
         self.project_dir = self.project_path.parent
         self.project_name = self.project_path.stem
+        self.progress_callback = progress_callback
 
         # 项目知识库目录
         self.kb_dir = self.project_dir / ".delphi-kb"
@@ -265,7 +267,7 @@ class ProjectKnowledgeBase:
         seen_paths = set()  # 用于去重
 
         for path in thirdparty_paths:
-            scanner = DelphiSourceScanner(path, str(thirdparty_kb_dir))
+            scanner = DelphiSourceScanner(path, str(thirdparty_kb_dir), self.progress_callback)
             scan_result = scanner.scan_directory()
 
             # 为每个文件添加唯一路径标识，避免重复
@@ -346,7 +348,7 @@ class ProjectKnowledgeBase:
         project_kb_dir.mkdir(parents=True, exist_ok=True)
 
         # 扫描项目源码
-        scanner = DelphiSourceScanner(str(self.project_dir), str(project_kb_dir))
+        scanner = DelphiSourceScanner(str(self.project_dir), str(project_kb_dir), self.progress_callback)
         scan_result = scanner.scan_directory()
 
         # 保存索引

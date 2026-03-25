@@ -8,7 +8,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 提供知识库查询和管理的 MCP 工具
 """
 
-from typing import Any
+from typing import Any, Optional, Callable
 from mcp.types import CallToolResult
 
 # 全局知识库服务实例
@@ -29,6 +29,7 @@ async def build_knowledge_base(arguments: Any) -> CallToolResult:
         arguments: 包含以下参数:
             - version: Delphi 版本 (可选)
             - force_rebuild: 是否强制重建 (可选,默认 false)
+            - show_progress: 是否显示进度 (可选,默认 true)
 
     Returns:
         构建结果
@@ -43,21 +44,41 @@ async def build_knowledge_base(arguments: Any) -> CallToolResult:
 
     version = arguments.get("version")
     force_rebuild = arguments.get("force_rebuild", False)
+    show_progress = arguments.get("show_progress", True)
+
+    # 创建进度回调
+    progress_messages = []
+    def progress_callback(progress):
+        if show_progress:
+            from ..utils.progress_tracker import ProgressCallback
+            callback = ProgressCallback(prefix="Delphi知识库")
+            msg = callback.tracker.get_progress_text(progress)
+            progress_messages.append(msg)
 
     try:
+        # 更新服务的进度回调
+        kb_service.progress_callback = progress_callback if show_progress else None
         success = kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
 
         if success:
             stats = kb_service.get_statistics()
+            result_text = f"知识库构建成功!\n\n统计信息:\n"
+            result_text += f"- 类数量: {stats.get('classes', 0)}\n"
+            result_text += f"- 函数数量: {stats.get('functions', 0)}\n"
+            result_text += f"- 文件数量: {stats.get('files', 0)}\n"
+            result_text += f"- 词汇表大小: {stats.get('vocabulary_size', 0)}\n"
+            result_text += f"- 数据库大小: {stats.get('database_size_mb', 0):.2f} MB"
+
+            # 添加进度信息
+            if show_progress and progress_messages:
+                result_text += f"\n\n构建进度 (最近10条):\n"
+                for msg in progress_messages[-10:]:
+                    result_text += f"  {msg}\n"
+
             return CallToolResult(
                 content=[{
                     "type": "text",
-                    "text": f"知识库构建成功!\n\n统计信息:\n"
-                            f"- 类数量: {stats.get('classes', 0)}\n"
-                            f"- 函数数量: {stats.get('functions', 0)}\n"
-                            f"- 文件数量: {stats.get('files', 0)}\n"
-                            f"- 词汇表大小: {stats.get('vocabulary_size', 0)}\n"
-                            f"- 数据库大小: {stats.get('database_size_mb', 0):.2f} MB"
+                    "text": result_text
                 }]
             )
         else:

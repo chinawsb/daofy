@@ -43,6 +43,7 @@ from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
 from src.tools import analyze_dependencies as dep_tools
 from src.tools import read_source_file as source_tools
 from src.tools import coding_rules
+from src.tools import async_tasks as async_tools
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
 
@@ -571,6 +572,72 @@ async def run_server():
                     },
                     "required": []
                 }
+            ),
+            Tool(
+                name="start_async_task",
+                description="启动异步任务（避免长时间任务超时）",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_type": {
+                            "type": "string",
+                            "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base"],
+                            "description": "任务类型"
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "任务参数（根据任务类型不同）"
+                        },
+                        "show_progress": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "是否显示进度"
+                        }
+                    },
+                    "required": ["task_type"]
+                }
+            ),
+            Tool(
+                name="get_task_status",
+                description="获取异步任务状态",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "任务ID"}
+                    },
+                    "required": ["task_id"]
+                }
+            ),
+            Tool(
+                name="get_task_result",
+                description="获取异步任务结果",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "任务ID"}
+                    },
+                    "required": ["task_id"]
+                }
+            ),
+            Tool(
+                name="list_tasks",
+                description="列出所有异步任务",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="cancel_task",
+                description="取消任务",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "任务ID"}
+                    },
+                    "required": ["task_id"]
+                }
             )
         ]
 
@@ -643,10 +710,16 @@ async def run_server():
                 result = await help_kb_tools.scan_help_html(arguments)
             elif name == "build_help_kb_index":
                 result = await help_kb_tools.build_help_kb_index(arguments)
+            elif name == "start_async_task":
+                result = await async_tools.start_async_task(arguments)
             elif name == "get_task_status":
-                result = await help_kb_tools.get_task_status(arguments)
+                result = await async_tools.get_task_status(arguments)
+            elif name == "get_task_result":
+                result = await async_tools.get_task_result(arguments)
             elif name == "list_tasks":
-                result = await help_kb_tools.list_tasks(arguments)
+                result = await async_tools.list_tasks(arguments)
+            elif name == "cancel_task":
+                result = await help_kb_tools.cancel_task(arguments)
             elif name == "search_help":
                 result = await help_kb_tools.search_help(arguments)
             elif name == "get_help_kb_stats":
@@ -671,7 +744,7 @@ async def run_server():
             return {"content": [{"type": "text", "text": f"错误: {str(e)}"}], "isError": True}
 
     # 启动服务器
-    logger.info("MCP Server 启动中...")
+    logger.info("MCP Server 启动完成,准备接收请求...")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

@@ -5,6 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.03.25] - 2026-03-25
+
+### Added
+
+#### SQLite 线程安全支持
+- 实现线程局部存储（Thread-Local Storage）解决 SQLite 线程安全问题
+- 每个线程使用独立的数据库连接，避免 `check_same_thread=False` 的绕过方案
+- 新增 `_get_connection()` 和 `_close_connection()` 方法管理线程连接
+
+#### 帮助文档知识库优化
+- 默认不再自动转换 HTML 为 Markdown，提升构建性能
+- 解压的 CHM 文件存储到 `data/help-knowledge-base/files` 目录
+- Markdown 文件存储到 `data/help-knowledge-base/markdown` 目录（仅当用户指定时）
+- 添加 `save_markdown` 参数控制是否转换 Markdown
+
+#### 任务管理增强
+- 添加任务取消功能 (`cancel_task`)
+- 添加详细步骤信息显示（当前步骤、总步骤数、步骤索引）
+- 添加预计剩余时间计算
+- 支持任务状态查询和列表显示
+
+#### 性能优化
+- 将 HTML 扫描从线程池改为进程池，充分利用多核 CPU
+- 优化进度回调频率（每10个文件报告一次）
+- 添加任务取消检查机制
+
+### Changed
+
+#### 代码重构
+- 重构 `SQLiteVectorKnowledgeBase` 类，移除 `self.conn` 实例变量
+- 所有数据库操作使用 `_get_connection()` 获取线程本地连接
+- 移除所有 `check_same_thread=False` 参数
+- 更新异常处理，确保连接正确关闭
+
+#### 目录结构调整
+- 帮助文档解压目录从 `extracted` 改为 `files`
+- Markdown 转换目录为 `markdown`（可选）
+
+#### 默认行为变更
+- `save_markdown` 参数默认值从 `True` 改为 `False`
+- `cleanup_original` 参数默认值从 `True` 改为 `False`
+
+### Fixed
+
+#### 线程安全问题
+- 修复 "SQLite objects created in a thread can only be used in that same thread" 错误
+- 修复多线程环境下数据库连接冲突问题
+- 修复任务管理器中的参数传递问题
+
+#### 构建过程优化
+- 修复 HTML 扫描过程中的进度报告
+- 修复任务取消机制
+- 修复步骤信息显示
+
+### Tested
+- 多线程搜索测试：20个并发线程全部成功
+- 混合操作测试：15个混合操作线程全部成功
+- 任务管理器测试：任务提交、取消、列表功能正常
+- 内存泄漏测试：20次对象创建/销毁无泄漏
+- 所有现有功能测试通过
+
 ## [2026.03.15] - 2026-03-15
 
 ### Added

@@ -14,7 +14,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Callable
 from collections import defaultdict
 
 # 添加当前目录到 Python 路径
@@ -28,12 +28,13 @@ from sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
 class DelphiKnowledgeBaseService:
     """Delphi 知识库服务"""
 
-    def __init__(self, kb_dir: Optional[str] = None):
+    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
         """
         初始化知识库服务
 
         Args:
             kb_dir: 知识库目录路径,如果为 None 则使用默认路径
+            progress_callback: 进度回调函数
         """
         if kb_dir is None:
             # 默认路径: MCP 服务器目录下的 data/delphi-knowledge-base
@@ -47,6 +48,7 @@ class DelphiKnowledgeBaseService:
         self.kb_instance = None
         self.source_dir = None
         self.delphi_versions = []
+        self.progress_callback = progress_callback
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)
@@ -191,8 +193,8 @@ class DelphiKnowledgeBaseService:
         # 导入扫描模块
         from scan_delphi_sources import DelphiSourceScanner
 
-        # 初始化扫描器
-        scanner = DelphiSourceScanner(self.source_dir, self.kb_dir)
+        # 初始化扫描器（带进度回调）
+        scanner = DelphiSourceScanner(self.source_dir, self.kb_dir, self.progress_callback)
 
         # 扫描源码
         print("开始扫描 Delphi 源码...")

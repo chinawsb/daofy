@@ -19,12 +19,88 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from multiprocessing import cpu_count
 from bs4 import BeautifulSoup
 
 from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+# 全局处理函数（用于多进程，必须是模块级函数才能被pickle）
+def _process_html_file_worker(args: Tuple) -> Optional[Dict]:
+    """
+    处理单个 HTML 文件的worker函数（用于多进程）
+
+    Args:
+        args: (html_file_path, directory_path, save_markdown, markdown_dir_path)
+
+    Returns:
+        文档字典或None
+    """
+    html_file_path, directory_path, save_markdown, markdown_dir_path = args
+
+    try:
+        html_file = Path(html_file_path)
+        directory = Path(directory_path)
+        markdown_dir = Path(markdown_dir_path) if markdown_dir_path else None
+
+        with open(html_file, 'r', encoding='utf-8', errors='ignore') as f:
+            html_content = f.read()
+
+        # 创建提取器（每个进程独立创建）
+        extractor = HTMLContentExtractor()
+
+        # 提取内容
+        extracted = extractor.extract_content(html_content, str(html_file))
+
+        if not extracted['content'] or len(extracted['content']) <= 50:
+            return None
+
+        # 转换为 Markdown（如果需要）
+        markdown_content = None
+        if save_markdown:
+            md_converter = HTMLToMarkdownConverter()
+            markdown_content = md_converter.convert(html_content)
+
+        # 保存 Markdown 文件
+        markdown_file_path = None
+        if markdown_content and markdown_dir:
+            try:
+                rel_path = html_file.relative_to(directory)
+                md_file = markdown_dir / rel_path.with_suffix('.md')
+                md_file.parent.mkdir(parents=True, exist_ok=True)
+
+                with open(md_file, 'w', encoding='utf-8') as md_f:
+                    md_f.write(markdown_content)
+
+                markdown_file_path = str(md_file)
+            except Exception:
+                pass
+
+        return {
+            'path': str(html_file.relative_to(directory)),
+            'full_path': str(html_file),
+            'title': extracted['title'],
+            'content': markdown_content if markdown_content else extracted['content'],
+            'html_content': extracted['content'],
+            'size': len(extracted['content']),
+            'hash': hashlib.md5(extracted['content'].encode()).hexdigest(),
+            'classes': extracted['classes'],
+            'functions': extracted['functions'],
+            'properties': extracted.get('properties', []),
+            'events': extracted.get('events', []),
+            'interfaces': extracted.get('interfaces', []),
+            'types': extracted.get('types', []),
+            'uses': extracted.get('uses', []),
+            'code_examples': extracted.get('code_examples', []),
+            'markdown_path': markdown_file_path
+        }
+
+    except Exception:
+        return None
 
 
 class HTMLToMarkdownConverter:
@@ -42,11 +118,23 @@ class HTMLToMarkdownConverter:
         self.converter.wrap_list_items = False
         self.converter.single_line_break = True
 
+        # 优化: 尝试使用更快的lxml解析器
+        self.parser = self._get_fast_parser()
+
+    def _get_fast_parser(self) -> str:
+        """获取最快的HTML解析器"""
+        try:
+            import lxml
+            return 'lxml'  # lxml比html.parser快3-5倍
+        except ImportError:
+            logger.info("lxml未安装,使用html.parser (建议安装lxml以提升性能: pip install lxml)")
+            return 'html.parser'
+
     def convert(self, html_content: str) -> str:
         """将 HTML 转换为 Markdown"""
         try:
-            # 先使用 BeautifulSoup 清理 HTML
-            soup = BeautifulSoup(html_content, 'html.parser')
+            # 先使用 BeautifulSoup 清理 HTML (使用更快的解析器)
+            soup = BeautifulSoup(html_content, self.parser)
 
             # 移除脚本和样式
             for element in soup(['script', 'style', 'nav', 'footer', 'header']):
@@ -116,7 +204,7 @@ class HTMLToMarkdownConverter:
     def _extract_text_fallback(self, html_content: str) -> str:
         """备用文本提取方法"""
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, self.parser)
             return soup.get_text(separator='\n', strip=True)
         except:
             return ""
@@ -127,6 +215,8 @@ class HTMLContentExtractor:
 
     def __init__(self):
         self.md_converter = HTMLToMarkdownConverter()
+        # 使用与HTMLToMarkdownConverter相同的解析器
+        self.parser = self.md_converter.parser
 
     def extract_content(self, html_content: str, file_path: str) -> Dict:
         """
@@ -164,7 +254,7 @@ class HTMLContentExtractor:
     def _extract_title(self, html_content: str, markdown_content: str) -> str:
         """提取文档标题"""
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, self.parser)
             if soup.title:
                 return soup.title.get_text(strip=True)
             if soup.h1:
@@ -197,7 +287,7 @@ class HTMLContentExtractor:
         }
 
         try:
-            soup = BeautifulSoup(html_content, 'html.parser')
+            soup = BeautifulSoup(html_content, self.parser)
 
             # 提取 Classes
             classes_header = soup.find(id='Classes') or soup.find(string=re.compile('^Classes$', re.I))
@@ -647,7 +737,7 @@ class DelphiHelpKnowledgeBase:
         self.kb_dir = Path(kb_dir)
         self.kb_dir.mkdir(parents=True, exist_ok=True)
         (self.kb_dir / "index").mkdir(exist_ok=True)
-        (self.kb_dir / "extracted").mkdir(exist_ok=True)
+        (self.kb_dir / "files").mkdir(exist_ok=True)  # 解压后的HTML文件目录
 
         self.kb_instance: Optional[SQLiteVectorKnowledgeBase] = None
         self.extractor = HTMLContentExtractor()
@@ -659,6 +749,98 @@ class DelphiHelpKnowledgeBase:
         self.delphi_help_dir = self._find_delphi_help_dir()
 
         logger.info(f"帮助文档知识库初始化: {self.kb_dir}")
+
+    def _should_process_file(self, file_path: Path) -> bool:
+        """
+        判断文件是否需要处理 (性能优化)
+        
+        Args:
+            file_path: 文件路径
+            
+        Returns:
+            是否需要处理
+        """
+        try:
+            # 跳过太小的文件(通常是无用的占位文件)
+            if file_path.stat().st_size < 500:
+                return False
+            
+            # 跳过特定目录
+            skip_dirs = ['_private', 'scripts', 'styles', 'images', 'css', 'js', 'assets']
+            if any(skip_dir in str(file_path).lower() for skip_dir in skip_dirs):
+                return False
+            
+            # 跳过特定文件名模式
+            skip_patterns = ['index', 'search', 'toc', 'nav', 'menu', 'header', 'footer']
+            file_name_lower = file_path.name.lower()
+            if any(pattern in file_name_lower for pattern in skip_patterns):
+                return False
+            
+            return True
+            
+        except Exception:
+            return True  # 出错时默认处理
+
+    def _calculate_optimal_workers(self) -> int:
+        """
+        计算最优工作线程数 (根据CPU核心数和可用内存)
+        
+        Returns:
+            最优线程数
+        """
+        try:
+            import os
+            import psutil
+            
+            # 获取CPU核心数
+            cpu_count = os.cpu_count() or 4
+            
+            # 获取可用内存(GB)
+            available_memory_gb = psutil.virtual_memory().available / (1024 ** 3)
+            
+            # 计算基于CPU的线程数 (CPU核心数 * 2,因为HTML解析是IO+CPU混合型)
+            cpu_based_workers = cpu_count * 2
+            
+            # 计算基于内存的线程数 (每GB内存支持2个线程,每个线程约占用500MB)
+            memory_based_workers = int(available_memory_gb * 2)
+            
+            # 取较小值,避免资源耗尽
+            optimal_workers = min(cpu_based_workers, memory_based_workers)
+            
+            # 限制在合理范围内 [4, 32]
+            optimal_workers = max(4, min(32, optimal_workers))
+            
+            logger.info(f"自动计算线程数: CPU核心={cpu_count}, 可用内存={available_memory_gb:.1f}GB, 最优线程数={optimal_workers}")
+            
+            return optimal_workers
+            
+        except Exception as e:
+            # 如果无法获取系统信息,使用默认值
+            logger.warning(f"无法获取系统信息,使用默认线程数16: {e}")
+            return 16
+
+    def _calculate_chm_workers(self) -> int:
+        """
+        计算CHM解压的最优线程数
+        
+        Returns:
+            最优线程数
+        """
+        try:
+            import os
+            
+            # CHM解压主要是IO密集型,使用CPU核心数即可
+            cpu_count = os.cpu_count() or 4
+            
+            # 限制在合理范围内 [2, 8]
+            optimal_workers = max(2, min(8, cpu_count))
+            
+            logger.info(f"CHM解压线程数: {optimal_workers}")
+            
+            return optimal_workers
+            
+        except Exception:
+            return 4  # 默认4线程
 
     def _find_7zip(self) -> Optional[str]:
         """查找 7-Zip 安装路径"""
@@ -676,22 +858,51 @@ class DelphiHelpKnowledgeBase:
         import winreg
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
-            version_key = winreg.EnumKey(key, 0)
-            version_path = winreg.OpenKey(key, version_key)
-            root_dir = winreg.QueryValueEx(version_path, "RootDir")[0]
-            winreg.CloseKey(version_path)
+
+            # 查找所有版本，选择最新的
+            versions = []
+            i = 0
+            while True:
+                try:
+                    version_key = winreg.EnumKey(key, i)
+                    versions.append(version_key)
+                    i += 1
+                except:
+                    break
+
             winreg.CloseKey(key)
 
-            help_dir = Path(root_dir) / "Help" / "Doc"
-            if help_dir.exists():
-                return str(help_dir)
+            # 按版本号排序，取最新的
+            versions.sort(key=lambda x: float(x) if x.replace('.', '').isdigit() else 0, reverse=True)
+
+            for version in versions:
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+                    version_path = winreg.OpenKey(key, version)
+                    root_dir = winreg.QueryValueEx(version_path, "RootDir")[0]
+                    winreg.CloseKey(version_path)
+                    winreg.CloseKey(key)
+
+                    help_dir = Path(root_dir) / "Help" / "Doc"
+                    if help_dir.exists():
+                        logger.info(f"找到 Delphi 帮助目录 (版本 {version}): {help_dir}")
+                        return str(help_dir)
+                except Exception as e:
+                    logger.warning(f"检查版本 {version} 失败: {e}")
+                    continue
+
         except Exception as e:
             logger.warning(f"查找 Delphi 帮助目录失败: {e}")
 
         # 默认路径
-        default_path = r"C:\Program Files (x86)\Embarcadero\Studio\22.0\Help\Doc"
-        if Path(default_path).exists():
-            return default_path
+        default_paths = [
+            r"C:\Program Files (x86)\Embarcadero\Studio\23.0\Help\Doc",
+            r"C:\Program Files (x86)\Embarcadero\Studio\22.0\Help\Doc",
+        ]
+        for default_path in default_paths:
+            if Path(default_path).exists():
+                logger.info(f"使用默认帮助目录: {default_path}")
+                return default_path
 
         return None
 
@@ -742,13 +953,15 @@ class DelphiHelpKnowledgeBase:
             return False
 
     def extract_all_chm(self, help_names: Optional[List[str]] = None,
-                       progress_callback: Optional[Callable] = None) -> Dict[str, bool]:
+                       progress_callback: Optional[Callable] = None,
+                       max_workers: Optional[int] = None) -> Dict[str, bool]:
         """
-        解压所有 CHM 文件
+        解压所有 CHM 文件 (并行优化版本)
 
         Args:
             help_names: 要解压的帮助文件列表，None表示全部
             progress_callback: 进度回调函数(current, total, name, status)
+            max_workers: 最大并行解压数,None表示自动计算
 
         Returns:
             每个帮助文件的解压结果
@@ -757,8 +970,12 @@ class DelphiHelpKnowledgeBase:
             logger.error("未找到 Delphi 帮助目录")
             return {}
 
+        # 性能优化: 自动计算最优线程数
+        if max_workers is None:
+            max_workers = self._calculate_chm_workers()
+
         results = {}
-        extracted_dir = self.kb_dir / "extracted"
+        extracted_dir = self.kb_dir / "files"  # 使用 files 目录存储解压的HTML
 
         # 确定要处理的文件
         files_to_process = {}
@@ -772,81 +989,187 @@ class DelphiHelpKnowledgeBase:
                     results[name] = False
 
         total = len(files_to_process)
-        for i, (name, (chm_path, desc)) in enumerate(files_to_process.items(), 1):
-            if progress_callback:
-                progress_callback(i, total, name, f"正在解压 {desc}")
-
-            output_dir = extracted_dir / name
-            success = self.extract_chm(str(chm_path), str(output_dir))
-            results[name] = success
+        
+        # 并行解压
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_name = {}
+            
+            for name, (chm_path, desc) in files_to_process.items():
+                output_dir = extracted_dir / name
+                future = executor.submit(self.extract_chm, str(chm_path), str(output_dir))
+                future_to_name[future] = (name, desc)
+            
+            # 收集结果
+            completed = 0
+            for future in as_completed(future_to_name):
+                completed += 1
+                name, desc = future_to_name[future]
+                
+                try:
+                    success = future.result()
+                    results[name] = success
+                    
+                    if progress_callback:
+                        status = f"完成 {desc}" if success else f"失败 {desc}"
+                        progress_callback(completed, total, name, status)
+                        
+                except Exception as e:
+                    logger.error(f"解压 {name} 失败: {e}")
+                    results[name] = False
+                    if progress_callback:
+                        progress_callback(completed, total, name, f"失败 {desc}")
 
         return results
 
     # ==================== 步骤2: 扫描 HTML 文件 ====================
 
+    def _process_single_html(self, html_file: Path, directory: Path, md_converter,
+                            markdown_dir: Optional[Path], extractor) -> Optional[Dict]:
+        """处理单个 HTML 文件（用于多线程）"""
+        try:
+            with open(html_file, 'r', encoding='utf-8', errors='ignore') as f:
+                html_content = f.read()
+
+            # 提取内容
+            extracted = extractor.extract_content(html_content, str(html_file))
+
+            if not extracted['content'] or len(extracted['content']) <= 50:
+                return None
+
+            # 转换为 Markdown
+            markdown_content = None
+            if md_converter:
+                markdown_content = md_converter.convert(html_content)
+
+            # 保存 Markdown 文件
+            markdown_file_path = None
+            if markdown_content and markdown_dir:
+                try:
+                    # 保持相对路径结构
+                    rel_path = html_file.relative_to(directory)
+                    md_file = markdown_dir / rel_path.with_suffix('.md')
+                    md_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    # 写入 Markdown 内容
+                    with open(md_file, 'w', encoding='utf-8') as md_f:
+                        md_f.write(markdown_content)
+
+                    markdown_file_path = str(md_file)
+                except Exception as e:
+                    logger.warning(f"保存 Markdown 文件失败 {md_file}: {e}")
+
+            return {
+                'path': str(html_file.relative_to(directory)),
+                'full_path': str(html_file),
+                'title': extracted['title'],
+                'content': markdown_content if markdown_content else extracted['content'],
+                'html_content': extracted['content'],
+                'size': len(extracted['content']),
+                'hash': hashlib.md5(extracted['content'].encode()).hexdigest(),
+                'classes': extracted['classes'],
+                'functions': extracted['functions'],
+                'properties': extracted.get('properties', []),
+                'events': extracted.get('events', []),
+                'interfaces': extracted.get('interfaces', []),
+                'types': extracted.get('types', []),
+                'uses': extracted.get('uses', []),
+                'code_examples': extracted.get('code_examples', []),
+                'markdown_path': markdown_file_path
+            }
+
+        except Exception as e:
+            logger.warning(f"处理文件失败 {html_file}: {e}")
+            return None
+
     def scan_html_files(self, directory: str, max_files: Optional[int] = None,
-                       progress_callback: Optional[Callable] = None) -> List[Dict]:
+                       progress_callback: Optional[Callable] = None,
+                       save_markdown: bool = False,
+                       max_workers: Optional[int] = None) -> List[Dict]:
         """
-        扫描目录中的 HTML 文件
+        扫描目录中的 HTML 文件（多线程优化版本）
 
         Args:
             directory: 目录路径
             max_files: 最大处理文件数
             progress_callback: 进度回调函数(current, total, filename)
+            save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
+            max_workers: 最大工作线程数,None表示自动计算
 
         Returns:
             文档列表
         """
-        documents = []
+        # 性能优化: 自动计算最优进程数（使用CPU核心数）
+        if max_workers is None:
+            max_workers = cpu_count() or 4
+            # 限制在合理范围内 [4, 16]
+            max_workers = max(4, min(16, max_workers))
+
         html_files = list(Path(directory).rglob("*.html")) + list(Path(directory).rglob("*.htm"))
+
+        # 性能优化: 过滤无用文件
+        html_files = [f for f in html_files if self._should_process_file(f)]
 
         if max_files:
             html_files = html_files[:max_files]
 
         total = len(html_files)
-        logger.info(f"开始处理 {total} 个 HTML 文件...")
+        logger.info(f"开始处理 {total} 个 HTML 文件（使用 {max_workers} 个进程）...")
 
-        for i, html_file in enumerate(html_files):
-            try:
-                if progress_callback and i % 10 == 0:
-                    progress_callback(i, total, html_file.name)
+        # 创建 Markdown 保存目录
+        markdown_dir = None
+        if save_markdown:
+            base_dir = Path(directory)
+            if base_dir.name == 'files':
+                markdown_dir = base_dir.parent / 'markdown'
+            else:
+                markdown_dir = base_dir.parent / 'markdown'
+            markdown_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("已启用 Markdown 转换")
 
-                with open(html_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    html_content = f.read()
+        documents = []
+        directory_path = Path(directory)
+        markdown_dir_str = str(markdown_dir) if markdown_dir else None
 
-                # 提取内容
-                extracted = self.extractor.extract_content(html_content, str(html_file))
+        # 准备参数列表
+        worker_args = [
+            (str(html_file), str(directory_path), save_markdown, markdown_dir_str)
+            for html_file in html_files
+        ]
 
-                if extracted['content'] and len(extracted['content']) > 50:
-                    documents.append({
-                        'path': str(html_file.relative_to(directory)),
-                        'full_path': str(html_file),
-                        'title': extracted['title'],
-                        'content': extracted['content'],
-                        'size': len(extracted['content']),
-                        'hash': hashlib.md5(extracted['content'].encode()).hexdigest(),
-                        'classes': extracted['classes'],
-                        'functions': extracted['functions'],
-                        'properties': extracted.get('properties', []),
-                        'events': extracted.get('events', []),
-                        'interfaces': extracted.get('interfaces', []),
-                        'types': extracted.get('types', []),
-                        'uses': extracted.get('uses', []),
-                        'code_examples': extracted.get('code_examples', [])
-                    })
+        # 使用进程池处理文件（真正利用多核CPU）
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            futures = [executor.submit(_process_html_file_worker, args) for args in worker_args]
 
-            except Exception as e:
-                logger.warning(f"处理文件失败 {html_file}: {e}")
+            # 收集结果
+            completed = 0
+            for future in as_completed(futures):
+                completed += 1
+
+                try:
+                    result = future.result()
+                    if result:
+                        documents.append(result)
+
+                    # 更新进度（每10个文件更新一次，提高响应性）
+                    if progress_callback and completed % 10 == 0:
+                        progress_callback(completed, total, f"已处理 {completed}/{total}")
+
+                except Exception as e:
+                    logger.warning(f"处理文件失败: {e}")
 
         if progress_callback:
             progress_callback(total, total, "完成")
 
         logger.info(f"成功提取 {len(documents)} 个文档")
+        if save_markdown:
+            logger.info(f"Markdown 文件已保存到: {markdown_dir}")
         return documents
 
     def scan_extracted_directory(self, help_name: str, max_files: Optional[int] = None,
                                  progress_callback: Optional[Callable] = None,
-                                 source_dir: Optional[str] = None) -> List[Dict]:
+                                 source_dir: Optional[str] = None,
+                                 save_markdown: bool = False) -> List[Dict]:
         """
         扫描已解压的目录
 
@@ -854,13 +1177,14 @@ class DelphiHelpKnowledgeBase:
             help_name: 帮助文件名称（如 'fmx', 'vcl'）
             max_files: 最大处理文件数
             progress_callback: 进度回调函数
-            source_dir: 源目录路径，默认使用 self.kb_dir / "extracted"
+            source_dir: 源目录路径，默认使用 self.kb_dir / "files"
+            save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
 
         Returns:
             文档列表
         """
         if source_dir is None:
-            source_path = self.kb_dir / "extracted" / help_name
+            source_path = self.kb_dir / "files" / help_name
         else:
             source_path = Path(source_dir) / help_name
 
@@ -869,7 +1193,7 @@ class DelphiHelpKnowledgeBase:
             return []
 
         logger.info(f"扫描目录: {source_path}")
-        documents = self.scan_html_files(str(source_path), max_files, progress_callback)
+        documents = self.scan_html_files(str(source_path), max_files, progress_callback, save_markdown)
 
         # 添加来源信息
         for doc in documents:
@@ -1008,7 +1332,10 @@ class DelphiHelpKnowledgeBase:
 
     def build_knowledge_base(self, help_names: Optional[List[str]] = None,
                             max_files_per_help: Optional[int] = None,
-                            progress_callback: Optional[Callable] = None) -> bool:
+                            progress_callback: Optional[Callable] = None,
+                            save_markdown: bool = False,
+                            cleanup_original: bool = False,
+                            is_cancelled_check: Optional[Callable[[], bool]] = None) -> bool:
         """
         完整构建帮助文档知识库
 
@@ -1016,38 +1343,50 @@ class DelphiHelpKnowledgeBase:
             help_names: 要构建的帮助文件列表，None表示全部
             max_files_per_help: 每个帮助文件最大处理文档数
             progress_callback: 进度回调函数(stage, current, total, message)
-                stage: 'extract', 'scan', 'index'
+                stage: 'extract', 'scan', 'index', 'cleanup'
+            save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
+            cleanup_original: 是否清理原始 HTML 文件（默认False，保留HTML文件）
+            is_cancelled_check: 取消检查函数，返回True表示任务已被取消
 
         Returns:
             是否成功
         """
+        def check_cancelled():
+            if is_cancelled_check and is_cancelled_check():
+                raise KeyboardInterrupt("任务已被用户取消")
+
         if not self.delphi_help_dir:
             logger.error("未找到 Delphi 帮助目录")
             return False
 
         # 步骤1: 解压 CHM
+        check_cancelled()
         if progress_callback:
             progress_callback('extract', 0, 1, "开始解压 CHM 文件...")
 
         extract_results = self.extract_all_chm(help_names,
-            lambda current, total, name, msg: progress_callback('extract', current, total, msg) if progress_callback else None)
+            lambda current, total, name, msg: (check_cancelled(), progress_callback('extract', current, total, msg))[1] if progress_callback else None)
 
         if not any(extract_results.values()):
             logger.error("没有成功解压任何 CHM 文件")
             return False
 
-        # 步骤2: 扫描 HTML
+        # 步骤2: 扫描 HTML 并转换为 Markdown
+        check_cancelled()
         if progress_callback:
-            progress_callback('scan', 0, 1, "开始扫描 HTML 文件...")
+            progress_callback('scan', 0, 1, "开始扫描 HTML 文件并转换为 Markdown...")
 
         all_documents = []
         successful_helps = [name for name, success in extract_results.items() if success]
 
         for i, help_name in enumerate(successful_helps):
+            check_cancelled()
             if progress_callback:
                 progress_callback('scan', i, len(successful_helps), f"扫描 {self.HELP_FILES.get(help_name, help_name)}...")
 
-            documents = self.scan_extracted_directory(help_name, max_files_per_help)
+            documents = self.scan_extracted_directory(help_name, max_files_per_help,
+                lambda current, total, name: (check_cancelled(), progress_callback('scan', i, len(successful_helps), f"处理 {name}"))[1] if progress_callback else None,
+                save_markdown=save_markdown)
             all_documents.extend(documents)
 
         if not all_documents:
@@ -1058,18 +1397,44 @@ class DelphiHelpKnowledgeBase:
             progress_callback('scan', len(successful_helps), len(successful_helps), f"扫描完成，共 {len(all_documents)} 个文档")
 
         # 步骤3: 构建索引
+        check_cancelled()
         if progress_callback:
             progress_callback('index', 0, 100, "开始构建向量索引...")
 
         success = self.build_vector_index(all_documents,
-            lambda percent, msg: progress_callback('index', percent, 100, msg) if progress_callback else None)
+            lambda percent, msg: (check_cancelled(), progress_callback('index', percent, 100, msg))[1] if progress_callback else None)
+
+        if not success:
+            logger.error("构建向量索引失败")
+            return False
+
+        # 步骤4: 清理原始 HTML 文件
+        check_cancelled()
+        if cleanup_original:
+            if progress_callback:
+                progress_callback('cleanup', 0, 1, "清理原始 HTML 文件...")
+
+            try:
+                extracted_dir = self.kb_dir / "files"
+                if extracted_dir.exists():
+                    logger.info("正在删除原始 HTML 文件...")
+                    shutil.rmtree(extracted_dir)
+                    logger.info(f"已删除原始 HTML 文件目录: {extracted_dir}")
+
+                if progress_callback:
+                    progress_callback('cleanup', 1, 1, "清理完成")
+            except Exception as e:
+                logger.warning(f"清理原始 HTML 文件失败: {e}")
+                if progress_callback:
+                    progress_callback('cleanup', 1, 1, "清理失败（已跳过）")
 
         return success
 
     def build_knowledge_base_incremental(self, help_names: Optional[List[str]] = None,
                                         max_files_per_help: Optional[int] = None,
                                         progress_callback: Optional[Callable] = None,
-                                        source_dir: Optional[str] = None) -> bool:
+                                        source_dir: Optional[str] = None,
+                                        save_markdown: bool = False) -> bool:
         """
         增量构建帮助文档知识库（跳过解压，直接扫描已解压的 HTML）
 
@@ -1077,13 +1442,14 @@ class DelphiHelpKnowledgeBase:
             help_names: 要构建的帮助文件列表，None表示全部
             max_files_per_help: 每个帮助文件最大处理文档数
             progress_callback: 进度回调函数
-            source_dir: 源目录路径，默认使用 self.kb_dir / "extracted"
+            source_dir: 源目录路径，默认使用 self.kb_dir / "files"
+            save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
 
         Returns:
             是否成功
         """
         if source_dir is None:
-            extracted_dir = self.kb_dir / "extracted"
+            extracted_dir = self.kb_dir / "files"
         else:
             extracted_dir = Path(source_dir)
 
@@ -1109,7 +1475,7 @@ class DelphiHelpKnowledgeBase:
             if progress_callback:
                 progress_callback('scan', i, len(help_names), f"扫描 {self.HELP_FILES.get(help_name, help_name)}...")
 
-            documents = self.scan_extracted_directory(help_name, max_files_per_help, source_dir=str(extracted_dir))
+            documents = self.scan_extracted_directory(help_name, max_files_per_help, source_dir=str(extracted_dir), save_markdown=save_markdown)
             all_documents.extend(documents)
 
         if not all_documents:

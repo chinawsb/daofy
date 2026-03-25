@@ -9,7 +9,8 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 支持分步骤构建：解压 CHM -> 扫描 HTML -> 构建索引
 """
 
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Callable
+from datetime import datetime
 from mcp.types import CallToolResult
 
 from ..services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
@@ -30,25 +31,70 @@ def get_help_knowledge_base() -> DelphiHelpKnowledgeBase:
     return _help_kb
 
 
-def _build_kb_task(force_rebuild: bool, help_names: Optional[List[str]] = None,
-                   max_files_per_help: Optional[int] = None) -> bool:
+def _build_kb_task(help_names: Optional[List[str]] = None,
+                   max_files_per_help: Optional[int] = None,
+                   save_markdown: bool = False,
+                   _progress_callback: Optional[Callable] = None,
+                   _task_id: Optional[str] = None) -> bool:
     """
     后台构建知识库任务
-    
+
     Args:
-        force_rebuild: 是否强制重建
         help_names: 要构建的帮助文件列表
         max_files_per_help: 每个帮助文件最大处理文档数
-        
+        save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
+        _progress_callback: 进度回调函数（由任务管理器注入）
+        _task_id: 任务ID（用于取消检查）
+
     Returns:
         是否成功
     """
     help_kb = get_help_knowledge_base()
-    return help_kb.build_knowledge_base(
-        help_names=help_names,
-        max_files_per_help=max_files_per_help,
-        force_rebuild=force_rebuild
-    )
+    task_manager = get_task_manager()
+
+    # 定义取消检查函数
+    def is_cancelled() -> bool:
+        if _task_id:
+            return task_manager.is_task_cancelled(_task_id)
+        return False
+
+    # 定义内部进度回调，将步骤信息传递给任务管理器
+    def internal_progress_callback(stage: str, current: int, total: int, message: str):
+        # 检查是否被取消
+        if is_cancelled():
+            raise KeyboardInterrupt("任务已被用户取消")
+
+        if _progress_callback:
+            # 映射阶段到步骤信息
+            stage_map = {
+                'extract': ('解压CHM文件', 1, 4),
+                'scan': ('扫描HTML文件', 2, 4),
+                'index': ('构建向量索引', 3, 4),
+                'cleanup': ('清理临时文件', 4, 4)
+            }
+            step_name, step_idx, total_steps = stage_map.get(stage, (stage, 1, 4))
+
+            # 计算总体进度
+            stage_progress = (current / total * 100) if total > 0 else 0
+            overall_progress = ((step_idx - 1) * 25 + stage_progress * 0.25)
+
+            # 调用进度回调
+            _progress_callback(
+                overall_progress,
+                f"[步骤{step_idx}/{total_steps}] {step_name}: {message}"
+            )
+
+    try:
+        return help_kb.build_knowledge_base(
+            help_names=help_names,
+            max_files_per_help=max_files_per_help,
+            save_markdown=save_markdown,
+            progress_callback=internal_progress_callback if _progress_callback else None,
+            is_cancelled_check=is_cancelled
+        )
+    except KeyboardInterrupt:
+        logger.info(f"任务 {_task_id} 已被取消")
+        return False
 
 
 async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
@@ -62,7 +108,8 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
             - help_names: 要构建的帮助文件列表 (可选,如 ['fmx', 'vcl'], 默认全部)
             - max_files_per_help: 每个帮助文件最大处理文档数 (可选,用于测试)
             - incremental: 是否使用增量构建(跳过解压) (可选,默认 false)
-            - source_dir: 外部源目录路径 (可选,用于增量构建时指定外部extracted目录)
+            - source_dir: 外部源目录路径 (可选,用于增量构建时指定外部files目录)
+            - save_markdown: 是否保存为 Markdown 文件 (可选,默认 false, 提升性能)
 
     Returns:
         构建结果或任务信息
@@ -73,6 +120,7 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
     max_files_per_help = arguments.get("max_files_per_help")
     incremental = arguments.get("incremental", False)
     source_dir = arguments.get("source_dir")
+    save_markdown = arguments.get("save_markdown", False)  # 默认不转换Markdown，提升性能
 
     try:
         help_kb = get_help_knowledge_base()
@@ -114,13 +162,19 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
                         }]
                     )
             
-            # 提交新任务
+            # 提交新任务 - 只传递需要的参数
+            task_kwargs = {}
+            if help_names:
+                task_kwargs["help_names"] = help_names
+            if max_files_per_help:
+                task_kwargs["max_files_per_help"] = max_files_per_help
+            if save_markdown:
+                task_kwargs["save_markdown"] = save_markdown
+
             task_id = task_manager.submit_task(
                 "build_help_kb",
                 _build_kb_task,
-                force_rebuild,
-                help_names,
-                max_files_per_help
+                **task_kwargs
             )
 
             build_mode = "增量构建" if incremental else "完整构建"
@@ -149,13 +203,14 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
                 success = help_kb.build_knowledge_base_incremental(
                     help_names=help_names,
                     max_files_per_help=max_files_per_help,
-                    source_dir=source_dir
+                    source_dir=source_dir,
+                    save_markdown=save_markdown
                 )
             else:
                 success = help_kb.build_knowledge_base(
                     help_names=help_names,
                     max_files_per_help=max_files_per_help,
-                    force_rebuild=force_rebuild
+                    save_markdown=save_markdown
                 )
 
             if success:
@@ -226,8 +281,8 @@ async def extract_help_chm(arguments: Any) -> CallToolResult:
         output += f"\n总计: {success_count}/{total_count} 个文件解压成功"
         
         if success_count > 0:
-            output += "\n\n解压后的文件位于: " + str(help_kb.kb_dir / "extracted")
-            output += "\n\n下一步可以使用 build_help_kb_index 构建向量索引"
+            output += "\n\n解压后的文件位于: " + str(help_kb.kb_dir / "files")
+            output += "\n\n下一步可以使用 scan_help_html 扫描HTML文件"
 
         return CallToolResult(content=[{"type": "text", "text": output}])
 
@@ -247,7 +302,8 @@ async def scan_help_html(arguments: Any) -> CallToolResult:
         arguments: 包含以下参数:
             - help_names: 要扫描的帮助文件列表 (可选,如 ['fmx', 'vcl'], 默认全部)
             - max_files_per_help: 每个帮助文件最大处理文档数 (可选,用于测试)
-            - source_dir: 外部源目录路径 (可选,默认使用 kb_dir/extracted)
+            - source_dir: 外部源目录路径 (可选,默认使用 kb_dir/files)
+            - save_markdown: 是否保存为 Markdown 文件 (可选,默认 false, 提升性能)
 
     Returns:
         扫描结果
@@ -255,6 +311,7 @@ async def scan_help_html(arguments: Any) -> CallToolResult:
     help_names = arguments.get("help_names")
     max_files_per_help = arguments.get("max_files_per_help")
     source_dir = arguments.get("source_dir")
+    save_markdown = arguments.get("save_markdown", False)  # 默认不转换Markdown，提升性能
 
     try:
         help_kb = get_help_knowledge_base()
@@ -263,12 +320,12 @@ async def scan_help_html(arguments: Any) -> CallToolResult:
         if source_dir:
             extracted_dir = source_dir
         else:
-            extracted_dir = str(help_kb.kb_dir / "extracted")
+            extracted_dir = str(help_kb.kb_dir / "files")
 
         if not help_names:
             # 自动发现已解压的目录
             help_names = []
-            extracted_path = help_kb.kb_dir / "extracted"
+            extracted_path = help_kb.kb_dir / "files"
             if extracted_path.exists():
                 for item in extracted_path.iterdir():
                     if item.is_dir() and item.name in help_kb.HELP_FILES:
@@ -295,7 +352,8 @@ async def scan_help_html(arguments: Any) -> CallToolResult:
             documents = help_kb.scan_extracted_directory(
                 help_name=help_name,
                 max_files=max_files_per_help,
-                source_dir=extracted_dir
+                source_dir=extracted_dir,
+                save_markdown=save_markdown
             )
             
             all_documents.extend(documents)
@@ -354,8 +412,9 @@ async def build_help_kb_index(arguments: Any) -> CallToolResult:
         arguments: 包含以下参数:
             - help_names: 要构建的帮助文件列表 (可选,如 ['fmx', 'vcl'], 默认全部)
             - max_files_per_help: 每个帮助文件最大处理文档数 (可选,用于测试)
-            - source_dir: 外部源目录路径 (可选,默认使用 kb_dir/extracted)
+            - source_dir: 外部源目录路径 (可选,默认使用 kb_dir/files)
             - async_mode: 是否使用异步模式 (可选,默认 true)
+            - save_markdown: 是否保存为 Markdown 文件 (可选,默认 false, 提升性能)
 
     Returns:
         构建结果
@@ -364,6 +423,7 @@ async def build_help_kb_index(arguments: Any) -> CallToolResult:
     max_files_per_help = arguments.get("max_files_per_help")
     source_dir = arguments.get("source_dir")
     async_mode = arguments.get("async_mode", True)
+    save_markdown = arguments.get("save_markdown", False)  # 默认不转换Markdown，提升性能
 
     try:
         help_kb = get_help_knowledge_base()
@@ -377,7 +437,8 @@ async def build_help_kb_index(arguments: Any) -> CallToolResult:
                 lambda: help_kb.build_knowledge_base_incremental(
                     help_names=help_names,
                     max_files_per_help=max_files_per_help,
-                    source_dir=source_dir
+                    source_dir=source_dir,
+                    save_markdown=save_markdown
                 )
             )
 
@@ -397,7 +458,8 @@ async def build_help_kb_index(arguments: Any) -> CallToolResult:
             success = help_kb.build_knowledge_base_incremental(
                 help_names=help_names,
                 max_files_per_help=max_files_per_help,
-                source_dir=source_dir
+                source_dir=source_dir,
+                save_markdown=save_markdown
             )
 
             if success:
@@ -458,14 +520,38 @@ async def get_task_status(arguments: Any) -> CallToolResult:
 
         # 格式化状态信息
         status_text = f"任务状态: {task_info.task_id}\n"
-        status_text += f"=" * 40 + "\n\n"
+        status_text += f"=" * 50 + "\n\n"
         status_text += f"名称: {task_info.name}\n"
         status_text += f"状态: {task_info.status.value}\n"
         status_text += f"进度: {task_info.progress:.1f}%\n"
+
+        # 显示步骤信息
+        if task_info.current_step:
+            step_info = f"当前步骤: {task_info.current_step}"
+            if task_info.total_steps > 0:
+                step_info = f"当前步骤: [{task_info.step_index}/{task_info.total_steps}] {task_info.current_step}"
+            status_text += f"{step_info}\n"
+
         status_text += f"消息: {task_info.message}\n\n"
 
         if task_info.started_at:
             status_text += f"开始时间: {task_info.started_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+
+            # 计算已运行时间和预计剩余时间
+            if task_info.status == TaskStatus.RUNNING:
+                elapsed = (datetime.now() - task_info.started_at).total_seconds()
+                status_text += f"已运行: {elapsed:.1f} 秒\n"
+
+                # 预计剩余时间
+                if task_info.progress > 0:
+                    total_estimated = elapsed / (task_info.progress / 100)
+                    remaining = total_estimated - elapsed
+                    if remaining > 0:
+                        if remaining > 60:
+                            status_text += f"预计剩余: {remaining/60:.1f} 分钟\n"
+                        else:
+                            status_text += f"预计剩余: {remaining:.1f} 秒\n"
+
         if task_info.completed_at:
             status_text += f"完成时间: {task_info.completed_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
             duration = (task_info.completed_at - task_info.started_at).total_seconds() if task_info.started_at else 0
@@ -534,6 +620,63 @@ async def list_tasks(arguments: Any) -> CallToolResult:
         logger.error(f"列出任务失败: {e}", exc_info=True)
         return CallToolResult(
             content=[{"type": "text", "text": f"列出任务时出错: {str(e)}"}],
+            isError=True
+        )
+
+
+async def cancel_task(arguments: Any) -> CallToolResult:
+    """
+    取消任务
+
+    Args:
+        arguments: 包含以下参数:
+            - task_id: 任务ID (必需)
+
+    Returns:
+        取消结果
+    """
+    task_id = arguments.get("task_id")
+    if not task_id:
+        return CallToolResult(
+            content=[{"type": "text", "text": "请提供任务ID"}],
+            isError=True
+        )
+
+    try:
+        task_manager = get_task_manager()
+        success = task_manager.cancel_task(task_id)
+
+        if success:
+            return CallToolResult(
+                content=[{
+                    "type": "text",
+                    "text": f"任务 {task_id} 已标记为取消。\n\n"
+                            f"注意：正在执行的操作可能需要一些时间才能停止。\n"
+                            f"请使用 get_task_status 查询最终状态。"
+                }]
+            )
+        else:
+            task_info = task_manager.get_task_info(task_id)
+            if not task_info:
+                return CallToolResult(
+                    content=[{"type": "text", "text": f"未找到任务: {task_id}"}],
+                    isError=True
+                )
+            else:
+                return CallToolResult(
+                    content=[{
+                        "type": "text",
+                        "text": f"无法取消任务 {task_id}\n\n"
+                                f"当前状态: {task_info.status.value}\n"
+                                f"只有等待中或运行中的任务才能取消。"
+                    }],
+                    isError=True
+                )
+
+    except Exception as e:
+        logger.error(f"取消任务失败: {e}", exc_info=True)
+        return CallToolResult(
+            content=[{"type": "text", "text": f"取消任务时出错: {str(e)}"}],
             isError=True
         )
 

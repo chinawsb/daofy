@@ -8,12 +8,13 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 提供项目知识库查询和管理的 MCP 工具
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Callable
 from mcp.types import CallToolResult
 from pathlib import Path
 
 from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
 from ..utils.logger import get_logger
+from ..utils.progress_tracker import ProgressInfo
 
 logger = get_logger(__name__)
 
@@ -21,12 +22,13 @@ logger = get_logger(__name__)
 _project_kb_cache: Dict[str, ProjectKnowledgeBase] = {}
 
 
-def get_project_kb(project_path: str) -> ProjectKnowledgeBase:
+def get_project_kb(project_path: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None) -> ProjectKnowledgeBase:
     """
     获取或创建项目知识库实例
 
     Args:
         project_path: 项目文件路径
+        progress_callback: 进度回调函数
 
     Returns:
         项目知识库实例
@@ -34,7 +36,7 @@ def get_project_kb(project_path: str) -> ProjectKnowledgeBase:
     project_path = str(Path(project_path).resolve())
 
     if project_path not in _project_kb_cache:
-        _project_kb_cache[project_path] = ProjectKnowledgeBase(project_path)
+        _project_kb_cache[project_path] = ProjectKnowledgeBase(project_path, progress_callback)
         _project_kb_cache[project_path].load_knowledge_bases()
 
     return _project_kb_cache[project_path]
@@ -50,6 +52,7 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
             - build_thirdparty: 是否构建三方库知识库 (可选,默认 true)
             - build_project: 是否构建项目源码知识库 (可选,默认 true)
             - force_rebuild: 是否强制重建 (可选,默认 false)
+            - show_progress: 是否显示进度 (可选,默认 true)
 
     Returns:
         初始化结果
@@ -71,9 +74,22 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
     build_thirdparty = arguments.get("build_thirdparty", True)
     build_project = arguments.get("build_project", True)
     force_rebuild = arguments.get("force_rebuild", False)
+    show_progress = arguments.get("show_progress", True)
+
+    # 创建进度回调
+    progress_messages = []
+    def progress_callback(progress: ProgressInfo):
+        if show_progress:
+            msg = f"进度: {progress.current}/{progress.total} ({progress.percentage:.1f}%) | "
+            msg += f"速度: {progress.speed:.1f}项/秒 | "
+            msg += f"已用: {progress.elapsed_time:.1f}秒 | "
+            msg += f"剩余: {progress.estimated_remaining:.1f}秒 | "
+            msg += f"{progress.message}"
+            progress_messages.append(msg)
+            logger.info(msg)
 
     try:
-        project_kb = get_project_kb(project_path)
+        project_kb = get_project_kb(project_path, progress_callback if show_progress else None)
 
         output = f"项目知识库初始化: {project_kb.project_name}\n\n"
 
@@ -108,6 +124,12 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
             output += f"{stats['thirdparty']['functions']} 函数\n"
 
         output += f"\n知识库位置: {project_kb.kb_dir}"
+
+        # 添加进度信息
+        if show_progress and progress_messages:
+            output += f"\n\n构建进度 (最近10条):\n"
+            for msg in progress_messages[-10:]:
+                output += f"  {msg}\n"
 
         return CallToolResult(content=[{"type": "text", "text": output}])
 

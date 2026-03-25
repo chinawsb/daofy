@@ -43,6 +43,10 @@ class TaskInfo:
     message: str = ""
     result: Any = None
     error: Optional[str] = None
+    # 新增：步骤信息
+    current_step: str = ""  # 当前步骤名称
+    total_steps: int = 0    # 总步骤数
+    step_index: int = 0     # 当前步骤索引（从1开始）
 
 
 class AsyncTaskManager:
@@ -60,14 +64,16 @@ class AsyncTaskManager:
             self._task_counter += 1
             return f"task_{int(time.time())}_{self._task_counter}"
 
-    def submit_task(self, name: str, func: Callable, *args, **kwargs) -> str:
+    def submit_task(self, name: str, func: Callable, *args, progress_callback: Optional[Callable] = None, **kwargs) -> str:
         """
         提交后台任务
 
         Args:
             name: 任务名称
             func: 任务函数
-            *args, **kwargs: 任务函数参数
+            *args: 任务函数位置参数
+            progress_callback: 进度回调函数
+            **kwargs: 任务函数关键字参数
 
         Returns:
             任务ID
@@ -93,7 +99,14 @@ class AsyncTaskManager:
 
                 logger.info(f"任务 {task_id} ({name}) 开始执行")
 
-                # 执行实际任务
+                # 创建进度更新函数
+                def update_progress(progress_val, message_val):
+                    self.update_task_progress(task_id, progress_val, message_val)
+
+                # 将进度回调和任务ID传递给任务函数
+                kwargs['_progress_callback'] = update_progress
+                kwargs['_task_id'] = task_id
+
                 result = func(*args, **kwargs)
 
                 with self._lock:
@@ -104,6 +117,13 @@ class AsyncTaskManager:
                     task_info.result = result
 
                 logger.info(f"任务 {task_id} ({name}) 完成")
+
+            except KeyboardInterrupt:
+                logger.info(f"任务 {task_id} ({name}) 被取消")
+                with self._lock:
+                    task_info.status = TaskStatus.CANCELLED
+                    task_info.completed_at = datetime.now()
+                    task_info.message = "任务已取消"
 
             except Exception as e:
                 logger.error(f"任务 {task_id} ({name}) 失败: {e}", exc_info=True)
@@ -139,13 +159,20 @@ class AsyncTaskManager:
         with self._lock:
             return dict(self._tasks)
 
-    def update_task_progress(self, task_id: str, progress: float, message: str = ""):
+    def update_task_progress(self, task_id: str, progress: float, message: str = "",
+                            current_step: str = "", step_index: int = 0, total_steps: int = 0):
         """更新任务进度"""
         with self._lock:
             if task_id in self._tasks:
                 self._tasks[task_id].progress = min(100.0, max(0.0, progress))
                 if message:
                     self._tasks[task_id].message = message
+                if current_step:
+                    self._tasks[task_id].current_step = current_step
+                if step_index > 0:
+                    self._tasks[task_id].step_index = step_index
+                if total_steps > 0:
+                    self._tasks[task_id].total_steps = total_steps
 
     def cancel_task(self, task_id: str) -> bool:
         """取消任务（仅对支持取消的任务有效）"""
@@ -163,6 +190,13 @@ class AsyncTaskManager:
 
             # 注意：线程无法强制终止，这里只是标记状态
             return True
+
+    def is_task_cancelled(self, task_id: str) -> bool:
+        """检查任务是否已被取消"""
+        with self._lock:
+            if task_id in self._tasks:
+                return self._tasks[task_id].status == TaskStatus.CANCELLED
+            return False
 
     def cleanup_old_tasks(self, max_age_hours: int = 24):
         """清理旧任务"""

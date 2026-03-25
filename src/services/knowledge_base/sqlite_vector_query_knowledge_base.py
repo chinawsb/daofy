@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 import time
 import hashlib
+import threading
 
 
 class SQLiteVectorKnowledgeBase:
@@ -24,8 +25,9 @@ class SQLiteVectorKnowledgeBase:
         self.db_file = self.index_dir / "knowledge_base_vector.sqlite"
         self.source_dir = None
 
-        # SQLite 连接
-        self.conn = None
+        # 使用线程局部存储，每个线程独立的数据库连接
+        self._thread_local = threading.local()
+        self._db_path = str(self.db_file)
 
         # 向量词汇表
         self.vocabulary = {}  # word -> id
@@ -33,6 +35,19 @@ class SQLiteVectorKnowledgeBase:
 
         # 加载索引
         self.load_index(force_rebuild)
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """获取当前线程的数据库连接"""
+        if not hasattr(self._thread_local, 'conn') or self._thread_local.conn is None:
+            self._thread_local.conn = sqlite3.connect(self._db_path)
+            self._thread_local.conn.row_factory = sqlite3.Row
+        return self._thread_local.conn
+
+    def _close_connection(self):
+        """关闭当前线程的数据库连接"""
+        if hasattr(self._thread_local, 'conn') and self._thread_local.conn is not None:
+            self._thread_local.conn.close()
+            self._thread_local.conn = None
 
     def load_index(self, force_rebuild: bool = False):
         """加载知识库索引"""
@@ -44,12 +59,11 @@ class SQLiteVectorKnowledgeBase:
 
             print(f"知识库加载成功! 包含 {metadata['statistics']['total_files']} 个文件")
 
-            # 打开 SQLite 数据库
-            self.conn = sqlite3.connect(str(self.db_file))
-            self.conn.row_factory = sqlite3.Row
+            # 获取当前线程的数据库连接
+            conn = self._get_connection()
 
             # 检查是否需要重建索引
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
             if not cursor.fetchone() or force_rebuild:
                 self.build_vector_index()
@@ -73,8 +87,7 @@ class SQLiteVectorKnowledgeBase:
 
         except Exception as e:
             print(f"加载知识库失败: {e}")
-            if self.conn:
-                self.conn.close()
+            self._close_connection()
             raise
 
     def get_index_hash(self) -> str:
@@ -185,7 +198,14 @@ class SQLiteVectorKnowledgeBase:
         print("正在构建 SQLite 向量索引...")
         start_time = time.time()
 
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 性能优化: 启用SQLite WAL模式和性能调优
+        cursor.execute("PRAGMA journal_mode=WAL")  # WAL模式提升并发性能
+        cursor.execute("PRAGMA synchronous=NORMAL")  # 减少fsync调用
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB缓存
+        cursor.execute("PRAGMA temp_store=MEMORY")  # 临时表存储在内存中
 
         # 删除现有表
         cursor.execute("DROP TABLE IF EXISTS metadata")
@@ -319,7 +339,7 @@ class SQLiteVectorKnowledgeBase:
             INSERT INTO vocabulary (id, word, idf_weight)
             VALUES (?, ?, ?)
         """, vocab_data)
-        self.conn.commit()
+        conn.commit()
 
         # 插入元数据
         cursor.execute("""
@@ -499,11 +519,11 @@ class SQLiteVectorKnowledgeBase:
         print(f"  - 关键词数据插入完成")
 
         # 提交事务
-        self.conn.commit()
+        conn.commit()
 
         # 优化数据库
         cursor.execute("ANALYZE")
-        self.conn.commit()
+        conn.commit()
 
         elapsed = (time.time() - start_time) * 1000
         print(f"SQLite 向量索引构建完成! 耗时: {elapsed:.2f}ms")
@@ -512,7 +532,8 @@ class SQLiteVectorKnowledgeBase:
     def load_vocabulary(self):
         """从数据库加载词汇表"""
         print("正在加载词汇表...")
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("SELECT id, word, idf_weight FROM vocabulary")
         for row in cursor.fetchall():
@@ -525,7 +546,8 @@ class SQLiteVectorKnowledgeBase:
         """语义搜索类"""
         query_vector = self.text_to_vector(query)
 
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
         cursor.execute("SELECT name, vector FROM classes")
 
         results = []
@@ -545,7 +567,8 @@ class SQLiteVectorKnowledgeBase:
         """语义搜索函数"""
         query_vector = self.text_to_vector(query)
 
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
         cursor.execute("SELECT name, vector FROM functions")
 
         results = []
@@ -564,7 +587,8 @@ class SQLiteVectorKnowledgeBase:
     def search_by_class_name(self, class_name: str) -> List[Dict]:
         """根据类名搜索 (精确匹配)"""
         class_name_lower = class_name.lower()
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("""
             SELECT c.name, c.base_class, c.type_kind, c.line, f.* FROM classes c
@@ -599,7 +623,8 @@ class SQLiteVectorKnowledgeBase:
     def search_by_function_name(self, function_name: str) -> List[Dict]:
         """根据函数名搜索 (精确匹配)"""
         function_name_lower = function_name.lower()
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("""
             SELECT func.name, func.line, func.type, f.* FROM functions func
@@ -633,7 +658,8 @@ class SQLiteVectorKnowledgeBase:
     def search_by_keyword(self, keyword: str, search_in: List[str] = None) -> List[Dict]:
         """根据关键词搜索 (精确匹配)"""
         keyword_lower = keyword.lower()
-        cursor = self.conn.cursor()
+        conn = self._get_connection()
+        cursor = conn.cursor()
 
         cursor.execute("""
             SELECT DISTINCT f.* FROM files f
@@ -659,9 +685,7 @@ class SQLiteVectorKnowledgeBase:
 
     def close(self):
         """关闭数据库连接"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+        self._close_connection()
 
     def __del__(self):
         """析构函数,确保数据库连接关闭"""
