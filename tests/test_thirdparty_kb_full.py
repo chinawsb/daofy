@@ -8,11 +8,18 @@ import sys
 import os
 
 # 切换到 MCP 服务器目录
-mcp_server_dir = os.path.join(os.path.dirname(__file__), 'delphi-complier-mcp-server', 'src')
+mcp_server_dir = os.path.join(os.path.dirname(__file__), '..', 'src')
 os.chdir(mcp_server_dir)
-sys.path.insert(0, mcp_server_dir)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+import pytest
+
+@pytest.fixture(scope="module")
+def kb():
+    """共享的知识库 fixture"""
+    print("\n初始化第三方库知识库...")
+    return ThirdPartyKnowledgeBase()
 
 def test_build_knowledge_base():
     """测试构建第三方库知识库"""

@@ -8,11 +8,11 @@ import sys
 import os
 
 # 切换到 MCP 服务器目录
-mcp_server_dir = os.path.join(os.path.dirname(__file__), 'delphi-complier-mcp-server', 'src')
+mcp_server_dir = os.path.join(os.path.dirname(__file__), '..', 'src')
 os.chdir(mcp_server_dir)
-sys.path.insert(0, mcp_server_dir)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
 
 def test_thirdparty_paths():
     """测试第三方库路径提取"""

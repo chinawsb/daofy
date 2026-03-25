@@ -44,6 +44,7 @@ from src.tools import analyze_dependencies as dep_tools
 from src.tools import read_source_file as source_tools
 from src.tools import coding_rules
 from src.tools import async_tasks as async_tools
+from src.tools import pasfmt
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
 
@@ -638,6 +639,89 @@ async def run_server():
                     },
                     "required": ["task_id"]
                 }
+            ),
+            # pasfmt 代码格式化工具
+            Tool(
+                name="format_delphi_file",
+                description="格式化 Delphi 源代码文件",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "要格式化的 Delphi 文件路径"},
+                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选）"},
+                        "backup": {"type": "boolean", "default": True, "description": "是否创建备份文件（在 __history 目录下）"},
+                        "in_place": {"type": "boolean", "default": True, "description": "是否原地格式化（修改原文件）"},
+                        "check_only": {"type": "boolean", "default": False, "description": "仅检查格式，不实际修改文件"}
+                    },
+                    "required": ["file_path"]
+                }
+            ),
+            Tool(
+                name="format_delphi_code",
+                description="格式化 Delphi 代码字符串",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "要格式化的 Delphi 代码"},
+                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选）"}
+                    },
+                    "required": ["code"]
+                }
+            ),
+            Tool(
+                name="set_pasfmt_path",
+                description="设置 pasfmt 可执行文件路径",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "pasfmt 可执行文件路径"}
+                    },
+                    "required": ["path"]
+                }
+            ),
+            Tool(
+                name="download_and_install_pasfmt",
+                description="下载并安装 pasfmt 工具",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "install_dir": {"type": "string", "description": "安装目录，默认为 C:\\\\Program Files\\\\pasfmt"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="download_and_install_pasfmt_rad",
+                description="下载并安装 pasfmt-rad IDE 插件",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，默认为 11", "default": "11"},
+                        "install_64bit": {"type": "boolean", "description": "是否安装64位版本，默认为 false", "default": False},
+                        "delphi_install_dir": {"type": "string", "description": "Delphi 安装目录，默认为自动检测"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="check_pasfmt_installation",
+                description="检查 pasfmt 工具安装状态",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="check_pasfmt_rad_installation",
+                description="检查 pasfmt-rad IDE 插件安装状态",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，默认为 11", "default": "11"}
+                    },
+                    "required": []
+                }
             )
         ]
 
@@ -734,6 +818,22 @@ async def run_server():
                 result = await source_tools.read_source_file(arguments)
             elif name == "search_and_read_file":
                 result = await source_tools.search_and_read_file(arguments)
+            # pasfmt 代码格式化工具
+            elif name == "format_delphi_file":
+                result = await pasfmt.format_file(**arguments)
+            elif name == "format_delphi_code":
+                result = await pasfmt.format_code(**arguments)
+            elif name == "set_pasfmt_path":
+                pasfmt.set_pasfmt_path(arguments.get("path"))
+                result = {"message": f"pasfmt 路径已设置为: {arguments.get('path')}"}
+            elif name == "download_and_install_pasfmt":
+                result = await pasfmt.download_and_install_pasfmt(**arguments)
+            elif name == "download_and_install_pasfmt_rad":
+                result = await pasfmt.download_and_install_pasfmt_rad(**arguments)
+            elif name == "check_pasfmt_installation":
+                result = await pasfmt.check_pasfmt_installation(**arguments)
+            elif name == "check_pasfmt_rad_installation":
+                result = await pasfmt.check_pasfmt_rad_installation(**arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
 

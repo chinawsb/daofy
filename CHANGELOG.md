@@ -5,6 +5,57 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.03.26] - 2026-03-26
+
+### Added
+
+#### pasfmt 代码格式化工具
+- 新增 `format_delphi_file` 工具：格式化 Delphi 源代码文件
+- 新增 `format_delphi_code` 工具：格式化 Delphi 代码字符串
+- 新增 `download_and_install_pasfmt` 工具：下载并安装 pasfmt CLI
+- 新增 `download_and_install_pasfmt_rad` 工具：下载并安装 pasfmt-rad IDE 插件
+- 新增 `check_pasfmt_installation` 工具：检查 pasfmt 安装状态
+- 新增 `check_pasfmt_rad_installation` 工具：检查 pasfmt-rad IDE 插件安装状态
+- 新增 `set_pasfmt_path` 工具：设置 pasfmt 可执行文件路径
+
+#### pasfmt 安装功能
+- 支持从 GitHub 下载预编译的 pasfmt 二进制文件
+- 支持多个下载镜像源
+- 支持从源码编译安装（需要 Rust 工具链）
+- 支持 Windows 32/64 位和 Linux
+- 支持 Delphi 11/12/13 版本的 IDE 插件安装
+
+### Changed
+
+#### pasfmt 工具适配
+- 更新命令行参数以适配 pasfmt v0.7.0：
+  - `--config` → `--config-file`
+  - `--check` → `--mode check`
+  - `--output` → `--mode stdout`
+- 优化 check 模式的返回码处理逻辑
+
+#### 测试文件修复
+- 修复测试文件中的导入路径问题
+- 添加缺失的 pytest fixture
+
+### Fixed
+
+#### pasfmt 工具问题修复
+- 修复 logger 导入问题，支持多种导入方式
+- 修复默认安装路径搜索，添加项目目录 `tools/pasfmt/cli`
+- 修复 `format_code` 返回值包含文件名前缀的问题
+- 修复 check 模式的 issues 内容，过滤日志输出
+- 支持 UTF-8 BOM 编码文件
+- 支持 GBK 编码文件
+
+### Tested
+- 所有 pytest 测试通过 (11/11)
+- pasfmt CLI 安装测试通过
+- pasfmt-rad IDE 插件安装测试通过
+- 格式化功能测试通过 (format_code, format_file)
+- check 模式功能测试通过
+- UTF-8/UTF-8 BOM/GBK 编码支持测试通过
+
 ## [2026.03.25] - 2026-03-25
 
 ### Added
