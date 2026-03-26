@@ -12,16 +12,19 @@ import asyncio
 import sys
 import os
 from pathlib import Path
+from typing import Any
+import io
 
-# 设置环境变量以确保正确的编码
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['PYTHONUTF8'] = '1'
 
-# 重新配置标准错误输出流编码
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
 if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent
@@ -35,13 +38,18 @@ from src.services.config_manager import ConfigManager
 from src.services.compiler_service import CompilerService
 from src.services.knowledge_base import DelphiKnowledgeBaseService
 from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
-from src.tools import compile_project, compile_file, get_args, config, environment
+from src.tools.compile_project import set_compiler_service as sp1, compile_project
+from src.tools.compile_file import set_compiler_service as sp2, compile_file
+from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
+from src.tools.config import set_compiler_config, set_config_manager
+from src.tools.environment import check_environment, set_config_manager as scm
+from src.tools.knowledge_base import set_knowledge_base_service, build_knowledge_base, search_class, search_function, semantic_search, get_knowledge_base_stats, list_delphi_versions
+from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
 from src.tools import knowledge_base as kb_tools
 from src.tools import project_knowledge_base as project_kb_tools
 from src.tools import help_knowledge_base as help_kb_tools
 from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
 from src.tools import analyze_dependencies as dep_tools
-from src.tools import read_source_file as source_tools
 from src.tools import coding_rules
 from src.tools import async_tasks as async_tools
 from src.tools import pasfmt
@@ -75,13 +83,12 @@ async def run_server():
     logger.info("第三方库知识库服务初始化完成")
 
     # 设置工具的服务实例
-    compile_project.set_compiler_service(compiler_service)
-    compile_file.set_compiler_service(compiler_service)
-    get_args.set_compiler_service(compiler_service)
-    config.set_config_manager(config_manager)
-    environment.set_config_manager(config_manager)
-    kb_tools.set_knowledge_base_service(kb_service)
-    source_tools.set_knowledge_base_services(kb_service, thirdparty_kb_service)
+    sp1(compiler_service)
+    sp2(compiler_service)
+    sp3(compiler_service)
+    scm(config_manager)
+    set_knowledge_base_service(kb_service)
+    set_knowledge_base_services(kb_service, thirdparty_kb_service)
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
@@ -96,7 +103,7 @@ async def run_server():
         return [
             Tool(
                 name="compile_project",
-                description="编译 Delphi 工程",
+                description="【推荐】编译 Delphi 项目工程。当需要验证代码是否正确、构建可执行文件、排查编译错误时，优先使用此工具。支持完整的项目构建流程，包括所有单元编译和链接。避免手动调用dcc32/dcc64编译器，使用此工具可自动处理路径解析和依赖。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -121,7 +128,7 @@ async def run_server():
             ),
             Tool(
                 name="compile_file",
-                description="编译单个 Delphi 单元文件(仅语法检查)",
+                description="【轻量级】对单个.pas文件进行快速语法检查。当只需要验证某个单元文件的语法正确性，而不需要完整编译整个项目时使用。比compile_project更快，适合开发过程中快速检查。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -135,7 +142,7 @@ async def run_server():
             ),
             Tool(
                 name="get_compiler_args",
-                description="获取编译器命令行参数(不执行编译)",
+                description="【调试用】仅获取编译器命令行参数，不执行实际编译。用于调试编译器配置、手动执行编译、或需要查看msbuild/dcc32具体参数时使用。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -159,7 +166,7 @@ async def run_server():
             ),
             Tool(
                 name="set_compiler_config",
-                description="配置 Delphi 编译器",
+                description="【环境配置】配置 Delphi 编译器路径。在首次编译项目或编译器路径变更时使用。需要提供dcc32.exe/dcc64.exe的完整路径。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -173,7 +180,7 @@ async def run_server():
             ),
             Tool(
                 name="check_environment",
-                description="检查编译器环境状态",
+                description="【环境检查】检查 Delphi 编译器环境状态。在编译失败或需要确认编译器是否正确配置时使用。可以查看当前配置的编译器版本和路径。",
                 inputSchema={
                     "type": "object",
                     "properties": {},
@@ -182,7 +189,7 @@ async def run_server():
             ),
             Tool(
                 name="get_coding_rules",
-                description="获取 Delphi 源码编码规则",
+                description="【规范参考】获取 Delphi 源码编码规则。当智能体需要修改或编写 Delphi 代码时，应先调用此工具了解项目的编码规范，包括命名约定、注释要求、代码格式等。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -193,7 +200,7 @@ async def run_server():
             ),
             Tool(
                 name="build_knowledge_base",
-                description="构建 Delphi 源码知识库 (支持语义搜索)",
+                description="【知识库初始化】构建 Delphi 源码知识库（全局）。首次使用知识库搜索功能前需要调用。构建过程可能较慢，建议使用异步模式。此知识库包含 VCL/FMX 等官方库的定义。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -205,7 +212,7 @@ async def run_server():
             ),
             Tool(
                 name="search_class",
-                description="搜索 Delphi 类定义",
+                description="【推荐】搜索 Delphi 类/接口/record 的定义。当需要了解某个VCL/FMX类的结构、属性、方法，或查找项目中自定义类的定义时，优先使用此工具。返回完整的类定义源码。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -216,7 +223,7 @@ async def run_server():
             ),
             Tool(
                 name="search_function",
-                description="搜索 Delphi 函数/过程定义",
+                description="【推荐】搜索 Delphi 函数/过程/方法的定义。当需要查找某个API函数的具体实现、类的方法定义，或了解函数签名（参数和返回值）时使用。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -227,7 +234,7 @@ async def run_server():
             ),
             Tool(
                 name="semantic_search",
-                description="语义搜索 Delphi 代码 (支持自然语言查询)",
+                description="【智能搜索】用自然语言描述需求来搜索 Delphi 代码。当不确定具体类名或函数名，但知道想要实现的功能时使用，如'创建按钮'、'HTTP请求'、'字符串处理'等。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -258,7 +265,7 @@ async def run_server():
             # 项目知识库工具
             Tool(
                 name="init_project_knowledge_base",
-                description="初始化项目知识库 (从 .dproj 读取三方库路径并构建知识库)",
+                description="【首次使用必读】初始化项目知识库。在分析一个新项目之前，必须先调用此工具构建项目的知识库。它会从.dproj读取三方库路径，自动扫描并索引项目源码，之后才能使用项目搜索功能。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -272,7 +279,7 @@ async def run_server():
             ),
             Tool(
                 name="search_project_class",
-                description="在项目中搜索类定义 (支持搜索项目源码和三方库)",
+                description="【项目内搜索】在项目中搜索类定义。需要先调用 init_project_knowledge_base 初始化项目知识库。支持搜索项目源码或三方库中的类定义。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -285,7 +292,7 @@ async def run_server():
             ),
             Tool(
                 name="search_project_function",
-                description="在项目中搜索函数定义 (支持搜索项目源码和三方库)",
+                description="【项目内搜索】在项目中搜索函数/方法定义。需要先调用 init_project_knowledge_base 初始化项目知识库。支持搜索项目源码或三方库中的函数定义。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -298,7 +305,7 @@ async def run_server():
             ),
             Tool(
                 name="semantic_search_project",
-                description="在项目中进行语义搜索 (支持自然语言查询,自动检测源码变动并更新)",
+                description="【项目智能搜索】在项目中用自然语言搜索代码。需要先调用 init_project_knowledge_base 初始化项目知识库。当不确定具体类名或函数名时，用自然语言描述需求即可找到相关代码。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -425,7 +432,7 @@ async def run_server():
             # 帮助文档知识库工具
             Tool(
                 name="build_help_knowledge_base",
-                description="构建 Delphi 帮助文档知识库 (完整构建：解压+扫描+索引，支持异步模式)",
+                description="【帮助文档初始化】构建 Delphi 官方帮助文档知识库。需要先准备好CHM帮助文件。构建完成后可使用 search_help 搜索官方文档。推荐使用异步模式避免超时。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -499,7 +506,7 @@ async def run_server():
             ),
             Tool(
                 name="search_help",
-                description="搜索 Delphi 帮助文档（支持语义搜索类、函数和文档）",
+                description="【文档查询】搜索 Delphi 官方帮助文档。当需要了解VCL/FMX类的官方用法、查看方法参数说明、查找示例代码时使用。返回帮助文档中的相关内容。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -521,7 +528,7 @@ async def run_server():
             # 项目依赖分析工具
             Tool(
                 name="analyze_project_dependencies",
-                description="分析 Delphi 项目的单元依赖关系",
+                description="【项目分析】分析 Delphi 项目的单元依赖关系。当需要了解项目的模块结构、查找循环依赖、确定需要编译的单元顺序、或清理无用单元时使用。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -545,7 +552,7 @@ async def run_server():
             # 源码文件读取工具
             Tool(
                 name="read_source_file",
-                description="读取 Delphi 源码文件内容（先在知识库中定位文件，再从磁盘读取）",
+                description="【推荐】读取 Delphi 源码文件内容。智能体需要查看任何 .pas 文件的源代码时，必须使用此工具而不是自行读取文件。支持指定行号范围，可精确定位代码段。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -560,7 +567,7 @@ async def run_server():
             ),
             Tool(
                 name="search_and_read_file",
-                description="搜索类型（类/record/interface）或函数并读取所在文件内容",
+                description="【一站式】搜索类/record/interface/函数定义，并自动读取其所在文件的完整代码。当需要同时了解类型定义和其周围代码上下文时使用，是search_class + read_source_file的组合。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -576,7 +583,7 @@ async def run_server():
             ),
             Tool(
                 name="start_async_task",
-                description="启动异步任务（避免长时间任务超时）",
+                description="【后台任务】启动异步任务以避免长时间操作超时。当需要构建大型知识库或执行耗时较长的操作时，使用此工具启动后台任务，然后通过 get_task_status 查询进度。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -643,7 +650,7 @@ async def run_server():
             # pasfmt 代码格式化工具
             Tool(
                 name="format_delphi_file",
-                description="格式化 Delphi 源代码文件",
+                description="【代码格式化】格式化 Delphi 源代码文件。智能体修改完代码后，使用此工具自动格式化代码以符合 Delphi 编码规范。推荐在提交代码前使用。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -732,15 +739,15 @@ async def run_server():
 
         try:
             if name == "compile_project":
-                result = await compile_project.compile_project(**arguments)
+                result = await compile_project.compile_project(**arguments)  # type: ignore[attr-defined]
             elif name == "compile_file":
-                result = await compile_file.compile_file(**arguments)
+                result = await compile_file(**arguments)
             elif name == "get_compiler_args":
-                result = await get_args.get_compiler_args(**arguments)
+                result = await get_compiler_args(**arguments)
             elif name == "set_compiler_config":
-                result = await config.set_compiler_config(**arguments)
+                result = await set_compiler_config(**arguments)
             elif name == "check_environment":
-                result = await environment.check_environment()
+                result = await check_environment()
             elif name == "get_coding_rules":
                 result = await coding_rules.get_coding_rules(**arguments)
             elif name == "build_knowledge_base":
@@ -815,17 +822,21 @@ async def run_server():
                 result = await dep_tools.resolve_smart_library_paths(arguments)
             # 源码文件读取工具
             elif name == "read_source_file":
-                result = await source_tools.read_source_file(arguments)
+                result = await read_source_file(arguments)
             elif name == "search_and_read_file":
-                result = await source_tools.search_and_read_file(arguments)
+                result = await search_and_read_file(arguments)
             # pasfmt 代码格式化工具
             elif name == "format_delphi_file":
                 result = await pasfmt.format_file(**arguments)
             elif name == "format_delphi_code":
                 result = await pasfmt.format_code(**arguments)
             elif name == "set_pasfmt_path":
-                pasfmt.set_pasfmt_path(arguments.get("path"))
-                result = {"message": f"pasfmt 路径已设置为: {arguments.get('path')}"}
+                path = arguments.get("path")
+                if path is not None:
+                    pasfmt.set_pasfmt_path(path)
+                    result = {"message": f"pasfmt 路径已设置为: {path}"}
+                else:
+                    result = {"message": "未提供 pasfmt 路径"}
             elif name == "download_and_install_pasfmt":
                 result = await pasfmt.download_and_install_pasfmt(**arguments)
             elif name == "download_and_install_pasfmt_rad":
