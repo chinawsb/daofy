@@ -183,6 +183,77 @@ class SQLiteVectorKnowledgeBase:
 
         return vector
 
+    @staticmethod
+    def compute_class_vector(item: tuple, vocab: dict, idf_weights: dict) -> tuple:
+        """并行计算类向量"""
+        import re
+        from collections import Counter
+        import json
+        
+        cls, full_path, desc = item
+        
+        # 本地tokenize
+        def tokenize(text):
+            text = re.sub(r'(?<!^)(?=[A-Z])', ' ', text)
+            text = re.sub(r'[_\-]', ' ', text)
+            words = re.findall(r'\b[a-zA-Z][a-zA-Z0-9]*\b', text.lower())
+            return [w for w in words if len(w) >= 2]
+        
+        words = tokenize(desc)
+        word_freq = Counter(words)
+        vector = {}
+        for word, freq in word_freq.items():
+            if word in vocab:
+                tf = freq / len(words) if words else 0
+                idf = idf_weights.get(word, 1.0)
+                vector[vocab[word]] = tf * idf
+        
+        return (
+            cls['name'].lower(),
+            cls['name'],
+            cls['base_class'],
+            cls.get('type_kind', 'class'),
+            cls['line'],
+            full_path,
+            desc,
+            json.dumps(vector)
+        )
+    
+    @staticmethod
+    def compute_func_vector(item: tuple, vocab: dict, idf_weights: dict) -> tuple:
+        """并行计算函数向量"""
+        import re
+        from collections import Counter
+        import json
+        
+        func, full_path, desc = item
+        
+        # 本地tokenize
+        def tokenize(text):
+            text = re.sub(r'(?<!^)(?=[A-Z])', ' ', text)
+            text = re.sub(r'[_\-]', ' ', text)
+            words = re.findall(r'\b[a-zA-Z][a-zA-Z0-9]*\b', text.lower())
+            return [w for w in words if len(w) >= 2]
+        
+        words = tokenize(desc)
+        word_freq = Counter(words)
+        vector = {}
+        for word, freq in word_freq.items():
+            if word in vocab:
+                tf = freq / len(words) if words else 0
+                idf = idf_weights.get(word, 1.0)
+                vector[vocab[word]] = tf * idf
+        
+        return (
+            func['name'].lower(),
+            func['name'],
+            func['line'],
+            func.get('type', 'function'),
+            full_path,
+            desc,
+            json.dumps(vector)
+        )
+
     def cosine_similarity(self, vec1: Dict[int, float], vec2: Dict[int, float]) -> float:
         """计算稀疏向量的余弦相似度"""
         # 计算点积
@@ -384,26 +455,22 @@ class SQLiteVectorKnowledgeBase:
                     print(f"    ... 还有 {len(duplicates) - 5} 个")
         
         total_files = len(deduped_files)
-        processed_files = 0
-        last_progress = 0
-
+        
+        # 第一阶段：收集不需要向量计算的数据
         files_data = []
-        classes_data = []
-        functions_data = []
         units_data = []
         keywords_data = []
-
+        
+        print("第一阶段: 收集文件、单元和关键词数据...")
+        
         for file_info in deduped_files:
             file_path = file_info['path']
             full_path = file_info.get('full_path', file_path)
             file_desc = f"{file_info['path']} {file_info.get('units', [])} {len(file_info.get('classes', []))} classes {len(file_info.get('functions', []))} functions"
 
-            # 收集文件数据
-            # 注意：使用完整路径作为唯一标识，避免同名不同目录的文件冲突
-            # path 存储相对路径，full_path 存储完整路径
             files_data.append((
-                full_path,  # 使用 full_path 作为 PRIMARY KEY
-                file_info['path'],  # 相对路径
+                full_path,
+                file_info['path'],
                 file_info['extension'],
                 file_info['size'],
                 file_info['line_count'],
@@ -414,57 +481,16 @@ class SQLiteVectorKnowledgeBase:
                 file_desc
             ))
 
-            # 处理类（包含 class、record、interface、enum 等类型）
-            # 注意：使用 full_path 作为外键引用，因为 files 表的主键是 full_path
-            for cls in file_info.get('classes', []):
-                type_kind = cls.get('type_kind', 'class')
-                # 使用提取的描述信息，如果没有则使用默认格式
-                user_desc = cls.get('description', '')
-                if user_desc:
-                    class_desc = f"{type_kind.capitalize()} {cls['name']}: {user_desc}"
-                else:
-                    class_desc = f"{type_kind.capitalize()} {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
-                vector = self.text_to_vector(class_desc)
-                classes_data.append((
-                    cls['name'].lower(),
-                    cls['name'],
-                    cls['base_class'],
-                    type_kind,
-                    cls['line'],
-                    full_path,  # 使用完整路径作为外键
-                    class_desc,
-                    json.dumps(vector)
-                ))
-
-            # 处理函数
-            for func in file_info.get('functions', []):
-                # 使用提取的描述信息，如果没有则使用默认格式
-                user_desc = func.get('description', '')
-                if user_desc:
-                    func_desc = f"{func.get('type', 'function')} {func['name']}: {user_desc}"
-                else:
-                    func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
-                vector = self.text_to_vector(func_desc)
-                functions_data.append((
-                    func['name'].lower(),
-                    func['name'],
-                    func['line'],
-                    func.get('type', 'function'),
-                    full_path,  # 使用完整路径作为外键
-                    func_desc,
-                    json.dumps(vector)
-                ))
-
-            # 插入单元
+            # 单元数据
             for unit in file_info.get('units', []):
                 units_data.append((
                     unit.lower(),
                     unit,
-                    full_path,  # 使用完整路径作为外键
+                    full_path,
                     f"Unit {unit} in {file_path}"
                 ))
 
-            # 插入关键词
+            # 关键词数据
             keywords = set()
             for unit in file_info.get('units', []):
                 keywords.add(unit.lower())
@@ -474,17 +500,90 @@ class SQLiteVectorKnowledgeBase:
                 keywords.add(func['name'].lower())
 
             for keyword in keywords:
-                keywords_data.append((keyword, keyword, full_path))  # 使用完整路径作为外键
-
-            # 进度显示
-            processed_files += 1
-            progress = int(processed_files / total_files * 100)
-            if progress >= last_progress + 5:  # 每 5% 显示一次
-                print(f"处理进度: {progress}% ({processed_files}/{total_files} 文件)")
-                last_progress = progress
-
-        print(f"处理进度: 100% ({processed_files}/{total_files} 文件)")
-        print(f"收集完成: {len(files_data)} 文件, {len(classes_data)} 类, {len(functions_data)} 函数, {len(units_data)} 单元, {len(keywords_data)} 关键词")
+                keywords_data.append((keyword, keyword, full_path))
+        
+        print(f"  文件: {len(files_data)}, 单元: {len(units_data)}, 关键词: {len(keywords_data)}")
+        
+        # 第二阶段：并行计算向量
+        print("第二阶段: 并行计算向量...")
+        
+        from concurrent.futures import ProcessPoolExecutor
+        from multiprocessing import cpu_count
+        
+        vocab = self.vocabulary
+        idf_weights = self.idf_weights
+        vector_size = len(vocab)
+        
+        # 准备需要计算向量的项
+        class_items = []  # (cls, full_path, file_path)
+        func_items = []  # (func, full_path, file_path)
+        
+        for file_info in deduped_files:
+            file_path = file_info['path']
+            full_path = file_info.get('full_path', file_path)
+            
+            for cls in file_info.get('classes', []):
+                type_kind = cls.get('type_kind', 'class')
+                user_desc = cls.get('description', '')
+                if user_desc:
+                    class_desc = f"{type_kind.capitalize()} {cls['name']}: {user_desc}"
+                else:
+                    class_desc = f"{type_kind.capitalize()} {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
+                class_items.append((cls, full_path, class_desc))
+            
+            for func in file_info.get('functions', []):
+                user_desc = func.get('description', '')
+                if user_desc:
+                    func_desc = f"{func.get('type', 'function')} {func['name']}: {user_desc}"
+                else:
+                    func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
+                func_items.append((func, full_path, func_desc))
+        
+        print(f"  需要计算向量: {len(class_items)} 类, {len(func_items)} 函数")
+        
+        # 动态计算worker数和chunksize
+        # 目标：减少IPC开销，每个chunk处理更多数据
+        n_workers = max(2, min(8, cpu_count() - 1))
+        
+        # 动态chunksize: 基于项目数量，使用更大chunksize减少IPC开销
+        # 公式: chunksize = max(500, items // workers) - 每个worker至少处理500个
+        class_chunksize = max(500, len(class_items) // n_workers)
+        func_chunksize = max(500, len(func_items) // n_workers)
+        
+        print(f"  使用 {n_workers} 进程并行计算 (类chunksize={class_chunksize}, 函数chunksize={func_chunksize})...")
+        
+        def compute_class_vector(item):
+            cls, full_path, desc = item
+            vector = self.text_to_vector(desc)
+            return (
+                cls['name'].lower(),
+                cls['name'],
+                cls['base_class'],
+                cls.get('type_kind', 'class'),
+                cls['line'],
+                full_path,
+                desc,
+                json.dumps(vector)
+            )
+        
+        classes_data = []
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            # 使用partial传递vocab和idf_weights
+            from functools import partial
+            func = partial(SQLiteVectorKnowledgeBase.compute_class_vector, vocab=vocab, idf_weights=idf_weights)
+            results = list(executor.map(func, class_items, chunksize=class_chunksize))
+            classes_data = results
+        
+        print(f"  类向量计算完成: {len(classes_data)}")
+        
+        # 并行计算函数向量
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            from functools import partial
+            func = partial(SQLiteVectorKnowledgeBase.compute_func_vector, vocab=vocab, idf_weights=idf_weights)
+            results = list(executor.map(func, func_items, chunksize=func_chunksize))
+            functions_data = results
+        
+        print(f"  函数向量计算完成: {len(functions_data)}")
 
         # 批量插入数据 - 使用单事务提高性能
         print("正在批量插入数据...")
@@ -672,7 +771,7 @@ class SQLiteVectorKnowledgeBase:
 
         return results
 
-    def search_by_keyword(self, keyword: str, search_in: List[str] = None) -> List[Dict]:
+    def search_by_keyword(self, keyword: str, search_in: Optional[List[str]] = None) -> List[Dict]:
         """根据关键词搜索 (精确匹配)"""
         keyword_lower = keyword.lower()
         conn = self._get_connection()

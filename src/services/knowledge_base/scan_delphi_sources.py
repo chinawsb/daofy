@@ -37,18 +37,17 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
     source_dir = Path(source_dir_str)
     
     try:
-        # 计算文件哈希
-        md5_hash = hashlib.md5()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b''):
-                md5_hash.update(chunk)
-        file_hash = md5_hash.hexdigest()
+        # 获取文件元数据（一次stat调用）
+        stat_info = file_path.stat()
         
-        # 读取文件内容
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-            lines = content.split('\n')
-            line_count = len(lines)
+        # 一次读取文件，同时计算哈希和获取内容
+        with open(file_path, 'rb') as f:
+            data = f.read()
+        
+        md5_hash = hashlib.md5(data).hexdigest()
+        content = data.decode('utf-8', errors='ignore')
+        lines = content.split('\n')
+        line_count = len(lines)
         
         # 相对路径
         rel_path = file_path.relative_to(source_dir)
@@ -58,10 +57,10 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
             'path': str(rel_path).replace('\\', '/'),
             'full_path': str(file_path),
             'extension': file_path.suffix.lower(),
-            'size': file_path.stat().st_size,
+            'size': stat_info.st_size,
             'line_count': line_count,
-            'hash': file_hash,
-            'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+            'hash': md5_hash,
+            'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
             'units': _extract_units(content),
             'uses': _extract_uses(content),
             'classes': _extract_classes(content),
@@ -79,15 +78,15 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
 
 def _extract_units(content: str) -> List[str]:
     """提取 unit 名称"""
-    pattern = r'^\s*unit\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;'
-    matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
+    pattern = re.compile(r'^\s*unit\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;', re.MULTILINE | re.IGNORECASE)
+    matches = pattern.findall(content)
     return matches
 
 
 def _extract_uses(content: str) -> List[str]:
     """提取 uses 子句中的单元"""
-    pattern = r'^\s*uses\s+([^;]+);'
-    matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
+    pattern = re.compile(r'^\s*uses\s+([^;]+);', re.MULTILINE | re.IGNORECASE)
+    matches = pattern.findall(content)
     units = []
     for match in matches:
         items = [item.strip() for item in match.split(',')]
@@ -95,15 +94,29 @@ def _extract_uses(content: str) -> List[str]:
     return units
 
 
+# 预编译正则表达式
+_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
+_RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
+_INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
+_ENUM_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;', re.MULTILINE | re.IGNORECASE)
+
+_FUNC_PATTERN_1 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
+_FUNC_PATTERN_2 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', re.MULTILINE | re.IGNORECASE)
+_FUNC_PATTERN_3 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
+_FUNC_PATTERN_4 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+
+_CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+
+_TYPE_PATTERN_1 = re.compile(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)', re.MULTILINE | re.IGNORECASE)
+_TYPE_PATTERN_2 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b', re.MULTILINE | re.IGNORECASE)
+
+
 def _extract_classes(content: str) -> List[Dict]:
     """提取类定义"""
     classes = []
     
     # 1. 匹配 class 类型
-    class_pattern = r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract)?'
-    matches = re.finditer(class_pattern, content, re.MULTILINE | re.IGNORECASE)
-    
-    for match in matches:
+    for match in _CLASS_PATTERN.finditer(content):
         class_name = match.group(1)
         base_class = match.group(2) if match.group(2) else 'TObject'
         line_num = content[:match.start()].count('\n') + 1
@@ -115,10 +128,7 @@ def _extract_classes(content: str) -> List[Dict]:
         })
     
     # 2. 匹配 record 类型
-    record_pattern = r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
-    matches = re.finditer(record_pattern, content, re.MULTILINE | re.IGNORECASE)
-    
-    for match in matches:
+    for match in _RECORD_PATTERN.finditer(content):
         record_name = match.group(1)
         base_record = match.group(2) if match.group(2) else None
         line_num = content[:match.start()].count('\n') + 1
@@ -130,10 +140,7 @@ def _extract_classes(content: str) -> List[Dict]:
         })
     
     # 3. 匹配 interface 类型
-    interface_pattern = r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
-    matches = re.finditer(interface_pattern, content, re.MULTILINE | re.IGNORECASE)
-    
-    for match in matches:
+    for match in _INTERFACE_PATTERN.finditer(content):
         interface_name = match.group(1)
         base_interface = match.group(2) if match.group(2) else None
         line_num = content[:match.start()].count('\n') + 1
@@ -144,6 +151,19 @@ def _extract_classes(content: str) -> List[Dict]:
             'type_kind': 'interface'
         })
     
+    # 4. 匹配 enum 类型
+    for match in _ENUM_PATTERN.finditer(content):
+        enum_name = match.group(1)
+        values = match.group(2).strip()
+        if ',' in values:
+            line_num = content[:match.start()].count('\n') + 1
+            classes.append({
+                'name': enum_name,
+                'base_class': None,
+                'line': line_num,
+                'type_kind': 'enum'
+            })
+    
     return classes
 
 
@@ -151,27 +171,47 @@ def _extract_functions(content: str) -> List[Dict]:
     """提取函数和过程"""
     functions = []
     
-    # 匹配 function/procedure
-    patterns = [
-        (r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', 'function'),
-        (r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', 'procedure'),
-        (r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', 'function'),
-        (r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)', 'procedure'),
-    ]
+    for match in _FUNC_PATTERN_1.finditer(content):
+        func_name = match.group(1)
+        return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
+        line_num = content[:match.start()].count('\n') + 1
+        functions.append({
+            'name': func_name,
+            'return_type': return_type,
+            'kind': 'function',
+            'line': line_num
+        })
     
-    for pattern, func_type in patterns:
-        matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
-        for match in matches:
-            func_name = match.group(1)
-            return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
-            line_num = content[:match.start()].count('\n') + 1
-            
-            functions.append({
-                'name': func_name,
-                'return_type': return_type,
-                'kind': func_type,
-                'line': line_num
-            })
+    for match in _FUNC_PATTERN_2.finditer(content):
+        func_name = match.group(1)
+        line_num = content[:match.start()].count('\n') + 1
+        functions.append({
+            'name': func_name,
+            'return_type': '',
+            'kind': 'procedure',
+            'line': line_num
+        })
+    
+    for match in _FUNC_PATTERN_3.finditer(content):
+        func_name = match.group(1)
+        return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
+        line_num = content[:match.start()].count('\n') + 1
+        functions.append({
+            'name': func_name,
+            'return_type': return_type,
+            'kind': 'function',
+            'line': line_num
+        })
+    
+    for match in _FUNC_PATTERN_4.finditer(content):
+        func_name = match.group(1)
+        line_num = content[:match.start()].count('\n') + 1
+        functions.append({
+            'name': func_name,
+            'return_type': '',
+            'kind': 'procedure',
+            'line': line_num
+        })
     
     return functions
 
@@ -180,10 +220,7 @@ def _extract_constants(content: str) -> List[Dict]:
     """提取常量定义"""
     constants = []
     
-    pattern = r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)'
-    matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
-    
-    for match in matches:
+    for match in _CONST_PATTERN.finditer(content):
         const_name = match.group(2)
         const_value = match.group(3).strip()
         line_num = content[:match.start()].count('\n') + 1
@@ -201,24 +238,27 @@ def _extract_types(content: str) -> List[Dict]:
     """提取类型定义"""
     types = []
     
-    # 匹配 type 块中的类型定义
-    patterns = [
-        r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)',
-        r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b',
-    ]
+    for match in _TYPE_PATTERN_1.finditer(content):
+        type_name = match.group(1)
+        type_def = match.group(2) if match.lastindex >= 2 else ''
+        line_num = content[:match.start()].count('\n') + 1
+        
+        types.append({
+            'name': type_name,
+            'definition': type_def,
+            'line': line_num
+        })
     
-    for pattern in patterns:
-        matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
-        for match in matches:
-            type_name = match.group(1)
-            type_def = match.group(2) if match.lastindex >= 2 else ''
-            line_num = content[:match.start()].count('\n') + 1
-            
-            types.append({
-                'name': type_name,
-                'definition': type_def,
-                'line': line_num
-            })
+    for match in _TYPE_PATTERN_2.finditer(content):
+        type_name = match.group(1)
+        type_def = match.group(2) if match.lastindex >= 2 else ''
+        line_num = content[:match.start()].count('\n') + 1
+        
+        types.append({
+            'name': type_name,
+            'definition': type_def,
+            'line': line_num
+        })
     
     return types
 
@@ -257,13 +297,14 @@ class DelphiSourceScanner:
         if self.progress_callback and total_files > 0:
             tracker = ProgressTracker(total_files, self.progress_callback, update_interval=0.5)
         
-        # Rule 1: Calculate max processes: min(max(1, files/50), cpu_count-1)
+        # 计算worker数量
+        # 对于I/O密集型任务（磁盘读取），应限制worker数量避免磁盘争用
+        # 公式: min(max(1, files//100), 8) - 最多8个worker
         cpu_cores = cpu_count()
-        max_needed = max(1, total_files // 50)
-        max_possible = max(1, cpu_cores - 1)
-        max_workers = min(max_needed, max_possible)
+        max_needed = max(1, total_files // 100)
+        max_workers = min(max_needed, 8)  # 上限8个worker
         
-        print(f"Processing: files={total_files}, workers={max_workers}")
+        print(f"Processing: files={total_files}, workers={max_workers} (cpu_cores={cpu_cores})")
         
         import time
         from concurrent.futures import ProcessPoolExecutor
@@ -273,7 +314,8 @@ class DelphiSourceScanner:
         total_lines = 0
         
         # Calculate optimal chunk size for IPC efficiency
-        # Larger chunks = less IPC overhead
+        # 公式: chunksize = total_files // (workers * 4)
+        # 目标: 30-60个chunks，让每个worker处理2-4个chunks
         chunk_size = max(50, total_files // (max_workers * 4))
         
         # Use ProcessPoolExecutor with larger chunksize to reduce IPC overhead
