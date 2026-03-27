@@ -272,25 +272,22 @@ class DelphiSourceScanner:
         file_count = 0
         total_lines = 0
         
-        # Use ProcessPoolExecutor with batch of 50
+        # Calculate optimal chunk size for IPC efficiency
+        # Larger chunks = less IPC overhead
+        chunk_size = max(50, total_files // (max_workers * 4))
+        
+        # Use ProcessPoolExecutor with larger chunksize to reduce IPC overhead
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # Rule 4: Process in chunks of 50
-            for batch_start in range(0, total_files, 50):
-                batch_end = min(batch_start + 50, total_files)
-                batch = file_paths[batch_start:batch_end]
-                
-                # Submit batch
-                results = list(executor.map(_analyze_file_worker, batch))
-                
-                for file_info in results:
-                    if file_info:
-                        source_files.append(file_info)
-                        file_count += 1
-                        total_lines += file_info.get('line_count', 0)
-                
-                # Update progress
-                if tracker and batch_start % 200 == 0:
-                    tracker.update(file_count, f"Scanning: {file_count}/{total_files}")
+            results = executor.map(_analyze_file_worker, file_paths, chunksize=chunk_size)
+            
+            for file_info in results:
+                if file_info:
+                    source_files.append(file_info)
+                    file_count += 1
+                    total_lines += file_info.get('line_count', 0)
+                    
+                    if tracker and file_count % 100 == 0:
+                        tracker.update(file_count, f"Scanning: {file_count}/{total_files}")
         
         if tracker:
             tracker.update(total_files, f"Scanning completed: {file_count} files")
