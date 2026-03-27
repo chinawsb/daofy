@@ -605,9 +605,15 @@ class SQLiteVectorKnowledgeBase:
         class_items = []  # (cls, full_path, file_path)
         func_items = []  # (func, full_path, file_path)
         
+        # 统计信息
+        total_classes = 0
+        total_funcs = 0
+        
         for file_info in deduped_files:
             file_path = file_info['path']
             full_path = file_info.get('full_path', file_path)
+            total_classes += len(file_info.get('classes', []))
+            total_funcs += len(file_info.get('functions', []))
             
             for cls in file_info.get('classes', []):
                 # 增量构建：检查向量是否已存在
@@ -632,26 +638,12 @@ class SQLiteVectorKnowledgeBase:
                         func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
                     func_items.append((func, full_path, func_desc))
         
-        # 报告向量计算情况
-        total_classes = sum(len(f.get('classes', [])) for f in deduped_files)
-        total_funcs = sum(len(f.get('functions', [])) for f in deduped_files)
-        
-        # 如果增量模式且所有向量已存在，跳过向量计算
+        # 增量模式早期返回：所有向量已存在
         if incremental and len(class_items) == 0 and len(func_items) == 0:
             print(f"  所有向量已存在，跳过向量计算!")
             print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
             
-            # 增量模式：只更新文件、单元、关键词数据，不重新插入类/函数
-            print("正在更新文件数据...")
-            cursor.executemany("""
-                INSERT OR REPLACE INTO files (
-                    full_path, path, extension, size, line_count,
-                    hash, last_modified, units, uses, description
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, files_data)
-            print("  文件数据更新完成")
-            
-            # 更新元数据
+            # 更新元数据和时间戳
             cursor.execute("""
                 UPDATE metadata SET hash = ?, timestamp = ?, total_files = ?, total_lines = ?, vector_size = ?
             """, (
@@ -666,11 +658,11 @@ class SQLiteVectorKnowledgeBase:
             elapsed = time.time() - start_time
             print(f"增量索引构建完成! 耗时: {elapsed*1000:.2f}ms")
             return
-            
+        
+        # 报告向量计算情况
         if len(class_items) == 0 and len(func_items) == 0:
             print(f"  所有向量已存在，跳过向量计算!")
             print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
-            # 仍然需要插入文件、单元、关键词数据
         else:
             print(f"  需要计算向量: {len(class_items)} 类 (新增), {len(func_items)} 函数 (新增)")
             print(f"  复用向量: {total_classes - len(class_items)} 类, {total_funcs - len(func_items)} 函数")
