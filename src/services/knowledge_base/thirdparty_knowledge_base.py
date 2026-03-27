@@ -19,7 +19,7 @@ import json
 import time
 import hashlib
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
 
 try:
@@ -43,12 +43,13 @@ except ImportError:
 class ThirdPartyKnowledgeBase:
     """第三方库知识库管理器"""
 
-    def __init__(self, kb_dir: Optional[str] = None):
+    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
         """
         初始化第三方库知识库
 
         Args:
             kb_dir: 知识库目录路径,如果为 None 则使用默认路径
+            progress_callback: 进度回调函数
         """
         if kb_dir is None:
             # 默认路径: MCP 服务器目录下的 data/thirdparty-knowledge-base
@@ -61,6 +62,7 @@ class ThirdPartyKnowledgeBase:
         self.kb_instance = None
         self.delphi_versions = []
         self.environment_variables = {}  # 环境变量缓存
+        self.progress_callback = progress_callback
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)

@@ -99,9 +99,45 @@ class AsyncTaskManager:
 
                 logger.info(f"任务 {task_id} ({name}) 开始执行")
 
-                # 创建进度更新函数
-                def update_progress(progress_val, message_val):
-                    self.update_task_progress(task_id, progress_val, message_val)
+                # 创建进度更新函数 - 支持多种回调签名
+                def update_progress(*args, **kwargs):
+                    # Handle different callback signatures:
+                    # 1. ProgressInfo object (from ProgressTracker)
+                    # 2. Single numeric value
+                    # 3. (current, total, message) - legacy style
+                    # 4. (stage, current, total, message) - help KB style
+                    
+                    if args and hasattr(args[0], 'percentage'):
+                        # Case 1: ProgressInfo object
+                        pct = args[0].percentage
+                        msg = args[0].message
+                    elif args and len(args) >= 3:
+                        # Case 3 or 4: tuple arguments
+                        # For help KB: stage, current, total, message
+                        # For legacy: current, total, message
+                        if len(args) == 4:
+                            # Help KB style: (stage, current, total, message)
+                            # Calculate percentage from current/total
+                            current = args[1]
+                            total = args[2]
+                            pct = (current / total * 100) if total > 0 else 0
+                            msg = args[3]
+                        else:
+                            # Legacy style: (current, total, message)
+                            current = args[0]
+                            total = args[1]
+                            pct = (current / total * 100) if total > 0 else 0
+                            msg = args[2] if len(args) > 2 else ''
+                    elif args and isinstance(args[0], (int, float)):
+                        # Case 2: Single numeric value
+                        pct = float(args[0])
+                        msg = kwargs.get('message', '')
+                    else:
+                        pct = 0
+                        msg = str(args) if args else ''
+                    
+                    logger.debug(f"Progress update: {pct}% - {msg}")
+                    self.update_task_progress(task_id, pct, msg)
 
                 # 将进度回调和任务ID传递给任务函数
                 kwargs['_progress_callback'] = update_progress
@@ -164,9 +200,10 @@ class AsyncTaskManager:
         """更新任务进度"""
         with self._lock:
             if task_id in self._tasks:
+                # Always update progress
                 self._tasks[task_id].progress = min(100.0, max(0.0, progress))
-                if message:
-                    self._tasks[task_id].message = message
+                # Always update message (even if empty to show current status)
+                self._tasks[task_id].message = message
                 if current_step:
                     self._tasks[task_id].current_step = current_step
                 if step_index > 0:

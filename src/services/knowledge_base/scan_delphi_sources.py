@@ -11,13 +11,216 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Set, Optional, Callable
+from multiprocessing import cpu_count
 import re
+import time
 
 try:
     from ...utils.progress_tracker import ProgressTracker, ProgressInfo
 except ImportError:
     # 如果相对导入失败，使用绝对导入
     from src.utils.progress_tracker import ProgressTracker, ProgressInfo
+
+
+def _analyze_file_worker(args: tuple) -> Optional[Dict]:
+    """
+    分析单个文件的工作函数（用于多进程）
+    
+    Args:
+        args: (file_path_str, source_dir_str)
+        
+    Returns:
+        文件信息字典或None
+    """
+    file_path_str, source_dir_str = args
+    file_path = Path(file_path_str)
+    source_dir = Path(source_dir_str)
+    
+    try:
+        # 计算文件哈希
+        md5_hash = hashlib.md5()
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(4096), b''):
+                md5_hash.update(chunk)
+        file_hash = md5_hash.hexdigest()
+        
+        # 读取文件内容
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+            lines = content.split('\n')
+            line_count = len(lines)
+        
+        # 相对路径
+        rel_path = file_path.relative_to(source_dir)
+        
+        # 提取文件信息
+        file_info = {
+            'path': str(rel_path).replace('\\', '/'),
+            'full_path': str(file_path),
+            'extension': file_path.suffix.lower(),
+            'size': file_path.stat().st_size,
+            'line_count': line_count,
+            'hash': file_hash,
+            'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+            'units': _extract_units(content),
+            'uses': _extract_uses(content),
+            'classes': _extract_classes(content),
+            'functions': _extract_functions(content),
+            'constants': _extract_constants(content),
+            'types': _extract_types(content)
+        }
+        
+        return file_info
+        
+    except Exception as e:
+        print(f"分析文件失败 {file_path}: {e}")
+        return None
+
+
+def _extract_units(content: str) -> List[str]:
+    """提取 unit 名称"""
+    pattern = r'^\s*unit\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;'
+    matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
+    return matches
+
+
+def _extract_uses(content: str) -> List[str]:
+    """提取 uses 子句中的单元"""
+    pattern = r'^\s*uses\s+([^;]+);'
+    matches = re.findall(pattern, content, re.MULTILINE | re.IGNORECASE)
+    units = []
+    for match in matches:
+        items = [item.strip() for item in match.split(',')]
+        units.extend(items)
+    return units
+
+
+def _extract_classes(content: str) -> List[Dict]:
+    """提取类定义"""
+    classes = []
+    
+    # 1. 匹配 class 类型
+    class_pattern = r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract)?'
+    matches = re.finditer(class_pattern, content, re.MULTILINE | re.IGNORECASE)
+    
+    for match in matches:
+        class_name = match.group(1)
+        base_class = match.group(2) if match.group(2) else 'TObject'
+        line_num = content[:match.start()].count('\n') + 1
+        classes.append({
+            'name': class_name,
+            'base_class': base_class,
+            'line': line_num,
+            'type_kind': 'class'
+        })
+    
+    # 2. 匹配 record 类型
+    record_pattern = r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
+    matches = re.finditer(record_pattern, content, re.MULTILINE | re.IGNORECASE)
+    
+    for match in matches:
+        record_name = match.group(1)
+        base_record = match.group(2) if match.group(2) else None
+        line_num = content[:match.start()].count('\n') + 1
+        classes.append({
+            'name': record_name,
+            'base_class': base_record,
+            'line': line_num,
+            'type_kind': 'record'
+        })
+    
+    # 3. 匹配 interface 类型
+    interface_pattern = r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'
+    matches = re.finditer(interface_pattern, content, re.MULTILINE | re.IGNORECASE)
+    
+    for match in matches:
+        interface_name = match.group(1)
+        base_interface = match.group(2) if match.group(2) else None
+        line_num = content[:match.start()].count('\n') + 1
+        classes.append({
+            'name': interface_name,
+            'base_class': base_interface,
+            'line': line_num,
+            'type_kind': 'interface'
+        })
+    
+    return classes
+
+
+def _extract_functions(content: str) -> List[Dict]:
+    """提取函数和过程"""
+    functions = []
+    
+    # 匹配 function/procedure
+    patterns = [
+        (r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', 'function'),
+        (r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', 'procedure'),
+        (r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', 'function'),
+        (r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)', 'procedure'),
+    ]
+    
+    for pattern, func_type in patterns:
+        matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
+        for match in matches:
+            func_name = match.group(1)
+            return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
+            line_num = content[:match.start()].count('\n') + 1
+            
+            functions.append({
+                'name': func_name,
+                'return_type': return_type,
+                'kind': func_type,
+                'line': line_num
+            })
+    
+    return functions
+
+
+def _extract_constants(content: str) -> List[Dict]:
+    """提取常量定义"""
+    constants = []
+    
+    pattern = r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)'
+    matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
+    
+    for match in matches:
+        const_name = match.group(2)
+        const_value = match.group(3).strip()
+        line_num = content[:match.start()].count('\n') + 1
+        
+        constants.append({
+            'name': const_name,
+            'value': const_value,
+            'line': line_num
+        })
+    
+    return constants
+
+
+def _extract_types(content: str) -> List[Dict]:
+    """提取类型定义"""
+    types = []
+    
+    # 匹配 type 块中的类型定义
+    patterns = [
+        r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)',
+        r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b',
+    ]
+    
+    for pattern in patterns:
+        matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
+        for match in matches:
+            type_name = match.group(1)
+            type_def = match.group(2) if match.lastindex >= 2 else ''
+            line_num = content[:match.start()].count('\n') + 1
+            
+            types.append({
+                'name': type_name,
+                'definition': type_def,
+                'line': line_num
+            })
+    
+    return types
 
 
 class DelphiSourceScanner:
@@ -35,45 +238,64 @@ class DelphiSourceScanner:
         (self.output_dir / "data").mkdir(parents=True, exist_ok=True)
 
     def scan_directory(self) -> Dict:
-        """扫描源码目录,收集文件信息"""
+        """扫描源码目录,收集文件信息（多进程版本）"""
         print(f"开始扫描目录: {self.source_dir}")
-
+        
+        # 首先收集所有要扫描的文件路径
+        file_paths = []
+        for root, dirs, files in os.walk(self.source_dir):
+            for file in files:
+                file_path = Path(root) / file
+                if file_path.suffix.lower() in self.file_extensions:
+                    file_paths.append((str(file_path), str(self.source_dir)))
+        
+        total_files = len(file_paths)
+        print(f"预计扫描 {total_files} 个文件...")
+        
+        # Create progress tracker
+        tracker = None
+        if self.progress_callback and total_files > 0:
+            tracker = ProgressTracker(total_files, self.progress_callback, update_interval=0.5)
+        
+        # Rule 1: Calculate max processes: min(max(1, files/50), cpu_count-1)
+        cpu_cores = cpu_count()
+        max_needed = max(1, total_files // 50)
+        max_possible = max(1, cpu_cores - 1)
+        max_workers = min(max_needed, max_possible)
+        
+        print(f"Processing: files={total_files}, workers={max_workers}")
+        
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        
         source_files = []
         file_count = 0
         total_lines = 0
-
-        # 首先统计文件总数
-        total_files = 0
-        for root, dirs, files in os.walk(self.source_dir):
-            for file in files:
-                file_path = Path(root) / file
-                if file_path.suffix.lower() in self.file_extensions:
-                    total_files += 1
-
-        # 创建进度跟踪器
-        tracker = None
-        if self.progress_callback and total_files > 0:
-            tracker = ProgressTracker(total_files, self.progress_callback, update_interval=1.0)
-            print(f"预计扫描 {total_files} 个文件...")
-
-        for root, dirs, files in os.walk(self.source_dir):
-            for file in files:
-                file_path = Path(root) / file
-                if file_path.suffix.lower() in self.file_extensions:
-                    file_info = self.analyze_file(file_path)
+        
+        # Use fixed worker count (ThreadPoolExecutor doesn't support dynamic resizing)
+        # Rule 4: Process in chunks of 50
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for batch_start in range(0, total_files, 50):
+                batch_end = min(batch_start + 50, total_files)
+                batch = file_paths[batch_start:batch_end]
+                
+                # Submit batch
+                results = list(executor.map(_analyze_file_worker, batch))
+                
+                for file_info in results:
                     if file_info:
                         source_files.append(file_info)
                         file_count += 1
                         total_lines += file_info.get('line_count', 0)
-
-                        # 更新进度
-                        if tracker:
-                            tracker.update(1, f"扫描: {file_path.name}")
-
+                
+                # Update progress
+                if tracker and batch_start % 200 == 0:
+                    tracker.update(file_count, f"Scanning: {file_count}/{total_files}")
+        
         if tracker:
-            tracker.finish(f"扫描完成: {file_count} 个文件")
-
-        print(f"扫描完成! 共找到 {file_count} 个源文件, {total_lines} 行代码")
+            tracker.update(total_files, f"Scanning completed: {file_count} files")
+        
+        print(f"Scanning completed! Found {file_count} source files, {total_lines} lines of code")
 
         return {
             'files': source_files,

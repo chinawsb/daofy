@@ -1086,36 +1086,30 @@ class DelphiHelpKnowledgeBase:
                        save_markdown: bool = False,
                        max_workers: Optional[int] = None) -> List[Dict]:
         """
-        扫描目录中的 HTML 文件（多线程优化版本）
+        Scan HTML files in directory (sequential processing for stability)
 
         Args:
-            directory: 目录路径
-            max_files: 最大处理文件数
-            progress_callback: 进度回调函数(current, total, filename)
-            save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
-            max_workers: 最大工作线程数,None表示自动计算
+            directory: Directory path
+            max_files: Maximum files to process
+            progress_callback: Progress callback function
+            save_markdown: Whether to save as Markdown
+            max_workers: Ignored (reserved for API compatibility)
 
         Returns:
-            文档列表
+            Document list
         """
-        # 性能优化: 自动计算最优进程数（使用CPU核心数）
-        if max_workers is None:
-            max_workers = cpu_count() or 4
-            # 限制在合理范围内 [4, 16]
-            max_workers = max(4, min(16, max_workers))
-
         html_files = list(Path(directory).rglob("*.html")) + list(Path(directory).rglob("*.htm"))
 
-        # 性能优化: 过滤无用文件
+        # Filter unnecessary files
         html_files = [f for f in html_files if self._should_process_file(f)]
 
         if max_files:
             html_files = html_files[:max_files]
 
         total = len(html_files)
-        logger.info(f"开始处理 {total} 个 HTML 文件（使用 {max_workers} 个进程）...")
+        logger.info(f"Processing {total} HTML files sequentially...")
 
-        # 创建 Markdown 保存目录
+        # Create Markdown save directory
         markdown_dir = None
         if save_markdown:
             base_dir = Path(directory)
@@ -1124,46 +1118,37 @@ class DelphiHelpKnowledgeBase:
             else:
                 markdown_dir = base_dir.parent / 'markdown'
             markdown_dir.mkdir(parents=True, exist_ok=True)
-            logger.info("已启用 Markdown 转换")
+            logger.info("Markdown conversion enabled")
 
         documents = []
         directory_path = Path(directory)
         markdown_dir_str = str(markdown_dir) if markdown_dir else None
 
-        # 准备参数列表
-        worker_args = [
-            (str(html_file), str(directory_path), save_markdown, markdown_dir_str)
-            for html_file in html_files
-        ]
-
-        # 使用进程池处理文件（真正利用多核CPU）
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            futures = [executor.submit(_process_html_file_worker, args) for args in worker_args]
-
-            # 收集结果
-            completed = 0
-            for future in as_completed(futures):
-                completed += 1
-
-                try:
-                    result = future.result()
-                    if result:
-                        documents.append(result)
-
-                    # 更新进度（每10个文件更新一次，提高响应性）
-                    if progress_callback and completed % 10 == 0:
-                        progress_callback(completed, total, f"已处理 {completed}/{total}")
-
-                except Exception as e:
-                    logger.warning(f"处理文件失败: {e}")
-
+        # Sequential processing for stability
+        for i, html_file in enumerate(html_files):
+            try:
+                result = _process_html_file_worker((
+                    str(html_file), 
+                    str(directory_path), 
+                    save_markdown, 
+                    markdown_dir_str
+                ))
+                if result:
+                    documents.append(result)
+                
+                # Update progress periodically
+                if progress_callback and (i + 1) % 10 == 0:
+                    progress_callback(i + 1, total, f"Processed {i + 1}/{total}")
+                    
+            except Exception as e:
+                logger.warning(f"Processing file failed {html_file}: {e}")
+        
         if progress_callback:
-            progress_callback(total, total, "完成")
+            progress_callback(total, total, "Done")
 
-        logger.info(f"成功提取 {len(documents)} 个文档")
+        logger.info(f"Successfully extracted {len(documents)} documents")
         if save_markdown:
-            logger.info(f"Markdown 文件已保存到: {markdown_dir}")
+            logger.info(f"Markdown files saved to: {markdown_dir}")
         return documents
 
     def scan_extracted_directory(self, help_name: str, max_files: Optional[int] = None,

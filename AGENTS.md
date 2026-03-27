@@ -44,6 +44,30 @@ pip install -r requirements.txt
 pip install -e ".[dev]"  # Install with dev dependencies
 ```
 
+### Windows Encoding Settings
+
+**IMPORTANT**: On Windows, always set UTF-8 encoding before running Python scripts to avoid GBK encoding issues:
+
+```bash
+# Option 1: Set environment variable per command
+PYTHONIOENCODING=utf-8 python your_script.py
+
+# Option 2: Set permanently for session
+set PYTHONIOENCODING=utf-8
+python your_script.py
+```
+
+When running Python commands in this project, **always use** `PYTHONIOENCODING=utf-8` prefix:
+
+```bash
+# Good
+PYTHONIOENCODING=utf-8 python rebuild_all_kbs_with_progress.py
+PYTHONIOENCODING=utf-8 python -m pytest
+
+# Bad (will cause encoding errors on Windows)
+python rebuild_all_kbs_with_progress.py
+```
+
 ### Running Tests
 
 ```bash
