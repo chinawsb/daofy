@@ -39,8 +39,15 @@ class SQLiteVectorKnowledgeBase:
     def _get_connection(self) -> sqlite3.Connection:
         """获取当前线程的数据库连接"""
         if not hasattr(self._thread_local, 'conn') or self._thread_local.conn is None:
-            self._thread_local.conn = sqlite3.connect(self._db_path)
-            self._thread_local.conn.row_factory = sqlite3.Row
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            # SQLite性能优化
+            conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
+            conn.execute("PRAGMA synchronous=NORMAL")  # 更快的同步模式
+            conn.execute("PRAGMA cache_size=-64000")  # 64MB缓存
+            conn.execute("PRAGMA temp_store=MEMORY")  # 临时表在内存中
+            conn.execute("PRAGMA mmap_size=268435456")  # 256MB内存映射
+            self._thread_local.conn = conn
         return self._thread_local.conn
 
     def _close_connection(self):
@@ -479,44 +486,54 @@ class SQLiteVectorKnowledgeBase:
         print(f"处理进度: 100% ({processed_files}/{total_files} 文件)")
         print(f"收集完成: {len(files_data)} 文件, {len(classes_data)} 类, {len(functions_data)} 函数, {len(units_data)} 单元, {len(keywords_data)} 关键词")
 
-        # 批量插入数据
+        # 批量插入数据 - 使用单事务提高性能
         print("正在批量插入数据...")
-        print(f"  - 插入文件数据 ({len(files_data)} 条)...")
-        cursor.executemany("""
-            INSERT INTO files (
-                full_path, path, extension, size, line_count,
-                hash, last_modified, units, uses, description
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, files_data)
-        print(f"  - 文件数据插入完成")
+        
+        try:
+            print(f"  - 插入文件数据 ({len(files_data)} 条)...")
+            cursor.executemany("""
+                INSERT INTO files (
+                    full_path, path, extension, size, line_count,
+                    hash, last_modified, units, uses, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, files_data)
+            print(f"  - 文件数据插入完成")
 
-        print(f"  - 插入类数据 ({len(classes_data)} 条)...")
-        cursor.executemany("""
-            INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, vector)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, classes_data)
-        print(f"  - 类数据插入完成")
+            print(f"  - 插入类数据 ({len(classes_data)} 条)...")
+            cursor.executemany("""
+                INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, vector)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, classes_data)
+            print(f"  - 类数据插入完成")
 
-        print(f"  - 插入函数数据 ({len(functions_data)} 条)...")
-        cursor.executemany("""
-            INSERT INTO functions (name_lower, name, line, type, file_path, description, vector)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, functions_data)
-        print(f"  - 函数数据插入完成")
+            print(f"  - 插入函数数据 ({len(functions_data)} 条)...")
+            cursor.executemany("""
+                INSERT INTO functions (name_lower, name, line, type, file_path, description, vector)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, functions_data)
+            print(f"  - 函数数据插入完成")
 
-        print(f"  - 插入单元数据 ({len(units_data)} 条)...")
-        cursor.executemany("""
-            INSERT INTO units (name_lower, name, file_path, description)
-            VALUES (?, ?, ?, ?)
-        """, units_data)
-        print(f"  - 单元数据插入完成")
+            print(f"  - 插入单元数据 ({len(units_data)} 条)...")
+            cursor.executemany("""
+                INSERT INTO units (name_lower, name, file_path, description)
+                VALUES (?, ?, ?, ?)
+            """, units_data)
+            print(f"  - 单元数据插入完成")
 
-        print(f"  - 插入关键词数据 ({len(keywords_data)} 条)...")
-        cursor.executemany("""
-            INSERT INTO keywords (keyword_lower, keyword, file_path)
-            VALUES (?, ?, ?)
-        """, keywords_data)
-        print(f"  - 关键词数据插入完成")
+            print(f"  - 插入关键词数据 ({len(keywords_data)} 条)...")
+            cursor.executemany("""
+                INSERT INTO keywords (keyword_lower, keyword, file_path)
+                VALUES (?, ?, ?)
+            """, keywords_data)
+            print(f"  - 关键词数据插入完成")
+            
+            conn.commit()
+            print("  - 数据提交完成")
+            
+        except Exception as e:
+            conn.rollback()
+            print(f"  - 数据插入失败: {e}")
+            raise
 
         # 提交事务
         conn.commit()
