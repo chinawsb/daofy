@@ -1086,14 +1086,14 @@ class DelphiHelpKnowledgeBase:
                        save_markdown: bool = False,
                        max_workers: Optional[int] = None) -> List[Dict]:
         """
-        Scan HTML files in directory (sequential processing for stability)
+        Scan HTML files in directory (parallel processing)
 
         Args:
             directory: Directory path
             max_files: Maximum files to process
             progress_callback: Progress callback function
             save_markdown: Whether to save as Markdown
-            max_workers: Ignored (reserved for API compatibility)
+            max_workers: Number of parallel workers (default: cpu_count//2)
 
         Returns:
             Document list
@@ -1107,7 +1107,12 @@ class DelphiHelpKnowledgeBase:
             html_files = html_files[:max_files]
 
         total = len(html_files)
-        logger.info(f"Processing {total} HTML files sequentially...")
+        
+        # 计算worker数量
+        if max_workers is None:
+            max_workers = max(2, cpu_count() // 2)
+        
+        logger.info(f"Processing {total} HTML files with {max_workers} workers...")
 
         # Create Markdown save directory
         markdown_dir = None
@@ -1120,29 +1125,35 @@ class DelphiHelpKnowledgeBase:
             markdown_dir.mkdir(parents=True, exist_ok=True)
             logger.info("Markdown conversion enabled")
 
-        documents = []
+        # 准备参数
         directory_path = Path(directory)
         markdown_dir_str = str(markdown_dir) if markdown_dir else None
-
-        # Sequential processing for stability
-        for i, html_file in enumerate(html_files):
-            try:
-                result = _process_html_file_worker((
-                    str(html_file), 
-                    str(directory_path), 
-                    save_markdown, 
-                    markdown_dir_str
-                ))
+        
+        # 准备所有文件参数
+        args_list = [
+            (str(html_file), str(directory_path), save_markdown, markdown_dir_str)
+            for html_file in html_files
+        ]
+        
+        # 动态计算chunksize
+        chunk_size = max(50, total // (max_workers * 4))
+        
+        # 并行处理
+        documents = []
+        processed = 0
+        
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(_process_html_file_worker, args_list, chunksize=chunk_size)
+            
+            for result in results:
                 if result:
                     documents.append(result)
+                processed += 1
                 
                 # Update progress periodically
-                if progress_callback and (i + 1) % 10 == 0:
-                    progress_callback(i + 1, total, f"Processed {i + 1}/{total}")
-                    
-            except Exception as e:
-                logger.warning(f"Processing file failed {html_file}: {e}")
-        
+                if progress_callback and processed % 50 == 0:
+                    progress_callback(processed, total, f"Processed {processed}/{total}")
+
         if progress_callback:
             progress_callback(total, total, "Done")
 
