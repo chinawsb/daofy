@@ -73,7 +73,7 @@ class SQLiteVectorKnowledgeBase:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
             if not cursor.fetchone() or force_rebuild:
-                self.build_vector_index()
+                self.build_vector_index(incremental=False)
             else:
                 # 验证缓存是否有效
                 cursor.execute("SELECT hash FROM metadata")
@@ -87,7 +87,7 @@ class SQLiteVectorKnowledgeBase:
 
                 if cached_hash != current_hash:
                     print("缓存已过期,重新构建索引...")
-                    self.build_vector_index()
+                    self.build_vector_index(incremental=False)
                 else:
                     print("使用缓存的索引 (SQLite 向量扩展模式)")
                     self.load_vocabulary()
@@ -104,6 +104,69 @@ class SQLiteVectorKnowledgeBase:
 
         hash_str = f"{index_stat.st_mtime}_{index_stat.st_size}_{metadata_stat.st_mtime}_{metadata_stat.st_size}"
         return hashlib.md5(hash_str.encode()).hexdigest()
+
+    def _load_existing_vectors(self) -> Tuple[Dict[str, bytes], Dict[str, bytes]]:
+        """
+        加载现有的向量数据（用于增量构建）
+        
+        Returns:
+            (class_vectors_dict, function_vectors_dict) - 以 (file_path, name) 为key
+        """
+        class_vectors = {}
+        func_vectors = {}
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 加载类向量
+            cursor.execute("SELECT name, file_path, vector FROM classes WHERE vector IS NOT NULL")
+            for row in cursor.fetchall():
+                if row['vector']:
+                    key = (row['file_path'], row['name'])
+                    class_vectors[key] = row['vector']
+            
+            # 加载函数向量
+            cursor.execute("SELECT name, file_path, vector FROM functions WHERE vector IS NOT NULL")
+            for row in cursor.fetchall():
+                if row['vector']:
+                    key = (row['file_path'], row['name'])
+                    func_vectors[key] = row['vector']
+            
+            print(f"  已加载现有向量: {len(class_vectors)} 类, {len(func_vectors)} 函数")
+            
+        except Exception as e:
+            print(f"  加载现有向量失败: {e}")
+        
+        return class_vectors, func_vectors
+
+    def _check_vectors_need_rebuild(self) -> bool:
+        """
+        检查向量是否需要重建
+        
+        Returns:
+            True if full rebuild needed, False if can use incremental
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 检查表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='classes'")
+            if not cursor.fetchone():
+                return True
+            
+            # 检查向量表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='class_vectors'")
+            # 如果没有单独的向量表，检查 classes 表是否有 vector 列
+            cursor.execute("PRAGMA table_info(classes)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'vector' not in columns:
+                return True
+                
+            return False
+        except:
+            return True
 
     def tokenize(self, text: str) -> List[str]:
         """简单的分词函数 - 支持驼峰命名和蛇形命名"""
@@ -271,34 +334,10 @@ class SQLiteVectorKnowledgeBase:
 
         return dot_product / (norm1 * norm2)
 
-    def build_vector_index(self):
-        """构建向量索引"""
-        print("正在构建 SQLite 向量索引...")
-        start_time = time.time()
-
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        # 性能优化: 启用SQLite WAL模式和性能调优
-        cursor.execute("PRAGMA journal_mode=WAL")  # WAL模式提升并发性能
-        cursor.execute("PRAGMA synchronous=NORMAL")  # 减少fsync调用
-        cursor.execute("PRAGMA cache_size=-64000")  # 64MB缓存
-        cursor.execute("PRAGMA temp_store=MEMORY")  # 临时表存储在内存中
-
-        # 删除现有表
-        cursor.execute("DROP TABLE IF EXISTS metadata")
-        cursor.execute("DROP TABLE IF EXISTS files")
-        cursor.execute("DROP TABLE IF EXISTS classes")
-        cursor.execute("DROP TABLE IF EXISTS functions")
-        cursor.execute("DROP TABLE IF EXISTS units")
-        cursor.execute("DROP TABLE IF EXISTS keywords")
-        cursor.execute("DROP TABLE IF EXISTS vocabulary")
-        cursor.execute("DROP TABLE IF EXISTS class_vectors")
-        cursor.execute("DROP TABLE IF EXISTS function_vectors")
-
-        # 创建表
+    def _create_tables(self, cursor):
+        """创建所有数据库表（辅助方法）"""
         cursor.execute("""
-            CREATE TABLE metadata (
+            CREATE TABLE IF NOT EXISTS metadata (
                 hash TEXT PRIMARY KEY,
                 timestamp REAL,
                 total_files INTEGER,
@@ -306,17 +345,15 @@ class SQLiteVectorKnowledgeBase:
                 vector_size INTEGER
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE vocabulary (
+            CREATE TABLE IF NOT EXISTS vocabulary (
                 id INTEGER PRIMARY KEY,
                 word TEXT UNIQUE,
                 idf_weight REAL
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE files (
+            CREATE TABLE IF NOT EXISTS files (
                 full_path TEXT PRIMARY KEY,
                 path TEXT,
                 extension TEXT,
@@ -329,9 +366,8 @@ class SQLiteVectorKnowledgeBase:
                 description TEXT
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE classes (
+            CREATE TABLE IF NOT EXISTS classes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name_lower TEXT,
                 name TEXT,
@@ -344,9 +380,8 @@ class SQLiteVectorKnowledgeBase:
                 FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE functions (
+            CREATE TABLE IF NOT EXISTS functions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name_lower TEXT,
                 name TEXT,
@@ -358,9 +393,8 @@ class SQLiteVectorKnowledgeBase:
                 FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE units (
+            CREATE TABLE IF NOT EXISTS units (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name_lower TEXT,
                 name TEXT,
@@ -369,9 +403,8 @@ class SQLiteVectorKnowledgeBase:
                 FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
-
         cursor.execute("""
-            CREATE TABLE keywords (
+            CREATE TABLE IF NOT EXISTS keywords (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 keyword_lower TEXT,
                 keyword TEXT,
@@ -379,12 +412,63 @@ class SQLiteVectorKnowledgeBase:
                 FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
         """)
-
         # 创建索引
-        cursor.execute("CREATE INDEX idx_classes_name_lower ON classes(name_lower)")
-        cursor.execute("CREATE INDEX idx_functions_name_lower ON functions(name_lower)")
-        cursor.execute("CREATE INDEX idx_units_name_lower ON units(name_lower)")
-        cursor.execute("CREATE INDEX idx_keywords_keyword_lower ON keywords(keyword_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name_lower ON classes(name_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_functions_name_lower ON functions(name_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_units_name_lower ON units(name_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(keyword_lower)")
+
+    def build_vector_index(self, incremental: bool = False):
+        """
+        构建向量索引
+        
+        Args:
+            incremental: 是否使用增量模式（保留现有向量，只计算新增/变化的）
+        """
+        print("正在构建 SQLite 向量索引...")
+        start_time = time.time()
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 性能优化: 启用SQLite WAL模式和性能调优
+        cursor.execute("PRAGMA journal_mode=WAL")  # WAL模式提升并发性能
+        cursor.execute("PRAGMA synchronous=NORMAL")  # 减少fsync调用
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB缓存
+        cursor.execute("PRAGMA temp_store=MEMORY")  # 临时表存储在内存中
+
+        if incremental:
+            # 增量模式：检查表是否存在
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+            if not cursor.fetchone():
+                # 表不存在，创建表后完整构建
+                self._create_tables(cursor)
+            else:
+                # 表存在，清空数据但保留结构
+                cursor.execute("DELETE FROM files")
+                cursor.execute("DELETE FROM classes")
+                cursor.execute("DELETE FROM functions")
+                cursor.execute("DELETE FROM units")
+                cursor.execute("DELETE FROM keywords")
+                cursor.execute("DELETE FROM vocabulary")
+        else:
+            # 完整模式：删除现有表并重建
+            cursor.execute("DROP TABLE IF EXISTS metadata")
+            cursor.execute("DROP TABLE IF EXISTS files")
+            cursor.execute("DROP TABLE IF EXISTS classes")
+            cursor.execute("DROP TABLE IF EXISTS functions")
+            cursor.execute("DROP TABLE IF EXISTS units")
+            cursor.execute("DROP TABLE IF EXISTS keywords")
+            cursor.execute("DROP TABLE IF EXISTS vocabulary")
+            cursor.execute("DROP TABLE IF EXISTS class_vectors")
+            cursor.execute("DROP TABLE IF EXISTS function_vectors")
+            self._create_tables(cursor)
+            
+            # 完整模式需要创建索引
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name_lower ON classes(name_lower)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_functions_name_lower ON functions(name_lower)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_units_name_lower ON units(name_lower)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(keyword_lower)")
 
         # 加载原始索引
         with open(self.source_index_file, 'r', encoding='utf-8') as f:
@@ -504,7 +588,7 @@ class SQLiteVectorKnowledgeBase:
         
         print(f"  文件: {len(files_data)}, 单元: {len(units_data)}, 关键词: {len(keywords_data)}")
         
-        # 第二阶段：并行计算向量
+        # 第二阶段：并行计算向量（支持增量构建）
         print("第二阶段: 并行计算向量...")
         
         from concurrent.futures import ProcessPoolExecutor
@@ -513,6 +597,9 @@ class SQLiteVectorKnowledgeBase:
         vocab = self.vocabulary
         idf_weights = self.idf_weights
         vector_size = len(vocab)
+        
+        # 加载现有向量（用于增量构建）
+        existing_class_vectors, existing_func_vectors = self._load_existing_vectors()
         
         # 准备需要计算向量的项
         class_items = []  # (cls, full_path, file_path)
@@ -523,21 +610,40 @@ class SQLiteVectorKnowledgeBase:
             full_path = file_info.get('full_path', file_path)
             
             for cls in file_info.get('classes', []):
-                type_kind = cls.get('type_kind', 'class')
-                user_desc = cls.get('description', '')
-                if user_desc:
-                    class_desc = f"{type_kind.capitalize()} {cls['name']}: {user_desc}"
-                else:
-                    class_desc = f"{type_kind.capitalize()} {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
-                class_items.append((cls, full_path, class_desc))
+                # 增量构建：检查向量是否已存在
+                key = (full_path, cls['name'])
+                if key not in existing_class_vectors:
+                    type_kind = cls.get('type_kind', 'class')
+                    user_desc = cls.get('description', '')
+                    if user_desc:
+                        class_desc = f"{type_kind.capitalize()} {cls['name']}: {user_desc}"
+                    else:
+                        class_desc = f"{type_kind.capitalize()} {cls['name']} inherits from {cls['base_class']} at line {cls['line']} in {file_path}"
+                    class_items.append((cls, full_path, class_desc))
             
             for func in file_info.get('functions', []):
-                user_desc = func.get('description', '')
-                if user_desc:
-                    func_desc = f"{func.get('type', 'function')} {func['name']}: {user_desc}"
-                else:
-                    func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
-                func_items.append((func, full_path, func_desc))
+                # 增量构建：检查向量是否已存在
+                key = (full_path, func['name'])
+                if key not in existing_func_vectors:
+                    user_desc = func.get('description', '')
+                    if user_desc:
+                        func_desc = f"{func.get('type', 'function')} {func['name']}: {user_desc}"
+                    else:
+                        func_desc = f"{func.get('type', 'function')} {func['name']} at line {func['line']} in {file_path}"
+                    func_items.append((func, full_path, func_desc))
+        
+        # 报告向量计算情况
+        total_classes = sum(len(f.get('classes', [])) for f in deduped_files)
+        total_funcs = sum(len(f.get('functions', [])) for f in deduped_files)
+        
+        if len(class_items) == 0 and len(func_items) == 0:
+            print(f"  所有向量已存在，跳过向量计算!")
+            print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
+            # 仍然需要插入文件、单元、关键词数据
+            pass
+        else:
+            print(f"  需要计算向量: {len(class_items)} 类 (新增), {len(func_items)} 函数 (新增)")
+            print(f"  复用向量: {total_classes - len(class_items)} 类, {total_funcs - len(func_items)} 函数")
         
         print(f"  需要计算向量: {len(class_items)} 类, {len(func_items)} 函数")
         
