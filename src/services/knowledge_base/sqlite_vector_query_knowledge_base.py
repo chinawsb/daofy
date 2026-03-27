@@ -87,7 +87,7 @@ class SQLiteVectorKnowledgeBase:
 
                 if cached_hash != current_hash:
                     print("缓存已过期,重新构建索引...")
-                    self.build_vector_index(incremental=False)
+                    self.build_vector_index(incremental=True)
                 else:
                     print("使用缓存的索引 (SQLite 向量扩展模式)")
                     self.load_vocabulary()
@@ -636,16 +636,44 @@ class SQLiteVectorKnowledgeBase:
         total_classes = sum(len(f.get('classes', [])) for f in deduped_files)
         total_funcs = sum(len(f.get('functions', [])) for f in deduped_files)
         
+        # 如果增量模式且所有向量已存在，跳过向量计算
+        if incremental and len(class_items) == 0 and len(func_items) == 0:
+            print(f"  所有向量已存在，跳过向量计算!")
+            print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
+            
+            # 增量模式：只更新文件、单元、关键词数据，不重新插入类/函数
+            print("正在更新文件数据...")
+            cursor.executemany("""
+                INSERT OR REPLACE INTO files (
+                    full_path, path, extension, size, line_count,
+                    hash, last_modified, units, uses, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, files_data)
+            print("  文件数据更新完成")
+            
+            # 更新元数据
+            cursor.execute("""
+                UPDATE metadata SET hash = ?, timestamp = ?, total_files = ?, total_lines = ?, vector_size = ?
+            """, (
+                self.get_index_hash(),
+                time.time(),
+                source_index['statistics']['total_files'],
+                source_index['statistics']['total_lines'],
+                len(self.vocabulary)
+            ))
+            conn.commit()
+            
+            elapsed = time.time() - start_time
+            print(f"增量索引构建完成! 耗时: {elapsed*1000:.2f}ms")
+            return
+            
         if len(class_items) == 0 and len(func_items) == 0:
             print(f"  所有向量已存在，跳过向量计算!")
             print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
             # 仍然需要插入文件、单元、关键词数据
-            pass
         else:
             print(f"  需要计算向量: {len(class_items)} 类 (新增), {len(func_items)} 函数 (新增)")
             print(f"  复用向量: {total_classes - len(class_items)} 类, {total_funcs - len(func_items)} 函数")
-        
-        print(f"  需要计算向量: {len(class_items)} 类, {len(func_items)} 函数")
         
         # 动态计算worker数和chunksize
         # 目标：减少IPC开销，每个chunk处理更多数据
