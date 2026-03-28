@@ -14,11 +14,20 @@ logger = get_logger(__name__)
 # 全局配置管理器实例
 _config_manager: Optional[ConfigManager] = None
 
+# 全局第三方库服务实例
+_thirdparty_kb_service = None
+
 
 def set_config_manager(manager: ConfigManager):
     """设置配置管理器实例"""
     global _config_manager
     _config_manager = manager
+
+
+def set_thirdparty_kb_service(service):
+    """设置第三方库知识库服务实例"""
+    global _thirdparty_kb_service
+    _thirdparty_kb_service = service
 
 
 async def check_environment() -> Dict[str, Any]:
@@ -63,11 +72,20 @@ async def check_environment() -> Dict[str, Any]:
 
         logger.info(f"环境检查完成: {available_count}/{len(compilers)} 个编译器可用")
 
+        # 获取第三方库路径
+        thirdparty_paths = []
+        try:
+            if _thirdparty_kb_service:
+                thirdparty_paths = _thirdparty_kb_service.get_library_paths()
+        except Exception as e:
+            logger.warning(f"获取第三方库路径失败: {e}")
+
         return {
             "status": status,
             "message": f"共 {len(compilers)} 个编译器配置,{available_count} 个可用",
             "compilers": compiler_infos,
-            "default_compiler": default_compiler.name if default_compiler else None
+            "default_compiler": default_compiler.name if default_compiler else None,
+            "thirdparty_paths": thirdparty_paths
         }
 
     except Exception as e:

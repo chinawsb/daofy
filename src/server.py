@@ -43,7 +43,7 @@ from src.tools.compile_project import set_compiler_service as sp1, compile_proje
 from src.tools.compile_file import set_compiler_service as sp2, compile_file
 from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
 from src.tools.config import set_compiler_config, set_config_manager, search_compilers
-from src.tools.environment import check_environment, set_config_manager as scm
+from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
 from src.tools.knowledge_base import (
     set_knowledge_base_service,
     set_delphi_kb_service,
@@ -103,6 +103,7 @@ async def run_server():
     sp2(compiler_service)
     sp3(compiler_service)
     scm(config_manager)
+    stks(thirdparty_kb_service)
     set_knowledge_base_service(kb_service)
     set_knowledge_base_services(kb_service, thirdparty_kb_service)
     logger.info("工具服务实例设置完成")
@@ -207,7 +208,7 @@ async def run_server():
             ),
             Tool(
                 name="check_environment",
-                description="【环境检查】检查 Delphi 编译器环境状态。在编译失败或需要确认编译器是否正确配置时使用。可以查看当前配置的编译器版本和路径。",
+                description="【环境检查】检查 Delphi 编译器环境状态。在编译失败或需要确认编译器是否正确配置时使用。可以查看当前配置的编译器版本、路径和第三方库路径列表。",
                 inputSchema={
                     "type": "object",
                     "properties": {},
@@ -282,76 +283,6 @@ async def run_server():
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
                     },
                     "required": ["project_path"]
-                }
-            ),
-            Tool(
-                name="get_thirdparty_paths",
-                description="获取项目的三方库路径 (从 .dproj 文件中提取)",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"}
-                    },
-                    "required": ["project_path"]
-                }
-            ),
-            # 全局第三方库知识库工具 - 保留 build_thirdparty_knowledge_base（通过统一接口）
-            Tool(
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "record_name": {"type": "string", "description": "record 类型名称"}
-                    },
-                    "required": ["record_name"]
-                }
-            ),
-            # 帮助文档知识库工具 - 通过 build_knowledge_base 统一接口
-            Tool(
-                name="get_help_kb_stats",
-                description="获取帮助文档知识库统计信息",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要扫描的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
-                        "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
-                        "source_dir": {"type": "string", "description": "外部源目录路径（默认使用 kb_dir/extracted）"}
-                    },
-                    "required": []
-                }
-            ),
-            Tool(
-                name="build_help_kb_index",
-                description="构建帮助文档向量索引（分步骤构建第3步）",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "help_names": {"type": "array", "items": {"type": "string"}, "description": "要构建的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
-                        "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
-                        "source_dir": {"type": "string", "description": "外部源目录路径（默认使用 kb_dir/extracted）"},
-                        "async_mode": {"type": "boolean", "default": True, "description": "是否使用异步模式"}
-                    },
-                    "required": []
-                }
-            ),
-            Tool(
-                name="search_help",
-                description="【文档查询】搜索 Delphi 官方帮助文档。当需要了解VCL/FMX类的官方用法、查看方法参数说明、查找示例代码时使用。返回帮助文档中的相关内容。",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "搜索查询，如 'TStringList', 'Create 创建对象'"},
-                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
-                    },
-                    "required": ["query"]
-                }
-            ),
-            Tool(
-                name="get_help_kb_stats",
-                description="获取帮助文档知识库统计信息",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
                 }
             ),
             # 项目依赖分析工具
@@ -573,15 +504,6 @@ async def run_server():
             # 项目知识库工具
             elif name == "init_project_knowledge_base":
                 result = await project_kb_tools.init_project_knowledge_base(arguments)
-            elif name == "get_thirdparty_paths":
-                result = await project_kb_tools.get_thirdparty_paths(arguments)
-            # 帮助文档知识库工具
-            elif name == "build_help_knowledge_base":
-                result = await help_kb_tools.build_help_knowledge_base(arguments)
-            elif name == "search_help":
-                result = await help_kb_tools.search_help(arguments)
-            elif name == "get_help_kb_stats":
-                result = await help_kb_tools.get_help_kb_stats(arguments)
             # 异步任务工具
             elif name == "start_async_task":
                 result = await async_tools.start_async_task(arguments)
