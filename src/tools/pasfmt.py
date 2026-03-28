@@ -460,12 +460,10 @@ async def format_code(
             else:
                 formatted_content = stdout
             
-            return {
-                "status": "success",
-                "formatted": True,
-                "content": formatted_content,
-                "message": "代码格式化成功"
-            }
+            return CallToolResult(
+                content=[{"type": "text", "text": formatted_content}],
+                isError=False
+            )
         else:
             # 失败
             error_msg = f"pasfmt 执行失败 (退出码: {result.returncode})"
@@ -474,12 +472,10 @@ async def format_code(
                 error_msg += f": {stderr}"
             
             logger.error(error_msg)
-            return {
-                "status": "failed",
-                "error_code": "PASFMT_EXECUTION_FAILED",
-                "error_message": error_msg,
-                "formatted": False
-            }
+            return CallToolResult(
+                content=[{"type": "text", "text": error_msg}],
+                isError=True
+            )
             
     except subprocess.TimeoutExpired:
         # 清理临时文件
@@ -488,12 +484,10 @@ async def format_code(
         
         error_msg = "pasfmt 执行超时"
         logger.error(error_msg)
-        return {
-            "status": "failed",
-            "error_code": "TIMEOUT",
-            "error_message": error_msg,
-            "formatted": False
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": error_msg}],
+            isError=True
+        )
     except Exception as e:
         # 清理临时文件
         if os.path.exists(temp_input):
@@ -501,12 +495,10 @@ async def format_code(
         
         error_msg = f"执行 pasfmt 时发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "status": "failed",
-            "error_code": "EXECUTION_ERROR",
-            "error_message": error_msg,
-            "formatted": False
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": error_msg}],
+            isError=True
+        )
 
 
 def _download_file(url: str, destination: str, source_name: str = "源") -> Tuple[bool, str]:
