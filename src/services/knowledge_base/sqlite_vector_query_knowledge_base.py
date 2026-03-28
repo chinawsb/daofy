@@ -500,11 +500,34 @@ class SQLiteVectorKnowledgeBase:
                 self._create_tables(cursor)
                 incremental = False  # 降级为完整构建
             else:
-                # 增量模式：只清空 files/keywords/units，保留 classes/functions/vocabulary
+                # 增量模式：加载源索引获取当前文件列表
+                with open(self.source_index_file, 'r', encoding='utf-8') as f:
+                    source_index = json.load(f)
+                
+                current_files = {f['full_path'] for f in source_index['files']}
+                
+                # 获取数据库中现有的文件列表
+                cursor.execute("SELECT full_path FROM files")
+                existing_files = {row[0] for row in cursor.fetchall()}
+                
+                # 找出已删除的文件
+                deleted_files = existing_files - current_files
+                
+                if deleted_files:
+                    print(f"  发现 {len(deleted_files)} 个已删除文件，清理关联数据...")
+                    # 删除已不存在文件的向量数据
+                    for del_file in deleted_files:
+                        cursor.execute("DELETE FROM classes WHERE file_path=?", (del_file,))
+                        cursor.execute("DELETE FROM functions WHERE file_path=?", (del_file,))
+                    cursor.execute("DELETE FROM files WHERE full_path IN ({})".format(
+                        ','.join('?' * len(deleted_files))
+                    ), tuple(deleted_files))
+                    print(f"  清理完成：删除 {len(deleted_files)} 个文件的向量数据")
+                
+                # 只清空 files/keywords/units，重新插入
                 cursor.execute("DELETE FROM files")
                 cursor.execute("DELETE FROM keywords")
                 cursor.execute("DELETE FROM units")
-                # 保留 classes, functions, vocabulary 用于增量更新
                 print("  增量模式：保留现有向量和词汇表")
         else:
             # 完整模式：删除现有表并重建
