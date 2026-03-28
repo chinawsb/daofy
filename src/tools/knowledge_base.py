@@ -468,7 +468,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     if "delphi_classes" in results and results["delphi_classes"]:
         output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
-        for r in results["delphi_classes"][:3]:
+        for r in results["delphi_classes"][:top_k]:
             output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
         output += "\n"
         has_results = True
