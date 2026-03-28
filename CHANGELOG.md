@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.03.28] - 2026-03-28
+
+### Added
+
+#### 路径宏展开工具
+- 新增 `src/utils/delphi_env.py` 工具模块
+- 支持 `$(BDS)`, `$(BDSCatalogRepository)`, `$(BDSUSERDIR)` 等路径宏展开
+- 新增 `get_catalog_repository_paths()` 函数获取 GetIt 组件源码路径
+- 新增 `resolve_delphi_search_paths()` 函数整合所有搜索路径
+
+#### 第三方库路径优化
+- 使用最新安装的 Delphi 版本（23.0 而非 22.0）
+- 正确过滤 Delphi 系统目录（Imports, BPL, DCP 等）
+- 添加 Studio Library 注册表路径支持
+- 自动添加 GetIt CatalogRepository 中的组件源码路径
+
+### Changed
+
+#### 知识库更新
+- 重建 Delphi 知识库：3207 文件，53943 类，442206 函数
+- 重建第三方库知识库：19 路径，264 文件，1584 类，20384 函数
+
+### Fixed
+
+#### 工具返回类型统一
+- 修复 `search_compilers` 返回类型为 CallToolResult
+- 修复 `get_compiler_args` 返回类型为 CallToolResult
+- 修复 `get_coding_rules` 返回类型为 CallToolResult
+- 修复 `check_pasfmt_installation` 返回类型为 CallToolResult
+- 修复 `format_code` 返回类型为 CallToolResult
+
+#### 搜索结果显示问题
+- 修复所有搜索工具硬编码只显示 3 个结果的问题
+- 修复 `knowledge_base.py` 中 `[:3]` 限制为使用 `top_k` 参数
+
+#### 项目依赖分析
+- 修复 `analyze_project_dependencies` 除零错误（当项目单元数为0时）
+- 增强注册表路径宏展开支持
+- 支持 GetIt 组件路径解析
+
+#### 知识库自动加载
+- 修复 `read_source_file` 知识库未自动加载问题
+- 添加 KB 实例为 None 时的自动加载逻辑
+
+### Tested
+
+- 所有 pytest 测试通过 (11/11)
+- 第三方库知识库工具测试通过
+- 帮助文档知识库工具测试通过
+- 项目依赖分析工具测试通过
+
+---
+
 ## [2026.03.26] - 2026-03-26
 
 ### Added
