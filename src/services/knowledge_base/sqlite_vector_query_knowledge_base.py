@@ -8,6 +8,7 @@ Delphi 知识库查询接口 (SQLite + 内置向量扩展)
 import json
 import sqlite3
 import math
+import struct
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
@@ -251,7 +252,7 @@ class SQLiteVectorKnowledgeBase:
         """并行计算类向量"""
         import re
         from collections import Counter
-        import json
+        import struct
         
         cls, full_path, desc = item
         
@@ -271,6 +272,9 @@ class SQLiteVectorKnowledgeBase:
                 idf = idf_weights.get(word, 1.0)
                 vector[vocab[word]] = tf * idf
         
+        # 打包为二进制格式
+        packed = SQLiteVectorKnowledgeBase._pack_vector_static(vector)
+        
         return (
             cls['name'].lower(),
             cls['name'],
@@ -279,15 +283,28 @@ class SQLiteVectorKnowledgeBase:
             cls['line'],
             full_path,
             desc,
-            json.dumps(vector)
+            packed
         )
+    
+    @staticmethod
+    def _pack_vector_static(vec: Dict[int, float]) -> bytes:
+        """静态方法：打包向量为二进制"""
+        if not vec:
+            return struct.pack('I', 0)
+        
+        items = sorted(vec.items())
+        count = len(items)
+        packed = struct.pack('I', count)
+        for word_id, weight in items:
+            packed += struct.pack('If', word_id, weight)
+        return packed
     
     @staticmethod
     def compute_func_vector(item: tuple, vocab: dict, idf_weights: dict) -> tuple:
         """并行计算函数向量"""
         import re
         from collections import Counter
-        import json
+        import struct
         
         func, full_path, desc = item
         
@@ -307,6 +324,9 @@ class SQLiteVectorKnowledgeBase:
                 idf = idf_weights.get(word, 1.0)
                 vector[vocab[word]] = tf * idf
         
+        # 打包为二进制格式
+        packed = SQLiteVectorKnowledgeBase._pack_vector_static(vector)
+        
         return (
             func['name'].lower(),
             func['name'],
@@ -314,7 +334,7 @@ class SQLiteVectorKnowledgeBase:
             func.get('type', 'function'),
             full_path,
             desc,
-            json.dumps(vector)
+            packed
         )
 
     def cosine_similarity(self, vec1: Dict[int, float], vec2: Dict[int, float]) -> float:
@@ -333,6 +353,41 @@ class SQLiteVectorKnowledgeBase:
             return 0.0
 
         return dot_product / (norm1 * norm2)
+
+    def _pack_vector(self, vec: Dict[int, float]) -> bytes:
+        """
+        将稀疏向量打包为二进制格式
+        格式: [count:4bytes][id1:4bytes][val1:4bytes][id2:4bytes][val2:4bytes]...
+        """
+        if not vec:
+            return struct.pack('I', 0)
+        
+        items = sorted(vec.items())
+        count = len(items)
+        fmt = f'I{count}f'  # count个 (id, float) 对
+        packed = struct.pack('I', count)
+        for word_id, weight in items:
+            packed += struct.pack('If', word_id, weight)
+        return packed
+
+    def _unpack_vector(self, data: bytes) -> Dict[int, float]:
+        """
+        从二进制格式解包稀疏向量
+        """
+        if not data or len(data) < 4:
+            return {}
+        
+        count = struct.unpack('I', data[:4])[0]
+        if count == 0:
+            return {}
+        
+        vec = {}
+        offset = 4
+        for _ in range(count):
+            word_id, weight = struct.unpack('If', data[offset:offset+8])
+            vec[word_id] = weight
+            offset += 8
+        return vec
 
     def _create_tables(self, cursor):
         """创建所有数据库表（辅助方法）"""
@@ -852,10 +907,8 @@ class SQLiteVectorKnowledgeBase:
 
         results = []
         for row in cursor.fetchall():
-            stored_vector = json.loads(row['vector'])
-            # 转换键为整数
-            stored_vector_int = {int(k): v for k, v in stored_vector.items()}
-            similarity = self.cosine_similarity(query_vector, stored_vector_int)
+            stored_vector = self._unpack_vector(row['vector'])
+            similarity = self.cosine_similarity(query_vector, stored_vector)
             if similarity > 0:
                 results.append((row['name'], similarity))
 
@@ -873,10 +926,8 @@ class SQLiteVectorKnowledgeBase:
 
         results = []
         for row in cursor.fetchall():
-            stored_vector = json.loads(row['vector'])
-            # 转换键为整数
-            stored_vector_int = {int(k): v for k, v in stored_vector.items()}
-            similarity = self.cosine_similarity(query_vector, stored_vector_int)
+            stored_vector = self._unpack_vector(row['vector'])
+            similarity = self.cosine_similarity(query_vector, stored_vector)
             if similarity > 0:
                 results.append((row['name'], similarity))
 
