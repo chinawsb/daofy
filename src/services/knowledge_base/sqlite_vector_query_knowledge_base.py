@@ -574,37 +574,51 @@ class SQLiteVectorKnowledgeBase:
         # 增量模式：加载现有词汇表
         existing_vocab = {}
         existing_idf = {}
+        vocab_loaded = False
         if incremental:
             try:
                 cursor.execute("SELECT word, id, idf_weight FROM vocabulary")
-                for row in cursor.fetchall():
-                    existing_vocab[row['word']] = row['id']
-                    existing_idf[row['word']] = row['idf_weight']
-                print(f"  已加载现有词汇: {len(existing_vocab)}")
+                rows = cursor.fetchall()
+                if rows:
+                    for row in rows:
+                        existing_vocab[row['word']] = row['id']
+                        existing_idf[row['word']] = row['idf_weight']
+                    print(f"  已加载现有词汇: {len(existing_vocab)}")
+                    vocab_loaded = True
             except:
                 pass
         
-        # 构建新词汇表
-        new_vocab, new_idf = self.build_vocabulary(all_documents)
+        # 检查是否需要重建词汇表（当源文件变化时需要重建）
+        need_rebuild_vocab = not vocab_loaded or not existing_vocab
         
-        # 合并词汇表
-        if incremental and existing_vocab:
-            # 合并：保留现有ID + 添加新词汇
-            max_id = max(existing_vocab.values()) if existing_vocab else 0
-            next_id = max_id + 1
-            
-            for word, word_id in new_vocab.items():
-                if word not in existing_vocab:
-                    existing_vocab[word] = next_id
-                    existing_idf[word] = new_idf[word]
-                    next_id += 1
-            
+        if not need_rebuild_vocab and incremental:
+            # 词汇表已存在且完整，直接使用
             self.vocabulary = existing_vocab
             self.idf_weights = existing_idf
-            print(f"  合并后词汇: {len(self.vocabulary)} (新增 {len(new_vocab)})")
+            print(f"  使用现有词汇表: {len(self.vocabulary)}")
         else:
-            self.vocabulary = new_vocab
-            self.idf_weights = new_idf
+            # 构建新词汇表
+            new_vocab, new_idf = self.build_vocabulary(all_documents)
+            
+            # 合并词汇表（只在需要添加新词时）
+            if incremental and existing_vocab:
+                max_id = max(existing_vocab.values()) if existing_vocab else 0
+                next_id = max_id + 1
+                new_count = 0
+                
+                for word, word_id in new_vocab.items():
+                    if word not in existing_vocab:
+                        existing_vocab[word] = next_id
+                        existing_idf[word] = new_idf[word]
+                        next_id += 1
+                        new_count += 1
+                
+                self.vocabulary = existing_vocab
+                self.idf_weights = existing_idf
+                print(f"  词汇表: 现有 {len(existing_vocab)}, 新增 {new_count}, 总计 {len(self.vocabulary)}")
+            else:
+                self.vocabulary = new_vocab
+                self.idf_weights = new_idf
 
         # 保存词汇表到数据库 (批量插入)
         print("正在保存词汇表...")
