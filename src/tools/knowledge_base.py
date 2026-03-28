@@ -362,3 +362,276 @@ async def list_delphi_versions(arguments: Any) -> CallToolResult:
             content=[{"type": "text", "text": f"获取 Delphi 版本时出错: {str(e)}"}],
             isError=True
         )
+
+
+# 统一的知识库服务实例
+_delphi_kb_service = None
+_project_kb_service = None
+_thirdparty_kb_service = None
+_help_kb_service = None
+
+
+def set_delphi_kb_service(service):
+    """设置 Delphi 知识库服务实例"""
+    global _delphi_kb_service
+    _delphi_kb_service = service
+
+
+def set_project_kb_service(service):
+    """设置项目知识库服务实例"""
+    global _project_kb_service
+    _project_kb_service = service
+
+
+def set_thirdparty_kb_service(service):
+    """设置第三方库知识库服务实例"""
+    global _thirdparty_kb_service
+    _thirdparty_kb_service = service
+
+
+def set_help_kb_service(service):
+    """设置帮助知识库服务实例"""
+    global _help_kb_service
+    _help_kb_service = service
+
+
+async def search_knowledge(arguments: Any) -> CallToolResult:
+    """
+    统一搜索知识库
+    
+    参数:
+    - kb_type: "all"|"delphi"|"project"|"thirdparty"|"help" 知识库类型
+    - search_type: "class"|"function"|"semantic"|"record"|"filename" 搜索类型
+    - query: 搜索关键词
+    - project_path: 项目路径 (仅project类型需要)
+    - top_k: 返回数量
+    """
+    kb_type = arguments.get("kb_type", "all")
+    search_type = arguments.get("search_type", "semantic")
+    query = arguments.get("query", "")
+    project_path = arguments.get("project_path")
+    top_k = arguments.get("top_k", 10)
+    
+    if not query:
+        return CallToolResult(
+            content=[{"type": "text", "text": "请提供搜索关键词 query"}],
+            isError=True
+        )
+    
+    results = {}
+    
+    # 确定要搜索的知识库
+    kb_types = []
+    if kb_type == "all":
+        kb_types = ["delphi", "project", "thirdparty", "help"]
+    else:
+        kb_types = [kb_type]
+    
+    # 搜索各知识库
+    for kb in kb_types:
+        try:
+            if kb == "delphi" and _delphi_kb_service:
+                if search_type in ["class", "all"]:
+                    results["delphi_classes"] = _delphi_kb_service.search_by_class_name(query)[:top_k]
+                if search_type in ["function", "all"]:
+                    results["delphi_functions"] = _delphi_kb_service.search_by_function_name(query)[:top_k]
+                if search_type in ["semantic", "all"]:
+                    results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
+                    results["delphi_semantic_functions"] = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
+                    
+            elif kb == "project" and _project_kb_service:
+                if search_type in ["class", "all"]:
+                    results["project_classes"] = _project_kb_service.search_by_class_name(query)[:top_k]
+                if search_type in ["function", "all"]:
+                    results["project_functions"] = _project_kb_service.search_by_function_name(query)[:top_k]
+                if search_type in ["semantic", "all"]:
+                    results["project_semantic"] = _project_kb_service.semantic_search(query, top_k=top_k)
+                    
+            elif kb == "thirdparty" and _thirdparty_kb_service:
+                if search_type in ["class", "all"]:
+                    results["thirdparty_classes"] = _thirdparty_kb_service.search_by_class_name(query)[:top_k]
+                if search_type in ["function", "all"]:
+                    results["thirdparty_functions"] = _thirdparty_kb_service.search_by_function_name(query)[:top_k]
+                if search_type in ["semantic", "all"]:
+                    results["thirdparty_semantic"] = _thirdparty_kb_service.semantic_search(query, top_k=top_k)
+                    
+            elif kb == "help" and _help_kb_service:
+                if search_type in ["semantic", "all"]:
+                    results["help_results"] = _help_kb_service.search_by_keyword(query)[:top_k]
+        except Exception as e:
+            results[f"{kb}_error"] = str(e)
+    
+    # 格式化输出
+    output = f"搜索 '{query}' (类型: {search_type}, 知识库: {kb_type}):\n\n"
+    
+    has_results = False
+    
+    if "delphi_classes" in results and results["delphi_classes"]:
+        output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
+        for r in results["delphi_classes"][:3]:
+            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+        output += "\n"
+        has_results = True
+        
+    if "delphi_functions" in results and results["delphi_functions"]:
+        output += f"Delphi 函数 ({len(results['delphi_functions'])}):\n"
+        for r in results["delphi_functions"][:3]:
+            output += f"  - {r.get('function', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+        output += "\n"
+        has_results = True
+        
+    if "project_classes" in results and results["project_classes"]:
+        output += f"项目类 ({len(results['project_classes'])}):\n"
+        for r in results["project_classes"][:3]:
+            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+        output += "\n"
+        has_results = True
+        
+    if "thirdparty_classes" in results and results["thirdparty_classes"]:
+        output += f"第三方库类 ({len(results['thirdparty_classes'])}):\n"
+        for r in results["thirdparty_classes"][:3]:
+            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+        output += "\n"
+        has_results = True
+        
+    if "help_results" in results and results["help_results"]:
+        output += f"帮助文档 ({len(results['help_results'])}):\n"
+        for r in results["help_results"][:3]:
+            output += f"  - {r.get('title', 'N/A')[:50]}\n"
+        output += "\n"
+        has_results = True
+    
+    if not has_results:
+        output += "未找到相关内容\n"
+    
+    return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
+    """
+    统一构建知识库
+    
+    参数:
+    - kb_type: "delphi"|"project"|"thirdparty"|"help"|"all" 知识库类型，支持组合(如"delphi,project")
+    - project_path: 项目路径 (仅project类型需要)
+    - version: Delphi版本 (仅delphi/thirdparty需要)
+    - async_mode: 是否异步
+    - force_rebuild: 是否强制重建
+    """
+    kb_type = arguments.get("kb_type", "all")
+    project_path = arguments.get("project_path")
+    version = arguments.get("version")
+    async_mode = arguments.get("async_mode", True)
+    force_rebuild = arguments.get("force_rebuild", False)
+    
+    # 解析知识库类型
+    if kb_type == "all":
+        kb_types = ["delphi", "project", "thirdparty", "help"]
+    elif isinstance(kb_type, str):
+        kb_types = [k.strip() for k in kb_type.split(",")]
+    else:
+        kb_types = [kb_type]
+    
+    results = {}
+    
+    for kb in kb_types:
+        try:
+            if kb == "delphi" and _delphi_kb_service:
+                success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
+                results["delphi"] = "成功" if success else "失败"
+            elif kb == "project" and _project_kb_service and project_path:
+                success = _project_kb_service.build_project_knowledge_base(force_rebuild=force_rebuild)
+                results["project"] = "成功" if success else "失败"
+            elif kb == "thirdparty" and _thirdparty_kb_service:
+                success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
+                results["thirdparty"] = "成功" if success else "失败"
+            elif kb == "help" and _help_kb_service:
+                success = _help_kb_service.build_knowledge_base(force_rebuild=force_rebuild)
+                results["help"] = "成功" if success else "失败"
+        except Exception as e:
+            results[kb] = f"错误: {str(e)}"
+    
+    # 格式化输出
+    output = f"构建知识库 ({kb_type}):\n\n"
+    for kb, status in results.items():
+        output += f"- {kb}: {status}\n"
+    
+    return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
+    """
+    统一获取知识库统计信息
+    
+    参数:
+    - kb_type: "delphi"|"project"|"thirdparty"|"help"|"all"
+    - project_path: 项目路径 (仅project需要)
+    """
+    kb_type = arguments.get("kb_type", "all")
+    project_path = arguments.get("project_path")
+    
+    # 解析知识库类型
+    if kb_type == "all":
+        kb_types = ["delphi", "project", "thirdparty", "help"]
+    elif isinstance(kb_type, str):
+        kb_types = [k.strip() for k in kb_type.split(",")]
+    else:
+        kb_types = [kb_type]
+    
+    results = {}
+    
+    for kb in kb_types:
+        try:
+            if kb == "delphi" and _delphi_kb_service:
+                stats = _delphi_kb_service.get_statistics()
+                results["delphi"] = stats
+            elif kb == "project" and _project_kb_service:
+                stats = _project_kb_service.get_statistics()
+                results["project"] = stats
+            elif kb == "thirdparty" and _thirdparty_kb_service:
+                stats = _thirdparty_kb_service.get_statistics()
+                results["thirdparty"] = stats
+            elif kb == "help" and _help_kb_service:
+                stats = _help_kb_service.get_statistics()
+                results["help"] = stats
+        except Exception as e:
+            results[kb] = {"error": str(e)}
+    
+    # 格式化输出
+    output = f"知识库统计 ({kb_type}):\n\n"
+    
+    for kb, stats in results.items():
+        output += f"【{kb.upper()}】\n"
+        if "error" in stats:
+            output += f"  错误: {stats['error']}\n"
+        else:
+            output += f"  文件: {stats.get('total_documents', stats.get('files', 0))}\n"
+            output += f"  类: {stats.get('total_classes', stats.get('classes', 0))}\n"
+            output += f"  函数: {stats.get('total_functions', stats.get('functions', 0))}\n"
+            output += f"  数据库: {stats.get('database_size_mb', 0)} MB\n"
+        output += "\n"
+    
+    return CallToolResult(content=[{"type": "text", "text": output}])
+
+    try:
+        versions = kb_service.delphi_versions
+
+        if not versions:
+            return CallToolResult(
+                content=[{"type": "text", "text": "未检测到已安装的 Delphi 版本"}]
+            )
+
+        # 格式化结果
+        output = "已检测到的 Delphi 版本:\n\n"
+        for i, version in enumerate(versions, 1):
+            output += f"{i}. {version['name']} ({version['version']})\n"
+            output += f"   安装路径: {version['root_dir']}\n"
+            output += f"   源码目录: {version['source_dir']}\n\n"
+
+        return CallToolResult(content=[{"type": "text", "text": output}])
+
+    except Exception as e:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"获取 Delphi 版本时出错: {str(e)}"}],
+            isError=True
+        )

@@ -41,9 +41,24 @@ from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnow
 from src.tools.compile_project import set_compiler_service as sp1, compile_project
 from src.tools.compile_file import set_compiler_service as sp2, compile_file
 from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
-from src.tools.config import set_compiler_config, set_config_manager, detect_compilers, search_delphi_compilers
+from src.tools.config import set_compiler_config, set_config_manager, search_compilers
 from src.tools.environment import check_environment, set_config_manager as scm
-from src.tools.knowledge_base import set_knowledge_base_service, build_knowledge_base, search_class, search_function, semantic_search, get_knowledge_base_stats, list_delphi_versions
+from src.tools.knowledge_base import (
+    set_knowledge_base_service,
+    set_delphi_kb_service,
+    set_project_kb_service,
+    set_thirdparty_kb_service,
+    set_help_kb_service,
+    build_knowledge_base,
+    search_class,
+    search_function,
+    semantic_search,
+    get_knowledge_base_stats,
+    list_delphi_versions,
+    search_knowledge,
+    build_unified_knowledge_base,
+    get_unified_knowledge_stats
+)
 from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
 from src.tools import knowledge_base as kb_tools
 from src.tools import project_knowledge_base as project_kb_tools
@@ -179,21 +194,12 @@ async def run_server():
                 }
             ),
             Tool(
-                name="detect_compilers",
-                description="【环境检测】自动检测系统中已安装的 Delphi 编译器。当编译器未配置或需要查看可用编译器时使用。",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            ),
-            Tool(
-                name="search_delphi_compilers",
-                description="【编译器搜索】在指定路径搜索 Delphi 编译器。如果未指定路径，则搜索默认安装位置。",
+                name="search_compilers",
+                description="【编译器搜索】搜索 Delphi 编译器。不带参数时自动检测系统中的编译器，带 search_path 参数时在指定路径搜索。仅返回有效的编译器。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "search_path": {"type": "string", "description": "搜索路径，如 'C:\\Program Files (x86)\\Embarcadero\\Studio'"}
+                        "search_path": {"type": "string", "description": "搜索路径，如 'C:\\Program Files (x86)\\Embarcadero\\Studio'（可选）"}
                     },
                     "required": []
                 }
@@ -279,6 +285,49 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                    "required": []
+                }
+            ),
+            # 统一知识库工具 (推荐)
+            Tool(
+                name="search_knowledge",
+                description="【推荐】统一搜索知识库。支持同时搜索多个知识库和多种类型。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型: all(全部), delphi, project, thirdparty, help"},
+                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "record", "filename"], "default": "semantic", "description": "搜索类型"},
+                        "query": {"type": "string", "description": "搜索关键词"},
+                        "project_path": {"type": "string", "description": "项目路径 (仅project类型需要)"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回数量"}
+                    },
+                    "required": ["query"]
+                }
+            ),
+            Tool(
+                name="build_knowledge_base",
+                description="【推荐】统一构建知识库。支持同时构建多个知识库。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "kb_type": {"type": "string", "default": "all", "description": "知识库类型: all, delphi, project, thirdparty, help (可组合,如'delphi,project')"},
+                        "project_path": {"type": "string", "description": "项目路径 (仅project类型需要)"},
+                        "version": {"type": "string", "description": "Delphi版本 (仅delphi/thirdparty需要)"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="get_knowledge_base_stats",
+                description="【推荐】统一获取知识库统计信息。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型"},
+                        "project_path": {"type": "string", "description": "项目路径 (仅project需要)"}
+                    },
                     "required": []
                 }
             ),
@@ -729,10 +778,8 @@ async def run_server():
                 result = await get_compiler_args(**arguments)
             elif name == "set_compiler_config":
                 result = await set_compiler_config(**arguments)
-            elif name == "detect_compilers":
-                result = await detect_compilers()
-            elif name == "search_delphi_compilers":
-                result = await search_delphi_compilers(**arguments)
+            elif name == "search_compilers":
+                result = await search_compilers(**arguments)
             elif name == "check_environment":
                 result = await check_environment()
             elif name == "get_coding_rules":
@@ -746,9 +793,13 @@ async def run_server():
             elif name == "semantic_search":
                 result = await kb_tools.semantic_search(arguments)
             elif name == "get_knowledge_base_stats":
-                result = await kb_tools.get_knowledge_base_stats(arguments)
+                result = await kb_tools.get_unified_knowledge_stats(arguments)
             elif name == "list_delphi_versions":
                 result = await kb_tools.list_delphi_versions(arguments)
+            elif name == "search_knowledge":
+                result = await kb_tools.search_knowledge(arguments)
+            elif name == "build_knowledge_base":
+                result = await kb_tools.build_unified_knowledge_base(arguments)
             # 项目知识库工具
             elif name == "init_project_knowledge_base":
                 result = await project_kb_tools.init_project_knowledge_base(arguments)

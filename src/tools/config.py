@@ -128,67 +128,13 @@ async def get_compiler_list() -> Dict[str, Any]:
         }
 
 
-async def detect_compilers() -> Dict[str, Any]:
+async def search_compilers(search_path: Optional[str] = None) -> Dict[str, Any]:
     """
-    自动检测系统中可用的 Delphi 编译器（仅返回有效的）
-
-    Returns:
-        检测结果字典
+    搜索 Delphi 编译器
     
-    Note:
-        建议使用 check_environment 工具来验证编译器有效性并获取详细信息
-    """
-    logger.info("收到自动检测编译器请求")
-
-    if _config_manager is None:
-        logger.error("配置管理器未初始化")
-        return {
-            "success": False,
-            "message": "配置管理器未初始化",
-            "detected": []
-        }
-
-    try:
-        # 触发自动检测
-        _config_manager._auto_detect_compilers()
-        
-        # 获取检测到的编译器列表并验证有效性
-        compilers = _config_manager.get_all_compilers()
-        default_compiler = _config_manager.get_compiler()
-        
-        validator = Validator()
-
-        detected = []
-        for c in compilers:
-            is_valid, _ = validator.validate_compiler_path(c.path)
-            if is_valid:  # 只返回有效的编译器
-                detected.append({
-                    "name": c.name,
-                    "path": c.path,
-                    "version": c.version,
-                    "is_default": c.name == (default_compiler.name if default_compiler else None)
-                })
-
-        logger.info(f"自动检测完成: {len(detected)} 个有效编译器")
-        return {
-            "success": True,
-            "message": f"检测到 {len(detected)} 个有效的 Delphi 编译器",
-            "detected": detected
-        }
-
-    except Exception as e:
-        error_msg = f"自动检测过程发生异常: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {
-            "success": False,
-            "message": error_msg,
-            "detected": []
-        }
-
-
-async def search_delphi_compilers(search_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    在指定路径搜索 Delphi 编译器（仅返回有效的）
+    - 不带 search_path 参数：自动检测系统中的编译器
+    - 带 search_path 参数：在指定路径搜索编译器
+    仅返回有效的编译器
 
     Args:
         search_path: 搜索路径，默认搜索常见安装位置
@@ -199,6 +145,99 @@ async def search_delphi_compilers(search_path: Optional[str] = None) -> Dict[str
     Note:
         建议使用 check_environment 工具来验证编译器有效性并获取详细信息
     """
+    logger.info(f"收到搜索编译器请求: {search_path or '自动检测'}")
+
+    if _config_manager is None:
+        logger.error("配置管理器未初始化")
+        return {
+            "success": False,
+            "message": "配置管理器未初始化",
+            "compilers": []
+        }
+
+    try:
+        validator = Validator()
+        found_compilers = []
+
+        if search_path is None:
+            # 自动检测模式：检测系统中已配置的编译器
+            _config_manager._auto_detect_compilers()
+            compilers = _config_manager.get_all_compilers()
+            default_compiler = _config_manager.get_compiler()
+
+            for c in compilers:
+                is_valid, _ = validator.validate_compiler_path(c.path)
+                if is_valid:
+                    found_compilers.append({
+                        "name": c.name,
+                        "path": c.path,
+                        "version": c.version,
+                        "is_default": c.name == (default_compiler.name if default_compiler else None)
+                    })
+            
+            logger.info(f"自动检测完成: {len(found_compilers)} 个有效编译器")
+            return {
+                "success": True,
+                "message": f"检测到 {len(found_compilers)} 个有效的 Delphi 编译器",
+                "compilers": found_compilers
+            }
+        else:
+            # 搜索模式：在指定路径搜索
+            import os
+            from pathlib import Path
+            
+            common_paths = [search_path]
+            
+            for base_path in common_paths:
+                if not os.path.exists(base_path):
+                    continue
+                    
+                for version_dir in os.listdir(base_path):
+                    version_path = os.path.join(base_path, version_dir)
+                    if not os.path.isdir(version_path):
+                        continue
+                        
+                    bin_path = os.path.join(version_path, "bin")
+                    if not os.path.exists(bin_path):
+                        continue
+                    
+                    for dcc in ["dcc32.exe", "dcc64.exe"]:
+                        dcc_path = os.path.join(bin_path, dcc)
+                        if os.path.exists(dcc_path):
+                            is_valid, _ = validator.validate_compiler_path(dcc_path)
+                            if is_valid:
+                                found_compilers.append({
+                                    "name": f"Delphi {version_dir}",
+                                    "path": dcc_path,
+                                    "version": version_dir
+                                })
+            
+            logger.info(f"搜索完成: {len(found_compilers)} 个有效编译器")
+            return {
+                "success": True,
+                "message": f"找到 {len(found_compilers)} 个有效的 Delphi 编译器",
+                "compilers": found_compilers
+            }
+
+    except Exception as e:
+        error_msg = f"搜索过程发生异常: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return {
+            "success": False,
+            "message": error_msg,
+            "compilers": []
+        }
+
+
+# 兼容旧接口
+async def detect_compilers() -> Dict[str, Any]:
+    """自动检测系统中可用的 Delphi 编译器（兼容旧接口）"""
+    return await search_compilers()
+
+
+async def search_delphi_compilers(search_path: Optional[str] = None) -> Dict[str, Any]:
+    """在指定路径搜索 Delphi 编译器（兼容旧接口）"""
+    return await search_compilers(search_path)
     logger.info(f"收到搜索编译器请求: {search_path}")
 
     if _config_manager is None:
