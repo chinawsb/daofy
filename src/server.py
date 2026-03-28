@@ -33,6 +33,7 @@ if str(project_root) not in sys.path:
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
+from mcp.types import CallToolResult, TextContent
 
 from src.services.config_manager import ConfigManager
 from src.services.compiler_service import CompilerService
@@ -306,6 +307,11 @@ async def run_server():
             ),
             # 帮助文档知识库工具 - 通过 build_knowledge_base 统一接口
             Tool(
+                name="get_help_kb_stats",
+                description="获取帮助文档知识库统计信息",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
                         "help_names": {"type": "array", "items": {"type": "string"}, "description": "要扫描的帮助文件列表，如 ['fmx', 'vcl']，默认全部"},
                         "max_files_per_help": {"type": "integer", "description": "每个帮助文件最大处理文档数（用于测试）"},
                         "source_dir": {"type": "string", "description": "外部源目录路径（默认使用 kb_dir/extracted）"}
@@ -624,11 +630,20 @@ async def run_server():
             else:
                 raise ValueError(f"未知工具: {name}")
 
-            return {"content": [{"type": "text", "text": str(result)}]}
+            # 统一返回格式：确保返回 CallToolResult
+            if isinstance(result, dict):
+                text = str(result.get('message', str(result)))
+                is_error = result.get('status') == 'failed' or result.get('success') == False
+                return CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
+            else:
+                return result
 
         except Exception as e:
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
-            return {"content": [{"type": "text", "text": f"错误: {str(e)}"}], "isError": True}
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"错误: {str(e)}")],
+                isError=True
+            )
 
     # 启动服务器
     logger.info("MCP Server 启动完成,准备接收请求...")

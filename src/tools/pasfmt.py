@@ -14,6 +14,7 @@ import shutil
 import requests
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
+from mcp.types import CallToolResult, TextContent
 
 try:
     from ..utils.logger import get_logger
@@ -393,7 +394,7 @@ async def format_file(
 async def format_code(
     code: str,
     config_path: Optional[str] = None
-) -> Dict[str, Any]:
+) -> CallToolResult:
     """
     格式化 Delphi 代码字符串
     
@@ -411,12 +412,10 @@ async def format_code(
     if not pasfmt_path:
         error_msg = "未找到 pasfmt 可执行文件，请先安装 pasfmt 并设置 PASFMT_PATH 环境变量"
         logger.error(error_msg)
-        return {
-            "status": "failed",
-            "error_code": "PASFMT_NOT_FOUND",
-            "error_message": error_msg,
-            "formatted": False
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=error_msg)],
+            isError=True
+        )
     
     # 创建临时文件
     with tempfile.NamedTemporaryFile(mode='w', suffix='.pas', delete=False, encoding='utf-8') as tmp:
@@ -949,7 +948,7 @@ async def download_and_install_pasfmt_rad(
         }
 
 
-async def check_pasfmt_installation() -> Dict[str, Any]:
+async def check_pasfmt_installation() -> CallToolResult:
     """
     检查 pasfmt 安装状态
     
@@ -962,12 +961,9 @@ async def check_pasfmt_installation() -> Dict[str, Any]:
     pasfmt_path = get_pasfmt_path()
     
     if pasfmt_path and os.path.exists(pasfmt_path):
-        return {
-            "status": "success",
-            "installed": True,
-            "pasfmt_path": pasfmt_path,
-            "message": f"pasfmt 已安装: {pasfmt_path}"
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=f"pasfmt 已安装: {pasfmt_path}")]
+        )
     else:
         # 检查可能的安装位置
         project_root = Path(__file__).parent.parent.parent
@@ -990,24 +986,18 @@ async def check_pasfmt_installation() -> Dict[str, Any]:
         if found_paths:
             # 设置找到的路径
             set_pasfmt_path(found_paths[0])
-            return {
-                "status": "success",
-                "installed": True,
-                "pasfmt_path": found_paths[0],
-                "message": f"找到 pasfmt: {found_paths[0]}",
-                "available_paths": found_paths
-            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"找到 pasfmt: {found_paths[0]}")]
+            )
         else:
             # 建议安装到项目目录下的 tools/pasfmt/cli
             project_root = Path(__file__).parent.parent.parent
             suggested_dir = str(project_root / "tools" / "pasfmt" / "cli")
             
-            return {
-                "status": "success",
-                "installed": False,
-                "message": "未找到 pasfmt 安装",
-                "suggested_install_dir": suggested_dir
-            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"未找到 pasfmt，建议安装到: {suggested_dir}")],
+                isError=True
+            )
 
 
 async def check_pasfmt_rad_installation(delphi_version: str = "11") -> Dict[str, Any]:

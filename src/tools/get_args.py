@@ -5,6 +5,7 @@
 """
 
 from typing import Optional, List, Dict, Any
+from mcp.types import CallToolResult, TextContent
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
 from ..services.compiler_service import CompilerService
 from ..utils.logger import get_logger
@@ -63,13 +64,10 @@ async def get_compiler_args(
 
     if _compiler_service is None:
         logger.error("编译服务未初始化")
-        return {
-            "compiler_executable": "",
-            "project_file": project_path,
-            "arguments": [],
-            "full_command": "",
-            "warnings": ["编译服务未初始化"]
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text="编译服务未初始化，请先启动服务")],
+            isError=True
+        )
 
     try:
         # 构建编译选项
@@ -104,10 +102,7 @@ async def get_compiler_args(
     except Exception as e:
         error_msg = f"生成参数过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "compiler_executable": "",
-            "project_file": project_path,
-            "arguments": [],
-            "full_command": "",
-            "warnings": [error_msg]
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=error_msg)],
+            isError=True
+        )

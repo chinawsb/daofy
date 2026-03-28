@@ -7,12 +7,13 @@
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any
+from mcp.types import CallToolResult, TextContent
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-async def get_coding_rules(project_path: Optional[str] = None) -> Dict[str, Any]:
+async def get_coding_rules(project_path: Optional[str] = None) -> CallToolResult:
     """
     获取 Delphi 源码编码规则
 
@@ -70,27 +71,20 @@ async def get_coding_rules(project_path: Optional[str] = None) -> Dict[str, Any]
         # 如果两者都不存在，返回空字符串
         if not final_rules:
             logger.warning("未找到任何编码规则文件")
-            return {
-                "success": False,
-                "message": "未找到任何编码规则文件",
-                "rules": ""
-            }
+            return CallToolResult(
+                content=[TextContent(type="text", text="未找到任何编码规则文件")],
+                isError=True
+            )
 
         logger.info("成功获取编码规则")
-        return {
-            "success": True,
-            "message": "成功获取编码规则",
-            "rules": final_rules,
-            "source": "user" if user_rules else "default",
-            "default_rules_path": str(default_rules_path),
-            "user_rules_path": str(user_rules_path) if project_path else None
-        }
+        output = f"编码规则 (来源: {'用户' if user_rules else '默认'}):\n\n"
+        output += final_rules[:2000]  # 限制输出长度
+        return CallToolResult(content=[TextContent(type="text", text=output)])
 
     except Exception as e:
         error_msg = f"获取编码规则过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "success": False,
-            "message": error_msg,
-            "rules": ""
-        }
+        return CallToolResult(
+            content=[TextContent(type="text", text=error_msg)],
+            isError=True
+        )
