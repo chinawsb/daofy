@@ -54,7 +54,7 @@ from src.tools.knowledge_base import (
     search_class,
     search_function,
     semantic_search,
-    get_knowledge_base_stats,
+    get_knowledge_stats,
     list_delphi_versions,
     search_knowledge,
     build_unified_knowledge_base,
@@ -223,7 +223,7 @@ async def run_server():
                 }
             ),
             Tool(
-                name="get_knowledge_base_stats",
+                name="get_knowledge_stats",
                 description="【查询用】查看知识库状态。了解当前有哪些知识库可用、各自包含多少内容（类/函数/文件数量）。",
                 inputSchema={
                     "type": "object",
@@ -443,7 +443,7 @@ async def run_server():
                 result = await coding_rules.get_coding_rules(**arguments)
             elif name == "build_knowledge":
                 result = await kb_tools.build_unified_knowledge_base(arguments)
-            elif name == "get_knowledge_base_stats":
+            elif name == "get_knowledge_stats":
                 result = await kb_tools.get_unified_knowledge_stats(arguments)
             elif name == "search_knowledge":
                 result = await kb_tools.search_knowledge(arguments)
