@@ -265,7 +265,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型"},
-                        "project_path": {"type": "string", "description": "项目路径 (仅project需要)"}
+                        "project_path": {"type": "string", "description": "项目路径 (默认当前目录)"}
                     },
                     "required": []
                 }
@@ -305,7 +305,7 @@ async def run_server():
                         "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）"},
                         "end_line": {"type": "integer", "description": "结束行号（可选，默认文件末尾）"},
                         "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数（最大1000）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"}
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "搜索范围"}
                     },
                     "required": ["file_path"]
                 }
@@ -319,7 +319,7 @@ async def run_server():
                         "type_name": {"type": "string", "description": "类型名称（类、record、interface，可选）"},
                         "record_name": {"type": "string", "description": "record 类型名称（可选）"},
                         "function_name": {"type": "string", "description": "函数名（可选）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "搜索范围"},
                         "start_line": {"type": "integer", "default": 1, "description": "起始行号"},
                         "max_lines": {"type": "integer", "default": 100, "description": "最大返回行数"}
                     },
