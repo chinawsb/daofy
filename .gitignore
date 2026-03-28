@@ -54,3 +54,4 @@ data/help-knowledge-base/
 
 # Config (可能包含本地路径)
 config/compilers.json
+temp_scan_result.json
