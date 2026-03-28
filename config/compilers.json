@@ -3,7 +3,7 @@
     {
       "name": "Delphi 11 Alexandria Win32",
       "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dcc32.exe",
-      "is_default": true,
+      "is_default": false,
       "version": "Delphi 11 Alexandria"
     },
     {
@@ -11,7 +11,19 @@
       "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dcc64.exe",
       "is_default": false,
       "version": "Delphi 11 Alexandria"
+    },
+    {
+      "name": "Delphi 12 Athens Win32",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\23.0\\bin\\dcc32.exe",
+      "is_default": true,
+      "version": "Delphi 12 Athens"
+    },
+    {
+      "name": "Delphi 12 Athens Win64",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\23.0\\bin\\dcc64.exe",
+      "is_default": false,
+      "version": "Delphi 12 Athens"
     }
   ],
-  "default_compiler": "Delphi 11 Alexandria Win32"
+  "default_compiler": "Delphi 12 Athens Win32"
 }

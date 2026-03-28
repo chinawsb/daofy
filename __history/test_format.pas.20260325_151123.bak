@@ -1,0 +1,146 @@
+unit TestFormat;
+
+interface
+
+uses
+SysUtils, Classes;
+
+type
+
+
+
+
+
+
+TTestClass = class
+private
+FName: string;
+FAge: Integer;
+public
+
+
+
+constructor Create(AName: string; AAge: Integer);
+
+
+
+function GetInfo: string;
+
+
+
+procedure SetName(Value: string);
+property Name: string read FName write SetName;
+property Age: Integer read FAge;
+end;
+
+TTestRecord = record
+ID: Integer;
+Name: string;
+Value: Double;
+end;
+
+
+
+
+
+
+
+ITestInterface = interface
+['{12345678-1234-1234-1234-123456789012}']
+
+
+
+procedure DoSomething;
+
+
+
+function GetValue: Integer;
+end;
+
+const
+MAX_COUNT = 100;
+DEFAULT_NAME = 'Default';
+
+var
+GlobalCounter: Integer;
+GlobalList   : TStringList;
+
+
+
+
+procedure TestProcedure(A: Integer; B: string; C: Boolean);
+
+
+
+function TestFunction(X: Double; Y: Double): Double;
+
+implementation
+
+
+
+
+constructor TTestClass.Create(AName: string; AAge: Integer);
+begin
+  FName: = AName;
+  FAge: = AAge;
+  end;
+
+
+
+
+function TTestClass.GetInfo: string;
+begin
+  Result: = Format('Name: %s, Age: %d', [FName, FAge]);
+  end;
+
+
+
+
+procedure TTestClass.SetName(Value: string);
+begin
+  if Value <> '' then
+  FName: = Value
+  else
+  raise Exception.Create('Name cannot be empty');
+  end;
+
+
+
+
+procedure TestProcedure(A: Integer; B: string; C: Boolean);
+var
+I       : Integer;
+Temp    : string;
+begin
+  Temp  : = '';
+  for I : = 1 to A do
+  begin
+    if C then
+    Temp: = Temp + B
+    else
+    Temp: = Temp + IntToStr(I);
+    end;
+  Writeln(Temp);
+  end;
+
+
+
+
+function TestFunction(X: Double; Y: Double): Double;
+begin
+  if X > Y then
+  Result: = X * Y
+  else if X < Y then
+  Result: = X / Y
+  else
+  Result: = X + Y;
+  end;
+
+initialization
+GlobalCounter: = 0;
+GlobalList: = TStringList.Create;
+
+finalization
+FreeAndNil(GlobalList);
+
+end.

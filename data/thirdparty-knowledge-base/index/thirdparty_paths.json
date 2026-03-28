@@ -1,0 +1,28 @@
+{
+  "version": {
+    "version": "22.0",
+    "name": "Delphi 11 Alexandria",
+    "root_dir": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\"
+  },
+  "paths": [
+    "C:\\Program Files (x86)\\madCollection\\madBasic\\Sources",
+    "C:\\Program Files (x86)\\madCollection\\madKernel\\Sources",
+    "C:\\Program Files (x86)\\madCollection\\madSecurity\\Sources",
+    "C:\\Program Files (x86)\\madCollection\\madShell\\Sources",
+    "C:\\User\\shophero\\Thirdpart\\FastReport\\LibD28",
+    "C:\\Program Files (x86)\\madCollection\\madBasic\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madDisAsm\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madExcept\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\Plugins\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madKernel\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madSecurity\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madShell\\BDS22\\win32",
+    "C:\\Program Files (x86)\\madCollection\\madBasic\\BDS22\\win64",
+    "C:\\Program Files (x86)\\madCollection\\madDisAsm\\BDS22\\win64",
+    "C:\\Program Files (x86)\\madCollection\\madExcept\\BDS22\\win64",
+    "C:\\Program Files (x86)\\madCollection\\Plugins\\win64",
+    "C:\\Program Files (x86)\\madCollection\\madSecurity\\BDS22\\win64"
+  ],
+  "count": 17,
+  "saved_at": "2026-03-27T13:02:52.710676"
+}
