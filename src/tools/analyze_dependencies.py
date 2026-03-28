@@ -24,14 +24,19 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
     """
     分析项目单元依赖
     
+    通过知识库查找未解析的第三方库单元路径。
+    
     Args:
         arguments: 包含以下参数:
             - project_path: 项目文件路径 (.dpr 或 .dproj) (必需)
+            - resolve_via_kb: 是否通过知识库查找未解析单元 (默认 True)
             
     Returns:
         分析结果，包含项目引用的所有单元列表
     """
     project_path = arguments.get("project_path")
+    resolve_via_kb = arguments.get("resolve_via_kb", True)
+    
     if not project_path:
         return CallToolResult(
             content=[{"type": "text", "text": "请提供项目文件路径"}],
@@ -41,6 +46,74 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
     try:
         logger.info(f"分析项目依赖: {project_path}")
         result = analyze_project_units(project_path)
+        
+        # 通过知识库查找未解析的单元
+        resolved_via_kb = {}
+        if resolve_via_kb and result.get('missing_units'):
+            logger.info(f"通过知识库查找 {len(result['missing_units'])} 个未解析单元...")
+            
+            # 尝试加载并搜索知识库
+            try:
+                from ..services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+                from ..services.knowledge_base.service import DelphiKnowledgeBaseService
+                
+                # 初始化第三方库知识库
+                thirdparty_kb = ThirdPartyKnowledgeBase()
+                thirdparty_kb.load_knowledge_base()
+                
+                # 初始化Delphi知识库
+                delphi_kb = DelphiKnowledgeBaseService()
+                delphi_kb.load_knowledge_base()
+                
+                kb_thirdparty = thirdparty_kb.kb_instance
+                kb_delphi = delphi_kb.kb_instance
+                
+                logger.info(f"知识库已加载 - 第三方库: {kb_thirdparty is not None}, Delphi: {kb_delphi is not None}")
+                
+                # 搜索每个未解析的单元
+                for unit in result['missing_units']:
+                    # 搜索第三方库 (关键词搜索文件名)
+                    if kb_thirdparty:
+                        kb_results = kb_thirdparty.search_by_keyword(f"{unit}.pas")[:3]
+                        if kb_results:
+                            for r in kb_results:
+                                path = r.get('full_path', '')
+                                if path and path.lower().endswith('.pas'):
+                                    resolved_via_kb[unit] = {
+                                        "source": "thirdparty",
+                                        "path": path
+                                    }
+                                    break
+                            if unit in resolved_via_kb:
+                                continue
+                    
+                    # 搜索Delphi库 (关键词搜索文件名)
+                    if kb_delphi and unit not in resolved_via_kb:
+                        kb_results = kb_delphi.search_by_keyword(f"{unit}.pas")[:3]
+                        if kb_results:
+                            for r in kb_results:
+                                path = r.get('full_path', '')
+                                if path and path.lower().endswith('.pas'):
+                                    resolved_via_kb[unit] = {
+                                        "source": "delphi",
+                                        "path": path
+                                    }
+                                    break
+                            
+                logger.info(f"通过知识库解析了 {len(resolved_via_kb)} 个单元")
+                
+            except Exception as kb_err:
+                import traceback
+                logger.warning(f"知识库查询失败: {kb_err}\n{traceback.format_exc()}")
+        
+        # 合并已解析的单元
+        all_resolved = dict(result.get('resolved_units', {}))
+        for unit, info in resolved_via_kb.items():
+            all_resolved[unit] = info['path']
+        
+        # 更新结果
+        result['resolved_via_kb'] = resolved_via_kb
+        result['all_resolved'] = all_resolved
         
         # 格式化输出
         output = f"项目依赖分析结果\n"
@@ -55,19 +128,34 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
             output += "\n"
         
         if result['missing_units']:
-            output += f"⚠️ 未找到的单元 ({len(result['missing_units'])} 个):\n"
-            for unit in result['missing_units'][:20]:  # 最多显示20个
-                output += f"  - {unit}\n"
-            if len(result['missing_units']) > 20:
-                output += f"  ... 还有 {len(result['missing_units']) - 20} 个\n"
+            missing_count = len(result['missing_units']) - len(resolved_via_kb)
+            output += f"⚠️ 未找到的单元 ({missing_count} 个):\n"
+            for unit in result['missing_units'][:20]:
+                if unit not in resolved_via_kb:
+                    output += f"  - {unit}\n"
+            if missing_count > 20:
+                output += f"  ... 还有 {missing_count - 20} 个\n"
             output += "\n"
         
-        if result['resolved_units']:
-            output += f"✓ 已解析的单元 ({len(result['resolved_units'])} 个):\n"
+        # 显示通过知识库找到的单元
+        if resolved_via_kb:
+            output += f"✓ 通过知识库解析 ({len(resolved_via_kb)} 个):\n"
+            for unit, info in list(resolved_via_kb.items())[:15]:
+                output += f"  - {unit}: {info['path']}\n"
+            if len(resolved_via_kb) > 15:
+                output += f"  ... 还有 {len(resolved_via_kb) - 15} 个\n"
+            output += "\n"
+        
+        if result.get('resolved_units'):
+            output += f"✓ 本地已解析 ({len(result['resolved_units'])} 个):\n"
             for unit, path in list(result['resolved_units'].items())[:10]:
                 output += f"  - {unit}: {path}\n"
             if len(result['resolved_units']) > 10:
                 output += f"  ... 还有 {len(result['resolved_units']) - 10} 个\n"
+        
+        # 汇总
+        total_resolved = len(all_resolved)
+        output += f"\n📊 解析汇总: {total_resolved}/{result['total_units']} ({total_resolved*100//result['total_units']}%)"
         
         return CallToolResult(content=[{"type": "text", "text": output}])
         
