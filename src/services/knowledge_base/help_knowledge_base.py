@@ -987,36 +987,41 @@ class DelphiHelpKnowledgeBase:
         # 检查CHM文件是否存在
         if not chm_path.exists():
             return False
-            
+        
         # 获取CHM文件列表
         chm_files = self._get_chm_file_list(str(chm_path))
         if not chm_files:
             # 无法获取CHM列表，假设需要解压
             return True
-            
-        # 检查解压目录中的文件数量
+        
+        # 检查解压目录中的文件
         try:
             existing_files = set()
             for f in extracted_dir.rglob('*'):
                 if f.is_file():
                     rel = f.relative_to(extracted_dir)
                     existing_files.add(str(rel).replace('\\', '/'))
-                    
-            # 比较文件数量
-            if len(existing_files) < len(chm_files):
-                # 文件数量不符，需要重新解压
+            
+            # 检查是否有文件被删除
+            missing_files = chm_files - existing_files
+            if missing_files:
+                # 有文件缺失，需要重新解压
+                if len(missing_files) <= 10:
+                    print(f"    发现 {len(missing_files)} 个缺失文件: {list(missing_files)[:5]}...")
+                else:
+                    print(f"    发现 {len(missing_files)} 个缺失文件...")
                 return True
-                
-            # 可选：更严格的检查 - 验证关键文件是否存在
-            # 抽样检查几个文件
-            if chm_files:
-                sample_files = list(chm_files)[:10]
-                for sample in sample_files:
-                    if sample not in existing_files:
-                        return True
-                        
-            return False  # 不需要解压
-        except Exception:
+            
+            # 检查是否有新增文件（解压目录文件少于CHM文件）
+            if len(existing_files) < len(chm_files):
+                print(f"    文件数量不足: {len(existing_files)} < {len(chm_files)}")
+                return True
+            
+            # 文件完整，不需要解压
+            return False
+            
+        except Exception as e:
+            print(f"    检查解压目录失败: {e}")
             return True  # 出错时假设需要解压
 
     def extract_chm(self, chm_path: str, output_dir: str, progress_callback: Optional[Callable] = None) -> bool:
