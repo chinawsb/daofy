@@ -142,6 +142,11 @@ class UnitDependencyAnalyzer:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
+            # 跳过太大的文件（可能是二进制或异常文件）
+            if len(content) > 10 * 1024 * 1024:  # 10MB
+                logger.warning(f"跳过过大文件: {file_path} ({len(content)} bytes)")
+                return units
+            
             # 匹配 uses 子句（支持多行）
             # 匹配 uses 后面跟着的单元列表，直到分号
             uses_pattern = r'\buses\s+([^;]+);'
@@ -157,6 +162,10 @@ class UnitDependencyAnalyzer:
                 unit_names = [u.strip() for u in match.split(',') if u.strip()]
                 
                 for unit_name in unit_names:
+                    # 验证单元名称是否有效
+                    if not self._is_valid_unit_name(unit_name):
+                        continue
+                    
                     # 处理命名空间（如 System.Classes）
                     is_namespace = '.' in unit_name
                     simple_name = unit_name.split('.')[-1] if is_namespace else unit_name
@@ -172,6 +181,56 @@ class UnitDependencyAnalyzer:
             logger.warning(f"提取 uses 失败 {file_path}: {e}")
         
         return units
+    
+    def _is_valid_unit_name(self, name: str) -> bool:
+        """
+        验证是否为有效的 Pascal 单元名称
+        
+        有效单元名规则:
+        - 必须以字母或下划线开头
+        - 只能包含字母、数字、下划线
+        - 不能包含空格、特殊字符
+        - 不能是常见英文单词（非 Delphi 关键字）
+        """
+        if not name:
+            return False
+        
+        # 去除引号和in关键字（处理 "in 'filename'" 这种）
+        name = name.strip().strip("'\"")
+        if name.lower().startswith('in '):
+            return False
+        
+        # 检查是否包含无效字符
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*$', name):
+            return False
+        
+        # 检查长度限制
+        if len(name) > 64:
+            return False
+        
+        # 检查是否为垃圾文本（包含常见英文单词组合）
+        name_lower = name.lower()
+        garbage_patterns = [
+            'the', 'first', 'second', 'third', 'pointer', 'block', 'free',
+            'reserved', 'list', 'memory', 'stack', 'heap', 'address',
+            'null', 'void', 'integer', 'string', 'char', 'byte', 'word',
+            'error', 'warning', 'debug', 'info', 'exception', 'failed'
+        ]
+        
+        # 如果名称太短且是常见单词，跳过
+        if len(name_lower) <= 3 and name_lower in (
+            'the', 'for', 'var', 'end', 'not', 'and', 'or', 'but', 'out', 'log',
+            'sys', 'obj', 'ini', 'cfg', 'app', 'msg', 'err', 'dbg'
+        ):
+            return False
+        
+        # 如果名称中有多个连续的小写单词（垃圾文本特征）
+        parts = name_lower.split('.')
+        for part in parts:
+            if len(part) > 20:
+                return False
+        
+        return True
     
     def _resolve_unit_locations(self, deps: ProjectDependencies, 
                                 additional_paths: List[str]):

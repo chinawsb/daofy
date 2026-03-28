@@ -70,18 +70,141 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                 
                 logger.info(f"知识库已加载 - 第三方库: {kb_thirdparty is not None}, Delphi: {kb_delphi is not None}")
                 
-                # 方法1: 通过Delphi源码目录查找VCL/RTL单元（优先，更可靠）
-                delphi_source_paths = [
-                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\common",
-                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\win",
-                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\vcl",
-                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\fmx",
-                ]
+                # 方法1: 通过项目的搜索路径顺序查找单元
+                # 1. 先从项目第三方库路径查找
+                # 2. 再从Delphi源码路径查找（使用DCC_Namespace映射）
                 
                 import os
+                from pathlib import Path
+                
+                # 读取项目的DCC_Namespace配置和搜索路径
+                project_file = Path(project_path)
+                project_dir = project_file.parent
+                namespaces = set()
+                search_paths = []
+                
+                if project_file.suffix == '.dproj':
+                    import xml.etree.ElementTree as ET
+                    try:
+                        tree = ET.parse(project_file)
+                        root = tree.getroot()
+                        
+                        # 查找 DCC_Namespace
+                        for elem in root.iter():
+                            tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                            if 'DCC_Namespace' in tag:
+                                ns_text = elem.text or ''
+                                logger.info(f"找到 DCC_Namespace 配置: {ns_text}")
+                                for ns in ns_text.split(';'):
+                                    ns = ns.strip()
+                                    if ns and not ns.startswith('$'):
+                                        namespaces.add(ns)
+                        
+                        # 查找 DCC_UnitSearchPath
+                        for elem in root.iter():
+                            tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+                            if tag == 'DCC_UnitSearchPath':
+                                search_path_text = elem.text or ''
+                                logger.info(f"找到 DCC_UnitSearchPath: {search_path_text}")
+                                for sp in search_path_text.split(';'):
+                                    sp = sp.strip()
+                                    if sp and not sp.startswith('$'):
+                                        # 转换相对路径为绝对路径
+                                        if not os.path.isabs(sp):
+                                            abs_path = os.path.normpath(os.path.join(project_dir, sp))
+                                        else:
+                                            abs_path = sp
+                                        if os.path.exists(abs_path):
+                                            search_paths.append(abs_path)
+                                logger.info(f"解析到的搜索路径: {search_paths}")
+                                
+                        logger.info(f"解析到的命名空间列表: {namespaces}")
+                    except Exception as e:
+                        logger.warning(f"解析 .dproj 失败: {e}")
+                
+                # 使用新的工具函数获取 Delphi 搜索路径
+                try:
+                    from ..utils.delphi_env import resolve_delphi_search_paths, get_catalog_repository_paths
+                    
+                    # 获取 GetIt 组件路径
+                    getit_paths = get_catalog_repository_paths()
+                    logger.info(f"GetIt 组件路径: {getit_paths}")
+                    
+                    # 获取所有搜索路径
+                    registry_paths = resolve_delphi_search_paths()
+                    logger.info(f"注册表库路径: {registry_paths}")
+                    
+                except Exception as e:
+                    logger.warning(f"获取 Delphi 搜索路径失败: {e}")
+                    getit_paths = []
+                    registry_paths = []
+                
+                # 合并搜索路径：.dproj + GetIt + 注册表
+                all_search_paths = search_paths + getit_paths + registry_paths
+                logger.info(f"GetIt 组件路径: {getit_paths}")
+                logger.info(f"注册表库路径: {registry_paths}")
+                
+                # 添加默认命名空间
+                if not namespaces:
+                    namespaces = {'Vcl', 'FMX', 'System', 'Data', 'Xml', 'Web', 'Soap'}
+                
+                # 分离不同类型的命名空间（使用更宽松的匹配）
+                vcl_namespaces = {ns for ns in namespaces if ns == 'Vcl' or ns.startswith('Vcl.') or ns == 'Winapi' or ns.startswith('Winapi.')}
+                fmx_namespaces = {ns for ns in namespaces if ns == 'FMX' or ns.startswith('FMX.')}
+                system_namespaces = {ns for ns in namespaces if ns in ('System', 'Data', 'Xml', 'Web', 'Soap', 'Datasnap') or ns.startswith('System.')}
+                
+                # 如果过滤后为空，使用默认值
+                if not vcl_namespaces:
+                    vcl_namespaces = {'Vcl', 'Winapi'}
+                if not fmx_namespaces:
+                    fmx_namespaces = {'FMX'}
+                if not system_namespaces:
+                    system_namespaces = {'System', 'Data', 'Xml', 'Web', 'Soap'}
+                
+                logger.info(f"项目命名空间: VCL={vcl_namespaces}, FMX={fmx_namespaces}, System={system_namespaces}")
+                logger.info(f"项目搜索路径: {search_paths}")
+                
                 missing_units_set = set(result['missing_units'])
                 
-                for base_path in delphi_source_paths:
+                # 1. 先从项目第三方库路径查找（包括从.dproj提取的搜索路径）
+                thirdparty_paths = result.get('thirdparty_paths', [])
+                
+                # 合并 .dproj 搜索路径 + GetIt 组件路径
+                all_thirdparty_paths = list(thirdparty_paths) + all_search_paths
+                logger.info(f"所有第三方库路径: {all_thirdparty_paths}")
+                
+                for tp_path in all_thirdparty_paths:
+                    if not os.path.exists(tp_path):
+                        continue
+                    # 限制搜索深度，避免扫描太慢
+                    for root, dirs, files in os.walk(tp_path):
+                        depth = root.replace(tp_path, '').count(os.sep)
+                        if depth > 3:  # 最多搜索3层
+                            continue
+                        for f in files:
+                            if not f.endswith('.pas'):
+                                continue
+                            parts = f[:-4].split('.')
+                            unit_name = parts[-1].lower() if parts else ''
+                            if unit_name and unit_name in missing_units_set and unit_name not in resolved_via_kb:
+                                resolved_via_kb[unit_name] = {"source": "thirdparty", "path": os.path.join(root, f)}
+                
+                # 2. 从Delphi源码路径查找
+                # 优先按命名空间查找
+                # 注意：rtl\win 使用 Winapi 命名空间
+                winapi_namespaces = {'Winapi', 'Winapi.Windows', 'Winapi.DirectX', 'Winapi.Direct3D', 'Winapi.DXGI', 'Winapi.D3DX'}
+                
+                delphi_sources = [
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\vcl", vcl_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\fmx", fmx_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\sys", system_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\common", system_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\win", winapi_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\data", system_namespaces),
+                    (r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\data", system_namespaces),
+                ]
+                
+                for base_path, valid_namespaces in delphi_sources:
                     if not os.path.exists(base_path):
                         continue
                     for root, dirs, files in os.walk(base_path):
@@ -89,20 +212,54 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                             if not f.endswith('.pas'):
                                 continue
                             
-                            # 提取单元名（去掉路径空间前缀）
-                            # Vcl.Controls.pas -> Controls
-                            # System.Classes.pas -> Classes  
-                            # FMX.Controls.pas -> Controls
-                            parts = f[:-4].split('.')  # 去掉 .pas
-                            unit_name = parts[-1].lower() if parts else ''
+                            parts = f[:-4]  # 去掉 .pas
+                            file_parts = parts.split('.')  # ['Vcl', 'Controls'] 或 ['Controls']
                             
-                            if unit_name and unit_name in missing_units_set:
-                                full_path = os.path.join(root, f)
-                                resolved_via_kb[unit_name] = {"source": "delphi", "path": full_path}
+                            # 获取文件名（去掉命名空间）
+                            if len(file_parts) > 1:
+                                unit_name = file_parts[-1].lower()
+                                file_namespace = file_parts[0]
+                                
+                                # 检查命名空间是否匹配（大小写不敏感）
+                                ns_match = any(
+                                    file_namespace.lower() == ns.lower() or file_namespace.lower().startswith(ns.lower() + '.')
+                                    for ns in valid_namespaces
+                                ) if valid_namespaces else True
+                                
+                                if ns_match:
+                                    if unit_name in missing_units_set and unit_name not in resolved_via_kb:
+                                        resolved_via_kb[unit_name] = {"source": "delphi", "path": os.path.join(root, f)}
+                            else:
+                                # 无命名空间
+                                unit_name = file_parts[0].lower()
+                                if unit_name in missing_units_set and unit_name not in resolved_via_kb:
+                                    resolved_via_kb[unit_name] = {"source": "delphi", "path": os.path.join(root, f)}
                 
-                logger.info(f"通过Delphi源码目录解析了 {len(resolved_via_kb)} 个单元")
+                logger.info(f"通过项目搜索路径解析了 {len(resolved_via_kb)} 个单元")
                 
-                logger.info(f"通过Delphi源码目录解析了 {len(resolved_via_kb)} 个单元")
+                # 3. 直接搜索所有Delphi源码目录（不依赖命名空间的精确匹配）
+                # 用于处理特殊情况如 System.SysConst 等
+                delphi_base = r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source"
+                if os.path.exists(delphi_base):
+                    rtl_all_namespaces = {'System', 'Data', 'Xml', 'Web', 'Soap', 'Datasnap', 'Vcl', 'FMX'}
+                    for root, dirs, files in os.walk(delphi_base):
+                        # 限制深度避免太慢
+                        depth = root.replace(delphi_base, '').count(os.sep)
+                        if depth > 3:
+                            continue
+                        for f in files:
+                            if not f.endswith('.pas'):
+                                continue
+                            parts = f[:-4].split('.')
+                            if len(parts) > 1:
+                                unit_name = parts[-1].lower()
+                                file_namespace = parts[0]
+                                # 只匹配已知的RTL命名空间
+                                if file_namespace.lower() in [ns.lower() for ns in rtl_all_namespaces]:
+                                    if unit_name in missing_units_set and unit_name not in resolved_via_kb:
+                                        resolved_via_kb[unit_name] = {"source": "delphi", "path": os.path.join(root, f)}
+                
+                logger.info(f"通过Delphi源码目录解析了 {len(resolved_via_kb)} 个单元（第三party + Delphi源码）")
                 
                 # 输出调试：检查 controls 是否在 missing_units 中
                 if 'controls' in [u.lower() for u in result.get('missing_units', [])]:
@@ -160,11 +317,11 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
         if result['missing_units']:
             missing_count = len(result['missing_units']) - len(resolved_via_kb)
             output += f"⚠️ 未找到的单元 ({missing_count} 个):\n"
-            for unit in result['missing_units'][:20]:
+            for unit in result['missing_units']:
                 if unit not in resolved_via_kb:
                     output += f"  - {unit}\n"
-            if missing_count > 20:
-                output += f"  ... 还有 {missing_count - 20} 个\n"
+            if missing_count > 50:
+                output += f"  ... 还有 {missing_count - 50} 个\n"
             output += "\n"
         
         # 显示通过知识库找到的单元
