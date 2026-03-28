@@ -443,14 +443,14 @@ class SQLiteVectorKnowledgeBase:
             if not cursor.fetchone():
                 # 表不存在，创建表后完整构建
                 self._create_tables(cursor)
+                incremental = False  # 降级为完整构建
             else:
-                # 表存在，清空数据但保留结构
+                # 增量模式：只清空 files/keywords/units，保留 classes/functions/vocabulary
                 cursor.execute("DELETE FROM files")
-                cursor.execute("DELETE FROM classes")
-                cursor.execute("DELETE FROM functions")
-                cursor.execute("DELETE FROM units")
                 cursor.execute("DELETE FROM keywords")
-                cursor.execute("DELETE FROM vocabulary")
+                cursor.execute("DELETE FROM units")
+                # 保留 classes, functions, vocabulary 用于增量更新
+                print("  增量模式：保留现有向量和词汇表")
         else:
             # 完整模式：删除现有表并重建
             cursor.execute("DROP TABLE IF EXISTS metadata")
@@ -492,28 +492,78 @@ class SQLiteVectorKnowledgeBase:
 
         # 构建词汇表
         print("正在构建词汇表...")
-        self.vocabulary, self.idf_weights = self.build_vocabulary(all_documents)
+        
+        # 增量模式：加载现有词汇表
+        existing_vocab = {}
+        existing_idf = {}
+        if incremental:
+            try:
+                cursor.execute("SELECT word, id, idf_weight FROM vocabulary")
+                for row in cursor.fetchall():
+                    existing_vocab[row['word']] = row['id']
+                    existing_idf[row['word']] = row['idf_weight']
+                print(f"  已加载现有词汇: {len(existing_vocab)}")
+            except:
+                pass
+        
+        # 构建新词汇表
+        new_vocab, new_idf = self.build_vocabulary(all_documents)
+        
+        # 合并词汇表
+        if incremental and existing_vocab:
+            # 合并：保留现有ID + 添加新词汇
+            max_id = max(existing_vocab.values()) if existing_vocab else 0
+            next_id = max_id + 1
+            
+            for word, word_id in new_vocab.items():
+                if word not in existing_vocab:
+                    existing_vocab[word] = next_id
+                    existing_idf[word] = new_idf[word]
+                    next_id += 1
+            
+            self.vocabulary = existing_vocab
+            self.idf_weights = existing_idf
+            print(f"  合并后词汇: {len(self.vocabulary)} (新增 {len(new_vocab)})")
+        else:
+            self.vocabulary = new_vocab
+            self.idf_weights = new_idf
 
         # 保存词汇表到数据库 (批量插入)
         print("正在保存词汇表...")
         vocab_data = [(word_id, word, self.idf_weights[word]) for word, word_id in self.vocabulary.items()]
+        
+        if incremental:
+            # 增量模式：先清空再插入（因为词汇表已被合并）
+            cursor.execute("DELETE FROM vocabulary")
+        
         cursor.executemany("""
             INSERT INTO vocabulary (id, word, idf_weight)
             VALUES (?, ?, ?)
         """, vocab_data)
         conn.commit()
 
-        # 插入元数据
-        cursor.execute("""
-            INSERT INTO metadata (hash, timestamp, total_files, total_lines, vector_size)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            self.get_index_hash(),
-            time.time(),
-            source_index['statistics']['total_files'],
-            source_index['statistics']['total_lines'],
-            len(self.vocabulary)
-        ))
+        # 插入/更新元数据
+        if incremental:
+            cursor.execute("""
+                UPDATE metadata SET hash=?, timestamp=?, total_files=?, total_lines=?, vector_size=?
+            """, (
+                self.get_index_hash(),
+                time.time(),
+                source_index['statistics']['total_files'],
+                source_index['statistics']['total_lines'],
+                len(self.vocabulary)
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO metadata (hash, timestamp, total_files, total_lines, vector_size)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                self.get_index_hash(),
+                time.time(),
+                source_index['statistics']['total_files'],
+                source_index['statistics']['total_lines'],
+                len(self.vocabulary)
+            ))
 
         # 处理文件和插入数据 (批量插入,带进度显示)
         print("正在处理文件和构建向量...")
@@ -725,6 +775,10 @@ class SQLiteVectorKnowledgeBase:
             print(f"  - 文件数据插入完成")
 
             print(f"  - 插入类数据 ({len(classes_data)} 条)...")
+            # 增量模式下先删除已存在的类
+            if incremental and classes_data:
+                for cd in classes_data:
+                    cursor.execute("DELETE FROM classes WHERE file_path=? AND name=?", (cd[5], cd[1]))
             cursor.executemany("""
                 INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, vector)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -732,6 +786,10 @@ class SQLiteVectorKnowledgeBase:
             print(f"  - 类数据插入完成")
 
             print(f"  - 插入函数数据 ({len(functions_data)} 条)...")
+            # 增量模式下先删除已存在的函数
+            if incremental and functions_data:
+                for fd in functions_data:
+                    cursor.execute("DELETE FROM functions WHERE file_path=? AND name=?", (fd[3], fd[0]))
             cursor.executemany("""
                 INSERT INTO functions (name_lower, name, line, type, file_path, description, vector)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
