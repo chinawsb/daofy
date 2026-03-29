@@ -23,18 +23,21 @@ if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
 from sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
+from smart_cache_knowledge_base import SmartCacheKnowledgeBase
 
 
 class DelphiKnowledgeBaseService:
     """Delphi 知识库服务"""
 
-    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
+    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None,
+                 use_smart_cache: bool = True):
         """
         初始化知识库服务
 
         Args:
             kb_dir: 知识库目录路径,如果为 None 则使用默认路径
             progress_callback: 进度回调函数
+            use_smart_cache: 是否使用智能缓存方案（默认True）
         """
         if kb_dir is None:
             # 默认路径: MCP 服务器目录下的 data/delphi-knowledge-base
@@ -49,6 +52,7 @@ class DelphiKnowledgeBaseService:
         self.source_dir = None
         self.delphi_versions = []
         self.progress_callback = progress_callback
+        self.use_smart_cache = use_smart_cache
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)
@@ -190,6 +194,62 @@ class DelphiKnowledgeBaseService:
             print(f"源码目录不存在: {self.source_dir}")
             return False
 
+        if self.use_smart_cache:
+            # 使用智能缓存方案
+            return self._build_with_smart_cache(force_rebuild)
+        else:
+            # 使用原有方案
+            return self._build_with_legacy(force_rebuild)
+    
+    def _build_with_smart_cache(self, force_rebuild: bool = False) -> bool:
+        """使用智能缓存方案构建知识库"""
+        print("使用智能缓存方案构建知识库...")
+        
+        # 创建配置文件
+        config = {
+            "name": "delphi-knowledge-base",
+            "type": "delphi-source",
+            "version": "2.0",
+            "source": {
+                "type": "link",
+                "path": str(self.source_dir),
+                "extensions": [".pas", ".dfm", ".inc"],
+                "encoding": "utf-8",
+                "use_files_dir": False
+            },
+            "database": {
+                "file": "knowledge_base.sqlite",
+                "enable_vector_cache": True,
+                "cache_size": 10000,
+                "vector_build_mode": "ondemand"
+            },
+            "build": {
+                "auto_rebuild": False,
+                "incremental": not force_rebuild,
+                "parallel_workers": 4,
+                "batch_size": 1000
+            }
+        }
+        
+        config_path = self.kb_dir / "config.json"
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        # 初始化智能缓存知识库
+        start_time = time.time()
+        self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir), config)
+        
+        # 异步重建
+        self.kb_instance.rebuild_async()
+        
+        elapsed = (time.time() - start_time) * 1000
+        print(f"知识库初始化完成! 耗时: {elapsed:.2f}ms")
+        print("向量正在后台构建中，知识库已可用...")
+        
+        return True
+    
+    def _build_with_legacy(self, force_rebuild: bool = False) -> bool:
+        """使用原有方案构建知识库"""
         # 导入扫描模块
         from scan_delphi_sources import DelphiSourceScanner
 
@@ -221,7 +281,12 @@ class DelphiKnowledgeBaseService:
         """
         try:
             if self.kb_instance is None:
-                self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                if self.use_smart_cache:
+                    # 使用智能缓存方案
+                    self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir))
+                else:
+                    # 使用原有方案
+                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
             return True
         except Exception as e:
             print(f"加载知识库失败: {e}")
@@ -231,67 +296,98 @@ class DelphiKnowledgeBaseService:
         """根据类名搜索"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.search_by_class_name(class_name)
+        
+        if self.use_smart_cache:
+            # 智能缓存方案：使用统一的search_by_name
+            return self.kb_instance.search_by_name(class_name, item_types=['c'])
+        else:
+            return self.kb_instance.search_by_class_name(class_name)
 
     def search_by_function_name(self, function_name: str) -> List[Dict]:
         """根据函数名搜索"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.search_by_function_name(function_name)
+        
+        if self.use_smart_cache:
+            # 智能缓存方案：使用统一的search_by_name
+            return self.kb_instance.search_by_name(function_name, item_types=['f', 'p'])
+        else:
+            return self.kb_instance.search_by_function_name(function_name)
 
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """根据关键词搜索"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.search_by_keyword(keyword)
+        
+        if self.use_smart_cache:
+            # 智能缓存方案：使用语义搜索
+            results = self.kb_instance.semantic_search(keyword, top_k=10)
+            return [{'name': r['name'], 'type': r['type_name'], 'similarity': r['similarity']} for r in results]
+        else:
+            return self.kb_instance.search_by_keyword(keyword)
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索类"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.semantic_search_classes(query, top_k)
+        
+        if self.use_smart_cache:
+            results = self.kb_instance.semantic_search(query, top_k=top_k, item_types=['c'])
+            return [(r['name'], r['similarity']) for r in results]
+        else:
+            return self.kb_instance.semantic_search_classes(query, top_k)
 
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索函数"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.semantic_search_functions(query, top_k)
+        
+        if self.use_smart_cache:
+            results = self.kb_instance.semantic_search(query, top_k=top_k, item_types=['f', 'p'])
+            return [(r['name'], r['similarity']) for r in results]
+        else:
+            return self.kb_instance.semantic_search_functions(query, top_k)
 
     def get_statistics(self) -> Dict:
         """获取知识库统计信息"""
         if not self.load_knowledge_base():
             return {}
+        
+        if self.use_smart_cache:
+            # 智能缓存方案
+            return self.kb_instance.get_statistics()
+        else:
+            # 原有方案
+            # 从数据库获取统计信息
+            import sqlite3
+            db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
+            if not db_file.exists():
+                return {}
 
-        # 从数据库获取统计信息
-        import sqlite3
-        db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
-        if not db_file.exists():
-            return {}
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
 
-        conn = sqlite3.connect(str(db_file))
-        cursor = conn.cursor()
+            stats = {}
+            try:
+                cursor.execute("SELECT COUNT(*) FROM classes")
+                stats["classes"] = cursor.fetchone()[0]
 
-        stats = {}
-        try:
-            cursor.execute("SELECT COUNT(*) FROM classes")
-            stats["classes"] = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM functions")
+                stats["functions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM functions")
-            stats["functions"] = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM files")
+                stats["files"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM files")
-            stats["files"] = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM vocabulary")
+                stats["vocabulary_size"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabulary")
-            stats["vocabulary_size"] = cursor.fetchone()[0]
+                # 获取文件大小
+                stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 
-            # 获取文件大小
-            stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
+            finally:
+                conn.close()
 
-        finally:
-            conn.close()
-
-        return stats
+            return stats
 
     def close(self):
         """关闭知识库连接"""
