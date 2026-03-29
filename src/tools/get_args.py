@@ -37,7 +37,7 @@ async def get_compiler_args(
     output_type: str = "gui",
     runtime_library: str = "static",
     build_configuration: Optional[str] = None
-) -> Dict[str, Any]:
+) -> CallToolResult:
     """
     获取编译器命令行参数(不执行编译)
 
@@ -58,7 +58,7 @@ async def get_compiler_args(
         build_configuration: 编译配置名称
 
     Returns:
-        命令行参数字典
+        命令行参数
     """
     logger.info(f"收到获取命令行参数请求: {project_path}")
 
@@ -97,7 +97,10 @@ async def get_compiler_args(
         result = _compiler_service.get_args(request)
 
         # 返回结果
-        return result.to_dict()
+        return CallToolResult(
+            content=[TextContent(type="text", text=str(result.to_dict()))],
+            isError=False
+        )
 
     except Exception as e:
         error_msg = f"生成参数过程发生异常: {str(e)}"

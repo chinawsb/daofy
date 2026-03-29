@@ -27,7 +27,7 @@ class ArgsGenerator:
 
         # 输出路径
         if options.output_path:
-            args.append('-E"' + options.output_path + '"')
+            args.append('-E' + options.output_path)
 
         # 条件编译符号
         if options.conditional_defines:
@@ -82,30 +82,36 @@ class ArgsGenerator:
 
     def validate_args(self, args: List[str]) -> bool:
         """验证参数合法性"""
-        # 检查是否有非法字符
+        path_params = {'-U', '-I', '-R', '-NS', '-LE', '-LN', '-NU', '-NH', '-NO', '-NB', '-NX'}
+        
         for arg in args:
-            # 如果参数包含引号,只检查引号外的部分
+            param_prefix = None
+            for pf in path_params:
+                if arg.startswith(pf):
+                    param_prefix = pf
+                    break
+            
             if '"' in arg and arg.count('"') >= 2:
-                # 分割引号内外的部分
                 parts = arg.split('"')
-                # 只检查引号外的部分(偶数索引的部分)
                 for i in range(0, len(parts), 2):
-                    if any(char in parts[i] for char in ['|', '&', '`', '(', ')', '<', '>']):
+                    if any(char in parts[i] for char in ['|', '&', '`', '<', '>']):
                         logger.error("参数包含非法字符: " + arg)
                         return False
             else:
-                # 没有引号,检查整个参数
-                if any(char in arg for char in ['|', '&', '`', '(', ')', '<', '>']):
-                    logger.error("参数包含非法字符: " + arg)
-                    return False
+                if param_prefix:
+                    if any(char in arg for char in ['|', '&', '`', '<', '>']):
+                        logger.error("参数包含非法字符: " + arg)
+                        return False
+                else:
+                    if any(char in arg for char in ['|', '&', '`', '(', ')', '<', '>']):
+                        logger.error("参数包含非法字符: " + arg)
+                        return False
             
-            # 检查 $ 字符是否在合法位置
             if '$' in arg and not arg.startswith('-$'):
                 logger.error("参数包含非法 $ 字符: " + arg)
                 return False
             
-            # 检查 ; 字符是否在合法位置
-            if ';' in arg and not ('"' in arg and arg.count('"') >= 2):
+            if ';' in arg and param_prefix is None:
                 logger.error("参数包含非法 ; 字符: " + arg)
                 return False
 

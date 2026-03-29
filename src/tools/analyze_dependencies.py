@@ -139,8 +139,10 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                     getit_paths = []
                     registry_paths = []
                 
-                # 合并搜索路径：.dproj + GetIt + 注册表
-                all_search_paths = search_paths + getit_paths + registry_paths
+                # 合并搜索路径：.dproj + GetIt + 注册表 + 第三方库
+                thirdparty_kb_paths = thirdparty_kb.get_library_paths()
+                all_search_paths = search_paths + getit_paths + registry_paths + thirdparty_kb_paths
+                logger.info(f"第三方库路径: {thirdparty_kb_paths[:5] if thirdparty_kb_paths else []}")
                 logger.info(f"GetIt 组件路径: {getit_paths}")
                 logger.info(f"注册表库路径: {registry_paths}")
                 
@@ -267,15 +269,43 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                 
                 # 方法2: 通过知识库搜索类定义获取文件路径（补充）
                 for unit in result['missing_units']:
-                    # 搜索第三方库
+                    unit_lower = unit.lower()
+                    
+                    # 搜索第三方库 - 使用小写匹配
                     if kb_thirdparty and unit not in resolved_via_kb:
                         kb_results = kb_thirdparty.search_by_class_name(unit)[:3]
+                        if not kb_results:
+                            kb_results = kb_thirdparty.search_by_function_name(unit)[:3]
                         if kb_results:
                             for r in kb_results:
                                 path = r.get('file', {}).get('full_path', '') or r.get('full_path', '')
                                 if path and path.lower().endswith('.pas'):
                                     resolved_via_kb[unit] = {"source": "thirdparty", "path": path}
                                     break
+                    
+                    # 直接从知识库索引中查找单元文件
+                    if unit not in resolved_via_kb:
+                        try:
+                            files = kb_thirdparty.kb_instance.index.get('files', [])
+                            for f in files:
+                                units_in_file = f.get('units', [])
+                                if any(u.lower() == unit_lower for u in units_in_file):
+                                    path = f.get('full_path', '')
+                                    if path and path.lower().endswith('.pas'):
+                                        resolved_via_kb[unit] = {"source": "thirdparty", "path": path}
+                                        break
+                        except Exception:
+                            pass
+                    
+                    # 直接从第三方路径中查找 .pas 文件
+                    if unit not in resolved_via_kb:
+                        for tp_path in all_thirdparty_paths:
+                            if not os.path.exists(tp_path):
+                                continue
+                            pas_file = os.path.join(tp_path, f"{unit}.pas")
+                            if os.path.exists(pas_file):
+                                resolved_via_kb[unit] = {"source": "thirdparty", "path": pas_file}
+                                break
                     
                     # 搜索Delphi官方库
                     if kb_delphi and unit not in resolved_via_kb:

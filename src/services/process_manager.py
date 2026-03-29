@@ -34,7 +34,7 @@ class ProcessManager:
                 env = {
                     'BDS': bds_path,
                     'BDSINCLUDE': f"{bds_path}\\include",
-                    'BDSCOMMONDIR': f"C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\{bds_path.split('\\\\')[-1]}",
+                    'BDSCOMMONDIR': f"C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\{bds_path.split('\\')[-1]}",
                     'LANGDIR': 'EN',
                 }
                 logger.debug(f"设置 Delphi 环境变量: {env}")

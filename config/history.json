@@ -1,6 +1,209 @@
 {
   "entries": [
     {
+      "timestamp": "2026-03-29T09:12:59.000762",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 795,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:12:37.864022",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 820,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:09:25.525461",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 801,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:09:05.049997",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 738,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:08:44.682280",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 772,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:08:24.935579",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 790,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:05:29.455951",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 743,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T09:05:08.190302",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 889,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T08:58:21.101523",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 782,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T08:58:09.551908",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 753,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T08:57:48.852358",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 795,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-03-29T08:53:19.538029",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 682,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:52:12.292484",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 736,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:50:49.461664",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 733,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:50:34.724484",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 779,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:50:13.384832",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 757,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:48:13.643047",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 715,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:47:51.936187",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 718,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:47:31.868496",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 1313,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:47:17.118309",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 1697,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:42:43.550799",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 734,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:42:30.431050",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 766,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:42:17.413000",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 744,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:41:55.621102",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 720,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:38:57.887809",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 743,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:37:30.103104",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 747,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:21:54.217575",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 709,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:11:22.367199",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 700,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-03-29T08:10:59.780133",
+      "project_path": "C:\\temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 735,
+      "error_message": "无错误"
+    },
+    {
       "timestamp": "2026-03-10T09:13:03.706446",
       "project_path": "C:/User/diandaxia/diandaxia.dproj",
       "status": "success",

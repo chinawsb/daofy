@@ -602,26 +602,45 @@ class CompilerService:
 
     def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str) -> List[str]:
         """生成 .dpr 文件的直接编译参数"""
+        from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
+        
         args = []
 
         # 项目文件
         args.append(project_path)
 
         # 输出目录（存放 .exe 文件）
-        args.append(f'-E"{output_base}"')
+        args.append(f'-E{output_base}')
 
         # 中间文件目录（存放 .dcu 文件）
         dcu_dir = str(Path(output_base) / "dcu")
-        args.append(f'-N"{dcu_dir}"')
+        args.append(f'-N{dcu_dir}')
 
         # 条件编译符号
         if options.conditional_defines:
             defines = ";".join(options.conditional_defines)
             args.append(f'-$D+{defines}')
 
-        # 单元搜索路径
-        if options.unit_search_paths:
-            paths = ";".join(options.unit_search_paths)
+        # 命名空间搜索路径 - 默认添加 System 命名空间
+        default_namespaces = ["System", "Winapi", "System.Win", "Vcl", "Vcl.Imaging",
+                              "Vcl.Touch", "Vcl.Samples", "Vcl.Shell", "Data", "Datasnap",
+                              "Web", "Soap", "Xml"]
+        args.append('-NS' + ";".join(default_namespaces))
+
+        # 单元搜索路径 - 如果未提供，则自动获取 Delphi 默认库搜索路径
+        unit_paths = options.unit_search_paths if options.unit_search_paths else []
+        if not unit_paths:
+            # 自动获取 Delphi 库搜索路径
+            platform = "Win32" if options.target_platform.value == "win32" else "Win64"
+            delphi_lib_paths = get_delphi_library_paths(platform=platform)
+            # 展开路径中的宏变量
+            for p in delphi_lib_paths:
+                expanded = expand_delphi_path_macros(p, version=None, platform=platform)
+                if expanded and expanded not in unit_paths:
+                    unit_paths.append(expanded)
+        
+        if unit_paths:
+            paths = ";".join(unit_paths)
             args.append(f'-U{paths}')
 
         # 资源搜索路径

@@ -5,6 +5,7 @@
 """
 
 from typing import Optional, List, Dict, Any
+from mcp.types import CallToolResult
 from ..models.compile_request import FileCompileRequest
 from ..services.compiler_service import CompilerService
 from ..utils.logger import get_logger
@@ -26,7 +27,7 @@ async def compile_file(
     unit_search_paths: Optional[List[str]] = None,
     warning_level: int = 2,
     disabled_warnings: Optional[List[str]] = None
-) -> Dict[str, Any]:
+) -> CallToolResult:
     """
     编译单个 Delphi 单元文件(仅语法检查)
 
@@ -37,18 +38,16 @@ async def compile_file(
         disabled_warnings: 禁用的警告列表
 
     Returns:
-        编译结果字典
+        编译结果
     """
     logger.info(f"收到单文件编译请求: {file_path}")
 
     if _compiler_service is None:
         logger.error("编译服务未初始化")
-        return {
-            "status": "failed",
-            "error_code": "SERVICE_NOT_INITIALIZED",
-            "error_message": "编译服务未初始化",
-            "duration": 0
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": "编译服务未初始化"}],
+            isError=True
+        )
 
     try:
         # 构建编译请求
@@ -63,14 +62,15 @@ async def compile_file(
         result = await _compiler_service.compile_file(request)
 
         # 返回结果
-        return result.to_dict()
+        return CallToolResult(
+            content=[{"type": "text", "text": str(result.to_dict())}],
+            isError=result.status.value != "success"
+        )
 
     except Exception as e:
         error_msg = f"编译过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "status": "failed",
-            "error_code": "INTERNAL_ERROR",
-            "error_message": error_msg,
-            "duration": 0
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": error_msg}],
+            isError=True
+        )

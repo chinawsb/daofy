@@ -5,6 +5,7 @@
 """
 
 from typing import Optional, List, Dict, Any
+from mcp.types import CallToolResult
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
 from ..models.compile_result import CompileResult
 from ..services.compiler_service import CompilerService
@@ -38,7 +39,7 @@ async def compile_project(
     output_type: str = "gui",
     runtime_library: str = "static",
     build_configuration: Optional[str] = None
-) -> Dict[str, Any]:
+) -> CallToolResult:
     """
     编译 Delphi 工程
 
@@ -66,12 +67,10 @@ async def compile_project(
 
     if _compiler_service is None:
         logger.error("编译服务未初始化")
-        return {
-            "status": "failed",
-            "error_code": "SERVICE_NOT_INITIALIZED",
-            "error_message": "编译服务未初始化",
-            "duration": 0
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": "编译服务未初始化"}],
+            isError=True
+        )
 
     try:
         # 构建编译选项
@@ -102,14 +101,15 @@ async def compile_project(
         result = await _compiler_service.compile_project(request)
 
         # 返回结果
-        return result.to_dict()
+        return CallToolResult(
+            content=[{"type": "text", "text": str(result.to_dict())}],
+            isError=result.status.value != "success"
+        )
 
     except Exception as e:
         error_msg = f"编译过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "status": "failed",
-            "error_code": "INTERNAL_ERROR",
-            "error_message": error_msg,
-            "duration": 0
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": error_msg}],
+            isError=True
+        )

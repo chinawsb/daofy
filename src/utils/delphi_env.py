@@ -198,7 +198,7 @@ def expand_delphi_path_macros(
     if bds_root:
         macros['$(BDS)'] = bds_root
         macros['$(BDSBIN)'] = os.path.join(bds_root, 'bin')
-        macros['$(BDSLIB)'] = os.path.join(bds_root.replace('Studio', 'Studio\\lib'), '$(Platform)')
+        macros['$(BDSLIB)'] = os.path.join(bds_root, 'lib')
     
     if user_docs:
         public_docs = user_docs.replace('\\' + user_docs.split('\\')[-1], '')
