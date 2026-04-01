@@ -92,6 +92,7 @@ KIND_PROC = 'FP'       # procedure
 KIND_CONST = 'CC'      # const
 KIND_RESOURCE = 'CR'   # resourcestring
 KIND_UNIT = 'UI'       # unit in uses
+KIND_HELPER = 'TH'     # class helper for / record helper for
 
 
 def _extract_all_entities(content: str) -> List[Dict]:
@@ -107,12 +108,14 @@ def _extract_all_entities(content: str) -> List[Dict]:
         name = match.group(1)
         base = match.group(2)  # None if no parent specified, Delphi defaults to TObject
         start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()  # 文件偏移
         entities.append({
             'name': name,
             'kind': KIND_CLASS,
-            'parent': base,  # None means inherit from TObject
+            'parent': base,
             'line': start_line,
             'start_line': start_line,
+            'start_offset': start_offset,
             'definition': f'class({base})' if base else 'class'
         })
     
@@ -121,12 +124,14 @@ def _extract_all_entities(content: str) -> List[Dict]:
         name = match.group(1)
         base = match.group(2)
         start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
         entities.append({
             'name': name,
             'kind': KIND_RECORD,
             'parent': base,
             'line': start_line,
             'start_line': start_line,
+            'start_offset': start_offset,
             'definition': f'record({base})' if base else 'record'
         })
     
@@ -135,13 +140,47 @@ def _extract_all_entities(content: str) -> List[Dict]:
         name = match.group(1)
         base = match.group(2)
         start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
         entities.append({
             'name': name,
             'kind': KIND_INTERFACE,
             'parent': base,
             'line': start_line,
             'start_line': start_line,
+            'start_offset': start_offset,
             'definition': f'interface({base})' if base else 'interface'
+        })
+    
+    # 提取 class helper 类型 (TH)
+    for match in _HELPER_PATTERN.finditer(content):
+        name = match.group(1)
+        target = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_HELPER,
+            'parent': target,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'class helper for {target}'
+        })
+    
+    # 提取 record helper 类型 (TH)
+    for match in _RECORD_HELPER_PATTERN.finditer(content):
+        name = match.group(1)
+        target = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_HELPER,
+            'parent': target,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'record helper for {target}'
         })
     
     # 提取 enum 类型 (TE)
@@ -398,6 +437,9 @@ def _extract_uses(content: str) -> List[str]:
 _CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([^)]+)\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
 _RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
 _INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
+# 匹配 class helper for TSomeClass 和 record helper for TSomeRecord
+_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+_RECORD_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
 _ENUM_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;(?!.*\bset\b)', re.MULTILINE | re.IGNORECASE)  # 排除 set of
 _SET_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*set\s+of\s+', re.MULTILINE | re.IGNORECASE)
 

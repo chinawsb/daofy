@@ -9,6 +9,7 @@ import json
 import sqlite3
 import math
 import struct
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
@@ -1091,9 +1092,16 @@ class SQLiteVectorKnowledgeBase:
         """, (function_name_lower,))
 
         results = []
+        file_cache = {}
+        
         for row in cursor.fetchall():
-            # 动态计算父类 - 根据行号找到所属的类/记录
-            parent = self._find_parent_by_line(row['full_path'], row['line'])
+            file_path = row['full_path']
+            line_num = row['line']
+            
+            if file_path not in file_cache:
+                file_cache[file_path] = self._get_file_types(file_path)
+            
+            parent = self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
             
             results.append({
                 'name': row['name'],
@@ -1115,13 +1123,71 @@ class SQLiteVectorKnowledgeBase:
             })
 
         return results
+    
+    def _get_file_types(self, file_path: str) -> Optional[List[Dict]]:
+        """获取文件中的所有类型定义及其范围"""
+        if not file_path:
+            return None
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name, start_line, start_offset
+                FROM entities
+                WHERE file_id = (
+                    SELECT id FROM files WHERE full_path = ?
+                )
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
+                AND start_line IS NOT NULL
+                AND start_offset IS NOT NULL
+                ORDER BY start_line
+            """, (file_path,))
+            
+            types = list(cursor.fetchall())
+            if not types:
+                return None
+            
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            type_ranges = []
+            for i, row in enumerate(types):
+                type_name = row['name']
+                start_line = row['start_line']
+                start_offset = row['start_offset']
+                
+                # 计算 end_line: 使用下一个类型的 start_line - 1
+                # 这样可以正确处理 interface (其内部的 end; 会导致错误范围)
+                if i + 1 < len(types):
+                    next_start_line = types[i + 1]['start_line']
+                else:
+                    next_start_line = float('inf')
+                
+                type_ranges.append((type_name, start_line, next_start_line - 1))
+            
+            return type_ranges
+            
+        except Exception:
+            return None
+    
+    def _find_parent_from_cache(self, file_path: str, line_num: int, type_ranges: Optional[List[tuple]]) -> Optional[str]:
+        """从缓存的类型范围中查找父类"""
+        if not type_ranges:
+            return None
+        
+        for type_name, start_line, end_line in reversed(type_ranges):
+            if start_line < line_num <= end_line:
+                return type_name
+        
+        return None
 
-    def _find_parent_by_line(self, file_path: str, line_num: int) -> Optional[str]:
-        """
-        根据行号查找所属的类或记录
-        使用 start_line：找到小于该行号的类型，取最近的一个
-        再用下一个类型的 start_line 作为上界判断
-        """
+    def _find_parent_by_line_fast(self, file_path: str, line_num: int) -> Optional[str]:
+        """快速查找父类 - 优先SQL"""
         if not file_path:
             return None
             
@@ -1129,14 +1195,14 @@ class SQLiteVectorKnowledgeBase:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # 只用 start_line，不需要 end_line
+            # 简单SQL查询：用start_line判断
             cursor.execute("""
                 SELECT name, start_line
                 FROM entities
                 WHERE file_id = (
                     SELECT id FROM files WHERE full_path = ?
                 )
-                AND kind IN ('TC', 'TR', 'TI')
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
                 AND start_line IS NOT NULL
                 ORDER BY start_line
             """, (file_path,))
@@ -1147,6 +1213,68 @@ class SQLiteVectorKnowledgeBase:
                     next_line = types[i + 1]['start_line'] if i + 1 < len(types) else float('inf')
                     if line_num < next_line:
                         return row['name']
+            
+        except Exception:
+            pass
+            
+        return None
+
+    def _find_parent_by_line(self, file_path: str, line_num: int) -> Optional[str]:
+        """
+        根据行号查找所属的类或记录
+        优化版本：一次读取文件，找到所有类型的end位置，精确判断嵌套关系
+        """
+        if not file_path:
+            return None
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 获取文件中所有类型定义及其偏移（按行号排序）
+            cursor.execute("""
+                SELECT name, start_line, start_offset
+                FROM entities
+                WHERE file_id = (
+                    SELECT id FROM files WHERE full_path = ?
+                )
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
+                AND start_line IS NOT NULL
+                AND start_offset IS NOT NULL
+                ORDER BY start_line
+            """, (file_path,))
+            
+            types = list(cursor.fetchall())
+            if not types:
+                return None
+            
+            # 一次读取文件，找到所有类型的end位置
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            type_ranges = []
+            
+            for row in types:
+                type_name = row['name']
+                start_line = row['start_line']
+                start_offset = row['start_offset']
+                
+                # 从 start_offset 开始查找 end;
+                remaining = content[start_offset:]
+                
+                # 找到第一个 end; (可能嵌套)
+                end_pos = remaining.find('end;')
+                if end_pos >= 0:
+                    end_line = start_line + remaining[:end_pos].count('\n')
+                else:
+                    end_line = float('inf')
+                
+                type_ranges.append((type_name, start_line, end_line))
+            
+            # 从后向前查找：找到最后一个 start_line < method_line 的类型
+            for type_name, start_line, end_line in reversed(type_ranges):
+                if start_line < line_num <= end_line:
+                    return type_name
             
         except Exception:
             pass
