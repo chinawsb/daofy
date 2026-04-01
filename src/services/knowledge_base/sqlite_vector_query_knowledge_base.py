@@ -1123,6 +1123,66 @@ class SQLiteVectorKnowledgeBase:
             })
 
         return results
+
+    def search_by_keywords(self, keywords: List[str], kind_filter: str = None) -> List[Dict]:
+        """
+        多关键词模糊搜索 (使用反转字符串匹配)
+        
+        Args:
+            keywords: 关键词列表，如 ["create", "button"]
+            kind_filter: 可选的类型过滤 ('TC', 'FF', 'FP', etc.)
+        
+        Returns:
+            匹配的结果列表
+        """
+        if not keywords:
+            return []
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        rev_keywords = [k[::-1].lower() for k in keywords]
+        
+        conditions = ["name_lower_rev LIKE ?" for _ in rev_keywords]
+        where_clause = " AND ".join(conditions)
+        
+        if kind_filter:
+            if isinstance(kind_filter, list):
+                kind_list = "'" + "','".join(kind_filter) + "'"
+                where_clause += f" AND kind IN ({kind_list})"
+            else:
+                where_clause += f" AND kind = '{kind_filter}'"
+        
+        cursor.execute(f"""
+            SELECT e.name, e.kind, e.parent, e.definition, e.line, f.path, f.full_path,
+                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+            FROM entities e
+            INNER JOIN files f ON e.file_id = f.id
+            WHERE {where_clause}
+        """, tuple([f'%{k}%' for k in rev_keywords]))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'name': row['name'],
+                'kind': row['kind'],
+                'parent': row['parent'],
+                'definition': row['definition'] or '',
+                'line': row['line'],
+                'file': {
+                    'path': row['path'],
+                    'full_path': row['full_path'],
+                    'extension': row['extension'],
+                    'size': row['size'],
+                    'line_count': row['line_count'],
+                    'hash': row['hash'],
+                    'last_modified': row['last_modified'],
+                    'units': json.loads(row['units']) if row['units'] else [],
+                    'uses': json.loads(row['uses']) if row['uses'] else []
+                }
+            })
+        
+        return results
     
     def _get_file_types(self, file_path: str) -> Optional[List[Dict]]:
         """获取文件中的所有类型定义及其范围"""
