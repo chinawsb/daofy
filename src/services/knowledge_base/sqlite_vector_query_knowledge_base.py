@@ -1050,7 +1050,7 @@ class SQLiteVectorKnowledgeBase:
                    f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
             FROM entities e
             INNER JOIN files f ON e.file_id = f.id
-            WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
+            WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
         """, (class_name_lower,))
 
         results = []

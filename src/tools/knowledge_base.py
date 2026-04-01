@@ -469,28 +469,56 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     if "delphi_classes" in results and results["delphi_classes"]:
         output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
         for r in results["delphi_classes"][:top_k]:
-            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+            name = r.get('name', 'N/A')
+            parent = r.get('parent')
+            path = r.get('file', {}).get('path', 'N/A')
+            line = r.get('line', '')
+            if parent:
+                output += f"  - {name} ({parent}) @ {path}:{line}\n"
+            else:
+                output += f"  - {name} @ {path}:{line}\n"
         output += "\n"
         has_results = True
         
     if "delphi_functions" in results and results["delphi_functions"]:
-        output += f"Delphi 函数 ({len(results['delphi_functions'])}):\n"
+        output += f"Delphi 函数/方法 ({len(results['delphi_functions'])}):\n"
         for r in results["delphi_functions"][:top_k]:
-            output += f"  - {r.get('function', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+            name = r.get('name', 'N/A')
+            parent = r.get('parent')
+            path = r.get('file', {}).get('path', 'N/A')
+            line = r.get('line', '')
+            if parent:
+                output += f"  - {name} (in {parent}) @ {path}:{line}\n"
+            else:
+                output += f"  - {name} @ {path}:{line}\n"
         output += "\n"
         has_results = True
         
     if "project_classes" in results and results["project_classes"]:
         output += f"项目类 ({len(results['project_classes'])}):\n"
         for r in results["project_classes"][:top_k]:
-            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+            name = r.get('name', 'N/A')
+            parent = r.get('parent')
+            path = r.get('file', {}).get('path', 'N/A')
+            line = r.get('line', '')
+            if parent:
+                output += f"  - {name} ({parent}) @ {path}:{line}\n"
+            else:
+                output += f"  - {name} @ {path}:{line}\n"
         output += "\n"
         has_results = True
         
     if "thirdparty_classes" in results and results["thirdparty_classes"]:
         output += f"第三方库类 ({len(results['thirdparty_classes'])}):\n"
         for r in results["thirdparty_classes"][:top_k]:
-            output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
+            name = r.get('name', 'N/A')
+            parent = r.get('parent')
+            path = r.get('file', {}).get('path', 'N/A')
+            line = r.get('line', '')
+            if parent:
+                output += f"  - {name} ({parent}) @ {path}:{line}\n"
+            else:
+                output += f"  - {name} @ {path}:{line}\n"
         output += "\n"
         has_results = True
         
