@@ -438,6 +438,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 if search_type in ["semantic", "all"]:
                     results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
                     results["delphi_semantic_functions"] = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
+                if search_type in ["fuzzy", "all"]:
+                    keywords = query.lower().split()
+                    if keywords:
+                        results["delphi_fuzzy"] = _delphi_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
                     
             elif kb == "project" and _project_kb_service:
                 if search_type in ["class", "all"]:
@@ -446,6 +450,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     results["project_functions"] = _project_kb_service.search_by_function_name(query)[:top_k]
                 if search_type in ["semantic", "all"]:
                     results["project_semantic"] = _project_kb_service.semantic_search(query, top_k=top_k)
+                if search_type in ["fuzzy", "all"]:
+                    keywords = query.lower().split()
+                    if keywords:
+                        results["project_fuzzy"] = _project_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
                     
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 if search_type in ["class", "all"]:
@@ -454,6 +462,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     results["thirdparty_functions"] = _thirdparty_kb_service.search_by_function_name(query)[:top_k]
                 if search_type in ["semantic", "all"]:
                     results["thirdparty_semantic"] = _thirdparty_kb_service.semantic_search(query, top_k=top_k)
+                if search_type in ["fuzzy", "all"]:
+                    keywords = query.lower().split()
+                    if keywords:
+                        results["thirdparty_fuzzy"] = _thirdparty_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
                     
             elif kb == "help" and _help_kb_service:
                 if search_type in ["semantic", "all"]:
@@ -519,6 +531,17 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 output += f"  - {name} ({parent}) @ {path}:{line}\n"
             else:
                 output += f"  - {name} @ {path}:{line}\n"
+        output += "\n"
+        has_results = True
+
+    if "delphi_fuzzy" in results and results["delphi_fuzzy"]:
+        output += f"模糊匹配 ({len(results['delphi_fuzzy'])}):\n"
+        for r in results["delphi_fuzzy"][:top_k]:
+            name = r.get('name', 'N/A')
+            kind = r.get('kind', '')
+            path = r.get('file', {}).get('path', 'N/A')
+            line = r.get('line', '')
+            output += f"  - {name} ({kind}) @ {path}:{line}\n"
         output += "\n"
         has_results = True
         
