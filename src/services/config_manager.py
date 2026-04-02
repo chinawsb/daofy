@@ -131,6 +131,81 @@ class ConfigManager:
                 logger.warning("未配置默认编译器")
             return compiler
 
+    PROJECT_VERSION_MAP = {
+        "19": "Delphi 10.4 Sydney",
+        "18": "Delphi 10.3 Rio",
+        "17": "Delphi 10.2 Tokyo",
+        "16": "Delphi 10.1 Berlin",
+        "15": "Delphi XE10",
+        "14": "Delphi XE9",
+        "13": "Delphi XE8",
+        "12": "Delphi XE7",
+        "11": "Delphi XE6",
+        "10": "Delphi XE5",
+        "9": "Delphi XE4",
+        "8": "Delphi XE3",
+        "7": "Delphi XE2",
+        "21": "Delphi 12 Athens",
+        "22": "Delphi 11 Alexandria",
+        "23": "Delphi 12 Athens",
+    }
+
+    def get_compiler_for_project(self, project_version: str, platform: str = "win32") -> Optional[CompilerConfig]:
+        """
+        根据项目版本自动匹配最适配的编译器
+
+        Args:
+            project_version: 项目版本号(如 "19.2", "21.0" 等)
+            platform: 目标平台(win32/win64),默认 win32
+
+        Returns:
+            最适配的编译器配置,如果未找到则返回默认编译器
+        """
+        if not project_version:
+            logger.warning("项目版本号为空,使用默认编译器")
+            return self.get_compiler()
+
+        delphi_version = self._map_project_version_to_delphi(project_version)
+        if not delphi_version:
+            logger.warning(f"无法识别的项目版本: {project_version},使用默认编译器")
+            return self.get_compiler()
+
+        compilers = self.config.compilers
+        if not compilers:
+            logger.warning("未配置任何编译器")
+            return None
+
+        matching_compilers = [c for c in compilers if delphi_version.lower() in c.version.lower()]
+
+        if matching_compilers:
+            if platform == "win64":
+                for c in matching_compilers:
+                    if "win64" in c.name.lower():
+                        logger.info(f"匹配到编译器(Win64): {c.name}")
+                        return c
+            else:
+                for c in matching_compilers:
+                    if "win32" in c.name.lower():
+                        logger.info(f"匹配到编译器(Win32): {c.name}")
+                        return c
+                return matching_compilers[0]
+
+        logger.warning(f"未找到匹配版本 {delphi_version} 的编译器,使用默认编译器")
+        return self.get_compiler()
+
+    def _map_project_version_to_delphi(self, project_version: str) -> Optional[str]:
+        """
+        将项目版本号映射到 Delphi 版本名称
+
+        Args:
+            project_version: 项目版本号
+
+        Returns:
+            Delphi 版本名称
+        """
+        version_prefix = project_version.split(".")[0]
+        return self.PROJECT_VERSION_MAP.get(version_prefix)
+
     def add_compiler(self, compiler: CompilerConfig):
         """
         添加编译器配置

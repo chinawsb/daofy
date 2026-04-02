@@ -143,7 +143,7 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=搜索, stats=查看统计, build=构建知识库"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库: all=全部, delphi=官方, project=项目, thirdparty=第三方, help=帮助"},
-                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "record", "filename", "property", "method", "field", "event", "uses", "const"], "default": "semantic", "description": "搜索类型"},
+                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "fuzzy", "record", "filename", "property", "method", "field", "event", "uses", "const"], "default": "semantic", "description": "搜索类型: fuzzy=模糊匹配(反转字符串), 支持中英文关键词"},
                         "query": {"type": "string", "description": "搜索内容，如 'TStringList' 或 'TButton Click事件'"},
                         "project_path": {"type": "string", "description": "项目路径 (action=build 或 kb_type包含project时需要)"},
                         "version": {"type": "string", "description": "Delphi版本，如 '23.0'"},

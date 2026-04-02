@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.04.02] - 2026-04-02
+
+### Added
+
+#### 模糊搜索 (Fuzzy Search)
+- 新增 `search_type='fuzzy'` 搜索类型
+- 使用反转字符串匹配 (`name_lower_rev` 列) 实现模糊搜索
+- AI 翻译中文查询为英文后再搜索 (如 "创建一个按钮" → "create button")
+- 支持知识库: delphi, project, thirdparty
+
+#### 编译器自动匹配
+- 从 `.dproj` 文件自动解析 `ProjectVersion`
+- 根据项目版本自动选择最适配的编译器
+- 版本映射: 19.x→10.4, 21.x→12 Athens, 22.x→11 Alexandria, 23.x→12 Athens
+- 未找到匹配版本时使用默认编译器
+
+### Changed
+
+- 知识库搜索类型 enum 新增 "fuzzy" 选项
+- `compile_project` 工具在未指定编译器时自动检测
+
 ## [2026.03.28] - 2026-03-28
 
 ### Added

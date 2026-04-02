@@ -378,6 +378,16 @@ class DprojParser:
 
         return info
 
+    def get_project_version(self) -> Optional[str]:
+        """
+        获取项目版本号
+
+        Returns:
+            项目版本号(如 "19.2"),如果未找到则返回 None
+        """
+        info = self.get_project_info()
+        return info.get("project_version")
+
     def is_file_in_project(self, file_name: str) -> bool:
         """
         检查文件是否属于项目

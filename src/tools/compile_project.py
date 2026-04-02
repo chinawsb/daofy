@@ -4,11 +4,13 @@
 提供 Delphi 工程整体编译功能
 """
 
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from mcp.types import CallToolResult
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
 from ..models.compile_result import CompileResult
 from ..services.compiler_service import CompilerService
+from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,6 +23,51 @@ def set_compiler_service(service: CompilerService):
     """设置编译服务实例"""
     global _compiler_service
     _compiler_service = service
+
+
+def _detect_compiler_from_project(project_path: str, target_platform: str) -> Optional[str]:
+    """
+    从项目中自动检测最适配的编译器
+
+    Args:
+        project_path: 项目文件路径
+        target_platform: 目标平台
+
+    Returns:
+        编译器名称,如果检测失败则返回 None
+    """
+    project_path_obj = Path(project_path)
+    if not project_path_obj.exists():
+        logger.warning(f"项目文件不存在: {project_path}")
+        return None
+
+    dproj_path = project_path
+    if project_path_obj.suffix.lower() == '.dpr':
+        dproj_path = str(project_path_obj.with_suffix('.dproj'))
+
+    if not Path(dproj_path).exists():
+        logger.warning(f"未找到 .dproj 文件: {dproj_path}")
+        return None
+
+    parser = DprojParser(dproj_path)
+    if not parser.parse():
+        logger.error(f"解析 .dproj 文件失败: {dproj_path}")
+        return None
+
+    project_version = parser.get_project_version()
+    if not project_version:
+        logger.warning(f"未获取到项目版本号: {dproj_path}")
+        return None
+
+    logger.info(f"项目版本号: {project_version}")
+
+    if _compiler_service and _compiler_service.config_manager:
+        compiler = _compiler_service.config_manager.get_compiler_for_project(project_version, target_platform)
+        if compiler:
+            logger.info(f"自动匹配编译器: {compiler.name}")
+            return compiler.name
+
+    return None
 
 
 async def compile_project(
@@ -73,6 +120,15 @@ async def compile_project(
         )
 
     try:
+        # 自动检测编译器版本(如果未指定)
+        if not compiler_version:
+            detected = _detect_compiler_from_project(project_path, target_platform)
+            if detected:
+                compiler_version = detected
+                logger.info(f"自动检测到编译器: {compiler_version}")
+            else:
+                logger.info("未自动检测到编译器,将使用默认编译器")
+
         # 构建编译选项
         options = CompileOptions(
             target_platform=TargetPlatform(target_platform),
