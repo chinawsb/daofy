@@ -52,6 +52,9 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
         # 相对路径
         rel_path = file_path.relative_to(source_dir)
         
+        # 提取实体（统一 entities 格式）
+        entities = _extract_all_entities(content)
+        
         # 提取文件信息
         file_info = {
             'path': str(rel_path).replace('\\', '/'),
@@ -63,10 +66,7 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
             'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
             'units': _extract_units(content),
             'uses': _extract_uses(content),
-            'classes': _extract_classes(content),
-            'functions': _extract_functions(content),
-            'constants': _extract_constants(content),
-            'types': _extract_types(content)
+            'entities': entities  # 统一实体表
         }
         
         return file_info
@@ -74,6 +74,345 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
     except Exception as e:
         print(f"分析文件失败 {file_path}: {e}")
         return None
+
+
+# Kind 常量（两字母代码）
+KIND_CLASS = 'TC'      # class
+KIND_RECORD = 'TR'     # record
+KIND_INTERFACE = 'TI'  # interface
+KIND_ENUM = 'TE'       # enum
+KIND_SET = 'TS'        # set of
+KIND_TYPE_ALIAS = 'TY' # type alias
+KIND_FIELD = 'MF'      # field
+KIND_PROPERTY = 'MP'   # property
+KIND_METHOD = 'MM'     # method
+KIND_EVENT = 'ME'      # event
+KIND_FUNC = 'FF'       # function
+KIND_PROC = 'FP'       # procedure
+KIND_CONST = 'CC'      # const
+KIND_RESOURCE = 'CR'   # resourcestring
+KIND_UNIT = 'UI'       # unit in uses
+KIND_HELPER = 'TH'     # class helper for / record helper for
+
+
+def _extract_all_entities(content: str) -> List[Dict]:
+    """
+    提取所有实体（统一格式）
+    返回带有 kind 两字母代码的实体列表
+    只记录 start_line，end_line 通过查询时用"下一个类型开始行"确定
+    """
+    entities = []
+    
+    # 提取 class 类型 (TC)
+    for match in _CLASS_PATTERN.finditer(content):
+        name = match.group(1)
+        base = match.group(2)  # None if no parent specified, Delphi defaults to TObject
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()  # 文件偏移
+        entities.append({
+            'name': name,
+            'kind': KIND_CLASS,
+            'parent': base,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'class({base})' if base else 'class'
+        })
+    
+    # 提取 record 类型 (TR)
+    for match in _RECORD_PATTERN.finditer(content):
+        name = match.group(1)
+        base = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_RECORD,
+            'parent': base,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'record({base})' if base else 'record'
+        })
+    
+    # 提取 interface 类型 (TI)
+    for match in _INTERFACE_PATTERN.finditer(content):
+        name = match.group(1)
+        base = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_INTERFACE,
+            'parent': base,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'interface({base})' if base else 'interface'
+        })
+    
+    # 提取 class helper 类型 (TH)
+    for match in _HELPER_PATTERN.finditer(content):
+        name = match.group(1)
+        target = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_HELPER,
+            'parent': target,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'class helper for {target}'
+        })
+    
+    # 提取 record helper 类型 (TH)
+    for match in _RECORD_HELPER_PATTERN.finditer(content):
+        name = match.group(1)
+        target = match.group(2)
+        start_line = content[:match.start()].count('\n') + 1
+        start_offset = match.start()
+        entities.append({
+            'name': name,
+            'kind': KIND_HELPER,
+            'parent': target,
+            'line': start_line,
+            'start_line': start_line,
+            'start_offset': start_offset,
+            'definition': f'record helper for {target}'
+        })
+    
+    # 提取 enum 类型 (TE)
+    for match in _ENUM_PATTERN.finditer(content):
+        name = match.group(1)
+        values = match.group(2).strip()
+        if ',' in values:  # 真正的枚举
+            line = content[:match.start()].count('\n') + 1
+            entities.append({
+                'name': name,
+                'kind': KIND_ENUM,
+                'parent': None,
+                'line': line,
+                'definition': 'enum'
+            })
+    
+    # 提取 set 类型 (TS)
+    for match in _SET_PATTERN.finditer(content):
+        name = match.group(1)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': KIND_SET,
+            'parent': None,
+            'line': line,
+            'definition': 'set'
+        })
+    
+    # 提取 function (FF) - parent 在查询时动态计算
+    for match in _FUNC_PATTERN_1.finditer(content):
+        name = match.group(1)
+        ret_type = match.group(2)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': KIND_FUNC,
+            'parent': None,
+            'line': line,
+            'definition': f'function: {ret_type}'
+        })
+    
+    # 提取 procedure (FP)
+    for match in _FUNC_PATTERN_2.finditer(content):
+        name = match.group(1)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': KIND_PROC,
+            'parent': None,
+            'line': line,
+            'definition': 'procedure'
+        })
+    
+    for match in _FUNC_PATTERN_3.finditer(content):
+        name = match.group(1)
+        ret_type = match.group(2)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': KIND_FUNC,
+            'parent': None,
+            'line': line,
+            'definition': f'function: {ret_type}'
+        })
+    
+    for match in _FUNC_PATTERN_4.finditer(content):
+        name = match.group(1)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': KIND_PROC,
+            'parent': None,
+            'line': line,
+            'definition': 'procedure'
+        })
+    
+    # 提取 const (CC)
+    for match in _CONST_PATTERN.finditer(content):
+        const_type = match.group(1)
+        name = match.group(2)
+        value = match.group(3).strip()
+        line = content[:match.start()].count('\n') + 1
+        
+        kind = KIND_CONST
+        if const_type.lower() == 'resourcestring':
+            kind = KIND_RESOURCE
+        
+        entities.append({
+            'name': name,
+            'kind': kind,
+            'parent': None,
+            'line': line,
+            'definition': value[:100]
+        })
+    
+    # 提取类型标注常量: SMenuSeparator: string = '-';
+    for match in _CONST_PATTERN_TYPED.finditer(content):
+        name = match.group(1)
+        value = match.group(2).strip()
+        line = content[:match.start()].count('\n') + 1
+        
+        entities.append({
+            'name': name,
+            'kind': KIND_CONST,
+            'parent': None,
+            'line': line,
+            'definition': value[:100]
+        })
+    
+    # 提取简单常量: SIntOverflow = '...'; toInteger = Char(3);
+    for match in _CONST_PATTERN_SIMPLE.finditer(content):
+        name = match.group(1)
+        value = match.group(2).strip()
+        line = content[:match.start()].count('\n') + 1
+        
+        entities.append({
+            'name': name,
+            'kind': KIND_CONST,
+            'parent': None,
+            'line': line,
+            'definition': value[:100]
+        })
+    
+    # 提取类型定义 (作为独立 type)
+    for match in _TYPE_PATTERN_1.finditer(content):
+        name = match.group(1)
+        type_def = match.group(2) if match.lastindex >= 2 else ''
+        line = content[:match.start()].count('\n') + 1
+        
+        # 跳过已提取的 class/record/interface
+        if name.startswith('T') or name.startswith('I'):
+            continue
+        
+        entities.append({
+            'name': name,
+            'kind': 'TY',  # type alias
+            'parent': None,
+            'line': line,
+            'definition': type_def[:50]
+        })
+    
+    # 提取指针类型: PPointerList = ^TPointerList;
+    for match in _TYPE_PATTERN_PTR.finditer(content):
+        name = match.group(1)
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': 'TY',
+            'parent': None,
+            'line': line,
+            'definition': 'pointer'
+        })
+    
+    # 提取 TProc 等类型别名: TProc = procedure; (不带 type 关键字)
+    for match in _TYPE_PATTERN_3.finditer(content):
+        name = match.group(1)
+        ref_to = match.group(2) or ''  # "reference to " or None
+        func_type = match.group(3)  # procedure or function
+        params = match.group(4) or ''  # parameters or None
+        ret_type = match.group(5) or ''  # return type
+        of_obj = match.group(6) or ''  # "of object" or None
+        
+        # 构建定义字符串
+        type_def = f"{ref_to}{func_type}{params}{ret_type} {of_obj}".strip()
+        line = content[:match.start()].count('\n') + 1
+        entities.append({
+            'name': name,
+            'kind': 'TY',
+            'parent': None,
+            'line': line,
+            'definition': type_def
+        })
+    
+    return entities
+
+
+def _find_type_end_line(content: str, start_pos: int) -> int:
+    """
+    查找类型定义的结束行
+    处理嵌套情况：计算 'begin' 和 'end' 的配对
+    """
+    pos = start_pos
+    brace_count = 0
+    in_interface = False
+    
+    search_content = content[pos:]
+    
+    # 检查是否在 interface 声明后面 (interface 只有 3 行: IXXX = interface; end;)
+    if re.match(r'^\s*interface\b', search_content, re.MULTILINE | re.IGNORECASE):
+        end_match = re.search(r'^\s*end\s*[;.]', search_content, re.MULTILINE)
+        if end_match:
+            return content[:pos + end_match.end()].count('\n') + 1
+        return content[:pos].count('\n') + 1
+    
+    # 检查是否有 begin - end 块
+    begin_match = re.search(r'^\s*begin', search_content, re.MULTILINE | re.IGNORECASE)
+    if begin_match:
+        brace_count = 1
+        search_content = search_content[begin_match.end():]
+        pos = pos + begin_match.end()
+        
+        # 查找配对的 end
+        while search_content and brace_count > 0:
+            # 找 begin
+            b_match = re.search(r'\bbegin\b', search_content, re.IGNORECASE)
+            # 找 end
+            e_match = re.search(r'\bend\b', search_content, re.IGNORECASE)
+            
+            if not e_match:
+                break
+                
+            if b_match and b_match.start() < e_match.start():
+                brace_count += 1
+                search_content = search_content[b_match.end():]
+            else:
+                brace_count -= 1
+                if brace_count == 0:
+                    # 找到匹配的 end，查找其后的 ; 或 .
+                    end_content = search_content[e_match.end():e_match.end()+10]
+                    semi_match = re.search(r'[;.]', end_content)
+                    if semi_match:
+                        return content[:pos + e_match.end() + semi_match.end()].count('\n') + 1
+                    return content[:pos + e_match.end()].count('\n') + 1
+                search_content = search_content[e_match.end():]
+    else:
+        # 没有 begin 块，查找 end; 或 end.
+        end_match = re.search(r'^\s*end\s*[;.]', search_content, re.MULTILINE)
+        if end_match:
+            return content[:pos + end_match.end()].count('\n') + 1
+    
+    # 默认返回起始行
+    return content[:start_pos].count('\n') + 1
 
 
 def _extract_units(content: str) -> List[str]:
@@ -95,20 +434,34 @@ def _extract_uses(content: str) -> List[str]:
 
 
 # 预编译正则表达式
-_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
+_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([^)]+)\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
 _RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
 _INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
-_ENUM_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;', re.MULTILINE | re.IGNORECASE)
+# 匹配 class helper for TSomeClass 和 record helper for TSomeRecord
+_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+_RECORD_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+_ENUM_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;(?!.*\bset\b)', re.MULTILINE | re.IGNORECASE)  # 排除 set of
+_SET_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*set\s+of\s+', re.MULTILINE | re.IGNORECASE)
 
 _FUNC_PATTERN_1 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
 _FUNC_PATTERN_2 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', re.MULTILINE | re.IGNORECASE)
 _FUNC_PATTERN_3 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
 _FUNC_PATTERN_4 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
 
+# 支持批量常量: const L1=1;L2=3; 或 resourcestring S1='a';S2='b';
 _CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+# 支持类型标注常量: SMenuSeparator: string = '-'; 或 X = value;
+_CONST_PATTERN_TYPED = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[^\s=]+\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+# 支持简单常量: SIntOverflow = '...'; 或 toInteger = Char(3);
+_CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*([^;{]+);', re.MULTILINE | re.IGNORECASE)
 
 _TYPE_PATTERN_1 = re.compile(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)', re.MULTILINE | re.IGNORECASE)
 _TYPE_PATTERN_2 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b', re.MULTILINE | re.IGNORECASE)
+# 匹配指针类型: PPointerList = ^TPointerList;
+_TYPE_PATTERN_PTR = re.compile(r'^\s*([PBT][A-Z][a-zA-Z0-9_]*)\s*=\s*\^', re.MULTILINE | re.IGNORECASE)
+# 匹配: TProc = procedure; TNotifyEvent = procedure(Sender) of object; TCallback = reference to procedure(...);
+# 匹配函数类型: TListSortCompare = function(Item1, Item2: Pointer): Integer;
+_TYPE_PATTERN_3 = re.compile(r'^\s*(T[A-Z][a-zA-Z0-9_]*)\s*=\s*(reference\s+to\s+)?(procedure|function)\s*(\([^)]*\))?\s*(:[^\n;]+)?\s*(of\s+object)?;', re.MULTILINE | re.IGNORECASE)
 
 
 def _extract_classes(content: str) -> List[Dict]:

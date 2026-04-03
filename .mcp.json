@@ -1,0 +1,11 @@
+{
+  "delphi": {
+    "type": "stdio",
+    "command": "python",
+    "args": ["src/server.py"],
+    "cwd": "C:/User/cloudAttendance/service/delphi-complier-mcp-server",
+    "env": {
+      "PYTHONIOENCODING": "utf-8"
+    }
+  }
+}

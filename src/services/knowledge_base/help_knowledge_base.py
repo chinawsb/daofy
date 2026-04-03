@@ -1718,7 +1718,7 @@ class DelphiHelpKnowledgeBase:
                     stats['total_types'] = data.get('statistics', {}).get('total_types', 0)
                     stats['total_code_examples'] = data.get('statistics', {}).get('total_code_examples', 0)
 
-            db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
+            db_file = self.kb_dir / "knowledge.sqlite"
             if db_file.exists():
                 stats['database_size_mb'] = round(db_file.stat().st_size / (1024 * 1024), 2)
 

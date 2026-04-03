@@ -45,7 +45,7 @@ def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
     if delphi_kb_service and delphi_kb_service.kb_instance:
         try:
             import sqlite3
-            conn = sqlite3.connect(str(delphi_kb_service.kb_dir / 'index' / 'knowledge_base_vector.sqlite'))
+            conn = sqlite3.connect(str(delphi_kb_service.kb_dir / 'knowledge.sqlite'))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
@@ -68,7 +68,7 @@ def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
     if thirdparty_kb_service and thirdparty_kb_service.kb_instance:
         try:
             import sqlite3
-            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'index' / 'knowledge_base_vector.sqlite'))
+            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'knowledge.sqlite'))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             

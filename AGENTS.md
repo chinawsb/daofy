@@ -19,13 +19,15 @@ delphi-complier-mcp-server/
 │   ├── server.py             # MCP Server entry point
 │   ├── tools/               # MCP tool implementations
 │   ├── services/            # Business logic services
-│   ├── models/               # Data models (Pydantic/dataclasses)
-│   └── utils/                # Utility functions
-├── tests/                    # Test files
-├── config/                   # Configuration files
+│   ├── models/              # Data models (Pydantic/dataclasses)
+│   └── utils/               # Utility functions
+├── tests/                   # Test files
+├── config/                  # Configuration files
 ├── data/                    # Knowledge base data
 ├── docs/                    # Documentation
-└── pyproject.toml           # Project configuration
+├── build_kb.py             # Knowledge base builder (full source)
+├── build_kb_fmx.py         # Knowledge base builder (FMX only)
+└── pyproject.toml          # Project configuration
 ```
 
 ---
@@ -41,60 +43,131 @@ venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
-pip install -e ".[dev]"  # Install with dev dependencies
+pip install -e ".[dev]"
 ```
 
 ### Windows Encoding Settings
 
-**IMPORTANT**: On Windows, always set UTF-8 encoding before running Python scripts to avoid GBK encoding issues:
+**IMPORTANT**: On Windows, always set UTF-8 encoding:
 
 ```bash
-# Option 1: Set environment variable per command
+# Option 1: Per command
 PYTHONIOENCODING=utf-8 python your_script.py
 
-# Option 2: Set permanently for session
+# Option 2: For session
 set PYTHONIOENCODING=utf-8
 python your_script.py
-```
-
-When running Python commands in this project, **always use** `PYTHONIOENCODING=utf-8` prefix:
-
-```bash
-# Good
-PYTHONIOENCODING=utf-8 python rebuild_all_kbs_with_progress.py
-PYTHONIOENCODING=utf-8 python -m pytest
-
-# Bad (will cause encoding errors on Windows)
-python rebuild_all_kbs_with_progress.py
 ```
 
 ### Running Tests
 
 ```bash
-# Run all tests
 pytest
-
-# Run a single test file
 pytest tests/test_knowledge_base.py
-
-# Run a single test function
-pytest tests/test_knowledge_base.py::test_search_class -v
-
-# Run with coverage
 pytest --cov=src --cov-report=html
-
-# Run tests matching a pattern
-pytest -k "test_search"
 ```
 
 ### Running the Server
 
 ```bash
-# Run MCP server directly
 python src/server.py
+```
 
-# Or use the installed script
-delphi-mcp-server
+---
+
+## Knowledge Base Architecture
+
+### Database Schema (3 Tables)
+
+| Table | Description | Records |
+|-------|-------------|---------|
+| **metadata** | Key-value pairs (total_files, total_lines, scan_date) | 3 |
+| **files** | Source file information | ~2,768 |
+| **entities** | Unified entity table with kind codes | ~774,024 |
+
+### Kind Codes (Two-Letter)
+
+| Code | Type | Description |
+|------|------|-------------|
+| **TC** | Type/Class | class |
+| **TR** | Type/Record | record |
+| **TI** | Type/Interface | interface |
+| **TE** | Type/Enum | enum |
+| **TS** | Type/Set | set of |
+| **TY** | Type | type alias |
+| **FF** | Function | function |
+| **FP** | Function | procedure |
+| **CC** | Constant | const |
+| **CR** | Constant | resourcestring |
+
+### Entity Structure
+
+```python
+{
+    'name': 'TFontStyles',    # Entity name
+    'kind': 'TS',             # Kind code
+    'parent': None,          # Parent class/interface
+    'line': 83,              # Line number
+    'definition': 'set'      # Definition string
+}
+```
+
+---
+
+## Knowledge Base Builder
+
+### Building Knowledge Bases
+
+```bash
+# FMX only (~30s, 311 files)
+python build_kb_fmx.py
+
+# Full source (~65s, 2768 files, 3.5M lines)
+python build_kb.py
+```
+
+### Multiprocessing Best Practices
+
+**关键点**:
+1. 先收集所有目录的文件，再统一分配给进程池
+2. Worker数量: `min(max(1, total_files // 100), cpu_cores - 1)`
+3. Chunk size: `max(50, total_files // max_workers)` - 减少IPC开销
+4. ProcessPoolExecutor 必须在脚本层创建（`if __name__ == "__main__"`）
+
+```python
+# build_kb.py
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import cpu_count
+from src.services.knowledge_base.scan_delphi_sources import _analyze_file_worker
+
+def main():
+    cpu_cores = cpu_count()
+    all_files = collect_all_files(base_dir)
+    total_files = len(all_files)
+    
+    max_workers = min(max(1, total_files // 100), max(1, cpu_cores - 1))
+    chunk_size = max(50, total_files // max_workers)
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        results = executor.map(_analyze_file_worker, all_files, chunksize=chunk_size)
+```
+
+### Scan Results Storage
+
+直接插入到 files 和 entities 表，不保存 JSON：
+
+```python
+# 直接插入 files
+cursor.execute("""
+    INSERT INTO files (path, full_path, extension, size, line_count, hash, last_modified, units, uses)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+""", (path, full_path, ext, size, lines, hash, modified, json.dumps(units), json.dumps(uses)))
+
+# 直接插入 entities
+cursor.execute("""
+    INSERT INTO entities (file_id, name, kind, parent, line, definition)
+    VALUES (?, ?, ?, ?, ?, ?)
+""", (file_id, name, kind, parent, line, definition))
 ```
 
 ---
@@ -106,260 +179,79 @@ delphi-mcp-server
 - Use **type hints** for all function parameters and return types
 - Use **Pydantic models** or **dataclasses** for data structures
 - Use **async/await** for I/O operations
-- Follow **PEP 8** with the conventions below
-- Use **UTF-8 encoding** with `utf-8` BOM for Python files (handled automatically)
+- Follow **PEP 8** conventions
 
 ### Imports
 
-**Order (from top to bottom)**:
-1. Standard library imports
-2. Third-party imports
-3. Local application imports
-
-**Within each group**: alphabetically sorted
-
-```python
-# Standard library
-import asyncio
-import sys
-import os
-from pathlib import Path
-from typing import Optional, List, Dict, Any
-
-# Third-party
-from mcp.server import Server
-from pydantic import BaseModel
-
-# Local (use relative imports within packages)
-from src.services.compiler_service import CompilerService
-from src.tools.compile_project import compile_project
-from src.utils.logger import get_logger
-```
+Order: Standard library → Third-party → Local application
 
 ### Naming Conventions
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | lowercase, snake_case | `compile_project.py`, `knowledge_base.py` |
-| Classes | PascalCase | `CompilerService`, `DelphiKnowledgeBaseService` |
-| Functions | snake_case | `compile_project()`, `get_compiler_args()` |
-| Variables | snake_case | `project_path`, `compiler_service` |
-| Constants | UPPER_SNAKE_CASE | `MAX_TIMEOUT`, `DEFAULT_PLATFORM` |
-| Private functions | _leading_underscore | `_internal_method()` |
-| Type aliases | PascalCase | `CompileResult`, `CompileOptions` |
+| Modules | snake_case | `scan_delphi_sources.py` |
+| Classes | PascalCase | `DelphiSourceScanner` |
+| Functions | snake_case | `_analyze_file_worker()` |
+| Variables | snake_case | `source_files` |
+| Constants | UPPER_SNAKE | `KIND_CLASS = 'TC'` |
 
-### Type Hints
+### Kind Constants
 
-```python
-# Always use type hints
-from typing import Optional, List, Dict, Any, Union
-
-def compile_project(
-    project_path: str,
-    target_platform: str = "win32",
-    output_path: Optional[str] = None,
-    timeout: int = 600,
-    conditional_defines: Optional[List[str]] = None,
-) -> Dict[str, Any]:
-    # ...
-```
-
-### Docstrings
-
-Use Google-style docstrings:
+使用两字母代码定义在 `scan_delphi_sources.py`:
 
 ```python
-async def compile_project(
-    project_path: str,
-    target_platform: str = "win32",
-) -> Dict[str, Any]:
-    """
-    Compile a Delphi project.
-
-    Args:
-        project_path: Path to the project file (.dproj or .dpr)
-        target_platform: Target platform (win32/win64)
-    
-    Returns:
-        Dictionary containing compilation result with status, errors, and warnings
-    
-    Raises:
-        ValueError: If project_path is invalid
-        CompilerError: If compilation fails
-    """
-    # ...
+KIND_CLASS = 'TC'      # class
+KIND_RECORD = 'TR'    # record
+KIND_INTERFACE = 'TI' # interface
+KIND_ENUM = 'TE'       # enum
+KIND_SET = 'TS'        # set of
+KIND_TYPE = 'TY'       # type alias
+KIND_FUNC = 'FF'       # function
+KIND_PROC = 'FP'      # procedure
+KIND_CONST = 'CC'     # const
+KIND_RESOURCE = 'CR'  # resourcestring
 ```
 
-### Error Handling
+### Regex Patterns for Entity Extraction
 
-- Use **specific exception types** when possible
-- Log errors with appropriate level before re-raising or returning error results
-- Return error dictionaries in MCP tool responses rather than raising exceptions to the caller
+All regex patterns are defined in `scan_delphi_sources.py`:
 
 ```python
-# Good pattern for MCP tools
-async def compile_project(...) -> Dict[str, Any]:
-    logger.info(f"Received compile request: {project_path}")
-    
-    try:
-        # Business logic
-        result = await _compiler_service.compile_project(request)
-        return result.to_dict()
-    
-    except ValueError as e:
-        logger.error(f"Invalid input: {str(e)}", exc_info=True)
-        return {
-            "status": "failed",
-            "error_code": "INVALID_INPUT",
-            "error_message": str(e),
-            "duration": 0
-        }
-    except Exception as e:
-        logger.error(f"Compilation failed: {str(e)}", exc_info=True)
-        return {
-            "status": "failed",
-            "error_code": "INTERNAL_ERROR",
-            "error_message": str(e),
-            "duration": 0
-        }
+# 类型定义 (type alias)
+_TYPE_PATTERN_1 = re.compile(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^;(]+)', re.MULTILINE)
+_TYPE_PATTERN_2 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*array\s+of', re.MULTILINE)
+_TYPE_PATTERN_3 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*procedure\s*\([^)]*\)', re.MULTILINE)
+_TYPE_PATTERN_PTR = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\^', re.MULTILINE)
+
+# 常量定义
+_CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+_CONST_PATTERN_TYPED = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[^\s=]+\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+_CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*([^;{]+);', re.MULTILINE | re.IGNORECASE)
 ```
 
-### Logging
+**支持的实体类型**:
+- `TYPE_PATTERN_1`: `type TMyType = Integer;`
+- `TYPE_PATTERN_2`: `TMyArray = array of Integer;`
+- `TYPE_PATTERN_3`: `TProc = procedure; TNotifyEvent = procedure(Sender) of object;`
+- `TYPE_PATTERN_PTR`: `PPointerList = ^TPointerList;`
+- `CONST_PATTERN`: `const L1=1;` 或 `resourcestring S1='a';`
+- `CONST_PATTERN_TYPED`: `SMenuSeparator: string = '-';`
+- `CONST_PATTERN_SIMPLE`: `SIntOverflow = 'Integer overflow'; toInteger = Char(3);`
 
-Use the project's logger:
-
-```python
-from src.utils.logger import get_logger
-
-logger = get_logger(__name__)
-
-logger.debug("Detailed debug information")
-logger.info("Normal operation information")
-logger.warning("Warning message")
-logger.error("Error message", exc_info=True)
-```
-
-### Data Models
-
-Use **Pydantic BaseModel** for input validation and **dataclasses** for internal data:
-
-```python
-# For API/input models - use Pydantic
-from pydantic import BaseModel, Field
-from enum import Enum
-
-class TargetPlatform(str, Enum):
-    WIN32 = "win32"
-    WIN64 = "win64"
-
-class CompileOptions(BaseModel):
-    target_platform: TargetPlatform = TargetPlatform.WIN32
-    timeout: int = Field(default=600, ge=1)
-    optimization_enabled: bool = True
-
-# For internal data - use dataclasses
-from dataclasses import dataclass, field
-
-@dataclass
-class CompileMessage:
-    file_path: str
-    line: int
-    column: int
-    message: str
-    message_type: str
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {...}
-```
-
-### Async/Await
-
-- Use `async def` for I/O-bound operations
-- Use `await` for all async calls
-- Use `asyncio.gather()` for parallel operations when appropriate
-
-```python
-async def some_function() -> Dict[str, Any]:
-    # Good: gather multiple async calls
-    results = await asyncio.gather(
-        service_a.fetch_data(),
-        service_b.fetch_data(),
-    )
-    return {"data": results}
-```
-
-### String Formatting
-
-- Use f-strings for simple interpolation
-- Use `.format()` for complex formatting
-- Use logging with f-strings for user-facing messages
-
-```python
-# Good: f-strings for simple cases
-logger.info(f"Compiling project: {project_path}")
-
-# Good: format for multi-line or complex
-message = "Project: {}\nStatus: {}\nDuration: {}ms".format(
-    project_path,
-    result.status,
-    result.duration
-)
-```
-
-### File Encoding
-
-Always use UTF-8 encoding. The project sets encoding at startup:
-
-```python
-import sys
-import os
-
-os.environ['PYTHONIOENCODING'] = 'utf-8'
-os.environ['PYTHONUTF8'] = '1'
-
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-```
+**注意**: `_CONST_PATTERN_SIMPLE` 必须有2个捕获组，否则运行时报错 "no such group"。
 
 ---
 
 ## Delphi Coding Rules (for generated code)
 
-This project also contains tools for working with Delphi source code. The coding rules are in `config/CODING_RULES.mdc`:
-
 ### Naming Rules
-- **Constants**: UPPER_CASE with underscores
-- **Keywords**: all lowercase
-- **Types** (classes, records, interfaces, enums): PascalCase with `T` prefix
-- **Interfaces**: PascalCase with `I` prefix
+- **Constants**: UPPER_CASE
+- **Keywords**: lowercase
+- **Types**: PascalCase with `T` prefix (e.g., `TButton`)
+- **Interfaces**: PascalCase with `I` prefix (e.g., `IInterface`)
 - **Exceptions**: PascalCase with `E` prefix
-- **Pointers**: PascalCase with `P` prefix (e.g., `PIpAddr`)
-- **Private/protected fields**: `F` prefix (e.g., `FName`)
-- **Properties**: PascalCase, no prefix
-- **Parameters**: `A` prefix (e.g., `AFileName`), except:
-  - Loop variables: `I`, `J`, `K`
-  - Pointer variables: `p`, `ps`, `pd`
-  - String variables: `s`
-  - Temporary variables: `T`
-
-### Code Formatting
-- Follow Delphi default formatting rules
-- Correct Delphi's generic formatting issues
-
-### Modification Rules
-- Backup files to `__history/` before modifying (following Delphi's `.~N~` convention)
-- Check file encoding and convert if needed before modifying
-- After modifying, compile and check for syntax errors
-- Before modifying identifiers, search to confirm scope
-
-### Review Rules
-- Memory leak detection
-- Exception handling completeness (try/except/finally)
-- Identifier naming compliance
-- Array and pointer bounds checking
-- Thread synchronization verification
+- **Fields**: `F` prefix (e.g., `FName`)
+- **Parameters**: `A` prefix (e.g., `AFileName`)
 
 ---
 
@@ -367,29 +259,10 @@ This project also contains tools for working with Delphi source code. The coding
 
 When adding new MCP tools:
 
-1. **Define the tool** in `src/server.py` under `@server.list_tools()`:
-   ```python
-   Tool(
-       name="tool_name",
-       description="Tool description",
-       inputSchema={...}
-   )
-   ```
-
-2. **Implement the handler** in `@server.call_tool()`:
-   ```python
-   elif name == "tool_name":
-       result = await tool_module.tool_function(**arguments)
-   ```
-
-3. **Use Pydantic models** for input validation:
-   - Define request models in `src/models/`
-   - Use enums for constrained values
-
-4. **Return structured results**:
-   - Return `Dict[str, Any]` for tool results
-   - Include `status`, error codes, and messages
-   - Use consistent error handling patterns
+1. Define the tool in `src/server.py`
+2. Implement the handler in `@server.call_tool()`
+3. Use Pydantic models for input validation
+4. Return structured Dict results
 
 ---
 
@@ -397,6 +270,5 @@ When adding new MCP tools:
 
 - The server runs on stdio - no HTTP server needed
 - MCP tools must be async-compatible
-- All paths should handle both Windows and cross-platform concerns where needed
-- Knowledge bases are stored in `data/` directory
-- Configuration is in `config/` directory
+- Knowledge bases stored in `data/` directory
+- Always use UTF-8 encoding on Windows

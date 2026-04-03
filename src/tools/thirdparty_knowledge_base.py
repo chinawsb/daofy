@@ -466,7 +466,7 @@ async def search_by_filename(arguments: Any) -> CallToolResult:
 
         # 在第三方库中搜索
         if search_in in ["all", "thirdparty"]:
-            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'index' / 'knowledge_base_vector.sqlite'))
+            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'knowledge.sqlite'))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 

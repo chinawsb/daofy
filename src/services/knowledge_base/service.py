@@ -10,6 +10,13 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import os
 import sys
+
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 import json
 import time
 import hashlib
@@ -326,6 +333,12 @@ class DelphiKnowledgeBaseService:
         else:
             return self.kb_instance.search_by_keyword(keyword)
 
+    def search_by_unit_name(self, unit_name: str) -> List[Dict]:
+        """根据单元名搜索"""
+        if not self.load_knowledge_base():
+            return []
+        return self.kb_instance.search_by_unit_name(unit_name)
+
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索类"""
         if not self.load_knowledge_base():
@@ -364,30 +377,35 @@ class DelphiKnowledgeBaseService:
             if not db_file.exists():
                 return {}
 
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
+        # 从数据库获取统计信息
+        import sqlite3
+        db_file = self.kb_dir / "knowledge.sqlite"
+        if not db_file.exists():
+            return {}
 
-            stats = {}
-            try:
-                cursor.execute("SELECT COUNT(*) FROM classes")
-                stats["classes"] = cursor.fetchone()[0]
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        stats = {}
+        try:
+            cursor.execute("SELECT COUNT(*) FROM classes")
+            stats["classes"] = cursor.fetchone()[0]
 
-                cursor.execute("SELECT COUNT(*) FROM functions")
-                stats["functions"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM functions")
+            stats["functions"] = cursor.fetchone()[0]
 
-                cursor.execute("SELECT COUNT(*) FROM files")
-                stats["files"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM files")
+            stats["files"] = cursor.fetchone()[0]
 
-                cursor.execute("SELECT COUNT(*) FROM vocabulary")
-                stats["vocabulary_size"] = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM vocabulary")
+            stats["vocabulary_size"] = cursor.fetchone()[0]
 
-                # 获取文件大小
-                stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
+            # 获取文件大小
+            stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 
-            finally:
-                conn.close()
+        finally:
+            conn.close()
 
-            return stats
+        return stats
 
     def close(self):
         """关闭知识库连接"""

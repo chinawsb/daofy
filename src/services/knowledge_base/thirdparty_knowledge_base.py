@@ -34,7 +34,7 @@ except ImportError:
     from sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
     import logging
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     if not logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
@@ -640,7 +640,7 @@ class ThirdPartyKnowledgeBase:
             return {}
 
         import sqlite3
-        db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
+        db_file = self.kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return {}
 

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "delphi": {
+      "type": "local",
+      "command": ["python", "src/server.py"],
+      "cwd": "C:/User/cloudAttendance/service/delphi-complier-mcp-server",
+      "environment": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}
