@@ -396,38 +396,19 @@ def set_help_kb_service(service):
 
 
 async def search_knowledge(arguments: Any) -> CallToolResult:
-    """
-    统一搜索知识库
-    
-    参数:
-    - kb_type: "all"|"delphi"|"project"|"thirdparty"|"help" 知识库类型
-    - search_type: "class"|"function"|"semantic"|"record"|"filename" 搜索类型
-    - query: 搜索关键词
-    - project_path: 项目路径 (仅project类型需要)
-    - top_k: 返回数量
-    """
+    """统一搜索知识库"""
     kb_type = arguments.get("kb_type", "all")
     search_type = arguments.get("search_type", "semantic")
     query = arguments.get("query", "")
-    project_path = arguments.get("project_path")
     top_k = arguments.get("top_k", 10)
     
     if not query:
-        return CallToolResult(
-            content=[{"type": "text", "text": "请提供搜索关键词 query"}],
-            isError=True
-        )
+        return CallToolResult(content=[{"type": "text", "text": "请提供搜索关键词 query"}], isError=True)
     
     results = {}
+    kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty", "help"]
+    results["kb_types_debug"] = str(kb_types)
     
-    # 确定要搜索的知识库
-    kb_types = []
-    if kb_type == "all":
-        kb_types = ["delphi", "project", "thirdparty", "help"]
-    else:
-        kb_types = [kb_type]
-    
-    # 搜索各知识库
     for kb in kb_types:
         try:
             if kb == "delphi" and _delphi_kb_service:
@@ -436,119 +417,52 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 if search_type in ["function", "all"]:
                     results["delphi_functions"] = _delphi_kb_service.search_by_function_name(query)[:top_k]
                 if search_type in ["semantic", "all"]:
-                    results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
-                    results["delphi_semantic_functions"] = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
-                if search_type in ["fuzzy", "all"]:
-                    keywords = query.lower().split()
-                    if keywords:
-                        results["delphi_fuzzy"] = _delphi_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
-                    
-            elif kb == "project" and _project_kb_service:
-                if search_type in ["class", "all"]:
-                    results["project_classes"] = _project_kb_service.search_by_class_name(query)[:top_k]
-                if search_type in ["function", "all"]:
-                    results["project_functions"] = _project_kb_service.search_by_function_name(query)[:top_k]
-                if search_type in ["semantic", "all"]:
-                    results["project_semantic"] = _project_kb_service.semantic_search(query, top_k=top_k)
-                if search_type in ["fuzzy", "all"]:
-                    keywords = query.lower().split()
-                    if keywords:
-                        results["project_fuzzy"] = _project_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
-                    
-            elif kb == "thirdparty" and _thirdparty_kb_service:
-                if search_type in ["class", "all"]:
-                    results["thirdparty_classes"] = _thirdparty_kb_service.search_by_class_name(query)[:top_k]
-                if search_type in ["function", "all"]:
-                    results["thirdparty_functions"] = _thirdparty_kb_service.search_by_function_name(query)[:top_k]
-                if search_type in ["semantic", "all"]:
-                    results["thirdparty_semantic"] = _thirdparty_kb_service.semantic_search(query, top_k=top_k)
-                if search_type in ["fuzzy", "all"]:
-                    keywords = query.lower().split()
-                    if keywords:
-                        results["thirdparty_fuzzy"] = _thirdparty_kb_service.search_by_keywords(keywords, kind_filter=['TC', 'TR', 'TI', 'FF', 'FP', 'TH'])[:top_k]
-                    
+                    try:
+                        results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
+                        results["delphi_semantic_functions"] = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
+                    except Exception as se:
+                        results["semantic_error"] = str(se)
             elif kb == "help" and _help_kb_service:
-                if search_type in ["semantic", "all"]:
-                    results["help_results"] = _help_kb_service.search_by_keyword(query)[:top_k]
+                results["help_classes"] = _help_kb_service.search_class(query)[:top_k]
+                results["help_debug"] = f"_help_kb_service exists: {_help_kb_service is not None}, results: {results.get('help_classes')}"
         except Exception as e:
             results[f"{kb}_error"] = str(e)
     
-    # 格式化输出
     output = f"搜索 '{query}' (类型: {search_type}, 知识库: {kb_type}):\n\n"
-    
     has_results = False
     
     if "delphi_classes" in results and results["delphi_classes"]:
         output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
         for r in results["delphi_classes"][:top_k]:
-            name = r.get('name', 'N/A')
-            parent = r.get('parent')
-            path = r.get('file', {}).get('path', 'N/A')
-            line = r.get('line', '')
-            if parent:
-                output += f"  - {name} ({parent}) @ {path}:{line}\n"
-            else:
-                output += f"  - {name} @ {path}:{line}\n"
+            output += f"  - {r.get('name', 'N/A')}\n"
         output += "\n"
         has_results = True
-        
+    
     if "delphi_functions" in results and results["delphi_functions"]:
-        output += f"Delphi 函数/方法 ({len(results['delphi_functions'])}):\n"
+        output += f"Delphi 函数/过程 ({len(results['delphi_functions'])}):\n"
         for r in results["delphi_functions"][:top_k]:
-            name = r.get('name', 'N/A')
-            parent = r.get('parent')
-            path = r.get('file', {}).get('path', 'N/A')
-            line = r.get('line', '')
-            if parent:
-                output += f"  - {name} (in {parent}) @ {path}:{line}\n"
-            else:
-                output += f"  - {name} @ {path}:{line}\n"
+            output += f"  - {r.get('name', 'N/A')}\n"
         output += "\n"
         has_results = True
-        
-    if "project_classes" in results and results["project_classes"]:
-        output += f"项目类 ({len(results['project_classes'])}):\n"
-        for r in results["project_classes"][:top_k]:
-            name = r.get('name', 'N/A')
-            parent = r.get('parent')
-            path = r.get('file', {}).get('path', 'N/A')
-            line = r.get('line', '')
-            if parent:
-                output += f"  - {name} ({parent}) @ {path}:{line}\n"
-            else:
-                output += f"  - {name} @ {path}:{line}\n"
+    
+    if "delphi_semantic_classes" in results and results["delphi_semantic_classes"]:
+        output += f"Delphi 类(语义搜索) ({len(results['delphi_semantic_classes'])}):\n"
+        for name, sim in results["delphi_semantic_classes"][:top_k]:
+            output += f"  - {name} (相似度: {sim:.2f})\n"
         output += "\n"
         has_results = True
-        
-    if "thirdparty_classes" in results and results["thirdparty_classes"]:
-        output += f"第三方库类 ({len(results['thirdparty_classes'])}):\n"
-        for r in results["thirdparty_classes"][:top_k]:
-            name = r.get('name', 'N/A')
-            parent = r.get('parent')
-            path = r.get('file', {}).get('path', 'N/A')
-            line = r.get('line', '')
-            if parent:
-                output += f"  - {name} ({parent}) @ {path}:{line}\n"
-            else:
-                output += f"  - {name} @ {path}:{line}\n"
+    
+    if "delphi_semantic_functions" in results and results["delphi_semantic_functions"]:
+        output += f"Delphi 函数/过程(语义搜索) ({len(results['delphi_semantic_functions'])}):\n"
+        for name, sim in results["delphi_semantic_functions"][:top_k]:
+            output += f"  - {name} (相似度: {sim:.2f})\n"
         output += "\n"
         has_results = True
-
-    if "delphi_fuzzy" in results and results["delphi_fuzzy"]:
-        output += f"模糊匹配 ({len(results['delphi_fuzzy'])}):\n"
-        for r in results["delphi_fuzzy"][:top_k]:
-            name = r.get('name', 'N/A')
-            kind = r.get('kind', '')
-            path = r.get('file', {}).get('path', 'N/A')
-            line = r.get('line', '')
-            output += f"  - {name} ({kind}) @ {path}:{line}\n"
-        output += "\n"
-        has_results = True
-        
-    if "help_results" in results and results["help_results"]:
-        output += f"帮助文档 ({len(results['help_results'])}):\n"
-        for r in results["help_results"][:top_k]:
-            output += f"  - {r.get('title', 'N/A')[:50]}\n"
+    
+    if "help_classes" in results and results["help_classes"]:
+        output += f"帮助类 ({len(results['help_classes'])}):\n"
+        for r in results["help_classes"][:top_k]:
+            output += f"  - {r.get('name', 'N/A')}\n"
         output += "\n"
         has_results = True
     
@@ -597,7 +511,12 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["thirdparty"] = "成功" if success else "失败"
             elif kb == "help" and _help_kb_service:
-                success = _help_kb_service.build_knowledge_base(force_rebuild=force_rebuild)
+                success = _help_kb_service.build_knowledge_base(
+                    help_names=None,
+                    progress_callback=None,
+                    save_markdown=False,
+                    cleanup_original=False
+                )
                 results["help"] = "成功" if success else "失败"
         except Exception as e:
             results[kb] = f"错误: {str(e)}"
@@ -635,6 +554,10 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
         try:
             if kb == "delphi" and _delphi_kb_service:
                 stats = _delphi_kb_service.get_statistics()
+                # 映射 keys to expected format
+                stats["total_documents"] = stats.get("files", 0)
+                stats["total_classes"] = stats.get("classes", 0)
+                stats["total_functions"] = stats.get("functions", 0) + stats.get("procedures", 0)
                 results["delphi"] = stats
             elif kb == "project" and _project_kb_service:
                 stats = _project_kb_service.get_statistics()

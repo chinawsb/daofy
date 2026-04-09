@@ -100,13 +100,21 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
         
+        # 检查 entities 表是否存在
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+        has_entities = cursor.fetchone() is not None
+        
         files = []
         cursor.execute("SELECT * FROM files")
         for row in cursor.fetchall():
             file_id = row['id']
             
-            cursor.execute("SELECT name, kind, parent, line, definition FROM entities WHERE file_id = ?", (file_id,))
-            entities = [{'name': r['name'], 'kind': r['kind'], 'parent': r['parent'], 'line': r['line'], 'definition': r['definition']} for r in cursor.fetchall()]
+            if has_entities:
+                cursor.execute("SELECT name, kind, parent, line, definition FROM entities WHERE file_id = ?", (file_id,))
+                entities = [{'name': r['name'], 'kind': r['kind'], 'parent': r['parent'], 'line': r['line'], 'definition': r['definition']} for r in cursor.fetchall()]
+            else:
+                cursor.execute("SELECT name, type, line, description FROM vocabularies WHERE file_id = ?", (file_id,))
+                entities = [{'name': r['name'], 'kind': r['type'], 'parent': None, 'line': r['line'], 'definition': r['description'] or ''} for r in cursor.fetchall()]
             
             files.append({
                 'path': row['path'],
@@ -411,14 +419,12 @@ class SQLiteVectorKnowledgeBase:
 
     def _create_tables(self, cursor):
         """创建所有数据库表（辅助方法）"""
+        # metadata表 - 使用 key-value 格式
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
-                hash TEXT PRIMARY KEY,
-                timestamp REAL,
-                total_files INTEGER,
-                total_lines INTEGER,
-                vector_size INTEGER,
-                source_directory TEXT
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at REAL DEFAULT (julianday('now'))
             )
         """)
         cursor.execute("""
@@ -838,7 +844,7 @@ class SQLiteVectorKnowledgeBase:
         
         # 动态计算worker数和chunksize
         # 目标：减少IPC开销，每个chunk处理更多数据
-        n_workers = max(2, min(8, cpu_count() - 1))
+        n_workers = max(2, cpu_count() - 1)
         
         # 动态chunksize: 基于项目数量，使用更大chunksize减少IPC开销
         # 公式: chunksize = max(500, items // workers) - 每个worker至少处理500个
@@ -967,40 +973,96 @@ class SQLiteVectorKnowledgeBase:
             print("词汇表不存在，跳过加载（精确查询仍可用）")
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索类"""
-        query_vector = self.text_to_vector(query)
-
+        """语义搜索类 (使用 LIKE 匹配)"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT name, vector FROM classes")
-
+        
+        query_lower = query.lower()
+        
+        # 检查是否有 entities 表
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+        has_entities = cursor.fetchone() is not None
+        
+        # 检查是否有 vocabularies 表
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vocabularies'")
+        has_vocabularies = cursor.fetchone() is not None
+        
         results = []
-        for row in cursor.fetchall():
-            stored_vector = self._unpack_vector(row['vector'])
-            similarity = self.cosine_similarity(query_vector, stored_vector)
-            if similarity > 0:
-                results.append((row['name'], similarity))
-
-        # 排序并返回 top-k
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:top_k]
+        
+        if has_entities:
+            # 使用 entities 表
+            cursor.execute(f"""
+                SELECT name, kind FROM entities 
+                WHERE kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
+                AND (name LIKE '%{query}%' OR name LIKE '%{query_lower}%')
+            """)
+            for row in cursor.fetchall():
+                results.append((row['name'], 0.8))
+        elif has_vocabularies:
+            # 使用 vocabularies 表
+            cursor.execute(f"""
+                SELECT name, type FROM vocabularies 
+                WHERE type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
+                AND (name LIKE '%{query}%' OR name_lower LIKE '%{query_lower}%')
+            """)
+            for row in cursor.fetchall():
+                results.append((row['name'], 0.8))
+        
+        # 去重并返回 top-k
+        seen = set()
+        unique_results = []
+        for name, sim in results:
+            if name not in seen:
+                seen.add(name)
+                unique_results.append((name, sim))
+        
+        return unique_results[:top_k]
 
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索函数"""
-        query_vector = self.text_to_vector(query)
-
+        """语义搜索函数 (使用 LIKE 匹配)"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT name, vector FROM functions")
-
+        
+        query_lower = query.lower()
+        
+        # 检查是否有 entities 表
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+        has_entities = cursor.fetchone() is not None
+        
+        # 检查是否有 vocabularies 表
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vocabularies'")
+        has_vocabularies = cursor.fetchone() is not None
+        
         results = []
-        for row in cursor.fetchall():
-            stored_vector = self._unpack_vector(row['vector'])
-            similarity = self.cosine_similarity(query_vector, stored_vector)
-            if similarity > 0:
-                results.append((row['name'], similarity))
-
-        # 排序并返回 top-k
+        
+        if has_entities:
+            # 使用 entities 表
+            cursor.execute(f"""
+                SELECT name FROM entities 
+                WHERE kind IN ('FF', 'FP')
+                AND (name LIKE '%{query}%' OR name LIKE '%{query_lower}%')
+            """)
+            for row in cursor.fetchall():
+                results.append((row['name'], 0.8))
+        elif has_vocabularies:
+            # 使用 vocabularies 表
+            cursor.execute(f"""
+                SELECT name FROM vocabularies 
+                WHERE type IN ('FF', 'FP')
+                AND (name LIKE '%{query}%' OR name_lower LIKE '%{query_lower}%')
+            """)
+            for row in cursor.fetchall():
+                results.append((row['name'], 0.8))
+        
+        # 去重并返回 top-k
+        seen = set()
+        unique_results = []
+        for name, sim in results:
+            if name not in seen:
+                seen.add(name)
+                unique_results.append((name, sim))
+        
+        return unique_results[:top_k]
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
@@ -1044,35 +1106,70 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # 使用 entities 表（3表结构）
-        cursor.execute("""
-            SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, 
-                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
-            FROM entities e
-            INNER JOIN files f ON e.file_id = f.id
-            WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
-        """, (class_name_lower,))
+        # 兼容两种表结构：entities（旧版）或 vocabularies（统一Schema）
+        # 检查 entities 表是否存在
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+        has_entities = cursor.fetchone() is not None
+
+        if has_entities:
+            # 使用 entities 表（3表结构）
+            cursor.execute("""
+                SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, 
+                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+                FROM entities e
+                INNER JOIN files f ON e.file_id = f.id
+                WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
+            """, (class_name_lower,))
+        else:
+            # 使用 vocabularies 表（统一Schema）
+            # 类型: TC=class, TR=record, TI=interface, TE=enum, TS=set, TY=type alias
+            cursor.execute("""
+                SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, 
+                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category
+                FROM vocabularies v
+                INNER JOIN files f ON v.file_id = f.id
+                WHERE LOWER(v.name) = ? AND v.type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
+            """, (class_name_lower,))
 
         results = []
         for row in cursor.fetchall():
-            results.append({
-                'name': row['name'],
-                'kind': row['kind'],
-                'parent': row['parent'],
-                'line': row['line'],
-                'definition': row['definition'] or '',
-                'file': {
-                    'path': row['path'],
-                    'full_path': row['full_path'],
-                    'extension': row['extension'],
-                    'size': row['size'],
-                    'line_count': row['line_count'],
-                    'hash': row['hash'],
-                    'last_modified': row['last_modified'],
-                    'units': json.loads(row['units']) if row['units'] else [],
-                    'uses': json.loads(row['uses']) if row['uses'] else []
-                }
-            })
+            if has_entities:
+                results.append({
+                    'name': row['name'],
+                    'kind': row['kind'],
+                    'parent': row['parent'],
+                    'line': row['line'],
+                    'definition': row['definition'] or '',
+                    'file': {
+                        'path': row['path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count'],
+                        'hash': row['hash'],
+                        'last_modified': row['last_modified'],
+                        'units': json.loads(row['units']) if row['units'] else [],
+                        'uses': json.loads(row['uses']) if row['uses'] else []
+                    }
+                })
+            else:
+                results.append({
+                    'name': row['name'],
+                    'kind': row['type'],
+                    'parent': row['base_class'],
+                    'line': row['line'],
+                    'definition': row['description'] or '',
+                    'file': {
+                        'path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count'],
+                        'hash': row['hash'],
+                        'last_modified': row['last_modified'],
+                        'category': row['category']
+                    }
+                })
 
         return results
 
@@ -1082,45 +1179,77 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # 使用 entities 表（3表结构）
-        cursor.execute("""
-            SELECT e.name, e.kind, e.definition, e.line, f.path, f.full_path, 
-                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
-            FROM entities e
-            INNER JOIN files f ON e.file_id = f.id
-            WHERE LOWER(e.name) = ? AND e.kind IN ('FF', 'FP')
-        """, (function_name_lower,))
+        # 兼容两种表结构
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
+        has_entities = cursor.fetchone() is not None
+
+        if has_entities:
+            cursor.execute("""
+                SELECT e.name, e.kind, e.definition, e.line, f.path, f.full_path, 
+                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+                FROM entities e
+                INNER JOIN files f ON e.file_id = f.id
+                WHERE LOWER(e.name) = ? AND e.kind IN ('FF', 'FP')
+            """, (function_name_lower,))
+        else:
+            # 使用 vocabularies 表（统一Schema）
+            # 类型: FF=function, FP=procedure
+            cursor.execute("""
+                SELECT v.name, v.type, v.description, v.line, f.relative_path, f.full_path, 
+                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category
+                FROM vocabularies v
+                INNER JOIN files f ON v.file_id = f.id
+                WHERE LOWER(v.name) = ? AND v.type IN ('FF', 'FP')
+            """, (function_name_lower,))
 
         results = []
         file_cache = {}
         
         for row in cursor.fetchall():
-            file_path = row['full_path']
-            line_num = row['line']
-            
-            if file_path not in file_cache:
-                file_cache[file_path] = self._get_file_types(file_path)
-            
-            parent = self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
-            
-            results.append({
-                'name': row['name'],
-                'kind': row['kind'],
-                'definition': row['definition'] or '',
-                'line': row['line'],
-                'parent': parent,
-                'file': {
-                    'path': row['path'],
-                    'full_path': row['full_path'],
-                    'extension': row['extension'],
-                    'size': row['size'],
-                    'line_count': row['line_count'],
-                    'hash': row['hash'],
-                    'last_modified': row['last_modified'],
-                    'units': json.loads(row['units']) if row['units'] else [],
-                    'uses': json.loads(row['uses']) if row['uses'] else []
-                }
-            })
+            if has_entities:
+                file_path = row['full_path']
+                line_num = row['line']
+                
+                if file_path not in file_cache:
+                    file_cache[file_path] = self._get_file_types(file_path)
+                
+                parent = self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
+                
+                results.append({
+                    'name': row['name'],
+                    'kind': row['kind'],
+                    'definition': row['definition'] or '',
+                    'line': row['line'],
+                    'parent': parent,
+                    'file': {
+                        'path': row['path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count'],
+                        'hash': row['hash'],
+                        'last_modified': row['last_modified'],
+                        'units': json.loads(row['units']) if row['units'] else [],
+                        'uses': json.loads(row['uses']) if row['uses'] else []
+                    }
+                })
+            else:
+                results.append({
+                    'name': row['name'],
+                    'kind': row['type'],
+                    'definition': row['description'] or '',
+                    'line': row['line'],
+                    'file': {
+                        'path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count'],
+                        'hash': row['hash'],
+                        'last_modified': row['last_modified'],
+                        'category': row['category']
+                    }
+                })
 
         return results
 

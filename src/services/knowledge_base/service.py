@@ -63,8 +63,6 @@ class DelphiKnowledgeBaseService:
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)
-        (self.kb_dir / "index").mkdir(exist_ok=True)
-        (self.kb_dir / "data").mkdir(exist_ok=True)
 
         # 检测已安装的 Delphi 版本
         self.detect_delphi_versions()
@@ -289,8 +287,8 @@ class DelphiKnowledgeBaseService:
         try:
             if self.kb_instance is None:
                 if self.use_smart_cache:
-                    # 使用智能缓存方案
-                    self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir))
+                    # 智能缓存方案：使用 SQLiteVectorKnowledgeBase 直接查询
+                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
                 else:
                     # 使用原有方案
                     self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
@@ -304,22 +302,16 @@ class DelphiKnowledgeBaseService:
         if not self.load_knowledge_base():
             return []
         
-        if self.use_smart_cache:
-            # 智能缓存方案：使用统一的search_by_name
-            return self.kb_instance.search_by_name(class_name, item_types=['c'])
-        else:
-            return self.kb_instance.search_by_class_name(class_name)
+        # 使用 SQLiteVectorKnowledgeBase 直接搜索
+        return self.kb_instance.search_by_class_name(class_name)
 
     def search_by_function_name(self, function_name: str) -> List[Dict]:
         """根据函数名搜索"""
         if not self.load_knowledge_base():
             return []
         
-        if self.use_smart_cache:
-            # 智能缓存方案：使用统一的search_by_name
-            return self.kb_instance.search_by_name(function_name, item_types=['f', 'p'])
-        else:
-            return self.kb_instance.search_by_function_name(function_name)
+        # 使用 SQLiteVectorKnowledgeBase 直接搜索
+        return self.kb_instance.search_by_function_name(function_name)
 
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """根据关键词搜索"""
@@ -344,39 +336,24 @@ class DelphiKnowledgeBaseService:
         if not self.load_knowledge_base():
             return []
         
-        if self.use_smart_cache:
-            results = self.kb_instance.semantic_search(query, top_k=top_k, item_types=['c'])
-            return [(r['name'], r['similarity']) for r in results]
-        else:
-            return self.kb_instance.semantic_search_classes(query, top_k)
+        # 使用 SQLiteVectorKnowledgeBase 的语义搜索
+        results = self.kb_instance.semantic_search_classes(query, top_k)
+        return results
 
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索函数"""
         if not self.load_knowledge_base():
             return []
         
-        if self.use_smart_cache:
-            results = self.kb_instance.semantic_search(query, top_k=top_k, item_types=['f', 'p'])
-            return [(r['name'], r['similarity']) for r in results]
-        else:
-            return self.kb_instance.semantic_search_functions(query, top_k)
+        # 使用 SQLiteVectorKnowledgeBase 的语义搜索
+        results = self.kb_instance.semantic_search_functions(query, top_k)
+        return results
 
     def get_statistics(self) -> Dict:
         """获取知识库统计信息"""
         if not self.load_knowledge_base():
             return {}
         
-        if self.use_smart_cache:
-            # 智能缓存方案
-            return self.kb_instance.get_statistics()
-        else:
-            # 原有方案
-            # 从数据库获取统计信息
-            import sqlite3
-            db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
-            if not db_file.exists():
-                return {}
-
         # 从数据库获取统计信息
         import sqlite3
         db_file = self.kb_dir / "knowledge.sqlite"
@@ -387,17 +364,23 @@ class DelphiKnowledgeBaseService:
         cursor = conn.cursor()
         stats = {}
         try:
-            cursor.execute("SELECT COUNT(*) FROM classes")
-            stats["classes"] = cursor.fetchone()[0]
-
-            cursor.execute("SELECT COUNT(*) FROM functions")
-            stats["functions"] = cursor.fetchone()[0]
-
             cursor.execute("SELECT COUNT(*) FROM files")
             stats["files"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabulary")
+            cursor.execute("SELECT COUNT(*) FROM vocabularies")
             stats["vocabulary_size"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
+            stats["classes"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
+            stats["functions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FP'")
+            stats["procedures"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='CC'")
+            stats["constants"] = cursor.fetchone()[0]
 
             # 获取文件大小
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)

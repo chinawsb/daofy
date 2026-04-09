@@ -12,6 +12,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 from typing import Any, Optional
 from pathlib import Path
+import sqlite3
 from mcp.types import CallToolResult
 
 # 知识库服务实例
@@ -278,17 +279,33 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
         
         # 获取第一个结果
         result = results[0]
-        file_path = result['file']['full_path']
         
-        # 如果找到了类型或函数，尝试定位到具体行
-        if search_name and 'class' in result:
-            line = result['class'].get('line', 1)
-            type_kind = result['class'].get('type_kind', 'class')
-            # 显示类型定义前后的一些行
-            start_line = max(1, line - 5)
-        elif function_name and 'function' in result:
-            line = result['function'].get('line', 1)
-            start_line = max(1, line - 3)
+        # SmartCache 格式检查: 是否有 relative_path 或 full_path
+        file_path = result.get('full_path') or result.get('relative_path')
+        
+        # 如果没有，从 file_id 查找
+        if not file_path:
+            file_id = result.get('file_id')
+            if file_id and delphi_kb_service:
+                try:
+                    conn = sqlite3.connect(str(delphi_kb_service.kb_dir / "knowledge_base.sqlite"))
+                    cur = conn.cursor()
+                    cur.execute("SELECT full_path, relative_path FROM files WHERE id = ?", (file_id,))
+                    row = cur.fetchone()
+                    if row:
+                        file_path = row[0] or row[1]
+                    conn.close()
+                except Exception as e:
+                    print(f"[DEBUG] file_id lookup failed: {e}")
+        
+        if not file_path:
+            return CallToolResult(
+                content=[{"type": "text", "text": f"搜索结果缺少文件路径信息: {result}"}],
+                isError=True
+            )
+        
+        line = result.get('line', 1)
+        start_line = max(1, line - 5)
         
         # 调用 read_source_file 读取文件
         read_args = {

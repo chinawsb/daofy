@@ -60,6 +60,7 @@ from src.tools.knowledge_base import (
     build_unified_knowledge_base,
     get_unified_knowledge_stats
 )
+from src.services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
 from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
 from src.tools import knowledge_base as kb_tools
 from src.tools import project_knowledge_base as project_kb_tools
@@ -91,12 +92,21 @@ async def run_server():
 
     # 初始化知识库服务
     kb_service = DelphiKnowledgeBaseService()
+    print(f"[DEBUG] kb_service created: {kb_service}")
     logger.info("知识库服务初始化完成")
 
     # 初始化第三方库知识库服务
     thirdparty_kb_service = ThirdPartyKnowledgeBase()
+    print(f"[DEBUG] thirdparty_kb_service created: {thirdparty_kb_service}")
     thirdparty_kb_tools.set_thirdparty_knowledge_base_service(thirdparty_kb_service)
     logger.info("第三方库知识库服务初始化完成")
+
+    # 初始化帮助文档知识库服务
+    help_kb_service = DelphiHelpKnowledgeBase()
+    print(f"[DEBUG] help_kb_service created: {help_kb_service}")
+    set_help_kb_service(help_kb_service)
+    print(f"[DEBUG] After set_help_kb_service, _help_kb_service = {kb_tools._help_kb_service}")
+    logger.info("帮助文档知识库服务初始化完成")
 
     # 设置工具的服务实例
     sp1(compiler_service)
@@ -106,6 +116,9 @@ async def run_server():
     stks(thirdparty_kb_service)
     set_knowledge_base_service(kb_service)
     set_knowledge_base_services(kb_service, thirdparty_kb_service)
+    set_delphi_kb_service(kb_service)
+    set_project_kb_service(kb_service)
+    set_thirdparty_kb_service(thirdparty_kb_service)
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
@@ -225,14 +238,20 @@ async def run_server():
     async def call_tool(name: str, arguments: dict):
         """调用工具"""
         logger.info(f"调用工具: {name}")
-
+        result = None
+        
         try:
             if name == "compile_project":
                 # 合并 compile_file, get_compiler_args
                 proj_path = arguments.get("project_path", "")
-                if proj_path.lower().endswith(('.pas', '.dpr')):
+                if proj_path.lower().endswith('.pas'):
                     # 文件模式：检查语法
-                    result = await compile_file(**arguments)
+                    result = await compile_file(
+                        file_path=proj_path,
+                        unit_search_paths=arguments.get('unit_search_paths'),
+                        warning_level=arguments.get('warning_level', 2),
+                        disabled_warnings=arguments.get('disabled_warnings')
+                    )
                 elif arguments.get("get_args_only"):
                     # 仅获取参数
                     result = await get_compiler_args(**arguments)
@@ -241,8 +260,8 @@ async def run_server():
                     result = await compile_project.compile_project(**arguments)
             
             elif name == "search_knowledge":
-                # 统一搜索接口：search/stats/build
                 action = arguments.get("action", "search")
+                print(f"[DEBUG] search_knowledge action={action}, kb_type={arguments.get('kb_type')}")
                 if action == "search":
                     result = await kb_tools.search_knowledge(arguments)
                 elif action == "stats":

@@ -31,9 +31,12 @@ def set_thirdparty_kb_service(service):
     _thirdparty_kb_service = service
 
 
-async def check_environment() -> CallToolResult:
+async def check_environment(arguments: dict = None) -> CallToolResult:
     """
     检查编译器环境状态
+
+    Args:
+        arguments: 可选的参数字典
 
     Returns:
         CallToolResult
