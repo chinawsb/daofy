@@ -106,8 +106,9 @@ async def _install_group_project(
         if proj_file:
             proj_path = str(Path(group_path).parent / proj_file)
             if Path(proj_path).exists():
+                is_runtime = _is_runtime_only_package(proj_path)
                 result = await _compile_single_package(proj_path, target_platform, build_configuration, timeout)
-                results.append((proj_path, result))
+                results.append((proj_path, is_runtime, result))
     
     if not results:
         for project in root.findall('.//Projects'):
@@ -115,10 +116,11 @@ async def _install_group_project(
             if proj_file:
                 proj_path = str(Path(group_path).parent / proj_file)
                 if Path(proj_path).exists():
+                    is_runtime = _is_runtime_only_package(proj_path)
                     result = await _compile_single_package(proj_path, target_platform, build_configuration, timeout)
-                    results.append((proj_path, result))
+                    results.append((proj_path, is_runtime, result))
     
-    return _format_results(results, install, target_platform)
+    return _format_group_results(results, install, target_platform)
 
 
 async def _install_dproj_package(
@@ -129,8 +131,9 @@ async def _install_dproj_package(
     install: bool
 ) -> CallToolResult:
     """处理单个项目"""
+    is_runtime = _is_runtime_only_package(dproj_path)
     result = await _compile_single_package(dproj_path, target_platform, build_configuration, timeout)
-    return _format_results([(dproj_path, result)], install, target_platform)
+    return _format_group_results([(dproj_path, is_runtime, result)], install, target_platform)
 
 
 async def _install_dpk_package(
@@ -162,6 +165,21 @@ async def _compile_single_package(
     """编译单个包项目"""
     from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform
     
+    version = _get_delphi_version()
+    bpl_dir = Path(rf"C:\Users\Public\Documents\Embarcadero\Studio\{version}\Bpl")
+    
+    existing_bpl = _find_bpl_file(project_path, target_platform, build_configuration)
+    
+    if existing_bpl and Path(existing_bpl).exists():
+        return {
+            "success": True,
+            "output_file": existing_bpl,
+            "errors": [],
+            "warnings": [],
+            "log": f"Using existing BPL: {existing_bpl}",
+            "duration": 0
+        }
+    
     options = CompileOptions(
         target_platform=TargetPlatform(target_platform),
         build_configuration=build_configuration,
@@ -179,6 +197,15 @@ async def _compile_single_package(
     output_file = None
     if result.status.value == "success":
         output_file = _find_bpl_file(project_path, target_platform, build_configuration)
+    
+    return {
+        "success": result.status.value == "success",
+        "output_file": output_file if output_file else result.output_file,
+        "errors": result.errors,
+        "warnings": result.warnings,
+        "log": result.log,
+        "duration": result.duration
+    }
     
     return {
         "success": result.status.value == "success",
@@ -336,23 +363,79 @@ def _platform_to_dir(platform: str) -> str:
     return mapping.get(platform.lower(), "Win32")
 
 
+def _is_runtime_only_package(project_path: str) -> bool:
+    """检查是否是运行时包（不需要安装到IDE）"""
+    import xml.etree.ElementTree as ET
+    
+    try:
+        tree = ET.parse(project_path)
+        root = tree.getroot()
+        ns = 'http://schemas.microsoft.com/developer/msbuild/2003'
+        
+        for pg in root.findall(f'.//{{{ns}}}PropertyGroup'):
+            for child in pg:
+                tag = child.tag.replace(f'{{{ns}}}', '')
+                if tag == 'RuntimeOnlyPackage':
+                    return child.text.strip().lower() == 'true'
+        return False
+    except:
+        return False
+
+
+def _get_package_projects(group_path: str) -> List[tuple]:
+    """获取项目组中的所有项目及其依赖关系"""
+    import xml.etree.ElementTree as ET
+    
+    tree = ET.parse(group_path)
+    root = tree.getroot()
+    ns = 'http://schemas.microsoft.com/developer/msbuild/2003'
+    
+    projects = []
+    for project in root.findall(f'.//{{{ns}}}Projects'):
+        proj_file = project.get('Include')
+        if proj_file:
+            proj_path = str(Path(group_path).parent / proj_file)
+            is_runtime = _is_runtime_only_package(proj_path)
+            projects.append((proj_path, is_runtime))
+    
+    if not projects:
+        for project in root.findall('.//Projects'):
+            proj_file = project.get('Include')
+            if proj_file:
+                proj_path = str(Path(group_path).parent / proj_file)
+                is_runtime = _is_runtime_only_package(proj_path)
+                projects.append((proj_path, is_runtime))
+    
+    return projects
+
+
 def _format_results(results: List[tuple], install: bool, target_platform: str) -> CallToolResult:
-    """格式化编译结果"""
-    all_success = all(r[1].get("success", False) for r in results)
+    """格式化单个项目编译结果"""
+    return _format_group_results([(proj, is_runtime, result) for proj, (is_runtime, result) in [
+        (r[0], (False, r[1])) for r in results
+    ]], install, target_platform)
+
+
+def _format_group_results(results: List[tuple], install: bool, target_platform: str) -> CallToolResult:
+    """格式化项目组编译结果（包含运行时/设计时包区分）"""
+    all_success = all(r[2].get("success", False) for r in results)
     
     output = "=" * 50 + "\n"
     output += "组件包编译结果\n"
     output += "=" * 50 + "\n\n"
     
-    bpl_files = []
-    for proj_path, result in results:
-        output += f"项目: {Path(proj_path).name}\n"
+    design_bpl_files = []
+    
+    for proj_path, is_runtime, result in results:
+        pkg_type = "运行时包" if is_runtime else "设计时包"
+        output += f"项目: {Path(proj_path).name} ({pkg_type})\n"
         output += f"状态: {'成功' if result.get('success') else '失败'}\n"
         
         output_file = result.get("output_file", "")
         if output_file and output_file.endswith('.bpl'):
             output += f"BPL文件: {output_file}\n"
-            bpl_files.append(output_file)
+            if not is_runtime:
+                design_bpl_files.append(output_file)
         elif output_file:
             output += f"输出目录: {output_file}\n"
         
@@ -363,7 +446,7 @@ def _format_results(results: List[tuple], install: bool, target_platform: str) -
         output += "\n"
     
     if install and all_success:
-        install_result = _format_install_guide(bpl_files, results)
+        install_result = _format_install_guide(design_bpl_files, results)
         output += install_result
     
     return CallToolResult(
@@ -378,11 +461,18 @@ def _format_install_guide(bpl_files: List[str], results: List[tuple]) -> str:
     output += "IDE 安装指南\n"
     output += "=" * 50 + "\n\n"
     
+    version = _get_delphi_version()
+    
     if bpl_files:
         output += "已找到以下 BPL 文件:\n"
         for bpl in bpl_files:
             output += f"  {bpl}\n"
         output += "\n"
+        
+        if _register_packages_to_ide(bpl_files, version):
+            output += "✅ 组件包已自动安装到 IDE!\n\n"
+        else:
+            output += "⚠️ 自动安装失败，请手动安装:\n"
     else:
         output += "未找到预编译的 BPL 文件\n"
         output += "编译后请手动安装:\n"
@@ -401,6 +491,28 @@ def _format_install_guide(bpl_files: List[str], results: List[tuple]) -> str:
     output += "5. 点击 OK 完成安装\n"
     
     return output
+
+
+def _register_packages_to_ide(bpl_files: List[str], version: str) -> bool:
+    """将组件包注册到 IDE"""
+    import winreg
+    
+    try:
+        key_path = rf"SOFTWARE\Embarcadero\BDS\{version}\Known Packages"
+        key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
+        
+        for bpl_path in bpl_files:
+            try:
+                winreg.SetValueEx(key, bpl_path, 0, winreg.REG_SZ, bpl_path)
+                print(f"Registered: {bpl_path}")
+            except Exception as e:
+                print(f"Failed to register {bpl_path}: {e}")
+        
+        winreg.CloseKey(key)
+        return True
+    except Exception as e:
+        print(f"Failed to register packages: {e}")
+        return False
 
 
 async def list_installed_packages() -> CallToolResult:
