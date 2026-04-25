@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.04.25] - 2026-04-25
+
+### Changed
+
+#### 编码规范优化
+- 类型命名添加 `class of` 类型规则
+- 公开字段描述修正
+- 泛型格式化添加具体问题说明（嵌套泛型、继承链）
+- "关键词"改为"Delphi 关键字"
+- 空格规则添加括号内侧
+- 预声明规则去重合并
+- 验证代码正确性改为"根据项目实际情况选择使用"
+- 自动更新机制添加必检/可选标记
+
 ## [2026.04.02] - 2026-04-02
 
 ### Added
