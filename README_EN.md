@@ -364,6 +364,112 @@ See [LICENSE](LICENSE) file for details.
 
 ## Version History
 
+### v2026.04.25 (2026-04-25)
+
+- Added installation script `install.ps1`
+  - Auto-detect installed AI Agents (Claude Desktop, Trae, CodeArts, Cursor, OpenCode, Windsurf, Cline, Tongyi Lingma, Doubao, Kimi, etc.)
+  - Auto-configure MCP Server to corresponding AI Agent
+  - Support force reconfiguration
+
+- Improved AI Agent detection logic
+  - CodeArts Agent: Added AppData\Roaming\codearts-agent detection
+  - OpenCode: Added ai.opencode.desktop desktop version and npm global installation detection
+  - Cursor/Windsurf/Tongyi Lingma: Added AppData directory detection
+
+- Added package installation tools
+  - `install_package`: Compile and install .dproj/.dpk/.groupproj packages to IDE
+  - `list_installed_packages`: List packages installed to IDE
+  - Identify runtime packages (RuntimeOnlyPackage) and design-time packages, only install design-time packages
+
+- Optimized coding standards (see config/CODING_RULES.mdc)
+  - Restructured document with clear sections and version info
+  - Added unit reference order, type declaration order, comment standards
+  - Added event handler naming rules (On prefix removal, Before/After prefix retention)
+  - Added enum naming rules (both prefixed and non-prefixed styles supported)
+  - Added forward declaration and pointer type declaration order rules
+  - Added type judgment warning (record may have Create method)
+  - Fixed line width to 120 characters (for 16:9 screens)
+  - Fixed code cleanup rules (direct cleanup for modification-introduced dead code)
+
+### v2026.03.29 (2026-03-29)
+
+- Fixed compilation parameter issues
+  - Fixed `$(BDSLIB)` macro expansion path error (original path `lib\$(Platform)` caused double expansion)
+  - Fixed `BDSCOMMONDIR` environment variable splitting logic error
+  - Removed unnecessary quotes (`asyncio.create_subprocess_exec` handles space paths automatically)
+  - Added default namespace `-NS` parameter to resolve SysUtils unit resolution issues
+  - Updated parameter validation logic to allow semicolons and parentheses in path parameters
+
+- Fixed project dependency analysis
+  - Added thirdparty KB path to search path list
+  - Supported case-insensitive matching (madbasic → madBasic)
+
+- Unified tool return types
+  - `compile_project` returns `CallToolResult`
+  - `compile_file` returns `CallToolResult`
+  - `get_compiler_args` returns `CallToolResult`
+
+- Tool consolidation
+  - Merged search functions into `search_knowledge`
+  - Merged build functions into `build_knowledge`
+  - Merged stats functions into `get_knowledge_stats`
+
+- All pytest tests passed (15/15)
+
+### v2026.03.28 (2026-03-28)
+
+- Added path macro expansion tools
+  - Added `src/utils/delphi_env.py` utility module
+  - Support `$(BDS)`, `$(BDSCatalogRepository)`, `$(BDSUSERDIR)` path macro expansion
+  - Added `get_catalog_repository_paths()` function to get GetIt component source paths
+  - Added `resolve_delphi_search_paths()` function to integrate all search paths
+
+- Optimized third-party library path handling
+  - Use latest installed Delphi version (23.0 instead of 22.0)
+  - Correctly filter Delphi system directories (Imports, BPL, DCP, etc.)
+  - Added Studio Library registry path support
+  - Auto-add GetIt CatalogRepository component source paths
+
+- Rebuilt knowledge base
+  - Delphi KB: 3207 files, 53943 classes, 442206 functions
+  - Third-party KB: 19 paths, 264 files, 1584 classes, 20384 functions
+
+- Fixed tool return type issues
+  - Fixed `search_compilers` return type to CallToolResult
+  - Fixed `get_compiler_args` return type to CallToolResult
+  - Fixed `get_coding_rules` return type to CallToolResult
+  - Fixed `check_pasfmt_installation` return type to CallToolResult
+  - Fixed `format_code` return type to CallToolResult
+
+- Fixed search result display issues
+  - Fixed all search tools hardcoding only 3 results
+  - Fixed `knowledge_base.py` `[:3]` limit to use `top_k` parameter
+
+- Fixed project dependency analysis
+  - Fixed `analyze_project_dependencies` division by zero error (when project units is 0)
+  - Enhanced registry path macro expansion support
+  - Support GetIt component path resolution
+
+- Fixed knowledge base auto-loading
+  - Fixed `read_source_file` knowledge base not auto-loading issue
+  - Added auto-load logic when KB instance is None
+
+- All pytest tests passed (11/11)
+
+### v2026.03.26 (2026-03-26)
+
+- Added pasfmt code formatting tools
+  - Added `format_delphi_file` tool to format Delphi source files
+  - Added `format_delphi_code` tool to format Delphi code strings
+  - Added `install_pasfmt` tool to download and install pasfmt CLI or IDE plugin
+  - Added `check_pasfmt_installation` tool to check pasfmt installation status
+  - Added `set_pasfmt_path` tool to set pasfmt executable path
+- Support downloading pre-compiled pasfmt binaries from GitHub (Windows 32/64-bit and Linux)
+- Support Delphi 11/12/13 IDE plugin installation
+- Adapted to pasfmt v0.7.0 command line parameters
+- Support UTF-8/UTF-8 BOM/GBK encoded files
+- Fixed test file import path issues
+
 ### v2026.03.21 (2026-03-21)
 - Added help documentation knowledge base step-by-step build functionality
   - Added `extract_help_chm` tool to extract CHM files separately (step 1)
