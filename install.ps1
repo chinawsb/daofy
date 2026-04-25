@@ -266,6 +266,7 @@ function Test-Trae {
 
 function Test-CodeArtsAgent {
     # 检查 CodeArts Agent 是否安装
+    # 1. 检查可执行文件
     $codeartsPaths = @(
         "${env:LOCALAPPDATA}\Programs\CodeArts\CodeArts.exe",
         "${env:ProgramFiles}\CodeArts\CodeArts.exe"
@@ -280,6 +281,18 @@ function Test-CodeArtsAgent {
                 Name = "CodeArts Agent"
                 ConfigType = "Standard"
             }
+        }
+    }
+
+    # 2. 检查 AppData\Roaming\codearts-agent (实际安装位置)
+    $codeartsRoaming = Join-Path $env:APPDATA "codearts-agent"
+    if (Test-Path $codeartsRoaming) {
+        return @{
+            Installed = $true
+            Path = $codeartsRoaming
+            ConfigPath = Join-Path $env:USERPROFILE ".codeartsdoer\mcp\mcp_settings.json"
+            Name = "CodeArts Agent"
+            ConfigType = "Standard"
         }
     }
 
@@ -323,6 +336,18 @@ function Test-Cursor {
         }
     }
 
+    # 检查 AppData 目录
+    $cursorRoaming = Join-Path $env:APPDATA "Cursor"
+    if (Test-Path $cursorRoaming) {
+        return @{
+            Installed = $true
+            Path = $cursorRoaming
+            ConfigPath = Join-Path $env:USERPROFILE ".cursor\mcp.json"
+            Name = "Cursor"
+            ConfigType = "Standard"
+        }
+    }
+
     # 检查配置文件
     $configPath = Join-Path $env:USERPROFILE ".cursor\mcp.json"
     if (Test-Path $configPath) {
@@ -356,19 +381,29 @@ function Test-OpenCode {
     $opencodeCli = Join-Path $env:LOCALAPPDATA "opencode\opencode-cli.exe"
     # 3. AppData\Roaming 安装
     $opencodeRoaming = Join-Path $env:APPDATA "opencode"
+    # 4. ai.opencode.desktop (桌面版)
+    $aiOpenencodeRoaming = Join-Path $env:APPDATA "ai.opencode.desktop"
+    $aiOpenencodeLocal = Join-Path $env:LOCALAPPDATA "ai.opencode.desktop"
     
     $opencodeInstalled = $opencodeNpm -or 
                          (Test-Path $opencodeLocal) -or 
                          (Test-Path $opencodeCli) -or 
-                         (Test-Path $opencodeRoaming)
+                         (Test-Path $opencodeRoaming) -or
+                         (Test-Path $aiOpenencodeRoaming) -or
+                         (Test-Path $aiOpenencodeLocal)
+    
+    # 确定安装路径
+    $installPath = if ($opencodeNpm) { $opencodeNpm.Source } 
+                   elseif (Test-Path $opencodeLocal) { $opencodeLocal }
+                   elseif (Test-Path $opencodeCli) { $opencodeCli }
+                   elseif (Test-Path $aiOpenencodeRoaming) { $aiOpenencodeRoaming }
+                   elseif (Test-Path $aiOpenencodeLocal) { $aiOpenencodeLocal }
+                   else { "OpenCode CLI" }
     
     if (Test-Path $configPath) {
         return @{
             Installed = $true
-            Path = if ($opencodeNpm) { $opencodeNpm.Source } 
-                   elseif (Test-Path $opencodeLocal) { $opencodeLocal }
-                   elseif (Test-Path $opencodeCli) { $opencodeCli }
-                   else { "OpenCode CLI" }
+            Path = $installPath
             ConfigPath = $configPath
             Name = "OpenCode"
             ConfigType = "OpenCode"
@@ -379,10 +414,7 @@ function Test-OpenCode {
     if ($opencodeInstalled) {
         return @{
             Installed = $true
-            Path = if ($opencodeNpm) { $opencodeNpm.Source } 
-                   elseif (Test-Path $opencodeLocal) { $opencodeLocal }
-                   elseif (Test-Path $opencodeCli) { $opencodeCli }
-                   else { "OpenCode CLI" }
+            Path = $installPath
             ConfigPath = $configPath
             Name = "OpenCode"
             ConfigType = "OpenCode"
@@ -414,6 +446,18 @@ function Test-Windsurf {
                 Name = "Windsurf"
                 ConfigType = "Standard"
             }
+        }
+    }
+
+    # 检查 AppData 目录
+    $windsurfRoaming = Join-Path $env:APPDATA "Windsurf"
+    if (Test-Path $windsurfRoaming) {
+        return @{
+            Installed = $true
+            Path = $windsurfRoaming
+            ConfigPath = Join-Path $env:USERPROFILE ".windsurf\mcp.json"
+            Name = "Windsurf"
+            ConfigType = "Standard"
         }
     }
 
@@ -534,6 +578,10 @@ function Test-TongyiLingma {
                        Where-Object { $_.Name -like "*tongyi*" } | 
                        Select-Object -First 1
 
+    # AppData 目录
+    $tongyiRoaming = Join-Path $env:APPDATA "tongyi"
+    $tongyiLocal = Join-Path $env:LOCALAPPDATA "tongyi"
+
     $configPath = Join-Path $env:USERPROFILE ".tongyi\mcp.json"
 
     if ($tongyiExtension) {
@@ -550,6 +598,16 @@ function Test-TongyiLingma {
         return @{
             Installed = $true
             Path = $tongyiJetbrains.FullName
+            ConfigPath = $configPath
+            Name = "通义灵码"
+            ConfigType = "Standard"
+        }
+    }
+
+    if ((Test-Path $tongyiRoaming) -or (Test-Path $tongyiLocal)) {
+        return @{
+            Installed = $true
+            Path = if (Test-Path $tongyiRoaming) { $tongyiRoaming } else { $tongyiLocal }
             ConfigPath = $configPath
             Name = "通义灵码"
             ConfigType = "Standard"
