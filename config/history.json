@@ -1,6 +1,391 @@
 {
   "entries": [
     {
+      "timestamp": "2026-04-24T20:41:30.333805",
+      "project_path": "C:\\\\User\\\\GR32\\\\Source\\\\Packages\\\\XE8\\\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 2092,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:40:24.659091",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "failed",
+      "duration": 2243,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:40:22.407998",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 1989,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:39:15.828755",
+      "project_path": "C:\\\\User\\\\GR32\\\\Source\\\\Packages\\\\XE8\\\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 2068,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:38:57.339407",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "failed",
+      "duration": 2259,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:38:55.074627",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 2081,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T20:29:18.797624",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2229,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T20:29:16.560414",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2062,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T20:25:22.273420",
+      "project_path": "C:\\\\User\\\\GR32\\\\Source\\\\Packages\\\\XE8\\\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2136,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T20:07:53.633004",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2245,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T20:07:51.379547",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2130,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:47:37.787436",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2330,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:47:35.448465",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2131,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:47:17.908629",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2202,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:29:45.072997",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2434,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:29:42.629848",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2222,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:26:42.615509",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 4364,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:26:38.243233",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 6175,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:25:40.733837",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2428,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:25:38.292315",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2357,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:24:37.898993",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2301,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:24:35.586283",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2057,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:23:35.580157",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2313,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:23:33.252583",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2183,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:21:38.983226",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2200,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:21:36.774911",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2044,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:20:31.695382",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2227,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:20:29.459084",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2025,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:19:54.113067",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2480,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:19:51.624929",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2142,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:05:03.244372",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2238,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:05:00.998278",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2081,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:04:22.206758",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2165,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:03:57.123868",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2330,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:03:54.787996",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2078,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:02:37.874023",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2319,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:02:35.550125",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2077,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:01:42.564561",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2230,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:01:40.329821",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2035,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:01:08.440383",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2227,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:01:06.195686",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2071,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:00:26.811700",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2291,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T18:00:24.501339",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2086,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:59:33.039673",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2062,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:57:59.168917",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 2203,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:57:56.945715",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2064,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:55:43.661049",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2094,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:49:16.712539",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_D.dproj",
+      "status": "success",
+      "duration": 4657,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:49:06.652159",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 2718,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-24T17:48:45.516835",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 5488,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-24T17:32:51.331648",
+      "project_path": "C:\\User\\Thirdpart\\ZBar\\zbar.vcl.dproj",
+      "status": "success",
+      "duration": 9656,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-09T13:05:54.775646",
+      "project_path": "C:\\Temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 704,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-09T13:03:40.112867",
+      "project_path": "C:\\Temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 3234,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-09T13:02:44.159496",
+      "project_path": "C:\\Temp\\test_project\\TestProject.dpr",
+      "status": "success",
+      "duration": 2909,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-07T10:15:22.123770",
+      "project_path": "C:\\Temp\\test_project\\TestProject.dpr",
+      "status": "failed",
+      "duration": 745,
+      "error_message": "无错误"
+    },
+    {
       "timestamp": "2026-03-29T12:40:59.694124",
       "project_path": "C:\\temp\\TButtonTest\\TButtonTest.dpr",
       "status": "success",
@@ -314,230 +699,6 @@
       "status": "failed",
       "duration": 3196,
       "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T14:22:29.192901",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3209,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:48:38.835777",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "success",
-      "duration": 5865,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-03-09T13:47:44.350530",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3152,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:47:24.695689",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3224,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:39:25.828070",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "success",
-      "duration": 5870,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-03-09T13:39:04.831593",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3144,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:38:28.887731",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3190,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:37:12.650013",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 166,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:36:37.332750",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 197,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:36:06.797127",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 161,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:35:52.111536",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 207,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:35:38.688230",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 303,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:31:27.374887",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 232,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:31:09.970186",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 240,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:29:25.405842",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 217,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:29:14.071662",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 465,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:28:11.688816",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 236,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:28:00.578958",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 238,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:26:47.011373",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 83,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:26:12.055696",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 79,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:25:54.701006",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 93,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:18:00.821688",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 77,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:17:43.848829",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 83,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:11:18.532539",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 238,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:11:00.091379",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 894,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:10:37.345946",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 124,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:10:19.912207",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 193,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:07:22.701629",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 68,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:07:04.578105",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dpr",
-      "status": "failed",
-      "duration": 553,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:06:33.176545",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 16,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:06:17.510017",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 40,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T13:05:42.289632",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 35,
-      "error_message": "F1026 File not found: '\"C:\\User\\diandaxia\\diandaxia.dproj\"'"
     }
   ],
   "max_entries": 100

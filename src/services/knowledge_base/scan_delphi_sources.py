@@ -727,10 +727,10 @@ class DelphiSourceScanner:
         
         # 计算worker数量
         # 对于I/O密集型任务（磁盘读取），应限制worker数量避免磁盘争用
-        # 公式: min(max(1, files//100), 8) - 最多8个worker
+        # 公式: max(2, cpu_count - 1)
         cpu_cores = cpu_count()
-        max_needed = max(1, total_files // 100)
-        max_workers = min(max_needed, 8)  # 上限8个worker
+        max_needed = max(2, cpu_cores - 1)
+        max_workers = max(1, min(max_needed, total_files // 50))
         
         print(f"Processing: files={len(changed_files)}, workers={max_workers} (cpu_cores={cpu_cores})")
         

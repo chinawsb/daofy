@@ -242,16 +242,43 @@ _CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*([^;{]+);', 
 
 ---
 
-## Delphi Coding Rules (for generated code)
+## Delphi Coding Rules
 
-### Naming Rules
-- **Constants**: UPPER_CASE
-- **Keywords**: lowercase
-- **Types**: PascalCase with `T` prefix (e.g., `TButton`)
-- **Interfaces**: PascalCase with `I` prefix (e.g., `IInterface`)
-- **Exceptions**: PascalCase with `E` prefix
-- **Fields**: `F` prefix (e.g., `FName`)
-- **Parameters**: `A` prefix (e.g., `AFileName`)
+### Naming Conventions
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Constants | UPPER_CASE | `MAX_BUFFER_SIZE` |
+| Types | PascalCase + T prefix | `TButton`, `TStringList` |
+| Interfaces | PascalCase + I prefix | `IInterface`, `IEnumerator` |
+| Exceptions | PascalCase + E prefix | `EInvalidArgument` |
+| Class Fields | F prefix | `FName`, `FCount` |
+| Parameters | A prefix | `AFileName`, `ACount` |
+| Single-letter params | Keep as-is | `I: Integer`, `J: Integer` |
+| Params already starting with A | Keep unchanged | `Accept` stays as `Accept` |
+| Other params | Add A prefix | `Count: Integer` → `ACount: Integer` |
+
+### Code Style
+
+- **NO comments** unless explicitly requested by user
+- Keep code concise and self-documenting
+- Follow existing code patterns in the file
+
+### Parameter Naming Examples
+
+```delphi
+// Correct
+procedure ProcessItems(AItems: TArray<Integer>; ACount: Integer);
+procedure Connect(AHost: string; APort: Word; AAccept: Boolean);
+
+// Avoid (unless single-letter)
+procedure Process(Items: TArray<Integer>; Count: Integer);
+```
+
+### Modifications & Backups
+
+- Create historical backups before major modifications
+- Backup naming: `filename.backupN` or `backup_YYYYMMDD/`
 
 ---
 

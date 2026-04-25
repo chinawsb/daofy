@@ -409,7 +409,7 @@ class SmartCacheKnowledgeBase:
     
     @staticmethod
     def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict]]:
-        """静态方法：解析Delphi源文件（用于多进程）"""
+        """静态方法：解析Delphi源文件（用于多进程）- 完整版"""
         import re
         from pathlib import Path
         
@@ -420,28 +420,271 @@ class SmartCacheKnowledgeBase:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            # 提取类定义
-            class_pattern = r'(T[A-Z][a-zA-Z0-9]*)\s*=\s*class\s*\(([^)]+)\)'
-            for match in re.finditer(class_pattern, content):
+            # ========== 1. 类型定义 ==========
+            
+            # 1.1 类定义（支持泛型）
+            # 匹配: TMyClass = class, TList<T> = class, TDict<TKey, TValue> = class
+            class_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*class\s*(?:\(([^)]+)\))?'
+            for match in re.finditer(class_pattern, content, re.IGNORECASE):
                 class_name = match.group(1)
-                base_class = match.group(2)
+                base_class = match.group(2) if match.group(2) else 'TObject'
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'c',
+                    'type': 'c',  # class
                     'name': class_name,
                     'line': line_num,
                     'base_class': base_class,
                     'description': f"Class {class_name} inherits from {base_class}"
                 })
             
-            # 提取函数/过程定义
-            func_pattern = r'(procedure|function)\s+([A-Za-z][a-zA-Z0-9]*)\s*\('
-            for match in re.finditer(func_pattern, content):
-                func_type = match.group(1)
-                func_name = match.group(2)
+            # 1.2 记录类型（支持泛型）
+            record_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*record\b'
+            for match in re.finditer(record_pattern, content, re.IGNORECASE):
+                record_name = match.group(1)
                 line_num = content[:match.start()].count('\n') + 1
                 
+                items.append({
+                    'type': 'r',  # record
+                    'name': record_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Record {record_name}"
+                })
+            
+            # 1.3 接口定义（支持泛型）
+            interface_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*interface\s*(?:\(([^)]+)\))?'
+            for match in re.finditer(interface_pattern, content, re.IGNORECASE):
+                interface_name = match.group(1)
+                base_interface = match.group(2) if match.group(2) else 'IInterface'
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 'i',  # interface
+                    'name': interface_name,
+                    'line': line_num,
+                    'base_class': base_interface,
+                    'description': f"Interface {interface_name} extends {base_interface}"
+                })
+            
+            # 1.4 枚举类型
+            enum_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*\(([^)]+)\)\s*;'
+            for match in re.finditer(enum_pattern, content):
+                enum_name = match.group(1)
+                enum_values = match.group(2)
+                # 确认是枚举而不是函数调用
+                if ',' in enum_values or '=' not in enum_values:
+                    line_num = content[:match.start()].count('\n') + 1
+                    
+                    items.append({
+                        'type': 'e',  # enum
+                        'name': enum_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Enum {enum_name} = ({enum_values})"
+                    })
+            
+            # 1.5 集合类型
+            set_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*set\s+of\s+([^;]+)\s*;'
+            for match in re.finditer(set_pattern, content, re.IGNORECASE):
+                set_name = match.group(1)
+                set_type = match.group(2).strip()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 's',  # set
+                    'name': set_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Set {set_name} = set of {set_type}"
+                })
+            
+            # 1.6 数组类型
+            array_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*array\s*(?:\[([^\]]+)\])?\s*of\s+([^;]+)\s*;'
+            for match in re.finditer(array_pattern, content, re.IGNORECASE):
+                array_name = match.group(1)
+                array_range = match.group(2) if match.group(2) else ''
+                array_type = match.group(3).strip()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                desc = f"Array {array_name} = array[{array_range}] of {array_type}" if array_range else f"Array {array_name} = array of {array_type}"
+                
+                items.append({
+                    'type': 'a',  # array
+                    'name': array_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': desc
+                })
+            
+            # 1.7 子界类型
+            subrange_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(\d+)\.\.(\d+)\s*;'
+            for match in re.finditer(subrange_pattern, content):
+                subrange_name = match.group(1)
+                range_start = match.group(2)
+                range_end = match.group(3)
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 'g',  # range (subrange)
+                    'name': subrange_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Subrange {subrange_name} = {range_start}..{range_end}"
+                })
+            
+            # 1.8 指针类型
+            pointer_pattern = r'\b(P[A-Z][a-zA-Z0-9]*)\s*=\s*\^([A-Z][a-zA-Z0-9]*)\s*;'
+            for match in re.finditer(pointer_pattern, content):
+                pointer_name = match.group(1)
+                target_type = match.group(2)
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 'p',  # pointer
+                    'name': pointer_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Pointer {pointer_name} = ^{target_type}"
+                })
+            
+            # 1.9 类型别名
+            alias_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*type\s+([A-Z][a-zA-Z0-9]*)\s*;'
+            for match in re.finditer(alias_pattern, content, re.IGNORECASE):
+                alias_name = match.group(1)
+                target_type = match.group(2)
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 't',  # type alias
+                    'name': alias_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Type {alias_name} = type {target_type}"
+                })
+            
+            # 1.10 匿名方法类型（reference to procedure/function）
+            anon_method_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*reference\s+to\s+(procedure|function)'
+            for match in re.finditer(anon_method_pattern, content, re.IGNORECASE):
+                method_name = match.group(1)
+                method_kind = match.group(2).lower()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 'am',  # anonymous method
+                    'name': method_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Anonymous Method {method_name} = reference to {method_kind}"
+                })
+            
+            # 1.11 方法指针类型（procedure/function of object）
+            method_ptr_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(procedure|function)\s*\([^)]*\)\s*of\s+object'
+            for match in re.finditer(method_ptr_pattern, content, re.IGNORECASE):
+                method_name = match.group(1)
+                method_kind = match.group(2).lower()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                items.append({
+                    'type': 'mp',  # method pointer
+                    'name': method_name,
+                    'line': line_num,
+                    'base_class': None,
+                    'description': f"Method Pointer {method_name} = {method_kind} of object"
+                })
+            
+            # 1.12 过程/函数类型（不属于对象）
+            proc_type_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(procedure|function)\s*\('
+            for match in re.finditer(proc_type_pattern, content, re.IGNORECASE):
+                # 检查是否是方法指针（已处理）
+                full_match = match.group(0)
+                # 检查后续内容是否包含"of object"
+                remaining = content[match.start():match.start()+200]
+                if 'of object' not in remaining:
+                    proc_name = match.group(1)
+                    proc_kind = match.group(2).lower()
+                    line_num = content[:match.start()].count('\n') + 1
+                    
+                    items.append({
+                        'type': 'pt',  # procedure/function type
+                        'name': proc_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Type {proc_name} = {proc_kind}"
+                    })
+            
+            # ========== 2. 常量和资源字符串（支持批量声明） ==========
+            
+            # 2.1 查找const块
+            const_block_pattern = r'\bconst\s*\n((?:\s+[A-Z][a-zA-Z0-9]*\s*=.*?;\s*\n)+)'
+            for match in re.finditer(const_block_pattern, content, re.IGNORECASE):
+                const_block = match.group(1)
+                line_start = content[:match.start()].count('\n') + 1
+                
+                # 解析块中的每个常量
+                const_item_pattern = r'\s*([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
+                for item_match in re.finditer(const_item_pattern, const_block):
+                    const_name = item_match.group(1)
+                    const_value = item_match.group(2).strip()
+                    line_num = line_start + const_block[:item_match.start()].count('\n')
+                    
+                    items.append({
+                        'type': 'k',  # constant
+                        'name': const_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Const {const_name} = {const_value}"
+                    })
+            
+            # 2.2 单行常量
+            const_pattern = r'\bconst\s+([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
+            for match in re.finditer(const_pattern, content, re.IGNORECASE):
+                const_name = match.group(1)
+                const_value = match.group(2).strip()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                # 检查是否已在const块中处理
+                already_added = any(i['type'] == 'k' and i['name'] == const_name and i['line'] == line_num for i in items)
+                if not already_added:
+                    items.append({
+                        'type': 'k',  # constant
+                        'name': const_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Const {const_name} = {const_value}"
+                    })
+            
+            # 2.3 资源字符串块
+            resourcestring_block_pattern = r'\bresourcestring\s*\n((?:\s*[A-Z][a-zA-Z0-9]*\s*=.*?;\s*\n)+)'
+            for match in re.finditer(resourcestring_block_pattern, content, re.IGNORECASE):
+                res_block = match.group(1)
+                line_start = content[:match.start()].count('\n') + 1
+                
+                res_item_pattern = r'\s*([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
+                for item_match in re.finditer(res_item_pattern, res_block):
+                    res_name = item_match.group(1)
+                    res_value = item_match.group(2).strip()
+                    line_num = line_start + res_block[:item_match.start()].count('\n')
+                    
+                    items.append({
+                        'type': 'z',  # resource string
+                        'name': res_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"ResourceString {res_name} = {res_value}"
+                    })
+            
+            # ========== 3. 函数和过程 ==========
+            
+            # 3.1 函数/过程定义
+            func_pattern = r'\b(procedure|function)\s+([A-Za-z][a-zA-Z0-9\.]*)\s*(?:\(([^)]*)\))?'
+            for match in re.finditer(func_pattern, content, re.IGNORECASE):
+                func_type = match.group(1).lower()
+                func_name = match.group(2)
+                params = match.group(3) if match.group(3) else ''
+                line_num = content[:match.start()].count('\n') + 1
+                
+                # 跳过构造函数、析构函数等特殊方法
                 if func_name in ['Create', 'Destroy', 'AfterConstruction', 'BeforeDestruction']:
                     continue
                 
@@ -452,8 +695,110 @@ class SmartCacheKnowledgeBase:
                     'name': func_name,
                     'line': line_num,
                     'base_class': None,
-                    'description': f"{func_type} {func_name}"
+                    'description': f"{func_type} {func_name}({params})"
                 })
+            
+            # ========== 4. 类成员（属性、字段、事件） ==========
+            
+            # 4.1 属性定义（区分事件和普通属性）
+            property_pattern = r'\bproperty\s+([A-Z][a-zA-Z0-9]*)\s*:\s*([^;=]+)'
+            for match in re.finditer(property_pattern, content, re.IGNORECASE):
+                prop_name = match.group(1)
+                prop_type = match.group(2).strip()
+                line_num = content[:match.start()].count('\n') + 1
+                
+                # 区分事件和普通属性
+                # 事件判断规则：
+                # 1. 属性名以On/Before/After开头
+                # 2. 类型为T开头的事件类型（如TNotifyEvent, TChangeEvent等）
+                is_event = (
+                    # 规则1: 属性名以事件前缀开头
+                    prop_name.startswith('On') or 
+                    prop_name.startswith('Before') or 
+                    prop_name.startswith('After') or
+                    # 规则2: 类型为T开头的事件类型
+                    (prop_type.startswith('T') and (
+                        'Event' in prop_type or
+                        'Handler' in prop_type or
+                        'Callback' in prop_type or
+                        'Notify' in prop_type
+                    ))
+                )
+                
+                if is_event:
+                    items.append({
+                        'type': 'v',  # event
+                        'name': prop_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Event {prop_name}: {prop_type}"
+                    })
+                else:
+                    items.append({
+                        'type': 'y',  # property
+                        'name': prop_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Property {prop_name}: {prop_type}"
+                    })
+            
+            # 4.2 类成员字段（需要上下文判断）
+            # 简化实现：检查是否在type块内，且以F开头
+            field_pattern = r'\b(F[A-Z][a-zA-Z0-9]*)\s*:\s*([A-Z][a-zA-Z0-9]*)\s*;'
+            for match in re.finditer(field_pattern, content):
+                field_name = match.group(1)
+                field_type = match.group(2)
+                line_num = content[:match.start()].count('\n') + 1
+                
+                # 检查是否在type块内（简化判断）
+                # 向前查找最近的type关键字
+                before_content = content[:match.start()]
+                type_keyword_pos = before_content.rfind('type')
+                in_type_block = type_keyword_pos != -1
+                
+                # 检查是否在var/const/resourcestring块内（如果是，则不是成员字段）
+                var_keyword_pos = before_content.rfind('\nvar ')
+                const_keyword_pos = before_content.rfind('\nconst ')
+                res_keyword_pos = before_content.rfind('\nresourcestring ')
+                in_var_block = var_keyword_pos != -1 and var_keyword_pos > type_keyword_pos if type_keyword_pos != -1 else var_keyword_pos != -1
+                in_const_block = const_keyword_pos != -1 and const_keyword_pos > type_keyword_pos if type_keyword_pos != -1 else const_keyword_pos != -1
+                in_res_block = res_keyword_pos != -1 and res_keyword_pos > type_keyword_pos if type_keyword_pos != -1 else res_keyword_pos != -1
+                
+                # 如果在type块内，且不在var/const/resourcestring块内，则为成员字段
+                if in_type_block and not (in_var_block or in_const_block or in_res_block):
+                    items.append({
+                        'type': 'm',  # member/field
+                        'name': field_name,
+                        'line': line_num,
+                        'base_class': None,
+                        'description': f"Field {field_name}: {field_type}"
+                    })
+            
+            # 4.3 全局变量（var块中，不以F开头）
+            var_block_pattern = r'\bvar\s*\n((?:\s*[A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*\s*:\s*[^;]+;\s*\n)+)'
+            for match in re.finditer(var_block_pattern, content, re.IGNORECASE):
+                var_block = match.group(1)
+                line_start = content[:match.start()].count('\n') + 1
+                
+                # 解析块中的每个变量（支持批量声明：X, Y, Z: Integer;）
+                var_line_pattern = r'\s*([A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*)\s*:\s*([^;]+)\s*;'
+                for item_match in re.finditer(var_line_pattern, var_block):
+                    var_names = item_match.group(1)
+                    var_type = item_match.group(2).strip()
+                    line_num = line_start + var_block[:item_match.start()].count('\n')
+                    
+                    # 分割批量变量名
+                    for var_name in var_names.split(','):
+                        var_name = var_name.strip()
+                        # 跳过成员变量（以F开头）
+                        if not var_name.startswith('F'):
+                            items.append({
+                                'type': 'g',  # global variable
+                                'name': var_name,
+                                'line': line_num,
+                                'base_class': None,
+                                'description': f"Var {var_name}: {var_type}"
+                            })
             
         except Exception as e:
             pass
@@ -621,7 +966,7 @@ class SmartCacheKnowledgeBase:
             print("  并行解析文件...")
             
             # 动态计算worker数和chunksize（参考已有实现）
-            n_workers = max(2, min(8, cpu_count() - 1))
+            n_workers = max(2, cpu_count() - 1)
             file_chunksize = max(500, len(files_data) // n_workers)
             
             print(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
@@ -760,7 +1105,7 @@ class SmartCacheKnowledgeBase:
             print(f"  开始构建向量，共{total}个项目...")
             
             # 动态计算worker数和chunksize
-            n_workers = max(2, min(8, cpu_count() - 1))
+            n_workers = max(2, cpu_count() - 1)
             batch_size = self.config['build'].get('batch_size', 1000)
             vector_chunksize = max(500, batch_size // n_workers)
             

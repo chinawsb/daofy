@@ -1,55 +1,0 @@
-
-================================================================================
-[开始] 帮助知识库构建开始 - 2026-03-25 09:04:18
-================================================================================
-
-
-================================================================================
-[阶段] CHM解压
-================================================================================
-  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 1分31秒 | 完成 代码示例  [###########---------------------------------------]  22.2% (2/9) | 剩余时间: 4分18秒 | 完成 主题帮助  [################----------------------------------]  33.3% (3/9) | 剩余时间: 2分51秒 | 完成 TeeChart 图表帮助  [######################----------------------------]  44.4% (4/9) | 剩余时间: 1分53秒 | 完成 Indy 网络组件帮助  [###########################-----------------------]  55.6% (5/9) | 剩余时间: 1分21秒 | 完成 数据库帮助  [#################################-----------------]  66.7% (6/9) | 剩余时间: 1分6秒 | 完成 System 单元帮助  [######################################------------]  77.8% (7/9) | 剩余时间: 50秒 | 完成 FireMonkey (FMX) 帮助  [############################################------]  88.9% (8/9) | 剩余时间: 23秒 | 完成 VCL (Visual Component Library) 帮助  [##################################################] 100.0% (9/9) | 剩余时间: 0秒 | 完成 运行时库帮助HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: 
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-HTML 转 Markdown 失败: unexpected call to parse_endtag
-
-[完成] extract - 耗时: 239.1秒
-
-
-================================================================================
-[阶段] HTML扫描
-================================================================================
-  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 40分40秒 | 扫描 主题帮助...  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 42分48秒 | 处理 Adding_and_Sorting_Strings.htm  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 44分1秒 | 处理 Add_Runtime_Package.htmHTML 转 Markdown 失败: unexpected call to parse_endtag
-  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 45分21秒 | 处理 Applying_FireMonkey_Image_Effects.htmHTML 转 Markdown 失败: 
-  [#####---------------------------------------------]  11.1% (1/9) | 剩余时间: 47分0秒 | 处理 Auto_Linking.htm

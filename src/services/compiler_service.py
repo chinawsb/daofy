@@ -212,38 +212,38 @@ class CompilerService:
             logger.warning(f"检查进程时发生错误: {str(e)}")
             return None
 
-    def _cleanup_dcu_files(self, search_paths: list):
+    def _cleanup_dcu_files(self, file_path: str):
         """
-        清理单元搜索路径中的 .dcu 文件
+        清理源文件所在目录的 .dcu 文件
         
         Args:
-            search_paths: 单元搜索路径列表
+            file_path: 源文件路径
         """
         import glob
         
-        total_deleted = 0
-        for path in search_paths:
-            if not Path(path).exists():
-                continue
-            
-            # 查找所有 .dcu 文件
-            dcu_pattern = str(Path(path) / "*.dcu")
-            dcu_files = glob.glob(dcu_pattern)
-            
-            if dcu_files:
-                logger.info(f"在 {path} 中找到 {len(dcu_files)} 个 .dcu 文件")
-                
-                # 删除 .dcu 文件
-                for dcu_file in dcu_files:
-                    try:
-                        os.unlink(dcu_file)
-                        logger.debug(f"已删除: {dcu_file}")
-                        total_deleted += 1
-                    except Exception as e:
-                        logger.warning(f"删除失败 {dcu_file}: {str(e)}")
+        file_path_obj = Path(file_path)
+        file_dir = file_path_obj.parent
         
-        if total_deleted > 0:
-            logger.info(f"共删除 {total_deleted} 个 .dcu 文件")
+        if not file_dir.exists():
+            return
+        
+        dcu_pattern = str(file_dir / "*.dcu")
+        dcu_files = glob.glob(dcu_pattern)
+        
+        if dcu_files:
+            logger.info(f"在 {file_dir} 中找到 {len(dcu_files)} 个 .dcu 文件")
+            
+            total_deleted = 0
+            for dcu_file in dcu_files:
+                try:
+                    os.unlink(dcu_file)
+                    logger.debug(f"已删除: {dcu_file}")
+                    total_deleted += 1
+                except Exception as e:
+                    logger.warning(f"删除失败 {dcu_file}: {str(e)}")
+            
+            if total_deleted > 0:
+                logger.info(f"共删除 {total_deleted} 个 .dcu 文件")
 
     def _execute_build_event(self, event_name: str, event_cmd: str, project_dir: str, 
                             ignore_exit_code: bool = False, timeout: int = 60,
@@ -462,7 +462,8 @@ class CompilerService:
             if request.options.output_path:
                 output_base = request.options.output_path
             else:
-                output_base = str(Path(project_dir) / "Win32")
+                platform_dir = "Win64" if request.options.target_platform == TargetPlatform.WIN64 else "Win32"
+                output_base = str(Path(project_dir) / platform_dir)
 
             # 确保输出目录存在
             Path(output_base).mkdir(parents=True, exist_ok=True)
@@ -1121,9 +1122,8 @@ class CompilerService:
                     logger.warning(f"解析项目文件失败: {e}")
                     dproj_path = None
 
-            # 4. 删除单元搜索路径中的旧版 .dcu 文件
-            if request.unit_search_paths:
-                self._cleanup_dcu_files(request.unit_search_paths)
+            # 4. 删除源文件所在目录的旧版 .dcu 文件
+            self._cleanup_dcu_files(request.file_path)
 
             # 5. 准备命名空间和include路径
             # 合并项目命名空间和默认命名空间

@@ -15,6 +15,7 @@ import json
 import time
 import shutil
 import hashlib
+import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable, Set
@@ -736,8 +737,6 @@ class DelphiHelpKnowledgeBase:
 
         self.kb_dir = Path(kb_dir)
         self.kb_dir.mkdir(parents=True, exist_ok=True)
-        (self.kb_dir / "index").mkdir(exist_ok=True)
-        (self.kb_dir / "files").mkdir(exist_ok=True)  # 解压后的HTML文件目录
 
         self.kb_instance: Optional[SQLiteVectorKnowledgeBase] = None
         self.extractor = HTMLContentExtractor()
@@ -842,10 +841,10 @@ class DelphiHelpKnowledgeBase:
             import os
             
             # CHM解压主要是IO密集型,使用CPU核心数即可
-            cpu_count = os.cpu_count() or 4
+            cpu_cores = os.cpu_count() or 4
             
-            # 限制在合理范围内 [2, 8]
-            optimal_workers = max(2, min(8, cpu_count))
+            # 限制: 最小2, 最大cpu_count-1
+            optimal_workers = max(2, cpu_cores - 1)
             
             logger.info(f"CHM解压线程数: {optimal_workers}")
             
@@ -1226,7 +1225,7 @@ class DelphiHelpKnowledgeBase:
         
         # 计算worker数量
         if max_workers is None:
-            max_workers = max(2, cpu_count() // 2)
+            max_workers = max(2, cpu_count() - 1)
         
         logger.info(f"Processing {total} HTML files with {max_workers} workers...")
 
@@ -1319,7 +1318,7 @@ class DelphiHelpKnowledgeBase:
     def build_vector_index(self, documents: List[Dict],
                           progress_callback: Optional[Callable] = None) -> bool:
         """
-        构建向量索引
+        构建向量索引 - 纯SQLite存储 (统一Schema)
 
         Args:
             documents: 文档列表
@@ -1332,109 +1331,175 @@ class DelphiHelpKnowledgeBase:
             if progress_callback:
                 progress_callback(0, "准备构建索引...")
 
-            files_data = []
-            total_classes = 0
-            total_functions = 0
-            total_properties = 0
-            total_events = 0
-            total_interfaces = 0
-            total_types = 0
-            total_code_examples = 0
+            db_file = self.kb_dir / "knowledge.sqlite"
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+
+            # 确保表结构存在
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    full_path TEXT,
+                    relative_path TEXT,
+                    extension TEXT,
+                    size INTEGER,
+                    line_count INTEGER,
+                    hash TEXT,
+                    last_modified TEXT,
+                    category TEXT,
+                    units_defined TEXT,
+                    units_imported TEXT,
+                    description TEXT,
+                    scan_timestamp REAL,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vocabularies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT,
+                    name TEXT,
+                    name_lower TEXT,
+                    file_id INTEGER,
+                    line INTEGER,
+                    base_class TEXT,
+                    description TEXT,
+                    vector BLOB,
+                    vector_status TEXT,
+                    attributes TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+
+            if progress_callback:
+                progress_callback(10, "写入文件数据...")
+
+            batch_size = 1000
+            current_time = datetime.now().timestamp()
 
             for i, doc in enumerate(documents):
-                if progress_callback and i % 100 == 0:
-                    progress_callback(int(i / len(documents) * 50), f"处理文档 {i}/{len(documents)}")
+                if progress_callback and i % 1000 == 0:
+                    progress_callback(int(10 + i / len(documents) * 40), f"处理文档 {i}/{len(documents)}")
 
                 content = doc.get('content', '')
-                max_desc_length = 3000
-                truncated_content = content[:max_desc_length] if len(content) > max_desc_length else content
-
-                classes = doc.get('classes', [])
-                functions = doc.get('functions', [])
-                properties = doc.get('properties', [])
-                events = doc.get('events', [])
-                interfaces = doc.get('interfaces', [])
-                types = doc.get('types', [])
                 uses_list = doc.get('uses', [])
-                code_examples = doc.get('code_examples', [])
+                if isinstance(uses_list, list):
+                    uses_str = ','.join(uses_list)
+                else:
+                    uses_str = str(uses_list) if uses_list else ''
 
-                total_classes += len(classes)
-                total_functions += len(functions)
-                total_properties += len(properties)
-                total_events += len(events)
-                total_interfaces += len(interfaces)
-                total_types += len(types)
-                total_code_examples += len(code_examples)
+                cursor.execute("""
+                    INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                        last_modified, category, units_defined, units_imported, description, 
+                        scan_timestamp, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    doc['full_path'],
+                    doc['path'],
+                    '.html',
+                    doc['size'],
+                    content.count('\n'),
+                    doc['hash'],
+                    datetime.now().isoformat(),
+                    'help',
+                    '',
+                    uses_str,
+                    (doc.get('title', '') + '\n' + content[:500]) if content else doc.get('title', ''),
+                    current_time,
+                    current_time,
+                    current_time
+                ))
 
-                files_data.append({
-                    'path': doc['path'],
-                    'full_path': doc['full_path'],
-                    'extension': '.html',
-                    'size': doc['size'],
-                    'line_count': content.count('\n'),
-                    'hash': doc['hash'],
-                    'last_modified': datetime.now().isoformat(),
-                    'units': uses_list,  # 使用提取的 uses 信息
-                    'uses': uses_list,
-                    'classes': classes,
-                    'functions': functions,
-                    'properties': properties,
-                    'events': events,
-                    'interfaces': interfaces,
-                    'types': types,
-                    'code_examples': code_examples,
-                    'title': doc.get('title', ''),
-                    'content': content,
-                    'description': f"{doc.get('title', '')}\n{truncated_content}"
-                })
+                file_id = cursor.lastrowid
 
-            if progress_callback:
-                progress_callback(50, "保存索引文件...")
+                # 插入 vocabularies (类)
+                for cls in doc.get('classes', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'class',
+                        cls.get('name', ''),
+                        cls.get('name', '').lower() if cls.get('name') else '',
+                        file_id,
+                        cls.get('line', 0),
+                        cls.get('base_class', ''),
+                        cls.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
 
-            scan_result = {
-                'files': files_data,
-                'statistics': {
-                    'total_files': len(files_data),
-                    'total_lines': sum(f['line_count'] for f in files_data),
-                    'total_classes': total_classes,
-                    'total_functions': total_functions,
-                    'total_properties': total_properties,
-                    'total_events': total_events,
-                    'total_interfaces': total_interfaces,
-                    'total_types': total_types,
-                    'total_code_examples': total_code_examples,
-                    'build_time': datetime.now().isoformat()
-                }
-            }
+                # 插入 vocabularies (函数)
+                for func in doc.get('functions', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'function',
+                        func.get('name', ''),
+                        func.get('name', '').lower() if func.get('name') else '',
+                        file_id,
+                        func.get('line', 0),
+                        '',
+                        func.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
 
-            # 保存索引
-            index_file = self.kb_dir / "index" / "source_index.json"
-            with open(index_file, 'w', encoding='utf-8') as f:
-                json.dump(scan_result, f, ensure_ascii=False, indent=2)
+                # 插入 vocabularies (属性)
+                for prop in doc.get('properties', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'property',
+                        prop.get('name', ''),
+                        prop.get('name', '').lower() if prop.get('name') else '',
+                        file_id,
+                        prop.get('line', 0),
+                        '',
+                        prop.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
 
-            # 保存元数据
-            metadata = {
-                'version': '1.0',
-                'source_directory': str(self.delphi_help_dir),
-                'scan_date': datetime.now().isoformat(),
-                'statistics': scan_result['statistics']
-            }
+                # 插入 vocabularies (事件)
+                for event in doc.get('events', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'event',
+                        event.get('name', ''),
+                        event.get('name', '').lower() if event.get('name') else '',
+                        file_id,
+                        event.get('line', 0),
+                        '',
+                        event.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
 
-            metadata_file = self.kb_dir / "index" / "metadata.json"
-            with open(metadata_file, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
+                if (i + 1) % batch_size == 0:
+                    conn.commit()
 
-            if progress_callback:
-                progress_callback(60, "构建向量索引...")
-
-            # 构建向量索引
-            self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), force_rebuild=True)
+            conn.commit()
 
             if progress_callback:
                 progress_callback(100, "完成")
 
-            logger.info(f"向量索引构建完成: {len(files_data)} 个文件, {total_classes} 个类, {total_functions} 个函数")
+            logger.info(f"向量索引构建完成: {len(documents)} 个文档")
             return True
+
+        except Exception as e:
+            logger.error(f"构建向量索引失败: {e}")
+            return False
+
+        except Exception as e:
+            logger.error(f"构建向量索引失败: {e}")
+            return False
 
         except Exception as e:
             logger.error(f"构建向量索引失败: {e}")
@@ -1609,9 +1674,13 @@ class DelphiHelpKnowledgeBase:
     # ==================== 查询功能 ====================
 
     def load_knowledge_base(self) -> bool:
-        """加载知识库"""
+        """加载知识库 - 从SQLite"""
         try:
             if self.kb_instance is None:
+                db_file = self.kb_dir / "knowledge.sqlite"
+                if not db_file.exists():
+                    logger.warning("SQLite数据库不存在")
+                    return False
                 self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
             return True
         except Exception as e:
@@ -1620,7 +1689,7 @@ class DelphiHelpKnowledgeBase:
 
     def search(self, query: str, top_k: int = 10) -> List[Dict]:
         """
-        搜索帮助文档
+        搜索帮助文档 - 从SQLite查询 (统一Schema)
 
         Args:
             query: 搜索查询
@@ -1629,68 +1698,173 @@ class DelphiHelpKnowledgeBase:
         Returns:
             搜索结果
         """
-        if not self.load_knowledge_base():
-            return []
-
         results = []
-
-        # 1. 语义搜索类
-        class_results = self.kb_instance.semantic_search_classes(query, top_k)
-        for name, score in class_results:
-            exact_results = self.kb_instance.search_by_class_name(name)
-            if exact_results:
-                result = exact_results[0]
-                results.append({
-                    'type': 'class',
-                    'name': result['class']['name'],
-                    'kind': result['class'].get('type_kind', 'class'),
-                    'base_class': result['class'].get('base_class', ''),
-                    'description': result['class'].get('description', '')[:200],
-                    'file_path': result['file']['path'],
-                    'full_path': result['file']['full_path'],
-                    'score': score
-                })
-
-        # 2. 语义搜索函数
-        func_results = self.kb_instance.semantic_search_functions(query, top_k)
-        for name, score in func_results:
-            exact_results = self.kb_instance.search_by_function_name(name)
-            if exact_results:
-                result = exact_results[0]
-                results.append({
-                    'type': 'function',
-                    'name': result['function']['name'],
-                    'func_type': result['function'].get('type', 'function'),
-                    'description': result['function'].get('description', '')[:200],
-                    'file_path': result['file']['path'],
-                    'full_path': result['file']['full_path'],
-                    'score': score
-                })
-
-        # 3. 关键词搜索
-        keyword_results = self.kb_instance.search_by_keyword(query)
-        for file_info in keyword_results[:top_k]:
-            existing = [r for r in results if r.get('full_path') == file_info['full_path']]
-            if not existing:
-                results.append({
-                    'type': 'document',
-                    'name': file_info['path'],
-                    'file_path': file_info['path'],
-                    'full_path': file_info['full_path'],
-                    'score': 0.5
-                })
-
-        results.sort(key=lambda x: x['score'], reverse=True)
-        return results[:top_k]
+        
+        try:
+            db_file = self.kb_dir / "knowledge.sqlite"
+            if not db_file.exists():
+                logger.warning("数据库不存在")
+                return results
+                
+            conn = sqlite3.connect(str(db_file))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            query_lower = f"%{query.lower()}%"
+            
+            # 搜索 vocabularies (类/函数/属性/事件)
+            cursor.execute("""
+                SELECT v.name, v.type, v.base_class, v.description, f.relative_path, f.full_path
+                FROM vocabularies v
+                JOIN files f ON v.file_id = f.id
+                WHERE v.name_lower LIKE ?
+                ORDER BY 
+                    CASE v.type 
+                        WHEN 'class' THEN 1 
+                        WHEN 'function' THEN 2 
+                        WHEN 'property' THEN 3 
+                        WHEN 'event' THEN 4 
+                    END
+                LIMIT ?
+            """, (query_lower, top_k * 2))
+            
+            for row in cursor.fetchall():
+                type_name = row['type']
+                if type_name == 'class':
+                    results.append({
+                        'type': 'class',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'base_class': row['base_class'],
+                        'description': row['description'] or '',
+                        'score': 100
+                    })
+                elif type_name == 'function':
+                    results.append({
+                        'type': 'function',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description'] or '',
+                        'score': 90
+                    })
+                elif type_name == 'property':
+                    results.append({
+                        'type': 'property',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description'] or '',
+                        'score': 80
+                    })
+                elif type_name == 'event':
+                    results.append({
+                        'type': 'event',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description'] or '',
+                        'score': 70
+                    })
+            
+            # 如果 vocabularies 没找到足够结果，搜索 files
+            if len(results) < top_k:
+                cursor.execute("""
+                    SELECT relative_path, full_path, description
+                    FROM files 
+                    WHERE LOWER(relative_path) LIKE ? OR LOWER(description) LIKE ?
+                    LIMIT ?
+                """, (query_lower, query_lower, top_k))
+                
+                existing_paths = {r.get('path', r.get('full_path', '')) for r in results}
+                for row in cursor.fetchall():
+                    if row['relative_path'] not in existing_paths:
+                        results.append({
+                            'type': 'document',
+                            'name': row['relative_path'],
+                            'title': row['relative_path'],
+                            'path': row['relative_path'],
+                            'file_path': row['relative_path'],
+                            'full_path': row['full_path'],
+                            'description': (row['description'] or '')[:200],
+                            'score': 50
+                        })
+            
+            conn.close()
+            
+            # 按分数排序并去重
+            results.sort(key=lambda x: x['score'], reverse=True)
+            
+            seen_paths = set()
+            unique_results = []
+            for r in results:
+                path = r.get('path', r.get('full_path', ''))
+                if path not in seen_paths:
+                    seen_paths.add(path)
+                    unique_results.append(r)
+            
+            return unique_results[:top_k]
+            
+        except Exception as e:
+            logger.error(f"搜索帮助文档失败: {e}")
+            return results
 
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """关键词搜索"""
-        if not self.load_knowledge_base():
-            return []
-        return self.kb_instance.search_by_keyword(keyword)
+        return self.search(keyword, 10)
+
+    def search_class(self, class_name: str, top_k: int = 10) -> List[Dict]:
+        """搜索类"""
+        return self._search_by_type(class_name, 'class', top_k)
+
+    def search_function(self, func_name: str, top_k: int = 10) -> List[Dict]:
+        """搜索函数"""
+        return self._search_by_type(func_name, 'function', top_k)
+
+    def _search_by_type(self, name: str, vocab_type: str, top_k: int = 10) -> List[Dict]:
+        """按类型搜索词汇"""
+        results = []
+        try:
+            db_file = self.kb_dir / "knowledge.sqlite"
+            if not db_file.exists():
+                return results
+            conn = sqlite3.connect(str(db_file))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            name_lower = f"%{name.lower()}%"
+            cursor.execute("""
+                SELECT v.name, v.type, v.base_class, v.description, f.relative_path, f.full_path, v.line
+                FROM vocabularies v
+                JOIN files f ON v.file_id = f.id
+                WHERE v.name_lower LIKE ? AND v.type = ?
+                LIMIT ?
+            """, (name_lower, vocab_type, top_k))
+            for row in cursor.fetchall():
+                results.append({
+                    'type': vocab_type,
+                    'name': row['name'],
+                    'line': row['line'],
+                    'base_class': row['base_class'],
+                    'description': row['description'] or '',
+                    'file_path': row['relative_path'],
+                    'full_path': row['full_path']
+                })
+            conn.close()
+        except Exception as e:
+            logger.error(f"搜索失败: {e}")
+        return results
 
     def get_statistics(self) -> Dict:
-        """获取统计信息（完整版）"""
+        """获取统计信息 - 从SQLite读取 (统一Schema)"""
         stats = {
             'total_documents': 0,
             'total_classes': 0,
@@ -1705,22 +1879,29 @@ class DelphiHelpKnowledgeBase:
         }
 
         try:
-            index_file = self.kb_dir / "index" / "source_index.json"
-            if index_file.exists():
-                with open(index_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    stats['total_documents'] = data.get('statistics', {}).get('total_files', 0)
-                    stats['total_classes'] = data.get('statistics', {}).get('total_classes', 0)
-                    stats['total_functions'] = data.get('statistics', {}).get('total_functions', 0)
-                    stats['total_properties'] = data.get('statistics', {}).get('total_properties', 0)
-                    stats['total_events'] = data.get('statistics', {}).get('total_events', 0)
-                    stats['total_interfaces'] = data.get('statistics', {}).get('total_interfaces', 0)
-                    stats['total_types'] = data.get('statistics', {}).get('total_types', 0)
-                    stats['total_code_examples'] = data.get('statistics', {}).get('total_code_examples', 0)
-
             db_file = self.kb_dir / "knowledge.sqlite"
             if db_file.exists():
+                conn = sqlite3.connect(str(db_file))
+                cursor = conn.cursor()
+                
+                cursor.execute("SELECT COUNT(*) FROM files")
+                stats['total_documents'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='class'")
+                stats['total_classes'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='function'")
+                stats['total_functions'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='property'")
+                stats['total_properties'] = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='event'")
+                stats['total_events'] = cursor.fetchone()[0]
+                
                 stats['database_size_mb'] = round(db_file.stat().st_size / (1024 * 1024), 2)
+                
+                conn.close()
 
         except Exception as e:
             logger.warning(f"获取统计信息失败: {e}")
@@ -1729,8 +1910,8 @@ class DelphiHelpKnowledgeBase:
 
     def is_kb_exists(self) -> bool:
         """检查知识库是否存在"""
-        index_file = self.kb_dir / "index" / "source_index.json"
-        return index_file.exists()
+        db_file = self.kb_dir / "knowledge.sqlite"
+        return db_file.exists()
 
     def close(self):
         """关闭知识库"""

@@ -789,3 +789,925 @@ AttributeError: 'function' object has no attribute 'set_compiler_service'
 2026-03-27 10:27:01,856 - delphi_mcp - INFO - 工具服务实例设置完成
 2026-03-27 10:27:01,856 - delphi_mcp - INFO - MCP Server 实例创建完成
 2026-03-27 10:27:01,857 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 11:58:22,702 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 11:58:22,704 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 11:58:22,708 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 11:58:22,710 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 11:58:22,714 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 11:58:22,718 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 11:58:22,718 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 11:58:22,718 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 11:58:22,718 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:12:25,545 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:12:25,546 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:12:25,549 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:12:25,551 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:12:25,554 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:12:25,557 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:12:25,557 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:12:25,557 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:12:25,557 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:15:50,240 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:15:50,241 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:15:50,243 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:15:50,245 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:15:50,248 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:15:50,250 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:15:50,250 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:15:50,251 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:15:50,251 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:16:48,000 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:16:48,001 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:16:48,003 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:16:48,006 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:16:48,008 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:16:48,011 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:16:48,011 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:16:48,011 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:16:48,012 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:18:25,677 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:18:25,678 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:18:25,680 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:18:25,683 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:18:25,686 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:18:25,688 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:18:25,689 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:18:25,689 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:18:25,689 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:19:36,061 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:19:36,062 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:19:36,065 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:19:36,067 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:19:36,070 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:19:36,073 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:19:36,073 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:19:36,073 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:19:36,073 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 12:20:36,704 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 12:20:36,704 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 12:20:36,707 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 12:20:36,709 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 12:20:36,712 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 12:20:36,715 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 12:20:36,715 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 12:20:36,716 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 12:20:36,716 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 21:04:17,767 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 21:04:17,768 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 21:04:17,770 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 21:04:17,772 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 21:04:17,775 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 21:04:17,778 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 21:04:17,778 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 21:04:17,778 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 21:04:17,778 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 23:19:21,968 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-03 23:19:21,969 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-03 23:19:21,971 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-03 23:19:21,974 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-03 23:19:21,976 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-03 23:19:21,979 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-03 23:19:21,979 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-03 23:19:21,979 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-03 23:19:21,980 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-03 23:29:21,913 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-03 23:29:21,914 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 235, in call_tool
+    result = await compile_file(**arguments)
+                   ~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-03 23:29:27,967 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-03 23:29:27,968 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'get_args_only'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 235, in call_tool
+    result = await compile_file(**arguments)
+                   ~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'get_args_only'
+2026-04-05 13:10:47,867 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 13:10:47,868 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 13:10:47,870 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 13:10:47,872 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 13:10:47,875 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 13:10:47,878 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 13:10:47,878 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 13:10:47,878 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 13:10:47,878 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 13:13:02,295 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 13:13:02,296 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 13:13:02,299 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 13:13:02,301 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 13:13:02,303 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 13:13:02,306 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 13:13:02,306 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 13:13:02,306 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 13:13:02,307 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 13:13:21,997 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 13:13:21,997 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 13:13:21,999 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 13:13:22,002 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 13:13:22,004 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 13:13:22,007 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 13:13:22,007 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 13:13:22,007 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 13:13:22,007 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 14:00:13,682 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 14:00:13,682 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 14:00:13,685 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 14:00:13,688 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 14:00:13,691 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 14:00:13,694 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 14:00:13,694 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 14:00:13,694 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 14:00:13,694 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 14:03:22,449 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 14:03:22,449 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 14:03:22,452 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 14:03:22,454 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 14:03:22,457 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 14:03:22,460 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 14:03:22,460 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 14:03:22,460 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 14:03:22,460 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 20:15:30,853 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 20:15:30,853 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 20:15:30,856 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 20:15:30,858 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 20:15:30,861 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 20:15:30,864 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 20:15:30,864 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 20:15:30,864 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 20:15:30,865 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 20:22:13,031 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-05 20:56:50,450 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-05 20:56:50,451 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    result = await compile_project.compile_project(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-05 20:56:54,545 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-05 22:08:42,784 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 22:08:42,785 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 22:08:42,787 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 22:08:42,790 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 22:08:42,793 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 22:08:42,796 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 22:08:42,796 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 22:08:42,796 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 22:08:42,796 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 22:08:53,523 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 22:08:53,524 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 22:08:53,527 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 22:08:53,529 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 22:08:53,532 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 22:08:53,535 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 22:08:53,536 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 22:08:53,536 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 22:08:53,536 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 22:38:15,820 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 22:38:15,820 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 22:38:15,823 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 22:38:15,825 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 22:38:15,827 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 22:38:15,830 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 22:38:15,830 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 22:38:15,831 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 22:38:15,831 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-05 22:54:00,112 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-05 22:54:00,112 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-05 22:54:00,117 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-05 22:54:00,124 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-05 22:54:00,127 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-05 22:54:00,132 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-05 22:54:00,132 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-05 22:54:00,132 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-05 22:54:00,132 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 08:47:56,409 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 08:47:56,410 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 08:47:56,412 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 08:47:56,414 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 08:47:56,417 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 08:47:56,420 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 08:47:56,420 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 08:47:56,420 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 08:47:56,420 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 08:51:22,625 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 08:51:22,626 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 08:51:22,628 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 08:51:22,635 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 08:51:22,638 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 08:51:22,641 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 08:51:22,641 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 08:51:22,641 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 08:51:22,641 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 11:23:44,085 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 11:23:44,087 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 11:23:44,090 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 11:23:44,094 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 11:23:44,098 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 11:23:44,101 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 11:23:44,102 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 11:23:44,102 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 11:23:44,102 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 11:24:38,490 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 11:24:38,491 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 11:24:38,493 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 11:24:38,497 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 11:24:38,501 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 11:24:38,503 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 11:24:38,503 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 11:24:38,504 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 11:24:38,505 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 13:33:43,111 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 13:33:43,111 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 13:33:43,114 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 13:33:43,116 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 13:33:43,119 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 13:33:43,122 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 13:33:43,123 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 13:33:43,123 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 13:33:43,123 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 13:34:40,589 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 13:34:40,589 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 13:34:40,593 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 13:34:40,596 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 13:34:40,599 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 13:34:40,601 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 13:34:40,602 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 13:34:40,602 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 13:34:40,602 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 14:33:09,768 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 14:33:09,769 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 14:33:09,772 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 14:33:09,774 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 14:33:09,778 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 14:33:09,781 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 14:33:09,781 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 14:33:09,781 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 14:33:09,781 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 14:35:59,681 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:36:08,287 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:36:42,932 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:36:59,972 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:39:20,337 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:42:29,592 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:43:32,078 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:44:05,242 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:45:02,359 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:49:42,464 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:50:22,783 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:52:16,725 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 14:53:02,531 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 14:53:02,532 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 14:53:02,534 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 14:53:02,537 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 14:53:02,540 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 14:53:02,542 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 14:53:02,563 - delphi_mcp - ERROR - 服务器运行失败: module 'src.tools.help_knowledge_base' has no attribute 'set_help_kb_service'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 352, in main
+    asyncio.run(run_server())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\swish\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 204, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Users\swish\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\runners.py", line 127, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\swish\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\base_events.py", line 719, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 104, in run_server
+    help_kb_tools.set_help_kb_service(help_kb_service)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'src.tools.help_knowledge_base' has no attribute 'set_help_kb_service'
+2026-04-07 14:54:16,238 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 14:54:16,239 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 14:54:16,242 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 14:54:16,244 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 14:54:16,246 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 14:54:16,249 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 14:54:16,268 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 14:54:16,268 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 14:54:16,268 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 14:54:16,268 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 14:56:45,425 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 14:56:45,425 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 14:56:45,428 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 14:56:45,430 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 14:56:45,433 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 14:56:45,436 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 14:56:45,455 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 14:56:45,455 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 14:56:45,455 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 14:56:45,455 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 15:03:49,786 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 15:03:49,787 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 15:03:49,789 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 15:03:49,792 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 15:03:49,794 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 15:03:49,797 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 15:03:49,815 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 15:03:49,816 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 15:03:49,816 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 15:03:49,816 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 15:09:32,375 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 15:09:32,376 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 15:09:32,379 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 15:09:32,381 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 15:09:32,384 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 15:09:32,387 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 15:09:32,409 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 15:09:32,409 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 15:09:32,410 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 15:09:32,410 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 15:10:48,289 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 15:10:48,290 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 15:10:48,293 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 15:10:48,296 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 15:10:48,299 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 15:10:48,302 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 15:10:48,322 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 15:10:48,323 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 15:10:48,323 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 15:10:48,324 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 15:13:03,785 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 15:13:03,785 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 15:13:03,788 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 15:13:03,790 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 15:13:03,793 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 15:13:03,795 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 15:13:03,814 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 15:13:03,814 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 15:13:03,815 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 15:13:03,815 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 18:28:29,426 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 18:28:29,427 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 18:28:29,429 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 18:28:29,432 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 18:28:29,434 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 18:28:29,435 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 18:28:29,455 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 18:28:29,455 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 18:28:29,455 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 18:28:29,456 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 20:04:02,521 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-07 20:04:02,521 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-07 20:04:02,524 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-07 20:04:02,527 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-07 20:04:02,529 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-07 20:04:02,530 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-07 20:04:02,549 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-07 20:04:02,549 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-07 20:04:02,549 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-07 20:04:02,549 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-07 20:11:06,882 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-07 20:27:11,374 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 11:41:52,247 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-08 11:41:52,248 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-08 11:41:52,251 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-08 11:41:52,253 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-08 11:41:52,255 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-08 11:41:52,257 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-08 11:41:52,277 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-08 11:41:52,277 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-08 11:41:52,277 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-08 11:41:52,277 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-08 11:42:38,631 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-08 11:42:38,632 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-08 11:42:38,634 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-08 11:42:38,636 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-08 11:42:38,638 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-08 11:42:38,640 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-08 11:42:38,658 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-08 11:42:38,658 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-08 11:42:38,658 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-08 11:42:38,659 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-08 11:45:00,503 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:26:29,897 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:14,840 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-08 12:55:22,263 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:29,353 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:35,603 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:42,345 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:48,792 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:55:55,666 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:56:02,771 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 12:56:02,771 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    result = await compile_file(**arguments)
+                   ~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 12:56:43,702 - delphi_mcp - INFO - 调用工具: format_delphi
+2026-04-08 12:56:43,703 - delphi_mcp - ERROR - 工具调用失败: check_pasfmt_installation() got an unexpected keyword argument 'action'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 301, in call_tool
+    result = await pasfmt.check_pasfmt_installation(**arguments)
+                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: check_pasfmt_installation() got an unexpected keyword argument 'action'
+2026-04-08 12:56:50,820 - delphi_mcp - INFO - 调用工具: format_delphi
+2026-04-08 12:56:57,616 - delphi_mcp - INFO - 调用工具: async_task
+2026-04-08 12:57:05,645 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:57:13,447 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:57:23,437 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 12:57:34,122 - delphi_mcp - INFO - 调用工具: read_source_file
+2026-04-08 12:58:09,663 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 12:58:09,663 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    result = await compile_file(**arguments)
+                   ~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 12:58:46,013 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 12:58:46,013 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    file_args = {
+    
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:00:20,132 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:00:20,133 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    file_args = {
+    
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:04:54,290 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:04:54,291 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    file_args = {
+    
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:06:11,320 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:06:11,321 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    file_args = {
+    
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:31:32,007 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:31:41,896 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:38:02,540 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:38:59,984 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:39:27,819 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:39:44,842 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:41:31,026 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:41:46,010 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:43:10,126 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:45:22,112 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:47:38,658 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:47:38,659 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    proj_path = arguments.get("project_path", "")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:48:30,255 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:48:30,255 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    proj_path = arguments.get("project_path", "")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:49:43,909 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-08 13:51:18,028 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-08 13:51:18,028 - delphi_mcp - ERROR - 工具调用失败: compile_file() got an unexpected keyword argument 'project_path'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 241, in call_tool
+    proj_path = arguments.get("project_path", "")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: compile_file() got an unexpected keyword argument 'project_path'
+2026-04-08 13:53:18,800 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:54:12,178 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:54:24,590 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 13:56:33,245 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:00:31,313 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:17:15,842 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:17:42,098 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:18:15,006 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:18:40,688 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:19:32,832 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:20:23,588 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:21:23,956 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:21:34,673 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-08 14:22:43,729 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:23:43,455 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:25:40,105 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:26:44,247 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:30:11,301 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:32:41,808 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:33:08,545 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:34:08,398 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:36:24,698 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-08 14:39:21,591 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-08 14:39:21,592 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-08 14:39:21,594 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-08 14:39:21,597 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-08 14:39:21,599 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-08 14:39:21,600 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-08 14:39:21,621 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-08 14:39:21,621 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-08 14:39:21,621 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-08 14:39:21,622 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-08 14:48:12,381 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-08 14:48:12,382 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-08 14:48:12,384 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-08 14:48:12,387 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-08 14:48:12,389 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-08 14:48:12,390 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-08 14:48:12,408 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-08 14:48:12,408 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-08 14:48:12,408 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-08 14:48:12,409 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-08 14:49:09,355 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-08 14:49:34,518 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:49:34,519 - delphi_mcp - ERROR - 工具调用失败: cannot access local variable 'result' where it is not associated with a value
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 330, in call_tool
+    if isinstance(result, dict):
+                  ^^^^^^
+UnboundLocalError: cannot access local variable 'result' where it is not associated with a value
+2026-04-08 14:51:47,801 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:51:47,801 - delphi_mcp - ERROR - 工具调用失败: cannot access local variable 'result' where it is not associated with a value
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 330, in call_tool
+    result = {"error": f"未知action: {action}"}
+          ^^^^^^
+UnboundLocalError: cannot access local variable 'result' where it is not associated with a value
+2026-04-08 14:54:50,729 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:54:50,730 - delphi_mcp - ERROR - 工具调用失败: cannot access local variable 'result' where it is not associated with a value
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 330, in call_tool
+    else:
+    
+UnboundLocalError: cannot access local variable 'result' where it is not associated with a value
+2026-04-08 14:56:36,096 - delphi_mcp - INFO - 调用工具: search_knowledge
+2026-04-08 14:56:36,096 - delphi_mcp - ERROR - 工具调用失败: cannot access local variable 'result' where it is not associated with a value
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 330, in call_tool
+    result = await help_kb_tools.cancel_task(arguments)
+          ^^^^^^
+UnboundLocalError: cannot access local variable 'result' where it is not associated with a value
+2026-04-08 15:00:21,131 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-08 15:00:21,144 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-08 15:00:21,149 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-08 15:00:21,154 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-08 15:00:21,158 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-08 15:00:21,162 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-08 15:00:21,184 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-08 15:00:21,187 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-08 15:00:21,190 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-08 15:00:21,192 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 08:49:59,817 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 08:49:59,817 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 08:49:59,821 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 08:49:59,823 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 08:49:59,825 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 08:49:59,827 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 08:49:59,852 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 08:49:59,852 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 08:49:59,853 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 08:49:59,853 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 08:51:10,621 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 08:51:10,621 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 08:51:10,623 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 08:51:10,625 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 08:51:10,627 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 08:51:10,628 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 08:51:10,644 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 08:51:10,644 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 08:51:10,644 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 08:51:10,644 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 09:51:32,656 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 09:51:32,657 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 09:51:32,659 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 09:51:32,661 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 09:51:32,663 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 09:51:32,664 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 09:51:32,682 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 09:51:32,682 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 09:51:32,682 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 09:51:32,682 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 09:58:18,435 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 09:58:18,435 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 09:58:18,437 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 09:58:18,439 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 09:58:18,441 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 09:58:18,443 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 09:58:18,459 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 09:58:18,460 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 09:58:18,460 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 09:58:18,460 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 10:03:50,054 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 10:03:50,054 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 10:03:50,056 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 10:03:50,058 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 10:03:50,060 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 10:03:50,062 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 10:03:50,077 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 10:03:50,077 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 10:03:50,078 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 10:03:50,078 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 13:00:54,780 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 13:00:54,781 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 13:00:54,783 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 13:00:54,785 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 13:00:54,787 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 13:00:54,789 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 13:00:54,806 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 13:00:54,806 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 13:00:54,806 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 13:00:54,806 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 13:01:38,460 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-09 13:01:38,461 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 260, in call_tool
+    result = await compile_project.compile_project(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-09 13:38:07,005 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 13:38:07,006 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 13:38:07,008 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 13:38:07,010 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 13:38:07,012 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 13:38:07,014 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 13:38:07,031 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 13:38:07,031 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 13:38:07,031 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 13:38:07,032 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 14:20:45,096 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 14:20:45,097 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 14:20:45,099 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 14:20:45,102 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 14:20:45,104 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 14:20:45,105 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 14:20:45,124 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 14:20:45,125 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 14:20:45,125 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 14:20:45,125 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-09 14:20:45,563 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-09 14:20:45,564 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-09 14:20:45,566 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-09 14:20:45,569 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-09 14:20:45,570 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-09 14:20:45,572 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-09 14:20:45,589 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-09 14:20:45,589 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-09 14:20:45,589 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-09 14:20:45,590 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 19:02:00,167 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 19:02:00,168 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 19:02:00,171 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 19:02:00,173 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 19:02:00,175 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 19:02:00,176 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 19:02:00,198 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 19:02:00,198 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 19:02:00,199 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 19:02:00,199 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 19:18:55,916 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 19:18:55,917 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 19:18:55,919 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 19:18:55,921 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 19:18:55,923 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 19:18:55,925 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 19:18:55,942 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 19:18:55,942 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 19:18:55,942 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 19:18:55,942 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 19:22:14,351 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 19:22:14,352 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 19:22:14,354 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 19:22:14,356 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 19:22:14,358 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 19:22:14,360 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 19:22:14,377 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 19:22:14,377 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 19:22:14,377 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 19:22:14,378 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 20:55:10,050 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 20:55:10,051 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 20:55:10,055 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 20:55:10,059 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 20:55:10,061 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 20:55:10,062 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 20:55:10,086 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 20:55:10,086 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 20:55:10,087 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 20:55:10,087 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 20:57:49,991 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 20:57:49,992 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 20:57:49,994 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 20:57:49,996 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 20:57:49,998 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 20:57:50,000 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 20:57:50,016 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 20:57:50,017 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 20:57:50,017 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 20:57:50,017 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 20:58:58,289 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 20:58:58,290 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 20:58:58,292 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 20:58:58,294 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 20:58:58,296 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 20:58:58,298 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 20:58:58,315 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 20:58:58,315 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 20:58:58,315 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 20:58:58,315 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 21:01:16,514 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-11 21:01:16,515 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-11 21:01:16,517 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-11 21:01:16,520 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-11 21:01:16,521 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-11 21:01:16,523 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-11 21:01:16,542 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-11 21:01:16,543 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-11 21:01:16,543 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-11 21:01:16,543 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-11 21:55:28,811 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-11 21:55:28,812 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 260, in call_tool
+    result = await compile_project.compile_project(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-11 21:55:41,440 - delphi_mcp - INFO - 调用工具: format_delphi
+2026-04-11 21:55:41,440 - delphi_mcp - ERROR - 工具调用失败: format_file() got an unexpected keyword argument 'action'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 297, in call_tool
+    result = await pasfmt.format_file(**arguments)
+                   ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: format_file() got an unexpected keyword argument 'action'
+2026-04-12 13:19:06,935 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-12 13:19:06,936 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 260, in call_tool
+    result = await compile_project.compile_project(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-13 11:10:30,437 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-13 11:10:30,437 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-13 11:10:30,440 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-13 11:10:30,443 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-13 11:10:30,445 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-13 11:10:30,447 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-13 11:10:30,465 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-13 11:10:30,465 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-13 11:10:30,466 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-13 11:10:30,466 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:20:52,255 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:20:52,277 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:20:52,289 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:20:52,291 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:20:52,293 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:20:52,295 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:20:52,363 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:20:52,363 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:20:52,363 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:20:52,364 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:20:53,618 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:20:53,619 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:20:53,621 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:20:53,623 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:20:53,625 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:20:53,627 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:20:53,644 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:20:53,644 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:20:53,644 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:20:53,644 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:23:13,504 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:23:13,504 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:23:13,507 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:23:13,512 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:23:13,514 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:23:13,516 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:23:13,536 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:23:13,536 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:23:13,536 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:23:13,536 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:23:23,902 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:23:23,903 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:23:23,905 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:23:23,907 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:23:23,909 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:23:23,910 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:23:23,927 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:23:23,927 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:23:23,927 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:23:23,927 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:25:21,746 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 17:25:21,748 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 260, in call_tool
+    result = await compile_project.compile_project(**arguments)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-24 17:28:04,664 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 17:28:04,665 - delphi_mcp - ERROR - 工具调用失败: 'function' object has no attribute 'compile_project'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 260, in call_tool
+    result = await compile_project(**arguments)
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+AttributeError: 'function' object has no attribute 'compile_project'
+2026-04-24 17:29:39,563 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:29:39,563 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:29:39,567 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:29:39,570 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:29:39,572 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:29:39,573 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:29:39,594 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:29:39,594 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:29:39,595 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:29:39,595 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:31:21,632 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:31:21,633 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:31:21,635 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:31:21,638 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:31:21,639 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:31:21,642 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:31:21,660 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:31:21,660 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:31:21,661 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:31:21,661 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:32:41,655 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 17:46:39,858 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 17:46:39,859 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 17:46:39,861 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 17:46:39,865 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 17:46:39,866 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 17:46:39,868 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 17:46:39,886 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 17:46:39,886 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 17:46:39,886 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 17:46:39,886 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 17:48:17,080 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-24 17:48:17,081 - delphi_mcp - ERROR - 工具调用失败: search_compilers() got an unexpected keyword argument 'action'
+Traceback (most recent call last):
+  File "C:\User\cloudAttendance\service\delphi-complier-mcp-server\src\server.py", line 287, in call_tool
+    result = await search_compilers(**arguments)
+                   ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+TypeError: search_compilers() got an unexpected keyword argument 'action'
+2026-04-24 17:48:22,083 - delphi_mcp - INFO - 调用工具: check_environment
+2026-04-24 17:48:40,024 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 17:49:03,931 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 17:49:12,051 - delphi_mcp - INFO - 调用工具: compile_project
+2026-04-24 18:44:34,331 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 18:44:34,331 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 18:44:34,334 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 18:44:34,336 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 18:44:34,337 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 18:44:34,339 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 18:44:34,354 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 18:44:34,355 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 18:44:34,355 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 18:44:34,355 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-24 18:46:04,825 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-24 18:46:04,825 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-24 18:46:04,828 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-24 18:46:04,830 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-24 18:46:04,831 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-24 18:46:04,833 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-24 18:46:04,847 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-24 18:46:04,847 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-24 18:46:04,848 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-24 18:46:04,848 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-25 10:25:05,175 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-25 10:25:05,176 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-25 10:25:05,178 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-25 10:25:05,180 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-25 10:25:05,182 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-25 10:25:05,184 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-25 10:25:05,255 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-25 10:25:05,255 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-25 10:25:05,256 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-25 10:25:05,256 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-25 10:26:06,389 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-25 10:26:06,390 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-25 10:26:06,393 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-25 10:26:06,396 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-25 10:26:06,398 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-25 10:26:06,400 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-25 10:26:06,420 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-25 10:26:06,421 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-25 10:26:06,421 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-25 10:26:06,421 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...
+2026-04-25 10:29:14,224 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-25 10:29:14,224 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-25 10:29:14,227 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-25 10:29:14,229 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-25 10:29:14,231 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-25 10:29:14,233 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-25 10:51:02,806 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.04.02
+2026-04-25 10:51:02,806 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-04-25 10:51:02,809 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-04-25 10:51:02,811 - delphi_mcp - INFO - 编译服务初始化完成
+2026-04-25 10:51:02,813 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-04-25 10:51:02,815 - delphi_mcp - INFO - 第三方库知识库服务初始化完成
+2026-04-25 10:51:02,835 - delphi_mcp - INFO - 帮助文档知识库服务初始化完成
+2026-04-25 10:51:02,836 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-04-25 10:51:02,836 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-04-25 10:51:02,836 - delphi_mcp - INFO - MCP Server 启动完成,准备接收请求...

@@ -45,8 +45,6 @@ class ProjectKnowledgeBase:
         # 项目知识库目录 - 存放在项目目录下
         self.kb_dir = self.project_dir / ".delphi-kb"
         self.kb_dir.mkdir(parents=True, exist_ok=True)
-        (self.kb_dir / "index").mkdir(exist_ok=True)
-        (self.kb_dir / "data").mkdir(exist_ok=True)
 
         # 知识库实例
         self.project_kb: Optional[SQLiteVectorKnowledgeBase] = None
@@ -329,40 +327,217 @@ class ProjectKnowledgeBase:
         Returns:
             是否构建成功
         """
+        import sqlite3
+        import os
+        
         # 计算源码哈希
         current_hash = self._calculate_source_hash(self.project_dir)
         cached_hash = self.metadata.get("source_hash")
 
         # 检查是否需要重建
         if not force_rebuild and cached_hash == current_hash:
-            # 检查知识库是否存在
-            project_kb_dir = self.kb_dir / "project"
-            if (project_kb_dir / "index" / "source_index.json").exists():
+            db_file = self.kb_dir / "knowledge.sqlite"
+            if db_file.exists():
                 logger.info("项目源码知识库已是最新,跳过构建")
                 return True
 
         logger.info("开始构建项目源码知识库")
 
         # 项目源码知识库目录
-        project_kb_dir = self.kb_dir / "project"
+        project_kb_dir = self.kb_dir
         project_kb_dir.mkdir(parents=True, exist_ok=True)
 
-        # 扫描项目源码
+        # 直接扫描 (单线程,避免多进程问题)
+        all_source_files = []
+        total_files = 0
+        total_lines = 0
+        
         scanner = DelphiSourceScanner(str(self.project_dir), str(project_kb_dir), self.progress_callback)
-        scan_result = scanner.scan_directory()
+        
+        # 扫描所有pas文件
+        for file_path in self.project_dir.rglob('*.pas'):
+            try:
+                file_info = scanner.analyze_file(file_path)
+                if file_info:
+                    all_source_files.append(file_info)
+                    total_files += 1
+                    total_lines += file_info.get('line_count', 0)
+            except Exception as e:
+                logger.debug(f"分析文件失败: {file_path}, {e}")
+        
+        # 扫描dpr文件
+        for file_path in self.project_dir.rglob('*.dpr'):
+            try:
+                file_info = scanner.analyze_file(file_path)
+                if file_info:
+                    all_source_files.append(file_info)
+                    total_files += 1
+                    total_lines += file_info.get('line_count', 0)
+            except Exception as e:
+                logger.debug(f"分析文件失败: {file_path}, {e}")
 
-        # 保存索引
-        scanner.save_index(scan_result)
+        logger.info(f"总共找到 {total_files} 个源文件, {total_lines} 行代码")
 
-        # 构建向量索引
-        logger.info("构建项目源码向量索引...")
-        self.project_kb = SQLiteVectorKnowledgeBase(str(project_kb_dir), force_rebuild=True)
+        if not all_source_files:
+            logger.warning("未找到任何源文件")
+            return False
+
+        # 直接保存到 SQLite (统一Schema)
+        db_file = self.kb_dir / "knowledge.sqlite"
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        
+        current_time = datetime.now().timestamp()
+        
+        # 确保表存在
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_path TEXT,
+                relative_path TEXT,
+                extension TEXT,
+                size INTEGER,
+                line_count INTEGER,
+                hash TEXT,
+                last_modified TEXT,
+                category TEXT,
+                units_defined TEXT,
+                units_imported TEXT,
+                description TEXT,
+                scan_timestamp REAL,
+                created_at REAL,
+                updated_at REAL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vocabularies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT,
+                name TEXT,
+                name_lower TEXT,
+                file_id INTEGER,
+                line INTEGER,
+                base_class TEXT,
+                description TEXT,
+                vector BLOB,
+                vector_status TEXT,
+                attributes TEXT,
+                created_at REAL,
+                updated_at REAL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at REAL
+            )
+        """)
+
+        # 插入源文件
+        logger.info("保存源文件到数据库...")
+        batch_size = 1000
+        for i, file_info in enumerate(all_source_files):
+            units = file_info.get('units', [])
+            if isinstance(units, list):
+                units = ','.join(units)
+            uses = file_info.get('uses', [])
+            if isinstance(uses, list):
+                uses = ','.join(uses)
+            
+            cursor.execute("""
+                INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                    last_modified, category, units_defined, units_imported, description, 
+                    scan_timestamp, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                file_info.get('full_path', ''),
+                file_info.get('path', ''),
+                file_info.get('extension', '.pas'),
+                file_info.get('size', 0),
+                file_info.get('line_count', 0),
+                file_info.get('hash', ''),
+                file_info.get('last_modified', ''),
+                'source',
+                str(units) if units else '',
+                str(uses) if uses else '',
+                file_info.get('description', '')[:500],
+                current_time,
+                current_time,
+                current_time
+            ))
+            
+            file_id = cursor.lastrowid
+            
+            # 插入 vocabularies (类)
+            for cls in file_info.get('classes', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+            
+            # 插入 vocabularies (函数)
+            for func in file_info.get('functions', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    file_id, func.get('line', 0), '', func.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+            
+            # 插入 vocabularies (常量)
+            for const in file_info.get('constants', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'constant', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    file_id, const.get('line', 0), '', const.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+
+        conn.commit()
+        
+        # 统计
+        cursor.execute("SELECT COUNT(*) FROM files WHERE category='source'")
+        source_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='class'")
+        class_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='function'")
+        func_count = cursor.fetchone()[0]
+        
+        # 保存元数据
+        cursor.execute("DELETE FROM metadata")
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_files', str(source_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_classes', str(class_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_functions', str(func_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('build_time', datetime.now().isoformat(), current_time))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"项目知识库构建完成!")
+        logger.info(f"  源文件: {source_count}")
+        logger.info(f"  类: {class_count}")
+        logger.info(f"  函数: {func_count}")
 
         # 更新元数据
         self.metadata["source_hash"] = current_hash
         self._save_metadata()
 
-        logger.info("项目源码知识库构建完成")
         return True
 
     def check_and_update_project_kb(self) -> bool:
