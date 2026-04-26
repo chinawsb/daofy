@@ -262,6 +262,17 @@ async def run_server():
                     "properties": {},
                     "required": []
                 }
+            ),
+            Tool(
+                name="get_coding_rules",
+                description="【编码规则】获取Delphi源码编码规范，包含命名规则、格式化、类型声明顺序、修改/审核代码规则等。AI Agent应在编写/修改Delphi代码前主动调用此工具获取规范。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目路径(可选)，用于查找用户自定义的CODING_RULES.mdc覆盖默认规则"}
+                    },
+                    "required": []
+                }
             )
         ]
 
@@ -423,6 +434,10 @@ async def run_server():
             
             elif name == "list_installed_packages":
                 result = await list_installed_packages()
+            
+            elif name == "get_coding_rules":
+                from src.tools.coding_rules import get_coding_rules
+                result = await get_coding_rules(arguments)
             
             else:
                 raise ValueError(f"未知工具: {name}")
