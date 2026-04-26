@@ -51,7 +51,7 @@ else:
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import CallToolResult, TextContent, ServerCapabilities
+    from mcp.types import CallToolResult, TextContent
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
@@ -493,9 +493,7 @@ async def run_server():
         await server.run(
             read_stream,
             write_stream,
-            server.create_initialization_options(
-                capabilities=ServerCapabilities(resources={}, tools={})
-            )
+            server.create_initialization_options()
         )
 
 
