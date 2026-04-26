@@ -2,24 +2,20 @@
 from .compile_project import compile_project, set_compiler_service
 from .compile_file import compile_file
 from .get_args import get_compiler_args
-from .config import set_compiler_config, detect_compilers, search_delphi_compilers
+from .config import set_config_manager, search_compilers
 from .environment import check_environment
 from .coding_rules import get_coding_rules
 from .knowledge_base import (
-    build_knowledge_base,
-    search_class,
-    search_function,
-    semantic_search,
-    get_knowledge_base_stats,
-    list_delphi_versions,
-    set_knowledge_base_service
+    set_delphi_kb_service,
+    set_project_kb_service,
+    set_thirdparty_kb_service,
+    set_help_kb_service,
+    search_knowledge,
+    build_unified_knowledge_base,
+    get_unified_knowledge_stats
 )
 from .project_knowledge_base import (
     init_project_knowledge_base,
-    search_project_class,
-    search_project_function,
-    semantic_search_project,
-    get_project_kb_stats,
     get_thirdparty_paths
 )
 from .help_knowledge_base import (
@@ -33,17 +29,7 @@ from .help_knowledge_base import (
 )
 from .thirdparty_knowledge_base import (
     build_thirdparty_knowledge_base,
-    search_thirdparty_class,
-    search_thirdparty_function,
-    semantic_search_thirdparty,
-    get_thirdparty_kb_stats,
-    search_record,
-    search_by_filename,
     set_thirdparty_knowledge_base_service
-)
-from .analyze_dependencies import (
-    analyze_project_dependencies,
-    resolve_smart_library_paths
 )
 from .read_source_file import (
     read_source_file,
@@ -75,32 +61,23 @@ __all__ = [
     'get_compiler_args',
     'set_compiler_service',
     # 配置工具
-    'set_compiler_config',
+    'set_config_manager',
+    'search_compilers',
     'check_environment',
     'get_coding_rules',
     # 知识库工具
-    'build_knowledge_base',
-    'search_class',
-    'search_function',
-    'semantic_search',
-    'get_knowledge_base_stats',
-    'list_delphi_versions',
-    'set_knowledge_base_service',
+    'set_delphi_kb_service',
+    'set_project_kb_service',
+    'set_thirdparty_kb_service',
+    'set_help_kb_service',
+    'search_knowledge',
+    'build_unified_knowledge_base',
+    'get_unified_knowledge_stats',
     # 项目知识库工具
     'init_project_knowledge_base',
-    'search_project_class',
-    'search_project_function',
-    'semantic_search_project',
-    'get_project_kb_stats',
     'get_thirdparty_paths',
     # 第三方库知识库工具
     'build_thirdparty_knowledge_base',
-    'search_thirdparty_class',
-    'search_thirdparty_function',
-    'semantic_search_thirdparty',
-    'get_thirdparty_kb_stats',
-    'search_record',
-    'search_by_filename',
     'set_thirdparty_knowledge_base_service',
     # 帮助文档知识库工具
     'build_help_knowledge_base',
@@ -110,9 +87,6 @@ __all__ = [
     'search_help',
     'get_help_kb_stats',
     'cancel_task',
-    # 项目依赖分析工具
-    'analyze_project_dependencies',
-    'resolve_smart_library_paths',
     # 源码文件读取工具
     'read_source_file',
     'search_and_read_file',

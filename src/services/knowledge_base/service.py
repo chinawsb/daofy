@@ -15,10 +15,8 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 import json
 import time
-import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable
-from collections import defaultdict
 
 # 添加当前目录到 Python 路径
 current_dir = Path(__file__).parent
@@ -310,97 +308,11 @@ class DelphiKnowledgeBaseService:
             print(f"加载知识库失败: {e}")
             return False
 
-    def search_by_class_name(self, class_name: str) -> List[Dict]:
-        """根据类名搜索"""
+    def search_by_name(self, name: str) -> List[Dict]:
+        """根据名称搜索符号 (返回所有类型)"""
         if not self.load_knowledge_base():
             return []
-        
-        # 使用 SQLiteVectorKnowledgeBase 直接搜索
-        return self.kb_instance.search_by_class_name(class_name)
-
-    def search_by_function_name(self, function_name: str) -> List[Dict]:
-        """根据函数名搜索"""
-        if not self.load_knowledge_base():
-            return []
-        
-        # 使用 SQLiteVectorKnowledgeBase 直接搜索
-        return self.kb_instance.search_by_function_name(function_name)
-    
-    def search_by_name(self, name: str, symbol_type: Optional[str] = None) -> List[Dict]:
-        """
-        根据名称搜索符号(支持所有类型)
-        
-        Args:
-            name: 符号名称
-            symbol_type: 符号类型(可选),如:
-                - TC: 类
-                - TR: 记录
-                - TI: 接口
-                - TE: 枚举
-                - TS: 集合
-                - TY: 类型别名
-                - FF: 函数
-                - FP: 过程
-                - CC: 常量
-                - CR: 资源字符串
-                - MP: 属性
-                - MF: 字段
-                - MM: 方法
-                - u: 单元
-                如果为None,则搜索所有类型
-        
-        Returns:
-            搜索结果列表
-        """
-        if not self.load_knowledge_base():
-            return []
-        
-        import sqlite3
-        config_path = self.kb_dir / "config.json"
-        db_file_name = "knowledge.sqlite"
-        if config_path.exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                db_file_name = config.get("database", {}).get("file", "knowledge.sqlite")
-            except:
-                pass
-        
-        db_file = self.kb_dir / db_file_name
-        conn = sqlite3.connect(str(db_file))
-        cursor = conn.cursor()
-        
-        try:
-            if symbol_type:
-                cursor.execute("""
-                    SELECT v.name, v.type, f.full_path, v.line, v.base_class, v.description
-                    FROM vocabularies v
-                    JOIN files f ON v.file_id = f.id
-                    WHERE v.name = ? AND v.type = ?
-                """, (name, symbol_type))
-            else:
-                cursor.execute("""
-                    SELECT v.name, v.type, f.full_path, v.line, v.base_class, v.description
-                    FROM vocabularies v
-                    JOIN files f ON v.file_id = f.id
-                    WHERE v.name = ?
-                """, (name,))
-            
-            results = []
-            for row in cursor.fetchall():
-                results.append({
-                    'name': row[0],
-                    'type': row[1],
-                    'file_path': row[2],
-                    'line': row[3],
-                    'base_class': row[4],
-                    'description': row[5]
-                })
-            
-            return results
-        finally:
-            conn.close()
-
+        return self.kb_instance.search_by_name(name)
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """根据关键词搜索"""
         if not self.load_knowledge_base():

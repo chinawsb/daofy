@@ -60,7 +60,7 @@ else:
     from src.tools.compile_project import set_compiler_service as sp1, compile_project
     from src.tools.compile_file import set_compiler_service as sp2, compile_file
     from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
-    from src.tools.config import set_compiler_config, set_config_manager, search_compilers
+    from src.tools.config import set_config_manager, search_compilers
     from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
     from src.tools.knowledge_base import (
         set_knowledge_base_service,
@@ -68,12 +68,6 @@ else:
         set_project_kb_service,
         set_thirdparty_kb_service,
         set_help_kb_service,
-        build_knowledge_base,
-        search_class,
-        search_function,
-        semantic_search,
-        get_knowledge_base_stats,
-        list_delphi_versions,
         search_knowledge,
         build_unified_knowledge_base,
         get_unified_knowledge_stats
@@ -81,11 +75,8 @@ else:
     from src.services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
     from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
     from src.tools import knowledge_base as kb_tools
-    from src.tools import project_knowledge_base as project_kb_tools
     from src.tools import help_knowledge_base as help_kb_tools
     from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
-    from src.tools import analyze_dependencies as dep_tools
-    from src.tools import coding_rules
     from src.tools import async_tasks as async_tools
     from src.tools import pasfmt
     from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
@@ -305,7 +296,6 @@ async def run_server():
             
             elif name == "search_knowledge":
                 action = arguments.get("action", "search")
-                print(f"[DEBUG] search_knowledge action={action}, kb_type={arguments.get('kb_type')}")
                 if action == "search":
                     result = await kb_tools.search_knowledge(arguments)
                 elif action == "stats":

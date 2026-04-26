@@ -1087,14 +1087,14 @@ class SQLiteVectorKnowledgeBase:
         results = []
         
         if search_type in ('all', 'class'):
-            class_results = self.search_by_class_name(query)
+            class_results = self.search_by_name(query)
             for r in class_results:
                 r['result_type'] = 'class'
                 r['definition'] = r.get('class', {}).get('definition', '')
             results.extend(class_results)
         
         if search_type in ('all', 'function'):
-            func_results = self.search_by_function_name(query)
+            func_results = self.search_by_name(query)
             for r in func_results:
                 r['result_type'] = 'function'
             results.extend(func_results)
@@ -1107,219 +1107,40 @@ class SQLiteVectorKnowledgeBase:
         
         return results
 
-    def search_by_class_name(self, class_name: str) -> List[Dict]:
-        """根据类名搜索 (精确匹配)"""
-        class_name_lower = class_name.lower()
+    def search_by_name(self, name: str) -> List[Dict]:
+        """根据名称搜索符号 (精确匹配, 返回所有类型)"""
+        KIND_NAMES = {
+            'TC': 'class', 'TR': 'record', 'TI': 'interface', 'TH': 'helper',
+            'TE': 'enum', 'TS': 'set', 'TY': 'type', 'AT': 'array',
+            'PT': 'pointer', 'MM': 'method', 'MF': 'field',
+            'FF': 'function', 'FP': 'procedure', 'CC': 'const', 'CR': 'resourcestring',
+            'MP': 'property',
+        }
+        name_lower = name.lower()
         conn = self._get_connection()
         cursor = conn.cursor()
-
-        # 兼容两种表结构：entities（旧版）或 vocabularies（统一Schema）
-        # 检查 entities 表是否存在
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
         has_entities = cursor.fetchone() is not None
-
         if has_entities:
-            # 使用 entities 表（3表结构）
-            cursor.execute("""
-                SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, 
-                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
-                FROM entities e
-                INNER JOIN files f ON e.file_id = f.id
-                WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
-            """, (class_name_lower,))
+            cursor.execute("SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses FROM entities e INNER JOIN files f ON e.file_id = f.id WHERE (LOWER(e.name) = ? OR (LOWER(e.name) LIKE ? AND e.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
         else:
-            # 使用 vocabularies 表（统一Schema）
-            # 类型: TC=class, TR=record, TI=interface, TE=enum, TS=set, TY=type alias
-            cursor.execute("""
-                SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, 
-                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category
-                FROM vocabularies v
-                INNER JOIN files f ON v.file_id = f.id
-                WHERE LOWER(v.name) = ? AND v.type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
-            """, (class_name_lower,))
-
-        results = []
-        for row in cursor.fetchall():
-            if has_entities:
-                results.append({
-                    'name': row['name'],
-                    'kind': row['kind'],
-                    'parent': row['parent'],
-                    'line': row['line'],
-                    'definition': row['definition'] or '',
-                    'file': {
-                        'path': row['path'],
-                        'full_path': row['full_path'],
-                        'extension': row['extension'],
-                        'size': row['size'],
-                        'line_count': row['line_count'],
-                        'hash': row['hash'],
-                        'last_modified': row['last_modified'],
-                        'units': json.loads(row['units']) if row['units'] else [],
-                        'uses': json.loads(row['uses']) if row['uses'] else []
-                    }
-                })
-            else:
-                results.append({
-                    'name': row['name'],
-                    'kind': row['type'],
-                    'parent': row['base_class'],
-                    'line': row['line'],
-                    'definition': row['description'] or '',
-                    'file': {
-                        'path': row['relative_path'],
-                        'full_path': row['full_path'],
-                        'extension': row['extension'],
-                        'size': row['size'],
-                        'line_count': row['line_count'],
-                        'hash': row['hash'],
-                        'last_modified': row['last_modified'],
-                        'category': row['category']
-                    }
-                })
-
-        return results
-
-    def search_by_function_name(self, function_name: str) -> List[Dict]:
-        """根据函数名搜索 (精确匹配)"""
-        function_name_lower = function_name.lower()
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        # 兼容两种表结构
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
-        has_entities = cursor.fetchone() is not None
-
-        if has_entities:
-            cursor.execute("""
-                SELECT e.name, e.kind, e.definition, e.line, f.path, f.full_path, 
-                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
-                FROM entities e
-                INNER JOIN files f ON e.file_id = f.id
-                WHERE LOWER(e.name) = ? AND e.kind IN ('FF', 'FP')
-            """, (function_name_lower,))
-        else:
-            # 使用 vocabularies 表（统一Schema）
-            # 类型: FF=function, FP=procedure
-            cursor.execute("""
-                SELECT v.name, v.type, v.description, v.line, f.relative_path, f.full_path, 
-                       f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category
-                FROM vocabularies v
-                INNER JOIN files f ON v.file_id = f.id
-                WHERE LOWER(v.name) = ? AND v.type IN ('FF', 'FP')
-            """, (function_name_lower,))
-
+            cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (LOWER(v.name) = ? OR (LOWER(v.name) LIKE ? AND v.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
         results = []
         file_cache = {}
-        
         for row in cursor.fetchall():
+            kind_code = row['kind'] if has_entities else row['type']
+            kind_name = KIND_NAMES.get(kind_code, kind_code)
             if has_entities:
                 file_path = row['full_path']
                 line_num = row['line']
-                
                 if file_path not in file_cache:
                     file_cache[file_path] = self._get_file_types(file_path)
-                
-                parent = self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
-                
-                results.append({
-                    'name': row['name'],
-                    'kind': row['kind'],
-                    'definition': row['definition'] or '',
-                    'line': row['line'],
-                    'parent': parent,
-                    'file': {
-                        'path': row['path'],
-                        'full_path': row['full_path'],
-                        'extension': row['extension'],
-                        'size': row['size'],
-                        'line_count': row['line_count'],
-                        'hash': row['hash'],
-                        'last_modified': row['last_modified'],
-                        'units': json.loads(row['units']) if row['units'] else [],
-                        'uses': json.loads(row['uses']) if row['uses'] else []
-                    }
-                })
+                parent = row['parent'] or self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
+                results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code, 'parent': parent, 'line': line_num, 'definition': row['definition'] or '', 'file': {'path': row['path'], 'full_path': row['full_path'], 'extension': row['extension'], 'size': row['size'], 'line_count': row['line_count'], 'hash': row['hash'], 'last_modified': row['last_modified'], 'units': json.loads(row['units']) if row['units'] else [], 'uses': json.loads(row['uses']) if row['uses'] else []}})
             else:
-                results.append({
-                    'name': row['name'],
-                    'kind': row['type'],
-                    'definition': row['description'] or '',
-                    'line': row['line'],
-                    'file': {
-                        'path': row['relative_path'],
-                        'full_path': row['full_path'],
-                        'extension': row['extension'],
-                        'size': row['size'],
-                        'line_count': row['line_count'],
-                        'hash': row['hash'],
-                        'last_modified': row['last_modified'],
-                        'category': row['category']
-                    }
-                })
-
+                results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code, 'parent': row['base_class'] or '', 'line': row['line'], 'definition': row['description'] or '', 'file': {'path': row['relative_path'], 'full_path': row['full_path'], 'extension': row['extension'], 'size': row['size'], 'line_count': row['line_count'], 'hash': row['hash'], 'last_modified': row['last_modified'], 'category': row['category']}})
         return results
 
-    def search_by_keywords(self, keywords: List[str], kind_filter: str = None) -> List[Dict]:
-        """
-        多关键词模糊搜索 (使用反转字符串匹配)
-        
-        Args:
-            keywords: 关键词列表，如 ["create", "button"]
-            kind_filter: 可选的类型过滤 ('TC', 'FF', 'FP', etc.)
-        
-        Returns:
-            匹配的结果列表
-        """
-        if not keywords:
-            return []
-        
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        rev_keywords = [k[::-1].lower() for k in keywords]
-        
-        conditions = ["name_lower_rev LIKE ?" for _ in rev_keywords]
-        where_clause = " AND ".join(conditions)
-        
-        if kind_filter:
-            if isinstance(kind_filter, list):
-                kind_list = "'" + "','".join(kind_filter) + "'"
-                where_clause += f" AND kind IN ({kind_list})"
-            else:
-                where_clause += f" AND kind = '{kind_filter}'"
-        
-        cursor.execute(f"""
-            SELECT e.name, e.kind, e.parent, e.definition, e.line, f.path, f.full_path,
-                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
-            FROM entities e
-            INNER JOIN files f ON e.file_id = f.id
-            WHERE {where_clause}
-        """, tuple([f'%{k}%' for k in rev_keywords]))
-        
-        results = []
-        for row in cursor.fetchall():
-            results.append({
-                'name': row['name'],
-                'kind': row['kind'],
-                'parent': row['parent'],
-                'definition': row['definition'] or '',
-                'line': row['line'],
-                'file': {
-                    'path': row['path'],
-                    'full_path': row['full_path'],
-                    'extension': row['extension'],
-                    'size': row['size'],
-                    'line_count': row['line_count'],
-                    'hash': row['hash'],
-                    'last_modified': row['last_modified'],
-                    'units': json.loads(row['units']) if row['units'] else [],
-                    'uses': json.loads(row['uses']) if row['uses'] else []
-                }
-            })
-        
-        return results
-    
     def _get_file_types(self, file_path: str) -> Optional[List[Dict]]:
         """获取文件中的所有类型定义及其范围"""
         if not file_path:
@@ -1537,104 +1358,6 @@ class SQLiteVectorKnowledgeBase:
 
         return results
 
-    def search_members(self, class_name: str, include_inherited: bool = False) -> List[Dict]:
-        """
-        搜索类的成员（按需解析）
-        
-        Args:
-            class_name: 类名
-            include_inherited: 是否包含继承的成员
-        
-        Returns:
-            成员列表
-        """
-        import re
-        from pathlib import Path
-        from src.utils.delphi_parser import extract_class_members
-        
-        if not hasattr(self, '_member_cache'):
-            self._member_cache = {}
-        
-        if class_name in self._member_cache:
-            cached_members = self._member_cache[class_name]
-            if include_inherited:
-                return cached_members
-            else:
-                own_members = [m for m in cached_members if m.get('source_class') == class_name]
-                return own_members
-        
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT name, file_path, definition, base_class, type_kind 
-            FROM classes WHERE name = ?
-        """, (class_name,))
-        
-        row = cursor.fetchone()
-        if not row:
-            return []
-        
-        file_path = row['file_path']
-        definition = row['definition']
-        
-        members = []
-        parsed_classes = set()
-        
-        def parse_and_get_members(cls_name: str):
-            if cls_name in parsed_classes:
-                return []
-            parsed_classes.add(cls_name)
-            
-            cursor.execute("""
-                SELECT name, file_path, definition, base_class 
-                FROM classes WHERE name = ?
-            """, (cls_name,))
-            
-            row = cursor.fetchone()
-            if not row:
-                return []
-            
-            fp = row['file_path']
-            defn = row['definition']
-            parent = row['base_class']
-            
-            cache_key = (fp, cls_name)
-            if cache_key in self._member_cache:
-                return self._member_cache[cache_key]
-            
-            try:
-                with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-            except:
-                return []
-            
-            class_members = extract_class_members(content)
-            cls_members = class_members.get(cls_name, [])
-            
-            for m in cls_members:
-                m['source_class'] = cls_name
-                m['source_file'] = fp
-            
-            self._member_cache[cache_key] = cls_members
-            
-            result = list(cls_members)
-            
-            if parent and include_inherited:
-                parent_members = parse_and_get_members(parent)
-                result.extend(parent_members)
-            
-            return result
-        
-        all_members = parse_and_get_members(class_name)
-        
-        self._member_cache[class_name] = all_members
-        
-        if not include_inherited:
-            return [m for m in all_members if m.get('source_class') == class_name]
-        
-        return all_members
-
     def close(self):
         """关闭数据库连接"""
         self._close_connection()
@@ -1643,70 +1366,3 @@ class SQLiteVectorKnowledgeBase:
         """析构函数,确保数据库连接关闭"""
         self.close()
 
-
-def main():
-    """命令行查询接口"""
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Delphi 知识库查询工具 (SQLite 向量扩展版)')
-    parser.add_argument('--kb-dir', default=r'c:\User\diandaxia\delphi-knowledge-base',
-                       help='知识库目录')
-    parser.add_argument('--search-type', choices=['unit', 'class', 'function', 'keyword', 'semantic'],
-                       default='semantic', help='搜索类型')
-    parser.add_argument('--query', required=True, help='搜索查询')
-    parser.add_argument('--top-k', type=int, default=10, help='语义搜索返回结果数量')
-    parser.add_argument('--rebuild', action='store_true', help='强制重新构建索引')
-
-    args = parser.parse_args()
-
-    # 初始化知识库
-    kb = SQLiteVectorKnowledgeBase(args.kb_dir, force_rebuild=args.rebuild)
-
-    try:
-        # 执行搜索
-        if args.search_type == 'semantic':
-            # 语义搜索
-            class_results = kb.semantic_search_classes(args.query, top_k=args.top_k)
-            function_results = kb.semantic_search_functions(args.query, top_k=args.top_k)
-
-            print(f"语义搜索 '{args.query}' 的结果:")
-            print(f"\n最相关的类:")
-            for class_name, score in class_results[:5]:
-                exact_results = kb.search_by_class_name(class_name)
-                if exact_results:
-                    result = exact_results[0]
-                    print(f"  {result['class']['name']} (相似度: {score:.3f}) - {result['file']['path']}")
-
-            print(f"\n最相关的函数:")
-            for func_name, score in function_results[:5]:
-                exact_results = kb.search_by_function_name(func_name)
-                if exact_results:
-                    result = exact_results[0]
-                    print(f"  {result['function']['name']} (相似度: {score:.3f}) - {result['file']['path']}")
-
-        elif args.search_type == 'class':
-            results = kb.search_by_class_name(args.query)
-            print(f"找到 {len(results)} 个类: '{args.query}'")
-            for i, result in enumerate(results[:10], 1):
-                print(f"\n{i}. {result['file']['path']}")
-                print(f"   - 类: {result['class']['name']}")
-
-        elif args.search_type == 'function':
-            results = kb.search_by_function_name(args.query)
-            print(f"找到 {len(results)} 个函数: '{args.query}'")
-            for i, result in enumerate(results[:10], 1):
-                print(f"\n{i}. {result['file']['path']}")
-                print(f"   - 函数: {result['function']['name']}")
-
-        elif args.search_type == 'keyword':
-            results = kb.search_by_keyword(args.query)
-            print(f"找到 {len(results)} 个文件包含关键词: '{args.query}'")
-            for i, result in enumerate(results[:10], 1):
-                print(f"\n{i}. {result['path']}")
-
-    finally:
-        kb.close()
-
-
-if __name__ == "__main__":
-    main()

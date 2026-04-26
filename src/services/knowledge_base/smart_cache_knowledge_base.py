@@ -411,23 +411,28 @@ class SmartCacheKnowledgeBase:
         
         return dot_product / (norm1 * norm2)
     
-    def rebuild_async(self, incremental: bool = False):
+    def rebuild_async(self, incremental: bool = False, source_paths: Optional[List[str]] = None):
         """异步重建知识库
         
         Args:
             incremental: 是否增量构建(跳过未变化的文件)
+            source_paths: 外部指定的源码路径列表(为None时使用config中的路径)
         """
         if self._building:
             print("构建已在进行中...")
             return
         
         # 获取源码路径
-        source_paths = self.path_resolver.get_source_paths()
-        print(f"源码路径: {[str(p) for p in source_paths]}")
+        if source_paths is not None:
+            from pathlib import Path
+            resolved_paths = [Path(p) for p in source_paths]
+        else:
+            resolved_paths = self.path_resolver.get_source_paths()
+        print(f"源码路径: {[str(p) for p in resolved_paths]}")
         
         # 阶段1：初始化（同步）
         print("\n阶段1：初始化...")
-        self._rebuild_init(source_paths, incremental=incremental)
+        self._rebuild_init(resolved_paths, incremental=incremental)
         
         # 阶段2：启动异步构建
         print("\n阶段2：启动异步向量构建...")
@@ -437,9 +442,10 @@ class SmartCacheKnowledgeBase:
     
     @staticmethod
     def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict]]:
-        """静态方法：解析Delphi源文件（用于多进程）- 完整版"""
+        """静态方法：解析Delphi源文件（用于多进程）- 复用 _extract_all_entities"""
         import re
         from pathlib import Path
+        from src.services.knowledge_base.scan_delphi_sources import _extract_all_entities
         
         file_path = Path(file_path_str)
         items = []
@@ -448,303 +454,170 @@ class SmartCacheKnowledgeBase:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            # ========== 1. 类型定义 ==========
+            # 核心实体复用 _extract_all_entities
+            entities = _extract_all_entities(content)
             
-            # 1.1 类定义（支持泛型）
-            # 匹配: TMyClass = class, TList<T> = class, TDict<TKey, TValue> = class
-            class_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*class\s*(?:\(([^)]+)\))?'
-            for match in re.finditer(class_pattern, content, re.IGNORECASE):
-                class_name = match.group(1)
-                base_class = match.group(2) if match.group(2) else 'TObject'
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TC',  # class
-                    'name': class_name,
-                    'line': line_num,
-                    'base_class': base_class,
-                    'description': f"Class {class_name} inherits from {base_class}"
-                })
+            # 补充提取: 细分类型 (先收集, 用于覆盖 TY 中被泛化匹配的条目)
+            _array_names = set()
+            _pointer_names = set()
+            _anon_method_names = set()
+            _subrange_names = set()
             
-            # 1.2 记录类型（支持泛型）
-            record_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*record\b'
-            for match in re.finditer(record_pattern, content, re.IGNORECASE):
-                record_name = match.group(1)
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TR',  # record
-                    'name': record_name,
-                    'line': line_num,
-                    'base_class': None,
-                    'description': f"Record {record_name}"
-                })
-            
-            # 1.3 接口定义（支持泛型）
-            interface_pattern = r'\b([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?)\s*=\s*interface\s*(?:\(([^)]+)\))?'
-            for match in re.finditer(interface_pattern, content, re.IGNORECASE):
-                interface_name = match.group(1)
-                base_interface = match.group(2) if match.group(2) else 'IInterface'
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TI',  # interface
-                    'name': interface_name,
-                    'line': line_num,
-                    'base_class': base_interface,
-                    'description': f"Interface {interface_name} extends {base_interface}"
-                })
-            
-            # 1.4 枚举类型
-            enum_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*\(([^)]+)\)\s*;'
-            for match in re.finditer(enum_pattern, content):
-                enum_name = match.group(1)
-                enum_values = match.group(2)
-                # 确认是枚举而不是函数调用
-                if ',' in enum_values or '=' not in enum_values:
-                    line_num = content[:match.start()].count('\n') + 1
-                    
-                    items.append({
-                        'type': 'TE',  # enum
-                        'name': enum_name,
-                        'line': line_num,
-                        'base_class': None,
-                        'description': f"Enum {enum_name} = ({enum_values})"
-                    })
-            
-            # 1.5 集合类型
-            set_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*set\s+of\s+([^;]+)\s*;'
-            for match in re.finditer(set_pattern, content, re.IGNORECASE):
-                set_name = match.group(1)
-                set_type = match.group(2).strip()
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TS',  # set
-                    'name': set_name,
-                    'line': line_num,
-                    'base_class': None,
-                    'description': f"Set {set_name} = set of {set_type}"
-                })
-            
-            # 1.6 数组类型
+            # 数组类型 (AT)
             array_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*array\s*(?:\[([^\]]+)\])?\s*of\s+([^;]+)\s*;'
             for match in re.finditer(array_pattern, content, re.IGNORECASE):
-                array_name = match.group(1)
-                array_range = match.group(2) if match.group(2) else ''
-                array_type = match.group(3).strip()
+                arr_name = match.group(1)
+                arr_range = match.group(2) or ''
+                arr_type = match.group(3).strip()
                 line_num = content[:match.start()].count('\n') + 1
-                
-                desc = f"Array {array_name} = array[{array_range}] of {array_type}" if array_range else f"Array {array_name} = array of {array_type}"
-                
+                desc = f"Array {arr_name} = array[{arr_range}] of {arr_type}" if arr_range else f"Array {arr_name} = array of {arr_type}"
+                _array_names.add(arr_name)
                 items.append({
-                    'type': 'AT',  # array
-                    'name': array_name,
+                    'type': 'AT',
+                    'name': arr_name,
                     'line': line_num,
                     'base_class': None,
                     'description': desc
                 })
             
-            # 1.7 子界类型
+            # 子界类型 (MF)
             subrange_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(\d+)\.\.(\d+)\s*;'
             for match in re.finditer(subrange_pattern, content):
-                subrange_name = match.group(1)
-                range_start = match.group(2)
-                range_end = match.group(3)
+                sr_name = match.group(1)
+                r_start = match.group(2)
+                r_end = match.group(3)
                 line_num = content[:match.start()].count('\n') + 1
-                
+                _subrange_names.add(sr_name)
                 items.append({
-                    'type': 'MF',  # range (subrange)
-                    'name': subrange_name,
+                    'type': 'MF',
+                    'name': sr_name,
                     'line': line_num,
                     'base_class': None,
-                    'description': f"Subrange {subrange_name} = {range_start}..{range_end}"
+                    'description': f"Subrange {sr_name} = {r_start}..{r_end}"
                 })
             
-            # 1.8 指针类型
+            # 指针类型 (PT)
             pointer_pattern = r'\b(P[A-Z][a-zA-Z0-9]*)\s*=\s*\^([A-Z][a-zA-Z0-9]*)\s*;'
             for match in re.finditer(pointer_pattern, content):
-                pointer_name = match.group(1)
-                target_type = match.group(2)
+                ptr_name = match.group(1)
+                tgt_type = match.group(2)
                 line_num = content[:match.start()].count('\n') + 1
-                
+                _pointer_names.add(ptr_name)
                 items.append({
-                    'type': 'PT',  # pointer
-                    'name': pointer_name,
+                    'type': 'PT',
+                    'name': ptr_name,
                     'line': line_num,
                     'base_class': None,
-                    'description': f"Pointer {pointer_name} = ^{target_type}"
+                    'description': f"Pointer {ptr_name} = ^{tgt_type}"
                 })
             
-            # 1.9 类型别名
-            alias_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*type\s+([A-Z][a-zA-Z0-9]*)\s*;'
-            for match in re.finditer(alias_pattern, content, re.IGNORECASE):
-                alias_name = match.group(1)
-                target_type = match.group(2)
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TY',  # type alias
-                    'name': alias_name,
-                    'line': line_num,
-                    'base_class': None,
-                    'description': f"Type {alias_name} = type {target_type}"
-                })
-            
-            # 1.10 匿名方法类型（reference to procedure/function）
+            # 匿名方法类型 (MM): reference to procedure/function
             anon_method_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*reference\s+to\s+(procedure|function)'
             for match in re.finditer(anon_method_pattern, content, re.IGNORECASE):
-                method_name = match.group(1)
-                method_kind = match.group(2).lower()
+                m_name = match.group(1)
+                m_kind = match.group(2).lower()
                 line_num = content[:match.start()].count('\n') + 1
-                
+                _anon_method_names.add(m_name)
                 items.append({
-                    'type': 'MM',  # anonymous method
-                    'name': method_name,
+                    'type': 'MM',
+                    'name': m_name,
                     'line': line_num,
                     'base_class': None,
-                    'description': f"Anonymous Method {method_name} = reference to {method_kind}"
+                    'description': f"Anonymous Method {m_name} = reference to {m_kind}"
                 })
             
-            # 1.11 方法指针类型（procedure/function of object）
+            # 方法指针类型 (MM): procedure/function of object
             method_ptr_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(procedure|function)\s*\([^)]*\)\s*of\s+object'
             for match in re.finditer(method_ptr_pattern, content, re.IGNORECASE):
-                method_name = match.group(1)
-                method_kind = match.group(2).lower()
+                m_name = match.group(1)
+                m_kind = match.group(2).lower()
                 line_num = content[:match.start()].count('\n') + 1
-                
+                _anon_method_names.add(m_name)
                 items.append({
-                    'type': 'MM',  # method pointer
-                    'name': method_name,
+                    'type': 'MM',
+                    'name': m_name,
                     'line': line_num,
                     'base_class': None,
-                    'description': f"Method Pointer {method_name} = {method_kind} of object"
+                    'description': f"Method Pointer {m_name} = {m_kind} of object"
                 })
             
-            # 1.12 过程/函数类型（不属于对象）
+            # 过程/函数类型 (PT, 非 of object)
             proc_type_pattern = r'\b([A-Z][a-zA-Z0-9]*)\s*=\s*(procedure|function)\s*\('
             for match in re.finditer(proc_type_pattern, content, re.IGNORECASE):
-                # 检查是否是方法指针（已处理）
-                full_match = match.group(0)
-                # 检查后续内容是否包含"of object"
                 remaining = content[match.start():match.start()+200]
-                if 'of object' not in remaining:
-                    proc_name = match.group(1)
-                    proc_kind = match.group(2).lower()
-                    line_num = content[:match.start()].count('\n') + 1
-                    
-                    items.append({
-                        'type': 'PT',  # procedure/function type
-                        'name': proc_name,
-                        'line': line_num,
-                        'base_class': None,
-                        'description': f"Type {proc_name} = {proc_kind}"
-                    })
+                if 'of object' not in remaining and 'reference to' not in remaining:
+                    p_name = match.group(1)
+                    p_kind = match.group(2).lower()
+                    if p_name not in _anon_method_names:
+                        line_num = content[:match.start()].count('\n') + 1
+                        _pointer_names.add(p_name)
+                        items.append({
+                            'type': 'PT',
+                            'name': p_name,
+                            'line': line_num,
+                            'base_class': None,
+                            'description': f"Type {p_name} = {p_kind}"
+                        })
             
-            # ========== 2. 常量和资源字符串（支持批量声明） ==========
+            _override_names = _array_names | _pointer_names | _anon_method_names | _subrange_names
             
-            # 2.1 查找const块
-            const_block_pattern = r'\bconst\s*\n((?:\s+[A-Z][a-zA-Z0-9]*\s*=.*?;\s*\n)+)'
-            for match in re.finditer(const_block_pattern, content, re.IGNORECASE):
-                const_block = match.group(1)
-                line_start = content[:match.start()].count('\n') + 1
+            for ent in entities:
+                kind = ent['kind']
+                name = ent['name']
+                parent = ent.get('parent')
+                line = ent['line']
+                definition = ent.get('definition', '')
                 
-                # 解析块中的每个常量
-                const_item_pattern = r'\s*([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
-                for item_match in re.finditer(const_item_pattern, const_block):
-                    const_name = item_match.group(1)
-                    const_value = item_match.group(2).strip()
-                    line_num = line_start + const_block[:item_match.start()].count('\n')
-                    
-                    items.append({
-                        'type': 'CC',  # constant
-                        'name': const_name,
-                        'line': line_num,
-                        'base_class': None,
-                        'description': f"Const {const_name} = {const_value}"
-                    })
-            
-            # 2.2 单行常量
-            const_pattern = r'\bconst\s+([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
-            for match in re.finditer(const_pattern, content, re.IGNORECASE):
-                const_name = match.group(1)
-                const_value = match.group(2).strip()
-                line_num = content[:match.start()].count('\n') + 1
-                
-                # 检查是否已在const块中处理
-                already_added = any(i['type'] == 'CC' and i['name'] == const_name and i['line'] == line_num for i in items)
-                if not already_added:
-                    items.append({
-                        'type': 'CC',  # constant
-                        'name': const_name,
-                        'line': line_num,
-                        'base_class': None,
-                        'description': f"Const {const_name} = {const_value}"
-                    })
-            
-            # 2.3 资源字符串块
-            resourcestring_block_pattern = r'\bresourcestring\s*\n((?:\s*[A-Z][a-zA-Z0-9]*\s*=.*?;\s*\n)+)'
-            for match in re.finditer(resourcestring_block_pattern, content, re.IGNORECASE):
-                res_block = match.group(1)
-                line_start = content[:match.start()].count('\n') + 1
-                
-                res_item_pattern = r'\s*([A-Z][a-zA-Z0-9]*)\s*=\s*([^;]+)\s*;'
-                for item_match in re.finditer(res_item_pattern, res_block):
-                    res_name = item_match.group(1)
-                    res_value = item_match.group(2).strip()
-                    line_num = line_start + res_block[:item_match.start()].count('\n')
-                    
-                    items.append({
-                        'type': 'CR',  # resource string
-                        'name': res_name,
-                        'line': line_num,
-                        'base_class': None,
-                        'description': f"ResourceString {res_name} = {res_value}"
-                    })
-            
-            # ========== 3. 函数和过程 ==========
-            
-            # 3.1 函数/过程定义
-            func_pattern = r'\b(procedure|function)\s+([A-Za-z][a-zA-Z0-9\.]*)\s*(?:\(([^)]*)\))?'
-            for match in re.finditer(func_pattern, content, re.IGNORECASE):
-                func_type = match.group(1).lower()
-                func_name = match.group(2)
-                params = match.group(3) if match.group(3) else ''
-                line_num = content[:match.start()].count('\n') + 1
-                
-                # 跳过构造函数、析构函数等特殊方法
-                if func_name in ['Create', 'Destroy', 'AfterConstruction', 'BeforeDestruction']:
+                # TY 被 AT/PT/MM/MF(subrange) 覆盖
+                if kind == 'TY' and name in _override_names:
                     continue
                 
-                type_code = 'FP' if func_type == 'procedure' else 'FF'
+                type_code = kind
+                desc = definition
+                if kind == 'TC':
+                    desc = f"Class {name} inherits from {parent}" if parent else f"Class {name}"
+                elif kind == 'TR':
+                    desc = f"Record {name}"
+                elif kind == 'TI':
+                    desc = f"Interface {name} extends {parent}" if parent else f"Interface {name}"
+                elif kind == 'TH':
+                    desc = f"Helper {name} for {parent}" if parent else f"Helper {name}"
+                elif kind == 'TE':
+                    desc = f"Enum {name}"
+                elif kind == 'TS':
+                    desc = f"Set {name}"
+                elif kind == 'FF':
+                    desc = definition if definition else f"Function {name}"
+                elif kind == 'FP':
+                    desc = definition if definition else f"Procedure {name}"
+                elif kind == 'CC':
+                    desc = f"Const {name} = {definition}" if definition else f"Const {name}"
+                elif kind == 'CR':
+                    desc = f"ResourceString {name} = {definition}" if definition else f"ResourceString {name}"
+                elif kind == 'TY':
+                    desc = definition if definition else f"Type {name}"
                 
                 items.append({
                     'type': type_code,
-                    'name': func_name,
-                    'line': line_num,
-                    'base_class': None,
-                    'description': f"{func_type} {func_name}({params})"
+                    'name': name,
+                    'line': line,
+                    'base_class': parent,
+                    'description': desc
                 })
             
-            # ========== 4. 类成员（属性、字段、事件） ==========
+            # ========== 补充提取类成员（属性、字段、事件） ==========
             
-            # 4.1 属性定义（区分事件和普通属性）
+            # 属性定义（区分事件和普通属性）
             property_pattern = r'\bproperty\s+([A-Z][a-zA-Z0-9]*)\s*:\s*([^;=]+)'
             for match in re.finditer(property_pattern, content, re.IGNORECASE):
                 prop_name = match.group(1)
                 prop_type = match.group(2).strip()
                 line_num = content[:match.start()].count('\n') + 1
                 
-                # 区分事件和普通属性
-                # 事件判断规则：
-                # 1. 属性名以On/Before/After开头
-                # 2. 类型为T开头的事件类型（如TNotifyEvent, TChangeEvent等）
                 is_event = (
-                    # 规则1: 属性名以事件前缀开头
                     prop_name.startswith('On') or 
                     prop_name.startswith('Before') or 
                     prop_name.startswith('After') or
-                    # 规则2: 类型为T开头的事件类型
                     (prop_type.startswith('T') and (
                         'Event' in prop_type or
                         'Handler' in prop_type or
@@ -755,7 +628,7 @@ class SmartCacheKnowledgeBase:
                 
                 if is_event:
                     items.append({
-                        'type': 'MP',  # event
+                        'type': 'MP',
                         'name': prop_name,
                         'line': line_num,
                         'base_class': None,
@@ -763,28 +636,24 @@ class SmartCacheKnowledgeBase:
                     })
                 else:
                     items.append({
-                        'type': 'TY',  # property
+                        'type': 'TY',
                         'name': prop_name,
                         'line': line_num,
                         'base_class': None,
                         'description': f"Property {prop_name}: {prop_type}"
                     })
             
-            # 4.2 类成员字段（需要上下文判断）
-            # 简化实现：检查是否在type块内，且以F开头
+            # 类成员字段（以F开头，在type块内）
             field_pattern = r'\b(F[A-Z][a-zA-Z0-9]*)\s*:\s*([A-Z][a-zA-Z0-9]*)\s*;'
             for match in re.finditer(field_pattern, content):
                 field_name = match.group(1)
                 field_type = match.group(2)
                 line_num = content[:match.start()].count('\n') + 1
                 
-                # 检查是否在type块内（简化判断）
-                # 向前查找最近的type关键字
                 before_content = content[:match.start()]
                 type_keyword_pos = before_content.rfind('type')
                 in_type_block = type_keyword_pos != -1
                 
-                # 检查是否在var/const/resourcestring块内（如果是，则不是成员字段）
                 var_keyword_pos = before_content.rfind('\nvar ')
                 const_keyword_pos = before_content.rfind('\nconst ')
                 res_keyword_pos = before_content.rfind('\nresourcestring ')
@@ -792,36 +661,32 @@ class SmartCacheKnowledgeBase:
                 in_const_block = const_keyword_pos != -1 and const_keyword_pos > type_keyword_pos if type_keyword_pos != -1 else const_keyword_pos != -1
                 in_res_block = res_keyword_pos != -1 and res_keyword_pos > type_keyword_pos if type_keyword_pos != -1 else res_keyword_pos != -1
                 
-                # 如果在type块内，且不在var/const/resourcestring块内，则为成员字段
                 if in_type_block and not (in_var_block or in_const_block or in_res_block):
                     items.append({
-                        'type': 'MF',  # member/field
+                        'type': 'MF',
                         'name': field_name,
                         'line': line_num,
                         'base_class': None,
                         'description': f"Field {field_name}: {field_type}"
                     })
             
-            # 4.3 全局变量（var块中，不以F开头）
+            # 全局变量（var块中，不以F开头）
             var_block_pattern = r'\bvar\s*\n((?:\s*[A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*\s*:\s*[^;]+;\s*\n)+)'
             for match in re.finditer(var_block_pattern, content, re.IGNORECASE):
                 var_block = match.group(1)
                 line_start = content[:match.start()].count('\n') + 1
                 
-                # 解析块中的每个变量（支持批量声明：X, Y, Z: Integer;）
                 var_line_pattern = r'\s*([A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*)\s*:\s*([^;]+)\s*;'
                 for item_match in re.finditer(var_line_pattern, var_block):
                     var_names = item_match.group(1)
                     var_type = item_match.group(2).strip()
                     line_num = line_start + var_block[:item_match.start()].count('\n')
                     
-                    # 分割批量变量名
                     for var_name in var_names.split(','):
                         var_name = var_name.strip()
-                        # 跳过成员变量（以F开头）
                         if not var_name.startswith('F'):
                             items.append({
-                                'type': 'MF',  # global variable
+                                'type': 'MF',
                                 'name': var_name,
                                 'line': line_num,
                                 'base_class': None,
@@ -1427,29 +1292,19 @@ class SmartCacheKnowledgeBase:
         conn.commit()
         conn.close()
     
-    def search_by_name(self, name: str, item_types: List[str] = None) -> List[Dict]:
-        """按名称搜索"""
+    def search_by_name(self, name: str) -> List[Dict]:
+        """按名称搜索 (返回所有类型)"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         name_lower = name.lower()
         
-        if item_types:
-            type_placeholders = ','.join(['?' for _ in item_types])
-            cursor.execute(f"""
-                SELECT v.*, f.relative_path, f.category
-                FROM vocabularies v
-                LEFT JOIN files f ON v.file_id = f.id
-                WHERE v.name_lower = ?
-                  AND v.type IN ({type_placeholders})
-            """, (name_lower,) + tuple(item_types))
-        else:
-            cursor.execute("""
-                SELECT v.*, f.relative_path, f.category
-                FROM vocabularies v
-                LEFT JOIN files f ON v.file_id = f.id
-                WHERE v.name_lower = ?
-            """, (name_lower,))
+        cursor.execute("""
+            SELECT v.*, f.relative_path, f.category
+            FROM vocabularies v
+            LEFT JOIN files f ON v.file_id = f.id
+            WHERE v.name_lower = ?
+        """, (name_lower,))
         
         results = []
         for row in cursor.fetchall():
@@ -1501,48 +1356,3 @@ class SmartCacheKnowledgeBase:
         
         conn.close()
         return stats
-
-
-def main():
-    """测试入口"""
-    import sys
-    
-    if len(sys.argv) < 2:
-        print("用法: python smart_cache_knowledge_base.py <知识库目录> [命令]")
-        print("命令: rebuild | search <查询> | status | stats")
-        return
-    
-    kb_dir = sys.argv[1]
-    command = sys.argv[2] if len(sys.argv) > 2 else 'status'
-    
-    kb = SmartCacheKnowledgeBase(kb_dir)
-    
-    if command == 'rebuild':
-        kb.rebuild_async()
-        # 等待构建完成
-        while True:
-            status = kb.get_build_status()
-            print(f"状态: {status['status']}, 进度: {status['progress']}%")
-            if status['status'] in ['completed', 'failed', 'stopped']:
-                break
-            time.sleep(2)
-    
-    elif command == 'search':
-        query = sys.argv[3] if len(sys.argv) > 3 else 'button'
-        results = kb.semantic_search(query, top_k=10)
-        print(f"\n搜索 '{query}' 的结果:")
-        for i, r in enumerate(results, 1):
-            print(f"{i}. {r['name']} ({r['type_name']}) - 相似度: {r['similarity']:.3f}")
-            print(f"   描述: {r['description'][:80]}...")
-    
-    elif command == 'status':
-        status = kb.get_build_status()
-        print(f"构建状态: {status}")
-    
-    elif command == 'stats':
-        stats = kb.get_statistics()
-        print(f"统计信息: {json.dumps(stats, indent=2, ensure_ascii=False)}")
-
-
-if __name__ == "__main__":
-    main()

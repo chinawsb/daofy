@@ -4,7 +4,7 @@
 提供编译器环境检查功能
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from mcp.types import CallToolResult
 from ..services.config_manager import ConfigManager
 from ..utils.validator import Validator
@@ -103,41 +103,3 @@ async def check_environment(arguments: dict = None) -> CallToolResult:
             isError=True
         )
 
-
-async def get_compile_history(limit: int = 10) -> Dict[str, Any]:
-    """
-    获取编译历史记录
-
-    Args:
-        limit: 最大记录数
-
-    Returns:
-        编译历史字典
-    """
-    logger.info(f"收到获取编译历史请求,限制: {limit}")
-
-    if _config_manager is None:
-        logger.error("配置管理器未初始化")
-        return {
-            "success": False,
-            "message": "配置管理器未初始化",
-            "entries": []
-        }
-
-    try:
-        entries = _config_manager.get_history(limit)
-
-        return {
-            "success": True,
-            "message": f"共 {len(entries)} 条历史记录",
-            "entries": [e.to_dict() for e in entries]
-        }
-
-    except Exception as e:
-        error_msg = f"获取编译历史过程发生异常: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        return {
-            "success": False,
-            "message": error_msg,
-            "entries": []
-        }
