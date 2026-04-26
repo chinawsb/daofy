@@ -48,9 +48,7 @@ msbuild_output.txt
 Thumbs.db
 
 # Knowledge Base Data (用户需要自行构建)
-data/delphi-knowledge-base/
-data/help-knowledge-base/
-**/.delphi-kb/
+data/
 
 # Config (可能包含本地路径)
 config/compilers.json
