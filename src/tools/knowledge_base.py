@@ -121,7 +121,7 @@ async def search_class(arguments: Any) -> CallToolResult:
         )
 
     try:
-        results = kb_service.search_by_class_name(class_name)
+        results = kb_service.search_by_name(class_name)
 
         if not results:
             return CallToolResult(
@@ -181,7 +181,7 @@ async def search_function(arguments: Any) -> CallToolResult:
         )
 
     try:
-        results = kb_service.search_by_function_name(function_name)
+        results = kb_service.search_by_name(function_name)
 
         if not results:
             return CallToolResult(
@@ -252,7 +252,7 @@ async def semantic_search(arguments: Any) -> CallToolResult:
             output += f"相关的类 (Top {len(class_results)}):\n"
             for class_name, score in class_results[:5]:
                 # 获取详细信息
-                exact_results = kb_service.search_by_class_name(class_name)
+                exact_results = kb_service.search_by_name(class_name)
                 if exact_results:
                     result = exact_results[0]
                     output += f"  - {result['class']['name']} (相似度: {score:.3f})\n"
@@ -264,7 +264,7 @@ async def semantic_search(arguments: Any) -> CallToolResult:
             output += f"相关的函数 (Top {len(function_results)}):\n"
             for func_name, score in function_results[:5]:
                 # 获取详细信息
-                exact_results = kb_service.search_by_function_name(func_name)
+                exact_results = kb_service.search_by_name(func_name)
                 if exact_results:
                     result = exact_results[0]
                     output += f"  - {result['function']['name']} (相似度: {score:.3f})\n"
@@ -415,42 +415,25 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     results = {}
     kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty", "help"]
-    results["kb_types_debug"] = str(kb_types)
     
-    # 符号类型映射
-    type_map = {
-        "class": "TC",
-        "record": "TR",
-        "interface": "TI",
-        "enum": "TE",
-        "set": "TS",
-        "type": "TY",
-        "function": "FF",
-        "procedure": "FP",
-        "const": "CC",
-        "resourcestring": "CR",
-        "property": "MP",
-        "field": "MF",
-        "method": "MM",
-        "unit": "u"
+    
+    _SEARCH_TYPE_TO_KIND = {
+        'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
+        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF'], 'procedure': ['FP'],
+        'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
+        'method': ['MM'], 'unit': ['u'], 'event': ['MM'],
     }
-    
+
+    def _filter_by_search_type(symbols, st):
+        if st in _SEARCH_TYPE_TO_KIND:
+            allowed_kinds = _SEARCH_TYPE_TO_KIND[st]
+            return [s for s in symbols if s.get('kind_code', '') in allowed_kinds]
+        return symbols
+
     for kb in kb_types:
         try:
             if kb == "delphi" and _delphi_kb_service:
-                # 处理特定类型搜索
-                if search_type in type_map:
-                    symbol_type = type_map[search_type]
-                    results["delphi_symbols"] = _delphi_kb_service.search_by_name(query, symbol_type)[:top_k]
-                elif search_type == "all":
-                    # 搜索所有类型
-                    results["delphi_all"] = _delphi_kb_service.search_by_name(query)[:top_k]
-                
-                # 保留原有的类和函数搜索
-                if search_type in ["class", "all"]:
-                    results["delphi_classes"] = _delphi_kb_service.search_by_class_name(query)[:top_k]
-                if search_type in ["function", "all"]:
-                    results["delphi_functions"] = _delphi_kb_service.search_by_function_name(query)[:top_k]
+                results["delphi_symbols"] = _filter_by_search_type(_delphi_kb_service.search_by_name(query)[:top_k * 3], search_type)[:top_k]
                 if search_type in ["semantic", "all"]:
                     try:
                         results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
@@ -459,27 +442,32 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                         results["semantic_error"] = str(se)
             elif kb == "help" and _help_kb_service:
                 results["help_classes"] = _help_kb_service.search_class(query)[:top_k]
-                results["help_debug"] = f"_help_kb_service exists: {_help_kb_service is not None}, results: {results.get('help_classes')}"
         except Exception as e:
             results[f"{kb}_error"] = str(e)
     
     output = f"搜索 '{query}' (类型: {search_type}, 知识库: {kb_type}):\n\n"
     has_results = False
     
+    _KIND_DESC = {
+        'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
+        'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程',
+        'CC': '常量', 'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
+    }
+
+    def _format_symbol(r):
+        kind_code = r.get('kind_code', '')
+        type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
+        file_info = r.get('file', {})
+        file_path = file_info.get('path', 'N/A') if file_info else 'N/A'
+        return f"  - {r.get('name', 'N/A')} ({type_desc})\n    文件: {file_path}\n    行号: {r.get('line', 'N/A')}\n"
+
     # 显示符号搜索结果
     if "delphi_symbols" in results and results["delphi_symbols"]:
         output += f"Delphi 符号 ({len(results['delphi_symbols'])}):\n"
         for r in results["delphi_symbols"][:top_k]:
-            type_desc = {
-                'TC': '类', 'TR': '记录', 'TI': '接口', 'TE': '枚举', 'TS': '集合',
-                'TY': '类型别名', 'FF': '函数', 'FP': '过程', 'CC': '常量',
-                'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
-            }.get(r.get('type', ''), r.get('type', ''))
-            output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
-            output += f"    文件: {r.get('file_path', 'N/A')}\n"
-            output += f"    行号: {r.get('line', 'N/A')}\n"
-            if r.get('description'):
-                output += f"    描述: {r.get('description')}\n"
+            output += _format_symbol(r)
+            if r.get('definition'):
+                output += f"    定义: {r.get('definition')}\n"
         output += "\n"
         has_results = True
     
@@ -487,11 +475,8 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     if "delphi_all" in results and results["delphi_all"]:
         output += f"Delphi 所有符号 ({len(results['delphi_all'])}):\n"
         for r in results["delphi_all"][:top_k]:
-            type_desc = {
-                'TC': '类', 'TR': '记录', 'TI': '接口', 'TE': '枚举', 'TS': '集合',
-                'TY': '类型别名', 'FF': '函数', 'FP': '过程', 'CC': '常量',
-                'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
-            }.get(r.get('type', ''), r.get('type', ''))
+            kind_code = r.get('kind_code', '')
+            type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
             output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
         output += "\n"
         has_results = True

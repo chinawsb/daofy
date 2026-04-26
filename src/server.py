@@ -111,20 +111,16 @@ async def run_server():
 
     # 初始化知识库服务
     kb_service = DelphiKnowledgeBaseService()
-    print(f"[DEBUG] kb_service created: {kb_service}")
     logger.info("知识库服务初始化完成")
 
     # 初始化第三方库知识库服务
     thirdparty_kb_service = ThirdPartyKnowledgeBase()
-    print(f"[DEBUG] thirdparty_kb_service created: {thirdparty_kb_service}")
     thirdparty_kb_tools.set_thirdparty_knowledge_base_service(thirdparty_kb_service)
     logger.info("第三方库知识库服务初始化完成")
 
     # 初始化帮助文档知识库服务
     help_kb_service = DelphiHelpKnowledgeBase()
-    print(f"[DEBUG] help_kb_service created: {help_kb_service}")
     set_help_kb_service(help_kb_service)
-    print(f"[DEBUG] After set_help_kb_service, _help_kb_service = {kb_tools._help_kb_service}")
     logger.info("帮助文档知识库服务初始化完成")
 
     # 设置工具的服务实例
@@ -133,6 +129,7 @@ async def run_server():
     sp3(compiler_service)
     sip(compiler_service)
     scm(config_manager)
+    set_config_manager(config_manager)
     stks(thirdparty_kb_service)
     set_knowledge_base_service(kb_service)
     set_knowledge_base_services(kb_service, thirdparty_kb_service)
@@ -300,7 +297,8 @@ async def run_server():
                     )
                 elif arguments.get("get_args_only"):
                     # 仅获取参数
-                    result = await get_compiler_args(**arguments)
+                    args = {k: v for k, v in arguments.items() if k != "get_args_only"}
+                    result = await get_compiler_args(**args)
                 else:
                     # 项目模式：编译
                     result = await compile_project(**arguments)
@@ -360,12 +358,19 @@ async def run_server():
                     result = await search_and_read_file(arguments)
             
             elif name == "check_environment":
-                # 合并 search_compilers
+                # 合并 search_compilers, install_pasfmt, install_pasfmt_rad
                 action = arguments.get("action", "check")
                 if action == "detect":
-                    result = await search_compilers(**arguments)
+                    result = await search_compilers(search_path=arguments.get("search_path"))
                 elif action == "check":
                     result = await check_environment()
+                elif action == "install":
+                    result = await pasfmt.download_and_install_pasfmt(install_dir=arguments.get("install_dir"))
+                elif action == "format_install":
+                    result = await pasfmt.download_and_install_pasfmt_rad(
+                        delphi_version=arguments.get("delphi_version", "11"),
+                        install_dir=arguments.get("install_dir"),
+                    )
                 else:
                     result = {"error": f"未知action: {action}"}
             
@@ -373,9 +378,17 @@ async def run_server():
                 # 合并 format_delphi_file, format_delphi_code, set_pasfmt_path, install_pasfmt, check_pasfmt_installation
                 action = arguments.get("action", "file")
                 if action == "file":
-                    result = await pasfmt.format_file(**arguments)
+                    result = await pasfmt.format_file(
+                        file_path=arguments.get("file_path", ""),
+                        config_path=arguments.get("config_path"),
+                        backup=arguments.get("backup", True),
+                        in_place=arguments.get("in_place", True),
+                    )
                 elif action == "code":
-                    result = await pasfmt.format_code(**arguments)
+                    result = await pasfmt.format_code(
+                        code=arguments.get("code", ""),
+                        config_path=arguments.get("config_path"),
+                    )
                 elif action == "check":
                     result = await pasfmt.format_file(file_path=arguments.get("file_path"), check_only=True)
                 elif action == "set_path":
@@ -388,9 +401,11 @@ async def run_server():
                 elif action == "status":
                     check_rad = arguments.get("check_rad", False)
                     if check_rad:
-                        result = await pasfmt.check_pasfmt_rad_installation(**arguments)
+                        result = await pasfmt.check_pasfmt_rad_installation(
+                            delphi_version=arguments.get("delphi_version", "11")
+                        )
                     else:
-                        result = await pasfmt.check_pasfmt_installation(**arguments)
+                        result = await pasfmt.check_pasfmt_installation()
                 else:
                     result = {"error": f"未知action: {action}"}
             

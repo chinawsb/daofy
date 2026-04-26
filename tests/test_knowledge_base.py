@@ -95,7 +95,8 @@ def test_search_class():
     class_name = "TButton"
     print(f"\n搜索类: {class_name}")
 
-    results = kb_service.search_by_class_name(class_name)
+    results = kb_service.search_by_name(class_name)
+    results = [r for r in results if r.get('kind_code', '') == 'TC']
 
     if results:
         print(f"\n找到 {len(results)} 个类 '{class_name}':")
