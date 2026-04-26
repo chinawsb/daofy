@@ -598,6 +598,11 @@ class ThirdPartyKnowledgeBase:
             )
         """)
         
+        # 全量构建: 清空旧数据
+        cursor.execute("DELETE FROM vocabularies")
+        cursor.execute("DELETE FROM files")
+        conn.commit()
+        
         # 插入源文件
         logger.info("保存源文件到数据库...")
         batch_size = 1000
@@ -777,14 +782,15 @@ class ThirdPartyKnowledgeBase:
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
             ('build_time', datetime.now().isoformat(), current_time))
         
-        conn.commit()
-        conn.close()
-        
+            conn.commit()
+            
         logger.info(f"知识库构建完成!")
         logger.info(f"  源文件: {source_count}")
         logger.info(f"  帮助文档: {help_count}")
         logger.info(f"  类: {class_count}")
         logger.info(f"  函数: {func_count}")
+        
+        conn.close()
 
         # 更新元数据
         self.metadata["total_paths"] = len(thirdparty_paths)

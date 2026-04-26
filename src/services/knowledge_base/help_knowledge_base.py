@@ -1807,6 +1807,11 @@ class DelphiHelpKnowledgeBase:
         except Exception as e:
             logger.error(f"构建向量索引失败: {e}")
             return False
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     # ==================== 完整构建流程 ====================
 

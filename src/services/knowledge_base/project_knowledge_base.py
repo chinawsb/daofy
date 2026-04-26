@@ -433,6 +433,11 @@ class ProjectKnowledgeBase:
                 updated_at REAL
             )
         """)
+        
+        # 全量构建: 清空旧数据
+        cursor.execute("DELETE FROM vocabularies")
+        cursor.execute("DELETE FROM files")
+        conn.commit()
 
         # 插入源文件
         logger.info("保存源文件到数据库...")

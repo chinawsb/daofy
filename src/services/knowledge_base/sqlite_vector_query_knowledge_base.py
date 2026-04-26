@@ -874,23 +874,23 @@ class SQLiteVectorKnowledgeBase:
         
         classes_data = []
         os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            # 使用partial传递vocab和idf_weights
-            from functools import partial
-            func = partial(SQLiteVectorKnowledgeBase.compute_class_vector, vocab=vocab, idf_weights=idf_weights)
-            results = list(executor.map(func, class_items, chunksize=class_chunksize))
-            classes_data = results
-        
-        print(f"  类向量计算完成: {len(classes_data)}")
-        
-        # 并行计算函数向量
-        with ProcessPoolExecutor(max_workers=n_workers) as executor:
-            from functools import partial
-            func = partial(SQLiteVectorKnowledgeBase.compute_func_vector, vocab=vocab, idf_weights=idf_weights)
-            results = list(executor.map(func, func_items, chunksize=func_chunksize))
-            functions_data = results
-        
-        os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
+        try:
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                from functools import partial
+                func = partial(SQLiteVectorKnowledgeBase.compute_class_vector, vocab=vocab, idf_weights=idf_weights)
+                results = list(executor.map(func, class_items, chunksize=class_chunksize))
+                classes_data = results
+            
+            print(f"  类向量计算完成: {len(classes_data)}")
+            
+            # 并行计算函数向量
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                from functools import partial
+                func = partial(SQLiteVectorKnowledgeBase.compute_func_vector, vocab=vocab, idf_weights=idf_weights)
+                results = list(executor.map(func, func_items, chunksize=func_chunksize))
+                functions_data = results
+        finally:
+            os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
         
         print(f"  函数向量计算完成: {len(functions_data)}")
 
