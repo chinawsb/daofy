@@ -31,15 +31,10 @@ if %ERRORLEVEL% neq 0 (
     goto :fail
 )
 
-goto :end
+exit /b 0
 
 :fail
 echo:
 echo [ERROR] Installation failed.
 pause
 exit /b 1
-
-:end
-echo:
-pause
-exit /b 0
