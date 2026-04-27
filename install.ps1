@@ -580,8 +580,8 @@ function Test-Cursor {
 }
 
 function Test-OpenCode {
-    # OpenCode 配置文件在项目目录下
-    $configPath = Join-Path $ScriptDir "opencode.json"
+    # OpenCode 全局配置文件在用户目录下
+    $configPath = Join-Path $env:USERPROFILE ".opencode\config.json"
     
     # 检查 OpenCode 是否安装（多种方式）
     # 1. npm 全局安装
