@@ -273,11 +273,11 @@ function Test-PythonPackages {
         if ($req -match "^([a-zA-Z0-9_-]+)") {
             $packageName = $matches[1]
             
-            # 检查包是否已安装
-            $checkCmd = "& '$PythonExe' -c `"import $packageName`" 2>&1"
-            $result = Invoke-Expression $checkCmd 2>$null
+            # 检查包是否已安装（用pip show避免import副作用）
+            $checkResult = & $PythonExe -m pip show $packageName --quiet 2>&1
+            $found = ($LASTEXITCODE -eq 0)
             
-            if ($LASTEXITCODE -eq 0) {
+            if ($found) {
                 $installedPackages += $packageName
             }
             else {
