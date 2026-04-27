@@ -78,7 +78,7 @@ async def get_coding_rules(project_path: Optional[str] = None) -> CallToolResult
 
         logger.info("成功获取编码规则")
         output = f"编码规则 (来源: {'用户' if user_rules else '默认'}):\n\n"
-        output += final_rules[:2000]  # 限制输出长度
+        output += final_rules
         return CallToolResult(content=[TextContent(type="text", text=output)])
 
     except Exception as e:
