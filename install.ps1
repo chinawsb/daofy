@@ -44,6 +44,10 @@
 .PARAMETER PythonPath
     指定 Python 解释器路径，默认自动检测
 
+.PARAMETER ProjectDir
+    指定项目目录路径（CodeArts Agent 使用）。MCP Server 将在该目录下运行，
+    从而使知识库和编译功能针对该项目的 Delphi 代码。
+
 .NOTES
     Author: Delphi MCP Server Team
     Version: 1.0.0
@@ -58,7 +62,10 @@ param(
     [switch]$Force,
 
     [Parameter(Mandatory=$false)]
-    [string]$PythonPath = ""
+    [string]$PythonPath = "",
+
+    [Parameter(Mandatory=$false)]
+    [string]$ProjectDir = ""
 )
 
 # ============================================================
@@ -1007,7 +1014,8 @@ function Test-ChatGLM {
 function Get-McpConfig {
     param(
         [string]$PythonExe,
-        [string]$ConfigType = "Standard"
+        [string]$ConfigType = "Standard",
+        [string]$ProjectDir = ""
     )
 
     # 根据是否使用虚拟环境决定配置方式
@@ -1054,10 +1062,11 @@ function Get-McpConfig {
         }
         else {
             # 使用系统 Python，使用 cwd 方式
+            $cwdPath = if ($ProjectDir -and (Test-Path $ProjectDir)) { $ProjectDir } else { $ScriptDir }
             return @{
                 command = "python"
                 args = @("src\server.py")
-                cwd = $ScriptDir
+                cwd = $cwdPath
                 env = @{
                     PYTHONUNBUFFERED = "1"
                     PYTHONIOENCODING = "utf-8"
@@ -1223,13 +1232,32 @@ function Remove-McpConfig {
 function Install-McpServer {
     param(
         [hashtable]$AgentInfo,
-        [string]$PythonExe
+        [string]$PythonExe,
+        [string]$ProjectDir = ""
     )
 
     Write-Info "正在配置 $($AgentInfo.Name)..."
     Write-Info "配置文件: $($AgentInfo.ConfigPath)"
 
     $configType = if ($AgentInfo.ConfigType) { $AgentInfo.ConfigType } else { "Standard" }
+
+    # CodeArts Agent 需要项目目录
+    $effectiveProjectDir = $ProjectDir
+    if ($AgentInfo.Name -eq "CodeArts Agent" -and -not $effectiveProjectDir) {
+        Write-Info ""
+        Write-Info "CodeArts Agent 使用项目级 MCP 配置，需要指定项目目录。"
+        Write-Info "项目目录是您的 Delphi 项目所在目录，MCP Server 将在该目录下运行。"
+        Write-Info ""
+        $inputDir = Read-Host "请输入项目目录路径（留空则使用当前目录）"
+        if ($inputDir) {
+            if (Test-Path $inputDir) {
+                $effectiveProjectDir = $inputDir
+            }
+            else {
+                Write-Warning "路径不存在: $inputDir，将使用默认目录"
+            }
+        }
+    }
 
     # 检查是否已配置
     $alreadyConfigured = Test-McpConfigured -ConfigPath $AgentInfo.ConfigPath -ServerName $McpServerName -ConfigType $configType
@@ -1245,7 +1273,7 @@ function Install-McpServer {
     }
 
     # 生成 MCP 配置
-    $mcpConfig = Get-McpConfig -PythonExe $PythonExe -ConfigType $configType
+    $mcpConfig = Get-McpConfig -PythonExe $PythonExe -ConfigType $configType -ProjectDir $effectiveProjectDir
 
     # 添加配置
     try {
@@ -1446,7 +1474,7 @@ function Main {
     $failCount = 0
 
     foreach ($agentInfo in $installedAgents) {
-        $result = Install-McpServer -AgentInfo $agentInfo -PythonExe $pythonExe
+        $result = Install-McpServer -AgentInfo $agentInfo -PythonExe $pythonExe -ProjectDir $ProjectDir
         if ($result) {
             $successCount++
         }
