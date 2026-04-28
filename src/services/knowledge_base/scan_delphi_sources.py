@@ -224,7 +224,7 @@ def _extract_all_entities(content: str) -> List[Dict]:
     
     # 提取 procedure (FP)
     for match in _FUNC_PATTERN_2.finditer(content):
-        name = match.group(2)
+        name = match.group(1)
         line = content[:match.start()].count('\n') + 1
         entities.append({
             'name': name,
