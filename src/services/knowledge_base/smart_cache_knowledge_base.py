@@ -680,8 +680,8 @@ class SmartCacheKnowledgeBase:
                 var_block = match.group(1)
                 line_start = content[:match.start()].count('\n') + 1
                 
-                var_line_pattern = r'\s*([A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*)\s*:\s*([^;]+)\s*;'
-                for item_match in re.finditer(var_line_pattern, var_block):
+                var_line_pattern = r'^\s*([A-Z][a-zA-Z0-9]*(?:\s*,\s*[A-Z][a-zA-Z0-9]*)*)\s*:\s*([^;]+)\s*;'
+                for item_match in re.finditer(var_line_pattern, var_block, re.MULTILINE):
                     var_names = item_match.group(1)
                     var_type = item_match.group(2).strip()
                     line_num = line_start + var_block[:item_match.start()].count('\n')
