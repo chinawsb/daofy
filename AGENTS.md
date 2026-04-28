@@ -80,10 +80,12 @@ python src/server.py
 ### Database Schema (3 Tables)
 
 | Table | Description | Records |
-|-------|-------------|---------|
+|-------|------------|---------|
 | **metadata** | Key-value pairs (total_files, total_lines, scan_date) | 3 |
 | **files** | Source file information | ~2,768 |
-| **entities** | Unified entity table with kind codes | ~774,024 |
+| **vocabularies** | Unified entity table with kind codes | ~774,024 |
+
+**注意**: 没有 `entities` 表。实体数据存储在 `vocabularies` 表中。
 
 ### Kind Codes (Two-Letter)
 

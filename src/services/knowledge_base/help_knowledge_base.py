@@ -1361,6 +1361,7 @@ class DelphiHelpKnowledgeBase:
                     type TEXT,
                     name TEXT,
                     name_lower TEXT,
+                    name_lower_rev TEXT,
                     file_id INTEGER,
                     line INTEGER,
                     base_class TEXT,
@@ -1417,13 +1418,14 @@ class DelphiHelpKnowledgeBase:
                 # 插入 vocabularies (类)
                 for cls in doc.get('classes', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'class',
                         cls.get('name', ''),
                         cls.get('name', '').lower() if cls.get('name') else '',
+                        cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                         file_id,
                         cls.get('line', 0),
                         cls.get('base_class', ''),
@@ -1434,13 +1436,14 @@ class DelphiHelpKnowledgeBase:
                 # 插入 vocabularies (函数)
                 for func in doc.get('functions', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'function',
                         func.get('name', ''),
                         func.get('name', '').lower() if func.get('name') else '',
+                        func.get('name', '').lower()[::-1] if func.get('name') else '',
                         file_id,
                         func.get('line', 0),
                         '',
@@ -1451,13 +1454,14 @@ class DelphiHelpKnowledgeBase:
                 # 插入 vocabularies (属性)
                 for prop in doc.get('properties', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'property',
                         prop.get('name', ''),
                         prop.get('name', '').lower() if prop.get('name') else '',
+                        prop.get('name', '').lower()[::-1] if prop.get('name') else '',
                         file_id,
                         prop.get('line', 0),
                         '',
@@ -1468,13 +1472,14 @@ class DelphiHelpKnowledgeBase:
                 # 插入 vocabularies (事件)
                 for event in doc.get('events', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'event',
                         event.get('name', ''),
                         event.get('name', '').lower() if event.get('name') else '',
+                        event.get('name', '').lower()[::-1] if event.get('name') else '',
                         file_id,
                         event.get('line', 0),
                         '',

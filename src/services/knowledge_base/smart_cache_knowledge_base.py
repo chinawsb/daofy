@@ -253,6 +253,7 @@ class SmartCacheKnowledgeBase:
                 type TEXT NOT NULL,
                 name TEXT NOT NULL,
                 name_lower TEXT NOT NULL,
+                name_lower_rev TEXT,
                 file_id INTEGER,
                 line INTEGER,
                 base_class TEXT,
@@ -310,6 +311,7 @@ class SmartCacheKnowledgeBase:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_type ON vocabularies(type)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name ON vocabularies(name)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower ON vocabularies(name_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower_rev ON vocabularies(name_lower_rev)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_file_id ON vocabularies(file_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_vector_status ON vocabularies(vector_status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(word)")

@@ -597,6 +597,7 @@ class ThirdPartyKnowledgeBase:
                 type TEXT,
                 name TEXT,
                 name_lower TEXT,
+                name_lower_rev TEXT,
                 file_id INTEGER,
                 line INTEGER,
                 base_class TEXT,
@@ -655,11 +656,12 @@ class ThirdPartyKnowledgeBase:
             # 插入 vocabularies (类)
             for cls in file_info.get('classes', []):
                 cursor.execute("""
-                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                        description, vector, vector_status, attributes, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                     file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
@@ -667,11 +669,12 @@ class ThirdPartyKnowledgeBase:
             # 插入 vocabularies (函数)
             for func in file_info.get('functions', []):
                 cursor.execute("""
-                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                        description, vector, vector_status, attributes, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    func.get('name', '').lower()[::-1] if func.get('name') else '',
                     file_id, func.get('line', 0), '', func.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
@@ -679,11 +682,12 @@ class ThirdPartyKnowledgeBase:
             # 插入 vocabularies (常量)
             for const in file_info.get('constants', []):
                 cursor.execute("""
-                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
-                        description, vector, vector_status, attributes, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     'constant', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    const.get('name', '').lower()[::-1] if const.get('name') else '',
                     file_id, const.get('line', 0), '', const.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
@@ -723,11 +727,12 @@ class ThirdPartyKnowledgeBase:
                 # 插入 vocabularies (类)
                 for cls in help_doc.get('classes', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                        cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                         file_id, 0, cls.get('base_class', ''), cls.get('description', ''),
                         None, 'pending', None, current_time, current_time
                     ))
@@ -735,11 +740,12 @@ class ThirdPartyKnowledgeBase:
                 # 插入 vocabularies (函数)
                 for func in help_doc.get('functions', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                        func.get('name', '').lower()[::-1] if func.get('name') else '',
                         file_id, 0, '', func.get('description', ''),
                         None, 'pending', None, current_time, current_time
                     ))
@@ -747,11 +753,12 @@ class ThirdPartyKnowledgeBase:
                 # 插入 vocabularies (属性)
                 for prop in help_doc.get('properties', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'property', prop.get('name', ''), prop.get('name', '').lower() if prop.get('name') else '',
+                        prop.get('name', '').lower()[::-1] if prop.get('name') else '',
                         file_id, 0, '', prop.get('description', ''),
                         None, 'pending', None, current_time, current_time
                     ))
@@ -759,11 +766,12 @@ class ThirdPartyKnowledgeBase:
                 # 插入 vocabularies (事件)
                 for event in help_doc.get('events', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         'event', event.get('name', ''), event.get('name', '').lower() if event.get('name') else '',
+                        event.get('name', '').lower()[::-1] if event.get('name') else '',
                         file_id, 0, '', event.get('description', ''),
                         None, 'pending', None, current_time, current_time
                     ))

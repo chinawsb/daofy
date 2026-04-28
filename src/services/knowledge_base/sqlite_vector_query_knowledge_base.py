@@ -84,6 +84,40 @@ class SQLiteVectorKnowledgeBase:
                 print("使用缓存的索引")
                 self.load_vocabulary()
 
+                # 迁移: 添加 name_lower_rev 列和索引（如果不存在）
+                cursor.execute("PRAGMA table_info(vocabularies)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if 'name_lower_rev' not in columns:
+                    print("迁移: 添加 name_lower_rev 列...")
+                    cursor.execute("ALTER TABLE vocabularies ADD COLUMN name_lower_rev TEXT")
+                    conn.commit()
+                    # 填充反转数据
+                    print("迁移: 填充 name_lower_rev 数据...")
+                    cursor.execute("SELECT COUNT(*) FROM vocabularies")
+                    total = cursor.fetchone()[0]
+                    print(f"  共 {total} 行，分批处理...")
+                    # 注册反转函数
+                    conn.create_function("my_reverse", 1, lambda s: s[::-1] if s else '')
+                    cursor.execute("UPDATE vocabularies SET name_lower_rev = my_reverse(name_lower) WHERE name_lower_rev IS NULL")
+                    conn.commit()
+                    print(f"  填充完成")
+                else:
+                    # 确保已有列但没有数据的行被填充
+                    cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE name_lower_rev IS NULL AND name_lower IS NOT NULL")
+                    missing = cursor.fetchone()[0]
+                    if missing > 0:
+                        print(f"迁移: 补填 {missing} 行 name_lower_rev 数据...")
+                        conn.create_function("my_reverse", 1, lambda s: s[::-1] if s else '')
+                        cursor.execute("UPDATE vocabularies SET name_lower_rev = my_reverse(name_lower) WHERE name_lower_rev IS NULL AND name_lower IS NOT NULL")
+                        conn.commit()
+                
+                # 确保反转列索引存在
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_vocabularies_name_lower_rev'")
+                if not cursor.fetchone():
+                    print("迁移: 创建 name_lower_rev 索引...")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower_rev ON vocabularies(name_lower_rev)")
+                    conn.commit()
+
         except Exception as e:
             print(f"加载知识库失败: {e}")
             self._close_connection()
@@ -980,11 +1014,15 @@ class SQLiteVectorKnowledgeBase:
             print("词汇表不存在，跳过加载（精确查询仍可用）")
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索类 (使用 LIKE 匹配)"""
+        """语义搜索类 (使用反转索引)"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         query_lower = query.lower()
+        # 使用反转索引: *keyword* 变成 reversed(keyword)* (前缀匹配，走索引)
+        rev_pattern = query_lower[::-1] + '*'
+        # entities 表没有反转列，仍然用 substring GLOB
+        sub_pattern = f'*{query_lower}*'
         
         # 检查是否有 entities 表
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
@@ -998,20 +1036,22 @@ class SQLiteVectorKnowledgeBase:
         
         if has_entities:
             # 使用 entities 表
-            cursor.execute(f"""
+            cursor.execute("""
                 SELECT name, kind FROM entities 
                 WHERE kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
-                AND (name LIKE '%{query}%' OR name LIKE '%{query_lower}%')
-            """)
+                AND LOWER(name) GLOB ?
+            """, (sub_pattern,))
             for row in cursor.fetchall():
                 results.append((row['name'], 0.8))
         elif has_vocabularies:
-            # 使用 vocabularies 表
-            cursor.execute(f"""
-                SELECT name, type FROM vocabularies 
-                WHERE type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
-                AND (name LIKE '%{query}%' OR name_lower LIKE '%{query_lower}%')
-            """)
+            # 使用 vocabularies 表 (子查询强制先用反转索引，再过滤 type)
+            cursor.execute("""
+                SELECT v.name, v.type FROM vocabularies v 
+                WHERE v.rowid IN (
+                    SELECT rowid FROM vocabularies WHERE name_lower_rev GLOB ?
+                )
+                AND v.type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
+            """, (rev_pattern,))
             for row in cursor.fetchall():
                 results.append((row['name'], 0.8))
         
@@ -1026,11 +1066,15 @@ class SQLiteVectorKnowledgeBase:
         return unique_results[:top_k]
 
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索函数 (使用 LIKE 匹配)"""
+        """语义搜索函数 (使用反转索引)"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         query_lower = query.lower()
+        # 使用反转索引: *keyword* 变成 reversed(keyword)* (前缀匹配，走索引)
+        rev_pattern = query_lower[::-1] + '*'
+        # entities 表没有反转列，仍然用 substring GLOB
+        sub_pattern = f'*{query_lower}*'
         
         # 检查是否有 entities 表
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
@@ -1044,20 +1088,22 @@ class SQLiteVectorKnowledgeBase:
         
         if has_entities:
             # 使用 entities 表
-            cursor.execute(f"""
+            cursor.execute("""
                 SELECT name FROM entities 
                 WHERE kind IN ('FF', 'FP')
-                AND (name LIKE '%{query}%' OR name LIKE '%{query_lower}%')
-            """)
+                AND LOWER(name) GLOB ?
+            """, (sub_pattern,))
             for row in cursor.fetchall():
                 results.append((row['name'], 0.8))
         elif has_vocabularies:
-            # 使用 vocabularies 表
-            cursor.execute(f"""
-                SELECT name FROM vocabularies 
-                WHERE type IN ('FF', 'FP')
-                AND (name LIKE '%{query}%' OR name_lower LIKE '%{query_lower}%')
-            """)
+            # 使用 vocabularies 表 (子查询强制先用反转索引，再过滤 type)
+            cursor.execute("""
+                SELECT v.name FROM vocabularies v 
+                WHERE v.rowid IN (
+                    SELECT rowid FROM vocabularies WHERE name_lower_rev GLOB ?
+                )
+                AND v.type IN ('FF', 'FP')
+            """, (rev_pattern,))
             for row in cursor.fetchall():
                 results.append((row['name'], 0.8))
         
@@ -1070,8 +1116,6 @@ class SQLiteVectorKnowledgeBase:
                 unique_results.append((name, sim))
         
         return unique_results[:top_k]
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results[:top_k]
 
     def search(self, query: str, search_type: str = 'all') -> List[Dict]:
         """
@@ -1122,9 +1166,9 @@ class SQLiteVectorKnowledgeBase:
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entities'")
         has_entities = cursor.fetchone() is not None
         if has_entities:
-            cursor.execute("SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses FROM entities e INNER JOIN files f ON e.file_id = f.id WHERE (LOWER(e.name) = ? OR (LOWER(e.name) LIKE ? AND e.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
+            cursor.execute("SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses FROM entities e INNER JOIN files f ON e.file_id = f.id WHERE (LOWER(e.name) = ? OR LOWER(e.name) GLOB ?)", (name_lower, name_lower + '<*'))
         else:
-            cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (v.name_lower = ? OR (v.name_lower LIKE ? AND v.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
+            cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (v.name_lower = ? OR v.name_lower GLOB ?)", (name_lower, name_lower + '<*'))
         results = []
         file_cache = {}
         for row in cursor.fetchall():
