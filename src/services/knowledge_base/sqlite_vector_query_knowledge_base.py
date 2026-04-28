@@ -1124,7 +1124,7 @@ class SQLiteVectorKnowledgeBase:
         if has_entities:
             cursor.execute("SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses FROM entities e INNER JOIN files f ON e.file_id = f.id WHERE (LOWER(e.name) = ? OR (LOWER(e.name) LIKE ? AND e.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
         else:
-            cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (LOWER(v.name) = ? OR (LOWER(v.name) LIKE ? AND v.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
+            cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (v.name_lower = ? OR (v.name_lower LIKE ? AND v.name LIKE '%<%>'))", (name_lower, name_lower + '<%'))
         results = []
         file_cache = {}
         for row in cursor.fetchall():
