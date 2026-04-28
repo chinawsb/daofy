@@ -57,10 +57,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     
     _SEARCH_TYPE_TO_KIND = {
-        'class': ['TC', 'c'], 'record': ['TR', 'r'], 'interface': ['TI', 'i'], 'enum': ['TE', 'e'],
-        'set': ['TS', 's'], 'type': ['TY', 'AT', 'PT', 'y', 'a', 't'], 'function': ['FF', 'f'], 'procedure': ['FP', 'p'],
-        'const': ['CC', 'k'], 'resourcestring': ['CR'], 'property': ['MP', 'v'], 'field': ['MF', 'm'],
-        'method': ['MM', 'g'], 'unit': ['u'], 'event': ['MM', 'g'],
+        'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
+        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF'], 'procedure': ['FP'],
+        'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
+        'method': ['MM'], 'unit': ['UI'], 'event': ['ME'],
     }
 
     def _filter_by_search_type(symbols, st):
@@ -90,7 +90,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     _KIND_DESC = {
         'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
         'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程',
-        'CC': '常量', 'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
+        'CC': '常量', 'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件', 'UI': '单元'
     }
 
     def _format_symbol(r):
