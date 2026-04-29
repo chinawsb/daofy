@@ -40,7 +40,7 @@ Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows 
 - **Third-party Library Knowledge Base**: Automatically extracts third-party library paths from .dproj files and builds knowledge base
 - **Incremental Updates**: Automatically detects source code changes and incrementally updates project knowledge base
 - **Help Documentation Knowledge Base**: Extracts content from Delphi CHM help files, supports API documentation queries
-- **Generic Document Knowledge Base**: Supports scanning and searching of txt/md/html/docx/doc/pdf and web documents
+- **Generic Document Knowledge Base**: Supports scanning and searching of txt/md/html/docx/doc/pdf/epub and web documents
   - Required dependencies: `beautifulsoup4`, `html2text`, `lxml`, `requests` (already in requirements.txt)
   - Optional dependencies: `python-docx` (Word .docx support), `antiword/catdoc` (legacy Word .doc support), `PyMuPDF` (PDF support, recommended) or `pdfplumber` (PDF support, fallback)
 - **Smart Deduplication**: Deduplicates based on full path, correctly handles files with same name in different directories

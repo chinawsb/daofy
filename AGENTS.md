@@ -344,7 +344,7 @@ When adding new MCP tools:
 ### Document Knowledge Base
 
 - **存储位置**: `data/document-knowledge-base/`
-- **支持格式**: txt, md, html, docx, doc, pdf, 网页
+- **支持格式**: txt, md, html, docx, doc, pdf, epub, 网页
 - **索引**: 
   - 逆序索引 (`title_rev`) - 优化前缀/后缀匹配
   - FTS5 全文索引 - BM25 排序（懒加载）

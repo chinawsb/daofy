@@ -451,6 +451,108 @@ class PDFProcessor(DocumentProcessor):
             return None
 
 
+class EPUBProcessor(DocumentProcessor):
+    """EPUB 电子书处理器 - 使用 zipfile + BeautifulSoup 直接解析"""
+    
+    def __init__(self):
+        self.supported_extensions = ['.epub']
+    
+    def process(self, file_path: Path) -> Optional[Dict]:
+        try:
+            import zipfile
+            from xml.etree import ElementTree as ET
+            
+            with zipfile.ZipFile(str(file_path), 'r') as zf:
+                container_xml = zf.read('META-INF/container.xml')
+                container_root = ET.fromstring(container_xml)
+                
+                rootfile_elem = container_root.find('.//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile')
+                opf_path = rootfile_elem.get('full-path')
+                
+                opf_content = zf.read(opf_path)
+                opf_root = ET.fromstring(opf_content)
+                
+                ns = {'opf': 'http://www.idpf.org/2007/opf'}
+                
+                manifest = {}
+                for item in opf_root.findall('.//opf:item', ns):
+                    item_id = item.get('id')
+                    href = item.get('href')
+                    manifest[item_id] = href
+                
+                spine_ids = []
+                for itemref in opf_root.findall('.//opf:itemref', ns):
+                    idref = itemref.get('idref')
+                    if idref in manifest:
+                        spine_ids.append(idref)
+                
+                opf_dir = opf_path.rsplit('/', 1)[0] if '/' in opf_path else ''
+                
+                text_content = []
+                sections = []
+                
+                for item_id in spine_ids[:100]:
+                    href = manifest[item_id]
+                    if opf_dir:
+                        file_path_in_zip = f"{opf_dir}/{href}"
+                    else:
+                        file_path_in_zip = href
+                    
+                    try:
+                        html_content = zf.read(file_path_in_zip)
+                        
+                        if BeautifulSoup:
+                            soup = BeautifulSoup(html_content, 'lxml')
+                            
+                            for heading in soup.find_all(['h1', 'h2', 'h3']):
+                                title = heading.get_text().strip()
+                                if title and len(title) < 100:
+                                    level = int(heading.name[1])
+                                    sections.append({'level': level, 'title': title})
+                            
+                            for script in soup.find_all('script'):
+                                script.decompose()
+                            for style in soup.find_all('style'):
+                                style.decompose()
+                            
+                            text = soup.get_text(separator='\n', strip=True)
+                            if text:
+                                text_content.append(text)
+                        else:
+                            text = html_content.decode('utf-8', errors='ignore')
+                            text_content.append(text)
+                    except KeyError:
+                        continue
+                
+                full_text = '\n\n'.join(text_content)
+                
+                title = file_path.stem
+                for elem in opf_root.findall('.//opf:title', ns):
+                    if elem.text:
+                        title = elem.text
+                        break
+                
+                metadata = {}
+                for elem in opf_root.findall('.//opf:creator', ns):
+                    if elem.text:
+                        metadata['author'] = elem.text
+                        break
+                
+                return {
+                    'title': title,
+                    'content': full_text,
+                    'content_type': 'epub',
+                    'size': len(full_text),
+                    'line_count': full_text.count('\n') + 1,
+                    'hash': hashlib.md5(full_text.encode()).hexdigest(),
+                    'sections': sections[:50],
+                    'code_examples': [],
+                    'metadata': metadata
+                }
+        except Exception:
+            return None
+
+
 class WebDocumentProcessor:
     """网页文档处理器（在线文档）"""
     
@@ -539,7 +641,8 @@ def _process_document_worker(args: Tuple) -> Optional[Dict]:
         HTMLProcessor(),
         DocxProcessor(),
         DocProcessor(),
-        PDFProcessor()
+        PDFProcessor(),
+        EPUBProcessor()
     ]
     
     try:
@@ -572,7 +675,7 @@ class GenericDocumentScanner:
         '.txt', '.md', '.markdown',
         '.htm', '.html',
         '.docx', '.doc',
-        '.pdf'
+        '.pdf', '.epub'
     ]
     
     def __init__(self, kb_dir: str, config: Optional[Dict] = None, progress_callback: Optional[Callable] = None):
