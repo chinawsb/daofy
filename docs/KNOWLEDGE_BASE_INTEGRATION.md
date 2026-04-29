@@ -27,84 +27,53 @@ SQLite 向量知识库已成功集成到 delphi_mcp_server 项目中!
    - 提供 7 个 MCP 工具供智能体使用
    - 支持所有主流 AI 助手平台
 
-## 🔧 新增 MCP 工具
+## 🔧 MCP 工具 (当前)
 
-### 1. build_knowledge_base - 构建知识库
+知识库功能统一通过 `delphi_kb` 工具提供，三种模式通过 `action` 参数控制：
 
-**描述**: 构建 Delphi 源码知识库 (支持语义搜索)
+### delphi_kb (action=search) - 搜索知识库
 
-**参数**:
-- `version` (可选): Delphi 版本,默认使用最新版本
-- `force_rebuild` (可选,默认 false): 是否强制重建知识库
-
-**示例**:
-```
-请构建 Delphi 知识库
-请使用 Delphi 11 Alexandria 版本构建知识库
-请强制重建知识库
-```
-
-### 2. search_class - 搜索类
-
-**描述**: 搜索 Delphi 类定义
+**描述**: 搜索 Delphi 代码/类/函数/文档
 
 **参数**:
-- `class_name` (必需): 类名,如 'TButton'
+- `query` (必需): 搜索关键词，如 'TButton'、'Create' 或自然语言
+- `search_type` (可选): 过滤实体类型，如 class/function/procedure 等
+- `kb_type` (可选): 知识库范围，如 delphi/project/thirdparty/help
+- `top_k` (可选, 默认 10): 返回结果数量
 
 **示例**:
 ```
 请搜索 TButton 类
-请查找 TComponent 类的定义
+请查找 Create 函数
+我需要创建一个按钮
 ```
 
-### 3. search_function - 搜索函数
+### delphi_kb (action=stats) - 查看统计
 
-**描述**: 搜索 Delphi 函数/过程定义
+**描述**: 查看知识库统计信息（文件/类/函数数量）
 
 **参数**:
-- `function_name` (必需): 函数名,如 'Create'
-
-**示例**:
-```
-请搜索 Create 函数
-请查找 Free 函数的定义
-```
-
-### 4. semantic_search - 语义搜索
-
-**描述**: 语义搜索 Delphi 代码 (支持自然语言查询)
-
-**参数**:
-- `query` (必需): 搜索查询,如 'create button' 或 'network http request'
-- `top_k` (可选,默认 10): 返回结果数量
-
-**示例**:
-```
-请搜索如何创建一个按钮
-我需要处理网络请求
-查找文件流相关的类和函数
-```
-
-### 5. get_knowledge_base_stats - 获取统计信息
-
-**描述**: 获取知识库统计信息
-
-**参数**: 无
+- `kb_type` (可选): 知识库范围
 
 **示例**:
 ```
 请查看知识库统计信息
 ```
 
-### 6. list_delphi_versions - 列出版本
+### delphi_kb (action=build) - 构建知识库
 
-**描述**: 列出已安装的 Delphi 版本
+**描述**: 构建/重建 Delphi 知识库
 
-**参数**: 无
+**参数**:
+- `version` (可选): Delphi 版本
+- `force_rebuild` (可选): 是否强制重建
+- `kb_type` (可选): 要构建的知识库类型
 
 **示例**:
 ```
-请列出已安装的 Delphi 版本
+请构建 Delphi 知识库
+请使用 Delphi 11 版本构建知识库
+请强制重建知识库
 ```
 
 ## 📁 项目结构
@@ -133,7 +102,7 @@ delphi_mcp_server/
 ```
 你: 请构建 Delphi 知识库
 
-智能体: [调用 build_knowledge_base 工具]
+智能体: [调用 delphi_kb 工具 action=build]
        正在检测 Delphi 版本...
        使用 Delphi 版本: Delphi 11 Alexandria (22.0)
        源码目录: C:\Program Files (x86)\Embarcadero\Studio\22.0\source
@@ -158,7 +127,7 @@ delphi_mcp_server/
 ```
 你: 请搜索 TButton 类
 
-智能体: [调用 search_class 工具]
+智能体: [调用 delphi_kb 工具 action=search, search_type=class]
        找到 3 个类 'TButton':
 
        1. 文件: fmx/FMX.StdCtrls.pas
@@ -184,7 +153,7 @@ delphi_mcp_server/
 ```
 你: 我需要创建一个按钮
 
-智能体: [调用 semantic_search 工具]
+智能体: [调用 delphi_kb 工具 action=search, search_type=semantic]
        语义搜索 '创建一个按钮' 的结果:
 
        相关的类:
@@ -207,7 +176,7 @@ delphi_mcp_server/
 ```
 你: 请查看知识库统计信息
 
-智能体: [调用 get_knowledge_base_stats 工具]
+智能体: [调用 delphi_kb 工具 action=stats]
        知识库统计信息:
 
        - 类数量: 17,731
@@ -247,7 +216,7 @@ delphi_mcp_server/
 ```
 你: 我需要开发一个文件上传功能
 
-智能体: [调用 semantic_search 工具]
+智能体: [调用 delphi_kb 工具 action=search, search_type=semantic]
        语义搜索 '文件上传' 的结果:
 
        相关的类:
@@ -273,7 +242,7 @@ delphi_mcp_server/
 ```
 你: TButton 有哪些属性和方法?
 
-智能体: [调用 search_class 工具]
+智能体: [调用 delphi_kb 工具 action=search, search_type=class]
        找到 3 个类 'TButton':
 
        [显示 TButton 的详细信息]
@@ -296,7 +265,7 @@ delphi_mcp_server/
 ```
 你: 我需要一个处理字符串的函数
 
-智能体: [调用 semantic_search 工具]
+智能体: [调用 delphi_kb 工具 action=search, search_type=semantic]
        语义搜索 '字符串处理' 的结果:
 
        相关的类:
@@ -337,7 +306,7 @@ kb_service = DelphiKnowledgeBaseService(kb_dir="自定义路径")
 默认使用最新检测到的 Delphi 版本。可以通过参数指定特定版本:
 
 ```python
-kb_service.build_knowledge_base(version="22.0")  # 使用 Delphi 11 Alexandria
+kb_service.build_knowledge_base(version="22.0")  # 使用 Delphi 11 Alexandria（旧版API，新版使用 delphi_kb action=build）
 ```
 
 ## 🧪 测试

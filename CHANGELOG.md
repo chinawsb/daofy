@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.04.29] - 2026-04-29
+
+### Added
+
+- Schema 版本管理机制（SCHEMA_VERSION），metadata 表记录版本号
+- 知识库搜索工具支持 project/thirdparty/help 多库并行搜索
+- 帮助知识库新增 `search_function` 支持
+- 文件查找改为多策略路径匹配（正斜杠/反斜杠/文件名后缀），支持跨知识库自动加载
+
+### Changed
+
+- 工具 `search_knowledge` 更名为 `delphi_kb`，所有工具描述和参数说明改为中文
+- 移除 entities 表兼容代码，统一使用 vocabularies 表（删除 421 行旧代码）
+- SQLite 连接添加 `PRAGMA busy_timeout=10000` 避免 database is locked
+- 移除 `use_smart_cache` 废弃参数，清理未导出工具函数
+- 帮助知识库构建：自动为旧库添加 name_lower_rev 列
+
+### Removed
+
+- 移除 `_build_with_legacy` 方法
+- 移除 `sqlite_vector_query_knowledge_base.py` 中的 `_get_file_types`、`_find_parent_from_cache`、`_find_parent_by_line_fast`、`_find_parent_by_line` 方法
+
 ## [2026.04.26] - 2026-04-26
 
 ### Fixed
