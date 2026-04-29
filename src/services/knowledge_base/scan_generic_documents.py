@@ -467,7 +467,12 @@ class EPUBProcessor(DocumentProcessor):
                 container_root = ET.fromstring(container_xml)
                 
                 rootfile_elem = container_root.find('.//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile')
+                if rootfile_elem is None:
+                    return None
+                
                 opf_path = rootfile_elem.get('full-path')
+                if not opf_path:
+                    return None
                 
                 opf_content = zf.read(opf_path)
                 opf_root = ET.fromstring(opf_content)
@@ -478,7 +483,8 @@ class EPUBProcessor(DocumentProcessor):
                 for item in opf_root.findall('.//opf:item', ns):
                     item_id = item.get('id')
                     href = item.get('href')
-                    manifest[item_id] = href
+                    if item_id and href:
+                        manifest[item_id] = href
                 
                 spine_ids = []
                 for itemref in opf_root.findall('.//opf:itemref', ns):
