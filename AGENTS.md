@@ -141,6 +141,9 @@ python build_kb.py
 # Build project knowledge base (via MCP tool)
 # delphi_kb(action="build", kb_type="project", project_path="path/to/project.dproj")
 
+# Build Delphi help document knowledge base (via MCP tool, async)
+# delphi_kb(action="build", kb_type="document", directory="C:\Program Files (x86)\Embarcadero\Studio\22.0\Help\Doc", extensions=[".chm"], async_mode=true)
+
 # Run with custom paths
 python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
 ```
@@ -295,6 +298,26 @@ AI Agent 在编译或生成 Delphi 代码前，**必须**先调用 `get_coding_r
 ```
 
 规则包含：命名规则、格式化规则、类型声明顺序、文件头注释、修改代码约束、审核要点等。
+
+### 构建 Delphi 帮助文档知识库
+
+用户首次使用或需要重建 Delphi API 文档时，调用 `delphi_kb` 工具构建文档知识库：
+
+```
+delphi_kb(
+    action="build",
+    kb_type="document",
+    directory="C:\Program Files (x86)\Embarcadero\Studio\<版本>\Help\Doc",
+    extensions=[".chm"],
+    async_mode=true
+)
+```
+
+说明：
+- `directory`：Delphi 帮助目录，需根据用户安装的版本调整（如 22.0=Delphi 11, 23.0=Delphi 12）
+- `extensions=[".chm"]`：只扫描 CHM 文件，工具会自动解压并导入 HTML 文档
+- `async_mode=true`：异步执行（耗时数分钟），提交后返回 task_id，通过 `async_task(action=status, task_id=...)` 轮询进度
+- 需要系统安装 7-Zip（可放在 `tools/7z/` 目录下免安装）
 
 ### 知识库使用优先级
 
