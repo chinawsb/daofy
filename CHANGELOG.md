@@ -18,12 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `delphi_kb` 工具新增 `action=scan/web` 和 `kb_type=document`
 - 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、PDFProcessor、WebDocumentProcessor、HlpProcessor
 - 新增依赖 `python-docx>=0.8.11`，推荐 `PyMuPDF` 或备选 `pdfplumber`
+- **项目知识库独立搜索**：`delphi_kb` 的 `kb_type=project` 改用 `ProjectKnowledgeBase` 独立查询，支持名称搜索 + 语义搜索（类/函数）
+- **read_source_file 项目知识库支持**：新增 `_search_project_kb_db()` 函数及 `project_path` 参数，按路径多策略匹配
+- **异步任务类型补充**：`async_task` 新增 `init_project_knowledge_base` 任务参数（project_path/version/force_rebuild/build_thirdparty/build_project）
+- **扩展名扫描补充**：`DelphiSourceScanner` 扩展扫描 `.dfm`/`.fmx`/`.inc` 文件
+- **共享三方库路径跳过**：项目知识库构建时自动读取共享知识库 `thirdparty_paths.json`，跳过已收录路径
+- **三方库增量构建**：基于文件 hash 对比实现增量更新，输出新增/更新/跳过/删除统计
 
 ### Changed
 
-- **异步任务参数统一**：统一使用 `task_params` 参数名
-- **任务名称优化**：文档知识库构建任务显示具体操作（扫描目录/爬取网站/URL列表）
+- **异步任务参数统一**：移除 `params` 兼容写法，**仅保留 `task_params`** 参数名
+- **三方库去重逻辑**：从基于 `relative_path` 改为基于 `full_path`（完整路径）去重，更准确
+- `compile_project` 和 `delphi_kb` 的 `project_path` 描述补充 `.dpk` 扩展名
+- 扫描器文件扩展名调整：移除 `.hpp`/`.h`，补充 `.dfm`
 - **FTS5懒加载机制优化**：插入文档时不同步FTS索引，由懒加载机制按需构建
+- **任务名称优化**：文档知识库构建任务显示具体操作（扫描目录/爬取网站/URL列表）
 - AGENTS.md 更新：补充测试命令、代码风格指南、错误处理规范
 
 ### Fixed
@@ -34,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 LZ77 解压中 match 后重置 bits_left 导致短语表崩溃的 bug
 - 修复 Python 位运算溢出导致 \|PhrIndex GetBit 偏移错误
 - 修复 MCP 工具定义缺少 `build_document_knowledge_base` 任务类型
+- 修复三方库知识库增量构建时重复插入数据的问题（使用 `INSERT OR REPLACE`）
+- 修复项目知识库搜索混入 Delphi 知识库结果的问题
 
 ## [2026.04.29] - 2026-04-29
 

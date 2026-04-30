@@ -144,7 +144,7 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr)或PAS文件路径 [必需]"},
+                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk)或PAS文件路径 [必需]"},
                         "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
                         "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
                         "output_path": {"type": "string", "description": "输出目录"},
@@ -177,7 +177,7 @@ async def run_server():
                         "file_path": {"type": "string", "description": "源码文件路径（action=read时，与url/doc_id三选一）"},
                         "offset": {"type": "integer", "default": 0, "description": "内容起始偏移（action=read时，默认0）"},
                         "limit": {"type": "integer", "default": 5000, "description": "内容最大长度（action=read时，默认5000，最大20000）"},
-                        "project_path": {"type": "string", "description": "项目.dproj/.dpr路径（仅action=build且kb_type=project时需要）"},
+                        "project_path": {"type": "string", "description": "项目.dproj/.dpr/.dpk路径（action=build且kb_type=project时必需；action=search且kb_type=project时也需要）"},
                         "version": {"type": "string", "description": "Delphi版本号如 '23.0'（仅action=build且kb_type=delphi/thirdparty时需要）"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步构建（仅action=build，默认true）。true=提交后立即返回task_id(通过async_task查进度); false=阻塞等待(不推荐，可能超时)"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},
@@ -378,6 +378,14 @@ async def run_server():
                                 "max_depth": arguments.get("max_depth", 3),
                                 "domain_filter": arguments.get("domain_filter"),
                                 "url_pattern": arguments.get("url_pattern")
+                            }
+                        elif task_type == "init_project_knowledge_base":
+                            task_params = {
+                                "project_path": arguments.get("project_path"),
+                                "version": version,
+                                "force_rebuild": force_rebuild,
+                                "build_thirdparty": arguments.get("build_thirdparty", True),
+                                "build_project": arguments.get("build_project", True),
                             }
                         else:
                             task_params = {

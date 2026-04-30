@@ -9,7 +9,7 @@ This is a **Delphi MCP Server** - a Model Context Protocol server that provides 
 - **Language**: Python 3.10-3.14
 - **Platform**: Windows
 - **Test Framework**: pytest (with pytest-asyncio for async tests)
-- **Key Dependencies**: mcp>=0.9.0, pydantic>=2.0.0, beautifulsoup4, lxml, requests, sqlite-vec>=0.1.0
+- **Key Dependencies**: mcp>=0.9.0, pydantic>=2.0.0, beautifulsoup4, lxml, requests
 - **Optional Dependencies**: PyMuPDF (recommended for PDF), pdfplumber (fallback for PDF), python-docx
 
 ## Project Structure
@@ -138,6 +138,9 @@ python build_kb_fmx.py
 # Build full source knowledge base (~65s, 2768 files, 3.5M lines)
 python build_kb.py
 
+# Build project knowledge base (via MCP tool)
+# delphi_kb(action="build", kb_type="project", project_path="path/to/project.dproj")
+
 # Run with custom paths
 python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
 ```
@@ -166,6 +169,28 @@ python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
 - Use `search_by_name()` for generic searches (covers all types)
 - Use `search_by_class_name()` specifically for class types (TC)
 - Prefer generic naming over single-letter codes for clarity
+
+### Knowledge Base Types (via `delphi_kb` tool)
+
+| kb_type | Description | Build Command |
+|---------|------------|---------------|
+| `delphi` | Delphi 官方源码 (RTL/VCL/FMX 等) | `action=build, version=<ver>` |
+| `project` | 项目级知识库 (项目源码 + 三方库) | `action=build, project_path=<.dproj>` |
+| `thirdparty` | 全局共享第三方库知识库 | `action=build, version=<ver>` |
+| `help` | Delphi CHM 帮助文档 | `action=build, version=<ver>` |
+| `document` | 通用文档 (txt/md/html/docx/pdf/epub/hlp/网页) | `action=build` + `directory`/`url`/`urls` |
+
+### Source Scanner File Extensions
+
+The `DelphiSourceScanner` scans these extensions:
+- `.pas`, `.dpr`, `.dpk`, `.dfm`, `.inc`
+
+### Incremental Build Notes
+
+- **mtime_size mode** (default): Fast change detection using file modification time + size
+- **md5 mode**: Accurate but slower, computes file hash for every file
+- **Project KB**: Shares third-party paths with global KB to avoid redundant scanning
+- **Help KB**: Supports incremental update (skip unchanged files by mtime)
 
 ---
 

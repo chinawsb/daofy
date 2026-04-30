@@ -71,7 +71,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     for kb in kb_types:
         try:
-            if kb in ("delphi", "project") and _delphi_kb_service:
+            if kb == "delphi" and _delphi_kb_service:
                 # 名称搜索（精确/通配匹配）
                 symbol_results = _delphi_kb_service.search_by_name(query)
                 filtered = _filter_by_search_type(symbol_results, search_type)[:top_k]
@@ -91,6 +91,41 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                             results[f"{kb}_semantic_functions"] = semantic_functions
                     except Exception:
                         pass
+
+            elif kb == "project":
+                # 项目知识库搜索：使用 ProjectKnowledgeBase 独立查询
+                project_path = arguments.get("project_path")
+                if not project_path:
+                    results["project_error"] = "请提供 project_path 参数"
+                else:
+                    from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                    try:
+                        pkb = ProjectKnowledgeBase(project_path)
+                        pkb.load_knowledge_bases()
+                        if pkb.project_kb:
+                            # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
+                            project_results = pkb.project_kb.search_by_name(query)
+                            filtered = _filter_by_search_type(project_results, search_type)[:top_k]
+                            if filtered:
+                                results["project_symbols"] = filtered
+                            # 语义搜索（直接使用 tuple 格式兼容已有输出逻辑）
+                            if search_type in ("semantic", "all"):
+                                try:
+                                    sc = pkb.project_kb.semantic_search_classes(query, top_k=top_k)
+                                    if sc:
+                                        results["project_semantic_classes"] = sc
+                                except Exception:
+                                    pass
+                                try:
+                                    sf = pkb.project_kb.semantic_search_functions(query, top_k=top_k)
+                                    if sf:
+                                        results["project_semantic_functions"] = sf
+                                except Exception:
+                                    pass
+                        else:
+                            results["project_error"] = "项目知识库未构建，请先构建"
+                    except Exception as e:
+                        results["project_error"] = str(e)
 
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 # 确保知识库已加载

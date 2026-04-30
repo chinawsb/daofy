@@ -43,7 +43,44 @@ def _get_kb_db_path(kb_service) -> Path:
     return kb_dir / db_name
 
 
-def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
+def _search_project_kb_db(project_path: str, file_path: str) -> Optional[Path]:
+    """在项目知识库 SQLite 中搜索文件"""
+    try:
+        kb_dir = Path(project_path).parent / ".delphi-kb"
+        db_file = kb_dir / "knowledge.sqlite"
+        if not db_file.exists():
+            return None
+        conn = sqlite3.connect(str(db_file))
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        normalized = file_path.replace('\\', '/')
+        backslashed = file_path.replace('/', '\\')
+        name_part = Path(file_path).name
+        c.execute("""
+            SELECT full_path FROM files
+            WHERE full_path = ? OR full_path = ? OR full_path = ?
+               OR full_path LIKE ? OR full_path LIKE ?
+               OR relative_path = ? OR relative_path = ? OR relative_path = ?
+               OR relative_path LIKE ? OR relative_path LIKE ?
+               OR relative_path LIKE ?
+            LIMIT 1
+        """, (
+            file_path, normalized, backslashed,
+            f'%/{normalized}', f'%\\{backslashed}',
+            file_path, normalized, backslashed,
+            f'%/{normalized}', f'%\\{backslashed}',
+            f'%/{name_part}'
+        ))
+        row = c.fetchone()
+        conn.close()
+        if row and row['full_path'] and Path(row['full_path']).exists():
+            return Path(row['full_path'])
+    except Exception:
+        pass
+    return None
+
+
+def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = None) -> Optional[Path]:
     """
     在知识库中查找文件
     
@@ -117,6 +154,15 @@ def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
         except Exception:
             pass
     
+    # 3. 在项目知识库中查找
+    if project_path:
+        try:
+            result = _search_project_kb_db(project_path, file_path)
+            if result:
+                return result
+        except Exception:
+            pass
+    
     return None
 
 
@@ -153,10 +199,11 @@ async def read_source_file(arguments: Any) -> CallToolResult:
     end_line = arguments.get("end_line")
     max_lines = min(arguments.get("max_lines", 500), 1000)  # 限制最大1000行
     search_in = arguments.get("search_in", "all")
+    project_path = arguments.get("project_path")
     
     try:
         # 查找文件
-        full_path = _find_file_in_knowledge_base(file_path)
+        full_path = _find_file_in_knowledge_base(file_path, project_path)
         
         if not full_path:
             return CallToolResult(
