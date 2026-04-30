@@ -314,7 +314,7 @@ delphi_kb(
 说明：
 - **不传 directory 时自动检测**最新安装的 Delphi 帮助目录（通过注册表或默认路径）
 - 也可手动指定：`directory="C:\Program Files (x86)\Embarcadero\Studio\<版本>\Help\Doc"`
-  - 版本对照：22.0=Delphi 11, 23.0=Delphi 12
+  - 版本对照：37.0=Delphi 13, 23.0=Delphi 12, 22.0=Delphi 11, 21.0=Delphi 10.4, 20.0=Delphi 10.3
 - `extensions=[".chm"]`：只扫描 CHM 文件，工具会自动解压并导入 HTML 文档
 - `async_mode=true`：异步执行（耗时数分钟），提交后返回 task_id，通过 `async_task(action=status, task_id=...)` 轮询进度
 - 需要系统安装 7-Zip（可放在 `tools/7z/` 目录下免安装）

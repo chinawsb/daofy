@@ -110,8 +110,8 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
     except Exception:
         pass
 
-    # 注册表失败，尝试默认路径
-    for ver in ["23.0", "22.0", "21.0", "20.0", "19.0", "18.0"]:
+    # 注册表失败，尝试默认路径（版本号与注册表一致：37.0=Delphi13, 23.0=Delphi12, 22.0=Delphi11...）
+    for ver in ["37.0", "23.0", "22.0", "21.0", "20.0", "19.0", "18.0", "17.0", "16.0", "15.0", "14.0", "12.0", "11.0", "10.0", "9.0", "8.0", "7.0", "6.0", "5.0", "4.0", "3.0"]:
         path = rf"C:\Program Files (x86)\Embarcadero\Studio\{ver}\Help\Doc"
         if Path(path).exists():
             logger.info(f"使用默认帮助目录: {path}")
