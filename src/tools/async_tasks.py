@@ -39,8 +39,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         任务启动结果，包含任务ID
     """
     task_type = arguments.get("task_type")
-    # 兼容两种参数名：params 或 task_params
-    params = arguments.get("params") or arguments.get("task_params", {})
+    params = arguments.get("task_params", {})
     show_progress = arguments.get("show_progress", True)
 
     if not task_type:

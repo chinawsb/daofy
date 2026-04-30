@@ -434,7 +434,7 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
   - 解析 TOPICLINK 格式结构，自动拆分为多个文档
   - 增量更新支持（基于文件 mtime）
 - **异步任务优化**
-  - 兼容 `params` 和 `task_params` 两种参数名
+  - 统一使用 `task_params` 参数名
   - 任务名称显示具体操作（扫描目录/爬取网站/URL列表）
 - **FTS5 懒加载机制优化**
   - 插入文档时不同步 FTS 索引，由懒加载机制按需构建

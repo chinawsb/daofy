@@ -21,14 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **异步任务参数兼容**：`async_task` 工具兼容 `params` 和 `task_params` 两种参数名
+- **异步任务参数统一**：统一使用 `task_params` 参数名
 - **任务名称优化**：文档知识库构建任务显示具体操作（扫描目录/爬取网站/URL列表）
 - **FTS5懒加载机制优化**：插入文档时不同步FTS索引，由懒加载机制按需构建
 - AGENTS.md 更新：补充测试命令、代码风格指南、错误处理规范
 
 ### Fixed
 
-- 修复异步任务参数名不一致问题（`params` vs `task_params`）
+- 修复异步任务参数名不一致问题，统一为 `task_params`
 - 修复文档知识库构建任务名称显示"0 个URL"的问题
 - 修复删除文档时未同步删除FTS5索引导致搜索结果不匹配的问题
 - 修复 LZ77 解压中 match 后重置 bits_left 导致短语表崩溃的 bug
