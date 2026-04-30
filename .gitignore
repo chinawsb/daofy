@@ -51,6 +51,17 @@ Thumbs.db
 data/
 **/.delphi-kb/
 
+# Release packages
+releases/
+
+# Development tools (本地工具，需要自行下载)
+tools/7z/
+
+# Temp / test files
+*.obj
+tests/*.py
+!tests/__init__.py
+
 # Config (可能包含本地路径)
 config/compilers.json
 config/history.json
