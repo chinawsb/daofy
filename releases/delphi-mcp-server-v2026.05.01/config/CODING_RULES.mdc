@@ -1,0 +1,454 @@
+# Delphi 编码规范
+
+> **最后更新**: 2026-04-25
+> **版本**: 1.1.0
+
+---
+
+## 命名规则
+
+### 基本命名约定
+
+- **常量命名**：字母全大写，单词间用下划线连接
+  ```delphi
+  const
+    MAX_BUFFER_SIZE = 1024;
+    DEFAULT_TIMEOUT = 30000;
+  ```
+
+- **Delphi 关键字**：全小写
+  ```delphi
+  if, then, else, begin, end, procedure, function, class, interface
+  ```
+
+- **类型命名**：使用 PascalCase，并加必要的前缀
+  - class of 类型：`class of TMyClass`
+
+### 类型前缀规则
+
+| 类型 | 前缀 | 示例 |
+|------|------|------|
+| 普通类 | T | `TUser`, `TConnection` |
+| 接口 | I | `IInterface`, `IComparable` |
+| 记录 | T | `TPoint`, `TRect` |
+| 枚举 | T | `TColor`, `TAlignment` |
+| 集合 | T | `TFontStyles` |
+| 异常类 | E | `EInvalidOperation`, `ENotFound` |
+| 指针类型 | P | `PPoint = ^TPoint` |
+
+### 成员变量命名
+
+- **私有/受保护成员**：前缀 `F`
+  ```delphi
+  private
+    FName: string;
+    FAge: Integer;
+    FIsActive: Boolean;
+  ```
+
+- **公开字段**：不加前缀（常用于 struct-like 记录）
+  ```delphi
+  public
+    Name: string;
+  ```
+
+### 属性命名
+
+- 使用大驼峰命名法，不加前缀
+  ```delphi
+  property Name: string read FName write FName;
+  property IsActive: Boolean read FIsActive write FIsActive;
+  ```
+
+### 方法命名
+
+- **普通方法**：大驼峰命名法
+  ```delphi
+  procedure CalculateTotal;
+  function GetUserName: string;
+  ```
+
+- **事件处理方法**：
+  - `On` 前缀的事件：去除 `On`，格式为 `实例名 + 事件名（不含On）`
+    ```delphi
+    // Form1 的 OnCreate 事件 → Form1Create
+    // Button1 的 OnClick 事件 → Button1Click
+    procedure Form1Create(Sender: TObject);
+    procedure Button1Click(Sender: TObject);
+    ```
+  - `Before/After` 前缀的事件：保留前缀
+    ```delphi
+    // Form1 的 AfterCreate 事件 → Form1AfterCreate
+    // Form1 的 BeforeShow 事件 → Form1BeforeShow
+    procedure Form1AfterCreate(Sender: TObject);
+    procedure Form1BeforeShow(Sender: TObject);
+    ```
+
+### 局部变量和参数命名
+
+- **一般规则**：未以 A 开头的参数，添加字母 A 作为前缀
+  ```delphi
+  procedure SetName(Name: string);        // ❌ 错误
+  procedure SetName(AName: string);       // ✅ 正确
+  ```
+
+- **例外情况**：
+  | 情况 | 命名方式 | 示例 |
+  |------|----------|------|
+  | 已以 A 开头 | 保持不变 | `Accept` |
+  | 循环变量 | 单字母 | `I`, `J`, `K` |
+  | 指针变量 | p/P/ps/pd/pe | `P`, `ps`, `pd` |
+  | 字符串变量 | s/S | `S`, `s` |
+  | 临时变量 | T | `T` |
+  | 异常变量 | E | `E` |
+  | 注释声明不加前缀 | 按注释要求 | `{ no-prefix }` |
+
+### 枚举值命名
+
+- **两种命名方式都正确**：
+  ```delphi
+  // 方式一：加类型前缀缩写（推荐，减少命名冲突）
+  type
+    TAlignment = (taLeft, taCenter, taRight);
+    TColor = (coRed, coGreen, coBlue);
+  
+  // 方式二：不加前缀（FMX 风格，通过类型前缀区分）
+  type
+    TAlignment = (Left, Center, Right);
+    TColor = (Red, Green, Blue);
+  ```
+
+- **编码建议**：
+  - 新代码推荐使用方式一（加前缀），减少命名冲突
+  - 审核代码时两种方式都支持
+  - 修改现有代码时保持原有风格一致
+
+### 单元文件命名
+
+- 单元文件名应与主类型名对应
+  ```
+  TUser → User.pas
+  TUserManager → UserManager.pas
+  ```
+
+### 忽略规则
+
+- 忽略窗体和数据模块 `published` 内定义组件的命名，避免不必要的修改
+
+---
+
+## 代码格式化
+
+### 基本格式
+
+- **缩进**：使用 2 空格缩进
+- **行宽**：建议不超过 120 字符（适配 16:9 屏幕分辨率）
+- **空格**：
+  - 赋值符号前后加空格：`X := 10;`
+  - 运算符前后加空格：`X := A + B;`
+  - 逗号后加空格：`Proc(A, B, C);`
+  - 括号内侧不加空格：`DoSomething(A, B);`
+
+### begin/end 配对
+
+```delphi
+// ✅ 正确
+if Condition then
+begin
+  DoSomething;
+  DoAnother;
+end;
+
+// ❌ 错误
+if Condition then begin
+  DoSomething;
+  DoAnother;
+end;
+```
+
+### 泛型格式化注意
+
+- **格式化代码后，注意检查是否包含泛型并修正默认格式化引入的格式错乱**
+  - 嵌套泛型（如 `TArray<TList<string>>`）可能被合并
+  - 继承链泛型（如 `class(TMyClass<T>)`）可能被错误换行
+
+### 匹配现有代码
+
+- 匹配现有代码的规范和风格，避免引入新的问题
+
+---
+
+## 单元引用顺序
+
+### 推荐顺序
+
+```delphi
+uses
+  // 1. 系统单元
+  System.SysUtils, System.Classes, System.Types,
+  // 2. VCL/FMX 单元
+  Vcl.Forms, Vcl.Controls, Vcl.Graphics,
+  // 3. 第三方库
+  madBasic, madDisAsm,
+  // 4. 项目单元
+  MyUnit1, MyUnit2;
+```
+
+---
+
+## 类型声明顺序
+
+### 推荐顺序
+
+```delphi
+type
+  // 1. 预声明（前向声明）
+  TMyClass = class;
+  PMyRecord = ^TMyRecord;  // 指针类型预声明
+
+  // 2. 枚举和集合
+  TMyEnum = (meOne, meTwo);
+  TMySet = set of TMyEnum;
+
+  // 3. 记录
+  TMyRecord = record
+    Field1: Integer;
+    Field2: string;
+  end;
+
+  // 4. 接口
+  IMyInterface = interface
+    ['{GUID}']
+    procedure DoSomething;
+  end;
+
+  // 5. 类
+  TMyClass = class(TObject)
+  end;
+```
+
+**前向声明**：类型需要相互引用时，在顶部进行前向声明
+
+**指针类型声明**：指针类型应在对应实际类型之前声明
+  ```delphi
+  type
+    TClassA = class;  // 前向声明
+    TClassB = class;  // 前向声明
+    
+    TClassA = class
+      FB: TClassB;    // 引用后声明的类型
+    end;
+    
+    TClassB = class
+      FA: TClassA;    // 引用前声明的类型
+    end;
+  ```
+
+- **指针类型声明**：指针类型应在对应实际类型之前声明
+  ```delphi
+  type
+    PMyRecord = ^TMyRecord;  // 指针声明在前
+    TMyRecord = record       // 实际类型在后
+      Field1: Integer;
+      Field2: string;
+    end;
+  ```
+
+- **指针类型命名**：使用 `P` 前缀，与实际类型名对应
+  ```delphi
+  PPoint = ^TPoint;      // ✅ 正确
+  PRect = ^TRect;        // ✅ 正确
+  PMyData = ^TMyData;    // ✅ 正确
+  ```
+
+---
+
+## 修改代码规则
+
+### 修改前准备
+
+1. **备份原文件**
+   - 备份到 `__history` 目录
+   - 命名规则：`原文件名.~版本号~`
+   - 版本号递增：最大版本号 + 1
+   ```
+   ws.server.pas → ws.server.pas.~1~
+   ws.server.pas.~401~ 存在 → ws.server.pas.~402~
+   ```
+
+2. **检查文件编码**
+   - 确保文件为 UTF-8 BOM 格式
+   - 避免中文乱码
+
+3. **验证引用存在**
+   - 通过知识库、项目源码和第三方目录确认单元存在
+
+### 修改过程
+
+1. **思考原则**
+   - 编程前先思考，不要随意假设和隐藏问题
+   - 明确说明假设，不确定时请人工确认
+   - 选择更简单的实现方式
+   - 保持代码整洁，遵循单一职责原则
+   - 避免过度设计和过度抽象
+
+2. **标识符修改**
+   - 全局/类级别标识符：先在工程内搜索确认
+   - 局部定义：检查作用域，确认全部使用位置
+
+3. **数据验证**
+   - 添加必要的数据验证和异常处理
+   - 避免无效数据或异常情况导致的错误
+
+### 修改后验证
+
+1. **编码检查**
+   - 文件保持 UTF-8 BOM 格式
+
+2. **编译检查**
+   - 根据工程文件配置编译
+   - 检查语法错误
+   - 根据编译输出修改代码
+
+3. **代码清理**
+   - 删除修改引入的未使用的变量、导入、函数、类（直接清理）
+   - 对于修改前已存在的死代码，需人工确认后再删除
+
+### 验证代码正确性
+
+根据项目实际情况选择使用：
+- 定义成功标准，循环测试直到满足
+- 编写单元测试，覆盖新功能和修复的 bug
+- 运行现有测试套件，确保没有引入新错误
+- 使用静态分析工具检查代码质量
+
+---
+
+## 审核代码规则
+
+### 必检项目
+
+| 检测项 | 说明 |
+|--------|------|
+| **内存泄露检测** | 确保对象正确创建和释放，注意实例类型避免误判 |
+| **资源释放检测** | 确保文件句柄、GDI 对象、数据库连接等正确释放 |
+| **异常处理检测** | 确保 try/except/finally 完整性 |
+| **命名检测** | 确保符合命名规则 |
+| **边界检查** | 数组和指针访问不越界 |
+| **线程同步检测** | 确认无死锁和并发冲突 |
+| **逻辑检测** | 无死循环、冲突逻辑、无效判断、死代码 |
+
+### Delphi 特有检测
+
+- **对象生命周期**：确保 `Create` 和 `Free` 配对
+- **类型判断注意**：
+  - ⚠️ **重要**：`A := TA.Create` 不能仅据此判定 `TA` 是类
+  - Delphi 的 `record` 类型也可能包含 `Create` 方法（运算符重载）
+  - 判断类型时应查看类型定义，不能仅凭调用方式推断
+  ```delphi
+  // 两种情况都可能是 Create 调用
+  A := TMyClass.Create;    // 类
+  A := TMyRecord.Create;   // 记录（带 Create 方法）
+  ```
+- **接口引用计数**：注意接口变量的赋值和释放
+- **字符串动态数组**：注意长字符串和大数组的内存管理
+- **TComponent 子类**：注意 Owner 参数的正确使用
+
+---
+
+## 注释规范
+
+### 单元文件注释
+
+```delphi
+{*******************************************************************************
+  Unit Name: User.pas
+  Description: 用户管理单元
+  Author: 作者名
+  Created: 2026-01-01
+  Modified: 2026-04-25
+*******************************************************************************}
+```
+
+### 方法注释
+
+```delphi
+/// <summary>
+/// 计算用户总分
+/// </summary>
+/// <param name="AUserId">用户ID</param>
+/// <returns>用户总分</returns>
+function CalculateTotalScore(AUserId: Integer): Integer;
+```
+
+### 行内注释
+
+```delphi
+// 检查用户是否激活
+if FIsActive then
+  DoSomething;
+```
+
+---
+
+## 辅助脚本编写
+
+- 使用 Python 编写辅助脚本
+- 以 UTF-8 编码保存脚本
+- 执行前加入 `PYTHONIOENCODING=utf-8` 指令避免中文乱码
+- 小心处理字符串转义和中文编码问题
+
+---
+
+## 规则维护
+
+### 优先级
+
+1. **项目自定义规则**：`rules.md`（优先级最高）
+2. **Agent 规则文件**：如 `agents.md`（优先级次之）
+3. **默认规则文件**：本文件（优先级最低）
+
+### 自动更新机制
+
+在每次对话中，Agent 应主动执行以下检查（必检）：
+
+1. **问题总结为规则**（必检）：修复 bug 或踩坑后，总结为规则添加到对应分类
+2. **清理过期规则**（可选）：代码重构导致规则不再适用时，删除或更新
+3. **去重检查**（必检）：添加新规则前，检查是否已有相同或冲突的规则
+4. **更新时间戳**（必检）：修改规则后，更新顶部的"最后更新"日期
+
+### 规则添加格式
+
+```markdown
+- **规则描述**：简洁明确
+- **错误示例**：❌ 标记
+- **正确示例**：✅ 标记
+- **原因说明**：为什么这样规定
+```
+
+### 触发自更新的时机
+
+- 修复 bug 后，反思是否需要新增规则防止同类问题
+- 重构代码后，检查现有规则是否仍然适用
+- 发现新的 API 用法或陷阱后，补充到规则中
+- 用户明确要求更新规则时
+
+---
+
+## 技能自维护
+
+### 技能文件管理
+
+- 每次成功解决问题，总结并生成技能文件
+- 放到 AI Agent 自己的技能目录下，以便重复使用
+- 优先使用已知技能解决问题
+- 发现技能存在问题，总结并修改原技能文件
+
+---
+
+## 变更日志
+
+| 日期 | 版本 | 变更内容 |
+|------|------|----------|
+| 2026-04-25 | 1.1.0 | 重构规范结构，补充缺失规则，修复格式问题 |
+| 2026-03-15 | 1.0.0 | 初始版本 |
