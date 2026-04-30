@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.05.01] - 2026-05-01
+
+### Removed
+
+- **帮助知识库全线删除**：`services/knowledge_base/help_knowledge_base.py`（2086 行）+ `tools/help_knowledge_base.py`（815 行）
+- `kb_type` 枚举移除 `help`，清理 `server.py`、`knowledge_base.py`、`__init__.py` 中所有引用
+- 移除 `_IN_PROCESS_POOL_WORKER` 环境变量（`smart_cache_knowledge_base.py`、`sqlite_vector_query_knowledge_base.py`）
+
+### Added
+
+- **文档知识库 CHM 格式支持**：新增 `ChmProcessor`，使用 7z 解压 CHM 后导入 HTML 文档
+  - 7z 排除图片/CSS/JS 等辅助文件，仅提取 HTML
+  - 搜索路径：`tools/7z/` > Program Files > Program Files (x86)
+  - 未安装时返回下载地址提示（官网 / SourceForge）
+- **文档知识库扫描引擎优化**
+  - `executor.map()` → `as_completed()`：边处理边提交，每 500 文档自动 commit
+  - `max_workers` 公式：`min(max(2, cpu_cores-1), total_files)`
+  - `chunksize` 动态计算：`min(avg_per_worker, batch_size)`
+- **子进程检测简化**：`server.py` 改用 `__name__ == '__mp_main__'` 单条件检测
+- 文档知识库新增 `.chm` 扩展名支持
+
+### Changed
+
+- AGENTS.md 更新：移除帮助 KB 引用，补充 CHM 格式说明
+- `server.py` 移除 `import subprocess` 内联导入（已有模块级导入）
+
 ## [2026.04.30] - 2026-04-30
 
 ### Added
