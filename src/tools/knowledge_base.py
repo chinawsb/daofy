@@ -170,10 +170,18 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     if project_path:
                         from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
                         try:
+                            # 从 .dproj 读取命名空间前缀，用于解析省略前缀的单元引用
+                            from ..utils.dproj_parser import DprojParser
+                            try:
+                                parser = DprojParser(project_path)
+                                ns_prefixes = parser.get_namespace()
+                            except Exception:
+                                ns_prefixes = None
+
                             pkb = ProjectKnowledgeBase(project_path)
                             pkb.load_knowledge_bases()
                             if pkb.project_kb:
-                                refs = pkb.project_kb.search_usages(query)
+                                refs = pkb.project_kb.search_usages(query, namespace_prefixes=ns_prefixes)
                                 if refs:
                                     results["project_references"] = refs
                         except Exception as e:

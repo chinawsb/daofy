@@ -1149,12 +1149,15 @@ class SQLiteVectorKnowledgeBase:
 
         return results
 
-    def search_usages(self, name: str) -> List[Dict]:
+    def search_usages(self, name: str, namespace_prefixes: Optional[List[str]] = None) -> List[Dict]:
         """
         搜索符号的引用位置 —— 先找定义该符号的单元，再找哪些文件引用了这些单元
 
         Args:
             name: 符号名或单元名
+            namespace_prefixes: 命名空间前缀列表（来自 .dproj 的 DCC_Namespace），
+                               用于解析省略前缀的引用。如 ['Vcl','System','Winapi']
+                               则 Vcl.Forms 也会匹配简写 Forms
 
         Returns:
             引用该符号的文件列表
@@ -1182,16 +1185,29 @@ class SQLiteVectorKnowledgeBase:
             defining_units.add(name)
 
         # Step 2: 找引用了这些单元的文件
+        # 若提供了 namespace_prefixes（来自 .dproj 的 DCC_Namespace），
+        # 对含前缀的单元（如 Vcl.Forms）同时搜索简写（Forms）
+        # 例如 prefixes=['Vcl','System'] → Vcl.Forms 也匹配 Forms
         results = []
         seen_paths = set()
         for unit_name in defining_units:
-            cursor.execute("""
-                SELECT DISTINCT f.full_path, f.relative_path, f.extension,
-                       f.units_defined, f.units_imported, f.line_count
-                FROM files f
-                WHERE f.units_imported LIKE ?
-                ORDER BY f.full_path
-            """, (f'%{unit_name}%',))
+            search_terms = [unit_name]
+
+            # 检查是否有已知命名空间前缀可以省略
+            if namespace_prefixes and '.' in unit_name:
+                prefix = unit_name.split('.')[0]
+                short_name = unit_name[len(prefix) + 1:]
+                if prefix in namespace_prefixes and short_name:
+                    search_terms.append(short_name)
+
+            for term in search_terms:
+                cursor.execute("""
+                    SELECT DISTINCT f.full_path, f.relative_path, f.extension,
+                           f.units_defined, f.units_imported, f.line_count
+                    FROM files f
+                    WHERE f.units_imported LIKE ?
+                    ORDER BY f.full_path
+                """, (f'%{term}%',))
 
             for row in cursor.fetchall():
                 fp = row['full_path']
@@ -1205,7 +1221,7 @@ class SQLiteVectorKnowledgeBase:
 
                 results.append({
                     'name': name,
-                    'match_reason': f"引用单元 {unit_name}",
+                    'match_reason': f"引用单元 {unit_name}" + (f" / {short_name}" if term == short_name and short_name else ""),
                     'file': {
                         'full_path': row['full_path'],
                         'path': row['relative_path'],
