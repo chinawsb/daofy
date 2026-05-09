@@ -35,15 +35,45 @@ def load_model():
     if _model is not None:
         return _model
 
-    try:
-        from sentence_transformers import SentenceTransformer
-        logger.info(f"加载 embedding 模型: {_model_name} (~70MB, 首次加载约 1-2s)")
-        _model = SentenceTransformer(_model_name)
-        logger.info("embedding 模型加载完成")
-        return _model
-    except Exception as e:
-        logger.warning(f"embedding 模型加载失败: {e}")
-        return None
+    from sentence_transformers import SentenceTransformer
+    import os
+
+    # 尝试多个镜像源
+    # 用户可通过 HF_ENDPOINT 环境变量强制指定
+    default_endpoint = os.environ.get("HF_ENDPOINT")
+    _endpoints = []
+    if default_endpoint:
+        _endpoints = [default_endpoint]
+    else:
+        _endpoints = [
+            None,  # huggingface.co（默认）
+            "https://hf-mirror.com",
+        ]
+
+    for ep in _endpoints:
+        try:
+            if ep:
+                logger.info(f"加载 embedding 模型（镜像: {ep}）: {_model_name}")
+                old_endpoint = os.environ.get("HF_ENDPOINT")
+                os.environ["HF_ENDPOINT"] = ep
+            else:
+                logger.info(f"加载 embedding 模型: {_model_name}")
+
+            _model = SentenceTransformer(_model_name)
+            logger.info("embedding 模型加载完成")
+            return _model
+        except Exception as e:
+            logger.warning(f"  镜像 {ep or 'default'} 失败: {e}")
+            if ep:
+                # 恢复原来的端点（如果有的话）
+                if old_endpoint:
+                    os.environ["HF_ENDPOINT"] = old_endpoint
+                else:
+                    os.environ.pop("HF_ENDPOINT", None)
+            continue
+
+    logger.warning("所有镜像源均无法加载 embedding 模型")
+    return None
 
 
 def encode_texts(texts: List[str], prefix: str = "query") -> Optional["numpy.ndarray"]:
