@@ -17,8 +17,8 @@ _delphi_kb_service = None
 _thirdparty_kb_service = None
 
 
-def _append_stats_guide(guide: str, kb_type: str) -> None:
-    """向 guide 字符串追加知识库统计信息"""
+def _append_stats_guide(guide: str, kb_type: str) -> str:
+    """向 guide 字符串追加知识库统计信息，返回修改后的字符串"""
     if kb_type in ("all", "delphi") and _delphi_kb_service:
         try:
             s = _delphi_kb_service.get_statistics()
@@ -55,6 +55,7 @@ def _append_stats_guide(guide: str, kb_type: str) -> None:
             )
         except Exception:
             pass
+    return guide
 
 
 def _resolve_project_path(project_path: Optional[str] = None) -> Optional[str]:
@@ -133,7 +134,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         )
         # 尝试获取统计信息补充到提示中
         try:
-            _append_stats_guide(guide, kb_type)
+            guide = _append_stats_guide(guide, kb_type)
         except Exception:
             pass
         return CallToolResult(content=[{"type": "text", "text": guide}])

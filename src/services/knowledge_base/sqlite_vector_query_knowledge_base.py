@@ -1151,7 +1151,7 @@ class SQLiteVectorKnowledgeBase:
 
     def search_usages(self, name: str) -> List[Dict]:
         """
-        搜索符号的引用位置 —— 找哪些文件引用了包含该符号的单元
+        搜索符号的引用位置 —— 先找定义该符号的单元，再找哪些文件引用了这些单元
 
         Args:
             name: 符号名或单元名
@@ -1163,31 +1163,57 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # 在 files.units_imported 中搜索引用了该符号/单元的文件
+        # Step 1: 找到包含此符号的单元名（通过 vocabularies 和 files 关联）
+        defining_units = set()
         cursor.execute("""
-            SELECT DISTINCT f.full_path, f.relative_path, f.extension,
-                   f.units_defined, f.units_imported, f.line_count
-            FROM files f
-            WHERE f.units_imported LIKE ? OR f.units_imported LIKE ?
-            ORDER BY f.full_path
-        """, (f'%{name_lower}%', f'%{name_lower},%'))
-
-        results = []
+            SELECT DISTINCT f.units_defined
+            FROM vocabularies v
+            INNER JOIN files f ON v.file_id = f.id
+            WHERE v.name_lower = ? AND f.units_defined IS NOT NULL AND f.units_defined != ''
+        """, (name_lower,))
         for row in cursor.fetchall():
-            units_imported = []
-            if row['units_imported']:
-                units_imported = [u.strip() for u in row['units_imported'].split(',') if u.strip()]
+            units = [u.strip() for u in row['units_defined'].split(',') if u.strip()]
+            for u in units:
+                if name_lower in u.lower() or u.lower() in name_lower:
+                    defining_units.add(u)
 
-            results.append({
-                'name': name,
-                'file': {
-                    'full_path': row['full_path'],
-                    'path': row['relative_path'],
-                    'extension': row['extension'],
-                    'line_count': row['line_count'],
-                },
-                'imported_by': units_imported[:20],  # 最多显示20个引用
-            })
+        # 如果没找到定义单元，直接用符号名做模糊匹配
+        if not defining_units:
+            defining_units.add(name)
+
+        # Step 2: 找引用了这些单元的文件
+        results = []
+        seen_paths = set()
+        for unit_name in defining_units:
+            cursor.execute("""
+                SELECT DISTINCT f.full_path, f.relative_path, f.extension,
+                       f.units_defined, f.units_imported, f.line_count
+                FROM files f
+                WHERE f.units_imported LIKE ?
+                ORDER BY f.full_path
+            """, (f'%{unit_name}%',))
+
+            for row in cursor.fetchall():
+                fp = row['full_path']
+                if fp in seen_paths:
+                    continue
+                seen_paths.add(fp)
+
+                units_imported = []
+                if row['units_imported']:
+                    units_imported = [u.strip() for u in row['units_imported'].split(',') if u.strip()]
+
+                results.append({
+                    'name': name,
+                    'match_reason': f"引用单元 {unit_name}",
+                    'file': {
+                        'full_path': row['full_path'],
+                        'path': row['relative_path'],
+                        'extension': row['extension'],
+                        'line_count': row['line_count'],
+                    },
+                    'imported_by': units_imported[:20],
+                })
 
         return results
 
