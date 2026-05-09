@@ -1006,14 +1006,97 @@ class SQLiteVectorKnowledgeBase:
         else:
             print("词汇表不存在，跳过加载（精确查询仍可用）")
 
-    def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索类 (使用反转索引)"""
+    def _semantic_search_embedding(self, query: str, type_filter: tuple, top_k: int = 10) -> List[Tuple[str, float]]:
+        """
+        使用 embedding 进行真语义搜索
+
+        Args:
+            query: 搜索查询
+            type_filter: vocabularies.type 过滤条件，如 ('TC', 'TR')
+            top_k: 返回结果数
+
+        Returns:
+            [(name, similarity), ...]
+        """
+        try:
+            from .embedding_service import (
+                encode_single, cosine_similarity, blob_to_vector, is_available
+            )
+        except ImportError:
+            return []
+
+        if not is_available():
+            return []
+
+        query_emb = encode_single(query, prefix="query")
+        if query_emb is None:
+            return []
+
+        import numpy as np
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
+        # 分批读取已有向量的 vocabularies
+        placeholders = ','.join(['?'] * len(type_filter))
+        cursor.execute(f"""
+            SELECT id, name, vector FROM vocabularies
+            WHERE type IN ({placeholders}) AND vector IS NOT NULL
+            ORDER BY id
+        """, type_filter)
+
+        batch_size = 5000
+        results = []
+        batch = []
+
+        for row in cursor.fetchall():
+            vid, name, vec_blob = row['id'], row['name'], row['vector']
+            vec = blob_to_vector(vec_blob)
+            if vec is None:
+                continue
+            batch.append((vid, name, vec))
+
+            if len(batch) >= batch_size:
+                names = [b[1] for b in batch]
+                embs = np.array([b[2] for b in batch], dtype=np.float32)
+                sims = cosine_similarity(query_emb, embs)
+                for n, s in zip(names, sims):
+                    results.append((n, float(s)))
+                batch = []
+
+        # 处理最后一批
+        if batch:
+            names = [b[1] for b in batch]
+            embs = np.array([b[2] for b in batch], dtype=np.float32)
+            sims = cosine_similarity(query_emb, embs)
+            for n, s in zip(names, sims):
+                results.append((n, float(s)))
+
+        # 去重 + 按相似度排序 + top_k
+        seen = set()
+        unique = []
+        for name, sim in sorted(results, key=lambda x: -x[1]):
+            if name not in seen:
+                seen.add(name)
+                unique.append((name, sim))
+            if len(unique) >= top_k:
+                break
+
+        return unique
+
+    def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
+        """语义搜索类 —— 优先使用 embedding，不可用时降级到反转索引"""
+        # 尝试 embedding
+        emb_results = self._semantic_search_embedding(query, ('TC', 'TR', 'TI', 'TE', 'TS', 'TY'), top_k)
+        if emb_results:
+            return emb_results
+
+        # 降级: 反转索引匹配
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
         query_lower = query.lower()
         rev_pattern = query_lower[::-1] + '*'
-        
+
         cursor.execute("""
             SELECT v.name FROM vocabularies v 
             WHERE v.rowid IN (
@@ -1021,27 +1104,32 @@ class SQLiteVectorKnowledgeBase:
             )
             AND v.type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
         """, (rev_pattern,))
-        
+
         results = [(row['name'], 0.8) for row in cursor.fetchall()]
-        
-        # 去重并返回 top-k
+
         seen = set()
         unique_results = []
         for name, sim in results:
             if name not in seen:
                 seen.add(name)
                 unique_results.append((name, sim))
-        
+
         return unique_results[:top_k]
 
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
-        """语义搜索函数 (使用反转索引)"""
+        """语义搜索函数 —— 优先使用 embedding，不可用时降级到反转索引"""
+        # 尝试 embedding
+        emb_results = self._semantic_search_embedding(query, ('FF', 'FP'), top_k)
+        if emb_results:
+            return emb_results
+
+        # 降级: 反转索引匹配
         conn = self._get_connection()
         cursor = conn.cursor()
-        
+
         query_lower = query.lower()
         rev_pattern = query_lower[::-1] + '*'
-        
+
         cursor.execute("""
             SELECT v.name FROM vocabularies v 
             WHERE v.rowid IN (
@@ -1049,17 +1137,16 @@ class SQLiteVectorKnowledgeBase:
             )
             AND v.type IN ('FF', 'FP')
         """, (rev_pattern,))
-        
+
         results = [(row['name'], 0.8) for row in cursor.fetchall()]
-        
-        # 去重并返回 top-k
+
         seen = set()
         unique_results = []
         for name, sim in results:
             if name not in seen:
                 seen.add(name)
                 unique_results.append((name, sim))
-        
+
         return unique_results[:top_k]
 
     def search(self, query: str, search_type: str = 'all') -> List[Dict]:
@@ -1258,6 +1345,76 @@ class SQLiteVectorKnowledgeBase:
             })
 
         return results
+
+    def count_pending_vectors(self) -> int:
+        """统计未构建向量的词条数"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE vector IS NULL OR vector_status='pending'")
+            return cursor.fetchone()[0]
+        except Exception:
+            return 0
+
+    def build_vectors(self, progress_callback=None) -> int:
+        """
+        为所有 pending 状态的 vocabularies 构建 embedding 向量
+
+        Args:
+            progress_callback: 进度回调 (percent, message)
+
+        Returns:
+            成功构建的数量
+        """
+        from .embedding_service import is_available, batch_encode_and_store
+
+        if not is_available():
+            logger.warning("embedding 依赖未安装，跳过向量构建")
+            return 0
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 获取所有 pending 的词条
+        cursor.execute("""
+            SELECT id, name FROM vocabularies
+            WHERE vector IS NULL OR vector_status='pending'
+            ORDER BY id
+        """)
+        all_rows = cursor.fetchall()
+        total = len(all_rows)
+
+        if total == 0:
+            logger.info("所有词条已有向量，无需构建")
+            return 0
+
+        logger.info(f"开始构建 {total} 个词条的 embedding 向量...")
+
+        # 分批处理
+        batch_size = 500
+        built = 0
+
+        for start in range(0, total, batch_size):
+            batch = all_rows[start:start + batch_size]
+            count = batch_encode_and_store(cursor, batch, prefix="passage")
+            built += count
+            conn.commit()
+
+            pct = min(100, (start + len(batch)) / total * 100)
+            if progress_callback:
+                progress_callback(pct, f"构建向量 [{start+len(batch)}/{total}]")
+            if start % 2000 == 0:
+                logger.info(f"  向量构建进度: {start+len(batch)}/{total}")
+
+        # 清理标记（vector_status='pending' 但 vector IS NULL 的标记为 failed）
+        cursor.execute("""
+            UPDATE vocabularies SET vector_status='failed'
+            WHERE (vector IS NULL OR vector='') AND vector_status='pending'
+        """)
+        conn.commit()
+
+        logger.info(f"向量构建完成: {built}/{total}")
+        return built
 
     def close(self):
         """关闭数据库连接"""

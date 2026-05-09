@@ -1075,6 +1075,37 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             except Exception:
                 pass
 
+    def build_vectors(self, progress_callback=None) -> dict:
+        """
+        为项目 KB 和三方库 KB 构建 embedding 向量
+
+        Args:
+            progress_callback: 进度回调 (percent, message)
+
+        Returns:
+            {"project": count, "thirdparty": count}
+        """
+        results = {}
+        pc = progress_callback or self.progress_callback
+
+        if self.project_kb:
+            if pc:
+                pc(5, "构建项目 KB 向量...")
+            count = self.project_kb.build_vectors(progress_callback=pc)
+            results["project"] = count
+            if pc:
+                pc(50, f"项目 KB 向量: {count}")
+
+        if self.thirdparty_kb:
+            if pc:
+                pc(55, "构建三方库 KB 向量...")
+            count = self.thirdparty_kb.build_vectors(progress_callback=pc)
+            results["thirdparty"] = count
+            if pc:
+                pc(100, f"向量构建完成: {results}")
+
+        return results
+
     def close(self):
         """关闭知识库连接"""
         if self.project_kb:
