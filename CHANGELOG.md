@@ -9,10 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **知识库 AI 触达率提升**（P0-P5）
+  - P0: 空 `query` 时返回 KB 统计 + 使用示例引导，替代简单的 "请提供参数" 报错
+  - P1: `search_type` 默认从 `semantic` 改为 `all`，Agent 无需选参数也能搜到结果
+  - P2: MCP tool `description` 嵌入 6 条常用命令示例，Agent 一眼看懂用法
+  - P3: 项目 KB / 三方库构建时添加详细进度回调（5%扫描 → 50%写DB → 95%报告 → 100%完成）
+  - P5: 新增 `search_type="reference"` 引用查询，可查哪些文件引用了某单元
+- **真语义搜索（P4，可选）**：新增 `intfloat/multilingual-e5-small` embedding 引擎
+  - 新增 `embedding_service.py`：E5-small 模型懒加载 + 分批编码 + cosine 搜索
+  - `semantic_search_classes/functions` 优先使用 embedding，不可用时降级到反转 GLOB
+  - 新增 `build_vectors()` 批量构建向量（分批 500 条 + 进度回调）
+  - 新增 `action=build_embedding` 异步任务入口，避免模型加载超时
+  - 模型自动从 `hf-mirror.com` 回退下载，支持 `TRANSFORMERS_OFFLINE=1` 离线模式
+  - 搜索时不自动加载模型，仅当 `build_embedding` 显式触发后才启用
 - **项目知识库路径自动检测**：`delphi_kb(action=search/stats/build, kb_type=project)` 不再强制要求 `project_path` 参数
   - 新增 `_resolve_project_path()` 函数，自动扫描 CWD 及父目录查找 `.dproj` 文件
   - 找到多个 `.dproj` 时优先匹配目录名同名的项目文件
   - AI agent 搜索项目知识库时无需显式传递路径
+- **引用查询短名解析**：`search_usages()` 从 `.dproj` 读取 `DCC_Namespace` 命名空间前缀
+  - `Vcl.Forms` 同时匹配简写 `Forms`，`Winapi.Windows` 匹配 `Windows`
+  - 未配置时使用 Delphi 2010+ 默认前缀列表（Winapi/System/Vcl/Data/Web/SOAP/XML 等）
+- **错误信息显示**：`search_knowledge()` 输出末尾增加 `project_error`/`thirdparty_error` 显示
 
 ### Fixed
 
@@ -21,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **修复三方库构建写入空 DB**：`build_thirdparty_knowledge_base()` 使用 `SQLiteVectorKnowledgeBase(force_rebuild=True)` 触发损坏的 `build_vector_index()`，该方法先 drop 表再读空表，永远不写入数据。改为直接 SQLite INSERT（与 `build_project_knowledge_base()` 统一 schema）
 - **修复共享三方库统计信息**：`ThirdPartyKnowledgeBase.get_statistics()` 只查旧 `classes`/`functions` 表，新 schema 数据在 `vocabularies` 表，导致共享三方库一直显示 0 类 0 函数
 - **修复搜索结果被 filter 吞没**：`_filter_by_search_type()` 不识别 `kind_code='class'`（项目 KB 存储格式），只认 `'TC'`（Delphi KB 格式），所有项目 KB 搜索结果被过滤为空
+- **修复 `_append_stats_guide()` 无效**：`guide` 字符串参数按值传递，内部 `+=` 不影响调用方，改为返回值模式
+- **修复 `search_usages()` 引用查询无结果**：直接在 `units_imported` 搜类名不匹配，改为先查定义单元再搜引用
+- **修复 `build_vectors()` 缺少 logger**：`sqlite_vector_query_knowledge_base.py` 从未定义 `logger`，导致 `build_embedding` 崩溃
+- **修复 embedding 模型离线加载**：`SentenceTransformer` 即使缓存也会联网验证 SSL，设置 `TRANSFORMERS_OFFLINE=1` + `local_files_only=True` 纯离线加载
+- **修复用户 site-packages 路径**：MCP 服务未加载 pip 安装到用户目录的包，添加 `site.addsitedir(site.USER_SITE)`
 
 ### Changed
 
@@ -29,10 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `_SEARCH_TYPE_TO_KIND` 和 `_KIND_DESC` 映射同步更新
   - 已有数据库通过 UPDATE 迁移，无需重新扫描
 - **移除旧格式兼容**：删除 `source_index.json` 和 `metadata.json` 写入、`_project_kb_service` 死代码
+- **AGENTS.md 补充搜索策略**：引导 Agent 先猜精确类名再搜（⭐1→⭐5 优先级），减少无用语义搜索
+- **`_semantic_search_embedding` 改为仅模型已加载时启用**：搜索不自动加载 embedding 模型，避免首次搜索延时
 
 ### Security
 
 - **SQLite 连接安全**：`build_thirdparty_knowledge_base()` 添加 `try/finally` 确保异常时连接关闭
+
+### Removed
+
+- 移除 `embedding_service.py` 中未使用的 `vector_to_blob()` 函数和 `Tuple` import
 
 ### Removed
 
