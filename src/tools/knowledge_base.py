@@ -17,6 +17,46 @@ _delphi_kb_service = None
 _thirdparty_kb_service = None
 
 
+def _append_stats_guide(guide: str, kb_type: str) -> None:
+    """向 guide 字符串追加知识库统计信息"""
+    if kb_type in ("all", "delphi") and _delphi_kb_service:
+        try:
+            s = _delphi_kb_service.get_statistics()
+            guide += (
+                f"  Delphi KB:  {s.get('files', 0)} 文件, "
+                f"{s.get('classes', 0)} 类, "
+                f"{s.get('functions', 0)} 函数\n"
+            )
+        except Exception:
+            pass
+    if kb_type in ("all", "project"):
+        try:
+            from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+            pp = _resolve_project_path(None)
+            if pp:
+                pkb = ProjectKnowledgeBase(pp)
+                pkb.load_knowledge_bases()
+                s = pkb.get_statistics()
+                pj = s.get("project") or {}
+                guide += (
+                    f"  Project KB: {pj.get('files', 0)} 文件, "
+                    f"{pj.get('classes', 0)} 类, "
+                    f"{pj.get('functions', 0)} 函数\n"
+                )
+        except Exception:
+            pass
+    if kb_type in ("all", "thirdparty") and _thirdparty_kb_service:
+        try:
+            s = _thirdparty_kb_service.get_statistics()
+            guide += (
+                f"  Thirdparty: {s.get('files', 0)} 文件, "
+                f"{s.get('classes', 0)} 类, "
+                f"{s.get('functions', 0)} 函数\n"
+            )
+        except Exception:
+            pass
+
+
 def _resolve_project_path(project_path: Optional[str] = None) -> Optional[str]:
     """
     解析项目路径：如果未提供则自动检测当前目录下的 .dproj 文件。
@@ -70,12 +110,33 @@ def set_thirdparty_kb_service(service):
 async def search_knowledge(arguments: Any) -> CallToolResult:
     """统一搜索知识库"""
     kb_type = arguments.get("kb_type", "all")
-    search_type = arguments.get("search_type", "semantic")
+    search_type = arguments.get("search_type", "all")
     query = arguments.get("query", "")
     top_k = arguments.get("top_k", 10)
     
     if not query:
-        return CallToolResult(content=[{"type": "text", "text": "请提供搜索关键词 query"}], isError=True)
+        # 空 query: 返回知识库状态 + 使用指引，而非简单报错
+        kb_type = arguments.get("kb_type", "all")
+        guide = (
+            "Delphi 知识库搜索\n"
+            "═══════════════════════════════════════\n"
+            "使用示例:\n"
+            '  delphi_kb(query="TStringList")            — 搜索类\n'
+            '  delphi_kb(query="Create", search_type="function") — 搜索函数\n'
+            '  delphi_kb(query="TForm", kb_type="delphi")  — 指定知识库\n'
+            '  delphi_kb(query="TfrmMain", kb_type="project") — 搜索项目代码\n'
+            '  delphi_kb(search_type="reference", query="TfrmMain") — 查找引用\n'
+            '\n'
+            f"知识库范围: {kb_type}\n"
+            f"search_type: {search_type}\n"
+            f"先调用 delphi_kb(action=stats, kb_type={kb_type}) 查看各 KB 文件数\n"
+        )
+        # 尝试获取统计信息补充到提示中
+        try:
+            _append_stats_guide(guide, kb_type)
+        except Exception:
+            pass
+        return CallToolResult(content=[{"type": "text", "text": guide}])
     
     results = {}
     kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty"]
@@ -97,6 +158,36 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     for kb in kb_types:
         try:
+            # 引用查询：使用 search_usages 搜索哪些文件引用了该符号
+            if search_type == "reference":
+                if kb == "delphi" and _delphi_kb_service:
+                    refs = _delphi_kb_service.search_by_name(query)
+                    if refs:
+                        results[f"{kb}_symbols"] = refs
+                elif kb == "project":
+                    project_path = _resolve_project_path(arguments.get("project_path"))
+                    if project_path:
+                        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                        try:
+                            pkb = ProjectKnowledgeBase(project_path)
+                            pkb.load_knowledge_bases()
+                            if pkb.project_kb:
+                                refs = pkb.project_kb.search_usages(query)
+                                if refs:
+                                    results["project_references"] = refs
+                        except Exception as e:
+                            results["project_error"] = str(e)
+                    else:
+                        results["project_error"] = "未检测到项目路径"
+                elif kb == "thirdparty" and _thirdparty_kb_service:
+                    if _thirdparty_kb_service.kb_instance is None:
+                        _thirdparty_kb_service.load_knowledge_base()
+                    if _thirdparty_kb_service.kb_instance:
+                        refs = _thirdparty_kb_service.kb_instance.search_usages(query)
+                        if refs:
+                            results["thirdparty_references"] = refs
+                continue  # 引用查询已处理，跳过下面的符号搜索
+
             if kb == "delphi" and _delphi_kb_service:
                 # 名称搜索（精确/通配匹配）
                 symbol_results = _delphi_kb_service.search_by_name(query)
@@ -272,7 +363,21 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 output += f"  - {name} (相似度: {sim:.2f})\n"
             output += "\n"
             has_results = True
-    
+
+    # 引用查询结果
+    for ref_key, label in [("project_references", "项目引用"), ("thirdparty_references", "三方库引用")]:
+        if ref_key in results and results[ref_key]:
+            refs = results[ref_key]
+            output += f"{label} ({len(refs)} 个文件引用):\n"
+            for r in refs[:top_k]:
+                fi = r.get("file", {})
+                imported = r.get("imported_by", [])
+                output += f"  - {fi.get('full_path', '?')}\n"
+                if imported:
+                    output += f"    引用单元: {', '.join(imported[:5])}\n"
+            output += "\n"
+            has_results = True
+
     # 显示错误信息（如果有）
     for err_key in ["project_error", "thirdparty_error", "delphi_error"]:
         if err_key in results and results[err_key]:

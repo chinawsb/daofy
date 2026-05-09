@@ -307,6 +307,7 @@ class ProjectKnowledgeBase:
             return True
 
         logger.info(f"开始构建三方库知识库,共 {len(thirdparty_paths)} 个目录")
+        self._report_progress(5, "扫描三方库源码目录...")
 
         # 合并所有三方库源码到一个临时目录或直接扫描
         thirdparty_kb_dir = self.kb_dir / "thirdparty"
@@ -315,8 +316,11 @@ class ProjectKnowledgeBase:
         # 扫描所有三方库目录
         all_files = []
         seen_paths = set()  # 用于去重
+        total_dirs = len(thirdparty_paths)
 
-        for path in thirdparty_paths:
+        for idx, path in enumerate(thirdparty_paths):
+            pct = 5 + (idx / total_dirs) * 35
+            self._report_progress(pct, f"扫描三方库 [{idx+1}/{total_dirs}]: {Path(path).name}")
             scanner = DelphiSourceScanner(path, str(thirdparty_kb_dir), self.progress_callback)
             scan_result = scanner.scan_directory()
 
@@ -333,6 +337,7 @@ class ProjectKnowledgeBase:
 
         # 直接写入 SQLite (统一Schema,与 build_project_knowledge_base 一致)
         import sqlite3
+        self._report_progress(40, f"保存 {len(all_files)} 个三方库文件到数据库...")
         logger.info("保存三方库源码到数据库...")
         db_file = thirdparty_kb_dir / "knowledge.sqlite"
         if db_file.exists():
@@ -491,6 +496,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             logger.info(f"  源文件: {source_count}")
             logger.info(f"  类: {class_count}")
             logger.info(f"  函数: {func_count}")
+            self._report_progress(80, f"三方库: {source_count} 文件, {class_count} 类, {func_count} 函数")
         except Exception:
             raise
         finally:
@@ -567,6 +573,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 return True
 
         logger.info("开始构建项目源码知识库")
+        self._report_progress(5, "扫描项目源码文件...")
 
         # 项目源码知识库目录
         project_kb_dir = self.kb_dir
@@ -669,6 +676,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
 
         # 插入源文件
+        self._report_progress(50, f"保存 {total_files} 个项目源文件到数据库...")
         logger.info("保存源文件到数据库...")
         batch_size = 1000
         for i, file_info in enumerate(all_source_files):
@@ -773,11 +781,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         logger.info(f"  源文件: {source_count}")
         logger.info(f"  类: {class_count}")
         logger.info(f"  函数: {func_count}")
+        self._report_progress(95, f"项目 KB: {source_count} 文件, {class_count} 类, {func_count} 函数")
 
         # 更新元数据
         self.metadata["source_hash"] = current_hash
         self._save_metadata()
 
+        self._report_progress(100, "项目知识库构建完成")
         return True
 
     def check_and_update_project_kb(self) -> bool:
@@ -1056,6 +1066,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 logger.warning(f"获取三方库知识库统计失败: {e}")
 
         return stats
+
+    def _report_progress(self, percent: float, message: str) -> None:
+        """报告进度（安全调用 progress_callback）"""
+        if self.progress_callback:
+            try:
+                self.progress_callback(percent, message)
+            except Exception:
+                pass
 
     def close(self):
         """关闭知识库连接"""

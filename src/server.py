@@ -184,13 +184,21 @@ async def run_server():
             ),
             Tool(
                 name="delphi_kb",
-                description="【知识库搜索/构建】搜索Delphi代码/类/函数/文档，查看统计或构建索引。三种模式通过'action'参数控制：\n"
-                            "     kb_type=document 且 action=build 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
+                description="【知识库搜索/统计/构建】搜索Delphi代码、类、函数，查看统计，或构建索引。\n"
+                            "使用示例:\n"
+                            '  delphi_kb(query="TStringList")                # 搜索所有知识库\n'
+                            '  delphi_kb(query="Create", search_type="function") # 搜索函数\n'
+                            '  delphi_kb(query="TfrmMain", kb_type="project")   # 仅搜项目KB(自动检测路径)\n'
+                            '  delphi_kb(action=stats)                        # 查看各KB统计\n'
+                            '  delphi_kb(search_type="reference", query="TfrmMain") # 查找引用\n'
+                            '  delphi_kb(action=build, kb_type=project)       # 构建项目KB\n'
+                            "\n"
+                            "三种模式通过'action'参数控制：\n"
                             "  1) action=search（默认）：搜索符号/文档。需要'query'参数，'search_type'过滤实体类型，'kb_type'选择知识库范围，'top_k'控制结果数。\n"
                             "  2) action=read：读取文档/源码内容。需要'url'/'doc_id'(文档)或'file_path'(源码)，支持offset/limit分页。\n"
                             "  3) action=stats：查看知识库统计（文件/类/函数数量）。用'kb_type'选择知识库范围。\n"
-                             "  4) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
-                             "     - kb_type=document 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
+                            "  4) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
+                            "     - kb_type=document 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
                             "  5) action=scan：扫描目录添加文档（kb_type=document时）。需要'directory'参数。\n"
                             "  6) action=web：添加网页文档（kb_type=document时）。需要'url'参数。\n"
                             "工作流: delphi_kb(action=search) → delphi_kb(action=read).",
@@ -199,14 +207,14 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document)"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
-                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "实体类型过滤（仅action=search）。semantic=语义匹配(默认), all=全部, class=类(TC), record=记录(TR), interface=接口(TI), enum=枚举(TE), set=集合(TS), type=类型别名(TY), function=全局函数(FF), procedure=过程(FP), const=常量(CC), resourcestring=资源字符串(CR), property=属性(MP), field=字段(MF), method=方法(MM), unit=单元(UI), fuzzy=LIKE模糊匹配, filename=按文件名搜索, event=事件(ME), uses=引用单元"},
-                        "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例如 'TStringList'（精确类名）、'TButton Click'（语义）、'Create'（函数名）、'SysUtils'（单元名）"},
+                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数(FF), reference=查找引用位置"},
+                        "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例: 'TStringList'（精确类名）、'Create'（函数名）、'TfrmMain'（项目自有类）、'SysUtils'（单元名）"},
                         "doc_id": {"type": "integer", "description": "文档ID（action=read时，与url/file_path三选一）"},
                         "url": {"type": "string", "description": "文档URL（action=read/web时）；网页URL（action=web时需要）"},
                         "file_path": {"type": "string", "description": "源码文件路径（action=read时，与url/doc_id三选一）"},
                         "offset": {"type": "integer", "default": 0, "description": "内容起始偏移（action=read时，默认0）"},
                         "limit": {"type": "integer", "default": 5000, "description": "内容最大长度（action=read时，默认5000，最大20000）"},
-                        "project_path": {"type": "string", "description": "项目.dproj/.dpr/.dpk路径（action=build且kb_type=project时必需；action=search且kb_type=project时也需要）"},
+                        "project_path": {"type": "string", "description": "项目.dproj/.dpr/.dpk路径（可选，不传时自动从当前目录检测）"},
                         "version": {"type": "string", "description": "Delphi版本号如 '23.0'（仅action=build且kb_type=delphi/thirdparty时需要）"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步构建（仅action=build，默认true）。true=提交后立即返回task_id(通过async_task查进度); false=阻塞等待(不推荐，可能超时)"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},

@@ -1149,6 +1149,48 @@ class SQLiteVectorKnowledgeBase:
 
         return results
 
+    def search_usages(self, name: str) -> List[Dict]:
+        """
+        搜索符号的引用位置 —— 找哪些文件引用了包含该符号的单元
+
+        Args:
+            name: 符号名或单元名
+
+        Returns:
+            引用该符号的文件列表
+        """
+        name_lower = name.lower()
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 在 files.units_imported 中搜索引用了该符号/单元的文件
+        cursor.execute("""
+            SELECT DISTINCT f.full_path, f.relative_path, f.extension,
+                   f.units_defined, f.units_imported, f.line_count
+            FROM files f
+            WHERE f.units_imported LIKE ? OR f.units_imported LIKE ?
+            ORDER BY f.full_path
+        """, (f'%{name_lower}%', f'%{name_lower},%'))
+
+        results = []
+        for row in cursor.fetchall():
+            units_imported = []
+            if row['units_imported']:
+                units_imported = [u.strip() for u in row['units_imported'].split(',') if u.strip()]
+
+            results.append({
+                'name': name,
+                'file': {
+                    'full_path': row['full_path'],
+                    'path': row['relative_path'],
+                    'extension': row['extension'],
+                    'line_count': row['line_count'],
+                },
+                'imported_by': units_imported[:20],  # 最多显示20个引用
+            })
+
+        return results
+
     def search_by_keyword(self, keyword: str, search_in: Optional[List[str]] = None) -> List[Dict]:
         """根据关键词搜索 (在实体名称中搜索)"""
         keyword_lower = keyword.lower()
