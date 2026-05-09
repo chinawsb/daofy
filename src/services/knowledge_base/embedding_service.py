@@ -10,7 +10,14 @@ Embedding 服务 —— 为知识库提供真语义搜索
 """
 
 import logging
+import site
 from typing import List, Optional
+
+# 确保用户 site-packages 在路径中（pip install 默认安装到用户目录）
+try:
+    site.addsitedir(site.USER_SITE)
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 
