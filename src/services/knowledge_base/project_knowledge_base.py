@@ -513,6 +513,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         self._save_metadata()
 
         logger.info("三方库知识库构建完成")
+        # 自动构建 embedding 向量
+        try:
+            self.build_vectors()
+        except Exception:
+            pass
         return True
 
     def _get_shared_exclude_prefixes(self) -> List[Path]:
@@ -788,6 +793,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         self._save_metadata()
 
         self._report_progress(100, "项目知识库构建完成")
+        # 自动构建 embedding 向量（异步，不阻塞构建流程）
+        try:
+            self._report_progress(99, "构建 embedding 向量...")
+            self.build_vectors()
+        except Exception:
+            pass
         return True
 
     def check_and_update_project_kb(self) -> bool:
