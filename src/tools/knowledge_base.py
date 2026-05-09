@@ -8,25 +8,57 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 提供知识库查询和管理的 MCP 工具
 """
 
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 from mcp.types import CallToolResult
 
 # 统一的知识库服务实例
 _delphi_kb_service = None
-_project_kb_service = None
 _thirdparty_kb_service = None
+
+
+def _resolve_project_path(project_path: Optional[str] = None) -> Optional[str]:
+    """
+    解析项目路径：如果未提供则自动检测当前目录下的 .dproj 文件。
+
+    检测顺序：
+    1. 如果传入了 project_path（非空），直接使用（不检查存在性，让下游报错）
+    2. 扫描 CWD 查找 *.dproj
+    3. 扫描 CWD 的父目录查找 *.dproj
+    4. 如果找到恰好一个，返回该路径
+    5. 如果找到 0 个或多个，返回 None（由调用方处理错误信息）
+
+    Args:
+        project_path: 用户传入的项目路径（可选）
+
+    Returns:
+        解析后的项目路径，或 None
+    """
+    # 用户显式传入了路径 → 直接使用，无论是否存在
+    if project_path:
+        return str(Path(project_path))
+
+    # 自动检测：从 CWD 开始，向上查找 .dproj
+    cwd = Path.cwd()
+    for search_dir in [cwd] + list(cwd.parents)[:5]:
+        dproj_files = list(search_dir.glob("*.dproj"))
+        if len(dproj_files) == 1:
+            return str(dproj_files[0].resolve())
+        elif len(dproj_files) > 1:
+            # 找到多个 .dproj，试试看有没有和目录名同名的
+            project_name = search_dir.name
+            for f in dproj_files:
+                if f.stem == project_name or f.stem.lower() == project_name.lower():
+                    return str(f.resolve())
+            # 仍然不明确，继续向上搜索
+
+    return None
 
 
 def set_delphi_kb_service(service):
     """设置 Delphi 知识库服务实例"""
     global _delphi_kb_service
     _delphi_kb_service = service
-
-
-def set_project_kb_service(service):
-    """设置项目知识库服务实例"""
-    global _project_kb_service
-    _project_kb_service = service
 
 
 def set_thirdparty_kb_service(service):
@@ -49,6 +81,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty"]
     
     
+    # vocabularies.type 使用 Delphi 双字母编码（与 Delphi KB 一致）
     _SEARCH_TYPE_TO_KIND = {
         'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
         'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF'], 'procedure': ['FP'],
@@ -87,9 +120,9 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
             elif kb == "project":
                 # 项目知识库搜索：使用 ProjectKnowledgeBase 独立查询
-                project_path = arguments.get("project_path")
+                project_path = _resolve_project_path(arguments.get("project_path"))
                 if not project_path:
-                    results["project_error"] = "请提供 project_path 参数"
+                    results["project_error"] = "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"
                 else:
                     from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
                     try:
@@ -240,6 +273,13 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             output += "\n"
             has_results = True
     
+    # 显示错误信息（如果有）
+    for err_key in ["project_error", "thirdparty_error", "delphi_error"]:
+        if err_key in results and results[err_key]:
+            label = {"project_error": "项目", "thirdparty_error": "三方库", "delphi_error": "Delphi"}.get(err_key, err_key)
+            output += f"【{label}】错误: {results[err_key]}\n\n"
+            has_results = True
+
     if not has_results:
         output += "未找到相关内容\n"
     
@@ -258,7 +298,7 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
     - force_rebuild: 是否强制重建
     """
     kb_type = arguments.get("kb_type", "all")
-    project_path = arguments.get("project_path")
+    project_path = _resolve_project_path(arguments.get("project_path"))
     version = arguments.get("version")
     async_mode = arguments.get("async_mode", True)
     force_rebuild = arguments.get("force_rebuild", False)
@@ -278,8 +318,11 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
             if kb == "delphi" and _delphi_kb_service:
                 success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["delphi"] = "成功" if success else "失败"
-            elif kb == "project" and _project_kb_service and project_path:
-                success = _project_kb_service.build_project_knowledge_base(force_rebuild=force_rebuild)
+            elif kb == "project" and project_path:
+                from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                pkb = ProjectKnowledgeBase(project_path)
+                success = pkb.build_project_knowledge_base(force_rebuild=force_rebuild)
+                pkb.close()
                 results["project"] = "成功" if success else "失败"
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
@@ -304,7 +347,6 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
     - project_path: 项目路径 (仅project需要)
     """
     kb_type = arguments.get("kb_type", "all")
-    project_path = arguments.get("project_path")
     
     # 解析知识库类型
     if kb_type == "all":
@@ -325,9 +367,22 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                 stats["total_classes"] = stats.get("classes", 0)
                 stats["total_functions"] = stats.get("functions", 0) + stats.get("procedures", 0)
                 results["delphi"] = stats
-            elif kb == "project" and _project_kb_service:
-                stats = _project_kb_service.get_statistics()
-                results["project"] = stats
+            elif kb == "project":
+                project_path = _resolve_project_path(arguments.get("project_path"))
+                if not project_path:
+                    results["project"] = {"error": "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"}
+                else:
+                    try:
+                        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                        pkb = ProjectKnowledgeBase(project_path)
+                        ok = pkb.load_knowledge_bases()
+                        if not ok or not pkb.project_kb:
+                            results["project"] = {"error": "项目知识库加载失败，请先构建或检查 .delphi-kb/knowledge.sqlite 是否存在"}
+                        else:
+                            full_stats = pkb.get_statistics()
+                            results["project"] = full_stats.get("project") or {"error": "项目统计信息为空"}
+                    except Exception as e:
+                        results["project"] = {"error": str(e)}
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 stats = _thirdparty_kb_service.get_statistics()
                 results["thirdparty"] = stats

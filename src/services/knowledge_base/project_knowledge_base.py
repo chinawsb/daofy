@@ -331,35 +331,175 @@ class ProjectKnowledgeBase:
                     file_info['path'] = f"{path_hash}/{file_info['path']}"
                     all_files.append(file_info)
 
-        # 合并结果
-        combined_result = {
-            'files': all_files,
-            'statistics': {
-                'total_files': len(all_files),
-                'total_lines': sum(f.get('line_count', 0) for f in all_files),
-                'scan_time': datetime.now().isoformat()
-            }
-        }
+        # 直接写入 SQLite (统一Schema,与 build_project_knowledge_base 一致)
+        import sqlite3
+        logger.info("保存三方库源码到数据库...")
+        db_file = thirdparty_kb_dir / "knowledge.sqlite"
+        if db_file.exists():
+            db_file.unlink()
+        conn = None
+        try:
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
 
-        # 保存合并后的索引
-        index_file = thirdparty_kb_dir / "index" / "source_index.json"
-        index_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(index_file, 'w', encoding='utf-8') as f:
-            json.dump(combined_result, f, ensure_ascii=False, indent=2)
+            current_time = datetime.now().timestamp()
 
-        # 保存元数据
-        metadata_file = thirdparty_kb_dir / "index" / "metadata.json"
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                'version': '1.0',
-                'source_directory': ';'.join(thirdparty_paths),
-                'scan_date': datetime.now().isoformat(),
-                'statistics': combined_result['statistics']
-            }, f, ensure_ascii=False, indent=2)
+            # 创建统一Schema表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS files (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    full_path TEXT,
+                    relative_path TEXT,
+                    extension TEXT,
+                    size INTEGER,
+                    line_count INTEGER,
+                    hash TEXT,
+                    last_modified TEXT,
+                    category TEXT,
+                    units_defined TEXT,
+                    units_imported TEXT,
+                    description TEXT,
+                    scan_timestamp REAL,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vocabularies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    type TEXT,
+                    name TEXT,
+                    name_lower TEXT,
+                    name_lower_rev TEXT,
+                    file_id INTEGER,
+                    line INTEGER,
+                    base_class TEXT,
+                    description TEXT,
+                    vector BLOB,
+                    vector_status TEXT,
+                    attributes TEXT,
+                    created_at REAL,
+                    updated_at REAL
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at REAL
+                )
+            """)
 
-        # 构建向量索引
-        logger.info("构建三方库向量索引...")
-        self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir), force_rebuild=True)
+            # 插入文件数据
+            for file_info in all_files:
+                units = file_info.get('units', [])
+                if isinstance(units, list):
+                    units = ','.join(units)
+                uses = file_info.get('uses', [])
+                if isinstance(uses, list):
+                    uses = ','.join(uses)
+
+                cursor.execute("""
+                    INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                        last_modified, category, units_defined, units_imported, description, 
+                        scan_timestamp, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    file_info.get('full_path', ''),
+                    file_info.get('path', ''),
+                    file_info.get('extension', '.pas'),
+                    file_info.get('size', 0),
+                    file_info.get('line_count', 0),
+                    file_info.get('hash', ''),
+                    file_info.get('last_modified', ''),
+                    'thirdparty',
+                    str(units) if units else '',
+                    str(uses) if uses else '',
+                    file_info.get('description', '')[:500],
+                    current_time,
+                    current_time,
+                    current_time
+                ))
+
+                file_id = cursor.lastrowid
+
+                # 插入 vocabularies (类)
+                for cls in file_info.get('classes', []):
+                    cursor.execute("""
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    cls.get('name', '').lower()[::-1] if cls.get('name') else '',
+                    file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+
+            # 插入 vocabularies (函数)
+            for func in file_info.get('functions', []):
+                cursor.execute("""
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    func.get('name', '').lower()[::-1] if func.get('name') else '',
+                    file_id, func.get('line', 0), '', func.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+
+            # 插入 vocabularies (常量)
+            for const in file_info.get('constants', []):
+                cursor.execute("""
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'CC', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    const.get('name', '').lower()[::-1] if const.get('name') else '',
+                    file_id, const.get('line', 0), '', const.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+
+            # 统计
+            cursor.execute("SELECT COUNT(*) FROM files WHERE category='thirdparty'")
+            source_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
+            class_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
+            func_count = cursor.fetchone()[0]
+
+            # 保存元数据
+            cursor.execute("DELETE FROM metadata")
+            cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+                ('total_files', str(source_count), current_time))
+            cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+                ('total_classes', str(class_count), current_time))
+            cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+                ('total_functions', str(func_count), current_time))
+            cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+                ('build_time', datetime.now().isoformat(), current_time))
+
+            # 记录 schema 版本号
+            from src.services.knowledge_base import set_schema_version_in_db
+            set_schema_version_in_db(cursor)
+
+            conn.commit()
+
+            logger.info(f"三方库知识库构建完成!")
+            logger.info(f"  源文件: {source_count}")
+            logger.info(f"  类: {class_count}")
+            logger.info(f"  函数: {func_count}")
+        except Exception:
+            raise
+        finally:
+            if conn:
+                conn.close()
+
+        # 构建向量索引 (加载 SQLiteVectorKnowledgeBase 用于查询)
+        logger.info("加载三方库向量索引...")
+        self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir))
 
         # 更新元数据
         self.metadata["thirdparty_paths"] = thirdparty_paths
@@ -570,12 +710,12 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
                     cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                     file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
-            
+
             # 插入 vocabularies (函数)
             for func in file_info.get('functions', []):
                 cursor.execute("""
@@ -583,12 +723,12 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
                     func.get('name', '').lower()[::-1] if func.get('name') else '',
                     file_id, func.get('line', 0), '', func.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
-            
+
             # 插入 vocabularies (常量)
             for const in file_info.get('constants', []):
                 cursor.execute("""
@@ -596,7 +736,7 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'constant', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    'CC', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
                     const.get('name', '').lower()[::-1] if const.get('name') else '',
                     file_id, const.get('line', 0), '', const.get('definition', ''),
                     None, 'pending', None, current_time, current_time
@@ -607,9 +747,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         # 统计
         cursor.execute("SELECT COUNT(*) FROM files WHERE category='source'")
         source_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='class'")
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
         class_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='function'")
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
         func_count = cursor.fetchone()[0]
         
         # 保存元数据
@@ -664,17 +804,34 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             是否加载成功
         """
         try:
-            # 加载项目源码知识库
-            project_kb_dir = self.kb_dir / "project"
-            if (project_kb_dir / "index" / "source_index.json").exists():
-                self.project_kb = SQLiteVectorKnowledgeBase(str(project_kb_dir))
-                logger.info("项目源码知识库加载成功")
+            # 加载项目源码知识库 - 支持两种格式:
+            # 1. 新格式: 直接存放在 .delphi-kb/knowledge.sqlite (由 build_project_knowledge_base 创建)
+            # 2. 旧格式: 存放在 .delphi-kb/project/index/source_index.json
 
-            # 加载三方库知识库
-            thirdparty_kb_dir = self.kb_dir / "thirdparty"
-            if (thirdparty_kb_dir / "index" / "source_index.json").exists():
-                self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir))
-                logger.info("三方库知识库加载成功")
+            # 优先检测新格式 (SQLite vector format)
+            new_format_db = self.kb_dir / "knowledge.sqlite"
+            if new_format_db.exists():
+                self.project_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                logger.info(f"项目源码知识库加载成功 (新格式): {new_format_db}")
+            else:
+                # 回退检测旧格式 (JSON index format)
+                project_kb_dir = self.kb_dir / "project"
+                if (project_kb_dir / "index" / "source_index.json").exists():
+                    self.project_kb = SQLiteVectorKnowledgeBase(str(project_kb_dir))
+                    logger.info("项目源码知识库加载成功 (旧格式)")
+
+            # 加载三方库知识库 - 同样支持两种格式
+            # 新格式: .delphi-kb/thirdparty/knowledge.sqlite
+            thirdparty_new_db = self.kb_dir / "thirdparty" / "knowledge.sqlite"
+            if thirdparty_new_db.exists():
+                self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir / "thirdparty"))
+                logger.info(f"三方库知识库加载成功 (新格式): {thirdparty_new_db}")
+            else:
+                # 旧格式
+                thirdparty_kb_dir = self.kb_dir / "thirdparty"
+                if (thirdparty_kb_dir / "index" / "source_index.json").exists():
+                    self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir))
+                    logger.info("三方库知识库加载成功 (旧格式)")
 
             return True
         except Exception as e:
@@ -820,14 +977,33 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     cursor = conn.cursor()
 
                     project_stats = {}
-                    cursor.execute("SELECT COUNT(*) FROM classes")
-                    project_stats["classes"] = cursor.fetchone()[0]
+                    # 新 schema: vocabularies 表 + type 列
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
+                        project_stats["classes"] = cursor.fetchone()[0]
+                    except Exception:
+                        # 旧 schema: classes 表
+                        try:
+                            cursor.execute("SELECT COUNT(*) FROM classes")
+                            project_stats["classes"] = cursor.fetchone()[0]
+                        except Exception:
+                            project_stats["classes"] = 0
 
-                    cursor.execute("SELECT COUNT(*) FROM functions")
-                    project_stats["functions"] = cursor.fetchone()[0]
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
+                        project_stats["functions"] = cursor.fetchone()[0]
+                    except Exception:
+                        try:
+                            cursor.execute("SELECT COUNT(*) FROM functions")
+                            project_stats["functions"] = cursor.fetchone()[0]
+                        except Exception:
+                            project_stats["functions"] = 0
 
-                    cursor.execute("SELECT COUNT(*) FROM files")
-                    project_stats["files"] = cursor.fetchone()[0]
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM files")
+                        project_stats["files"] = cursor.fetchone()[0]
+                    except Exception:
+                        project_stats["files"] = 0
 
                     project_stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 
@@ -845,14 +1021,32 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     cursor = conn.cursor()
 
                     thirdparty_stats = {}
-                    cursor.execute("SELECT COUNT(*) FROM classes")
-                    thirdparty_stats["classes"] = cursor.fetchone()[0]
+                    # 新 schema: vocabularies 表 + type 列
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
+                        thirdparty_stats["classes"] = cursor.fetchone()[0]
+                    except Exception:
+                        try:
+                            cursor.execute("SELECT COUNT(*) FROM classes")
+                            thirdparty_stats["classes"] = cursor.fetchone()[0]
+                        except Exception:
+                            thirdparty_stats["classes"] = 0
 
-                    cursor.execute("SELECT COUNT(*) FROM functions")
-                    thirdparty_stats["functions"] = cursor.fetchone()[0]
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
+                        thirdparty_stats["functions"] = cursor.fetchone()[0]
+                    except Exception:
+                        try:
+                            cursor.execute("SELECT COUNT(*) FROM functions")
+                            thirdparty_stats["functions"] = cursor.fetchone()[0]
+                        except Exception:
+                            thirdparty_stats["functions"] = 0
 
-                    cursor.execute("SELECT COUNT(*) FROM files")
-                    thirdparty_stats["files"] = cursor.fetchone()[0]
+                    try:
+                        cursor.execute("SELECT COUNT(*) FROM files")
+                        thirdparty_stats["files"] = cursor.fetchone()[0]
+                    except Exception:
+                        thirdparty_stats["files"] = 0
 
                     thirdparty_stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 

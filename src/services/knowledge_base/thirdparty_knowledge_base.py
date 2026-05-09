@@ -707,7 +707,7 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
                     cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                     file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
                     None, 'pending', None, current_time, current_time
@@ -720,7 +720,7 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
                     func.get('name', '').lower()[::-1] if func.get('name') else '',
                     file_id, func.get('line', 0), '', func.get('definition', ''),
                     None, 'pending', None, current_time, current_time
@@ -733,7 +733,7 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    'constant', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    'CC', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
                     const.get('name', '').lower()[::-1] if const.get('name') else '',
                     file_id, const.get('line', 0), '', const.get('definition', ''),
                     None, 'pending', None, current_time, current_time
@@ -788,7 +788,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                        'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
                         cls.get('name', '').lower()[::-1] if cls.get('name') else '',
                         file_id, 0, cls.get('base_class', ''), cls.get('description', ''),
                         None, 'pending', None, current_time, current_time
@@ -801,7 +801,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                        'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
                         func.get('name', '').lower()[::-1] if func.get('name') else '',
                         file_id, 0, '', func.get('description', ''),
                         None, 'pending', None, current_time, current_time
@@ -814,7 +814,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        'property', prop.get('name', ''), prop.get('name', '').lower() if prop.get('name') else '',
+                        'MP', prop.get('name', ''), prop.get('name', '').lower() if prop.get('name') else '',
                         prop.get('name', '').lower()[::-1] if prop.get('name') else '',
                         file_id, 0, '', prop.get('description', ''),
                         None, 'pending', None, current_time, current_time
@@ -827,7 +827,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        'event', event.get('name', ''), event.get('name', '').lower() if event.get('name') else '',
+                        'ME', event.get('name', ''), event.get('name', '').lower() if event.get('name') else '',
                         event.get('name', '').lower()[::-1] if event.get('name') else '',
                         file_id, 0, '', event.get('description', ''),
                         None, 'pending', None, current_time, current_time
@@ -840,9 +840,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         source_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM files WHERE category='help'")
         help_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='class'")
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
         class_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='function'")
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
         func_count = cursor.fetchone()[0]
         
         # 保存元数据
@@ -1092,13 +1092,20 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cursor.fetchall()}
             
-            if 'classes' in tables:
-                cursor.execute("SELECT COUNT(*) FROM classes")
+            # 新版 schema: vocabularies 表 + 双字母 type 编码
+            if 'vocabularies' in tables:
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
                 stats["classes"] = cursor.fetchone()[0]
-
-            if 'functions' in tables:
-                cursor.execute("SELECT COUNT(*) FROM functions")
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
                 stats["functions"] = cursor.fetchone()[0]
+            else:
+                # 旧版 schema 兼容（classes/functions 表）
+                if 'classes' in tables:
+                    cursor.execute("SELECT COUNT(*) FROM classes")
+                    stats["classes"] = cursor.fetchone()[0]
+                if 'functions' in tables:
+                    cursor.execute("SELECT COUNT(*) FROM functions")
+                    stats["functions"] = cursor.fetchone()[0]
 
             if 'files' in tables:
                 cursor.execute("SELECT COUNT(*) FROM files")

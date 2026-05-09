@@ -60,7 +60,6 @@ else:
     from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
     from src.tools.knowledge_base import (
         set_delphi_kb_service,
-        set_project_kb_service,
         set_thirdparty_kb_service,
         search_knowledge,
         build_unified_knowledge_base,
@@ -151,7 +150,8 @@ async def run_server():
     stks(thirdparty_kb_service)
     set_knowledge_base_services(kb_service, thirdparty_kb_service)
     set_delphi_kb_service(kb_service)
-    set_project_kb_service(kb_service)
+    # 项目 KB 服务由 project_path 参数动态创建,不在启动时初始化
+    # set_project_kb_service(kb_service)  # kb_service 是 Delphi RTL KB,不适合作为项目 KB
     set_thirdparty_kb_service(thirdparty_kb_service)
     logger.info("工具服务实例设置完成")
 
@@ -413,8 +413,10 @@ async def run_server():
                                 "url_pattern": arguments.get("url_pattern")
                             }
                         elif task_type == "init_project_knowledge_base":
+                            from src.tools.knowledge_base import _resolve_project_path
+                            resolved_path = _resolve_project_path(arguments.get("project_path"))
                             task_params = {
-                                "project_path": arguments.get("project_path"),
+                                "project_path": resolved_path,
                                 "version": version,
                                 "force_rebuild": force_rebuild,
                                 "build_thirdparty": arguments.get("build_thirdparty", True),

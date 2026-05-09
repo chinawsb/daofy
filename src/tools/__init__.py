@@ -7,7 +7,6 @@ from .environment import check_environment
 from .coding_rules import get_coding_rules
 from .knowledge_base import (
     set_delphi_kb_service,
-    set_project_kb_service,
     set_thirdparty_kb_service,
     search_knowledge,
     build_unified_knowledge_base,
@@ -53,7 +52,6 @@ __all__ = [
     'get_coding_rules',
     # 知识库工具
     'set_delphi_kb_service',
-    'set_project_kb_service',
     'set_thirdparty_kb_service',
     'search_knowledge',
     'build_unified_knowledge_base',
