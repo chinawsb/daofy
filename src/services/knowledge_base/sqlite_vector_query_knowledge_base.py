@@ -10,12 +10,15 @@ import sqlite3
 import math
 import struct
 import os
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
 import time
 import hashlib
 import threading
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteVectorKnowledgeBase:
