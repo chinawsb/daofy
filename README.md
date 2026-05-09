@@ -90,7 +90,7 @@ delphi_kb(
 
 | 工具名称 | 功能描述 | 主要参数 |
 |----------|----------|----------|
-| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`, `top_k`, `project_path`(项目知识库必需), `directory`(扫描目录, 构建文档KB时可省略自动检测), `url`(网页URL), `content_type`(文档类型), `extensions`(文件扩展名) |
+| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`, `top_k`, `project_path`(项目知识库可选，不传时自动从当前目录检测 .dproj), `directory`(扫描目录, 构建文档KB时可省略自动检测), `url`(网页URL), `content_type`(文档类型), `extensions`(文件扩展名) |
 
 ### 源码读取工具
 

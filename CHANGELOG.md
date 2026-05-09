@@ -5,7 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2026.05.01] - 2026-05-01
+## [2026.05.09] - 2026-05-09
+
+### Added
+
+- **项目知识库路径自动检测**：`delphi_kb(action=search/stats/build, kb_type=project)` 不再强制要求 `project_path` 参数
+  - 新增 `_resolve_project_path()` 函数，自动扫描 CWD 及父目录查找 `.dproj` 文件
+  - 找到多个 `.dproj` 时优先匹配目录名同名的项目文件
+  - AI agent 搜索项目知识库时无需显式传递路径
+
+### Fixed
+
+- **修复项目知识库加载失败**：`load_knowledge_bases()` 只识别旧 JSON 格式（`.delphi-kb/project/index/source_index.json`），不识新 SQLite 格式（`.delphi-kb/knowledge.sqlite`），导致项目 KB 始终无法加载，搜索返回 0 结果
+- **修复统计信息返回全 0**：`get_statistics()` 查询不存在的 `classes`/`functions` 表（新 schema 改为 `vocabularies` 表），导致 stats 显示 0 类 0 函数
+- **修复三方库构建写入空 DB**：`build_thirdparty_knowledge_base()` 使用 `SQLiteVectorKnowledgeBase(force_rebuild=True)` 触发损坏的 `build_vector_index()`，该方法先 drop 表再读空表，永远不写入数据。改为直接 SQLite INSERT（与 `build_project_knowledge_base()` 统一 schema）
+- **修复共享三方库统计信息**：`ThirdPartyKnowledgeBase.get_statistics()` 只查旧 `classes`/`functions` 表，新 schema 数据在 `vocabularies` 表，导致共享三方库一直显示 0 类 0 函数
+- **修复搜索结果被 filter 吞没**：`_filter_by_search_type()` 不识别 `kind_code='class'`（项目 KB 存储格式），只认 `'TC'`（Delphi KB 格式），所有项目 KB 搜索结果被过滤为空
+
+### Changed
+
+- **标准化 type 编码**：所有知识库的 `vocabularies.type` 统一使用 Delphi 双字母编码（`TC`/`FF`/`CC`/`MP`/`ME` 等），与 Delphi 源码知识库一致
+  - `build_project_knowledge_base()` / `build_thirdparty_knowledge_base()` / `ThirdPartyKnowledgeBase` 全部改为写入双字母编码
+  - `_SEARCH_TYPE_TO_KIND` 和 `_KIND_DESC` 映射同步更新
+  - 已有数据库通过 UPDATE 迁移，无需重新扫描
+- **移除旧格式兼容**：删除 `source_index.json` 和 `metadata.json` 写入、`_project_kb_service` 死代码
+
+### Security
+
+- **SQLite 连接安全**：`build_thirdparty_knowledge_base()` 添加 `try/finally` 确保异常时连接关闭
 
 ### Removed
 

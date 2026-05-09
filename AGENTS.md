@@ -138,7 +138,7 @@ python build_kb_fmx.py
 # Build full source knowledge base (~65s, 2768 files, 3.5M lines)
 python build_kb.py
 
-# Build project knowledge base (via MCP tool)
+# Build project knowledge base (via MCP tool, project_path 可选——不传时自动从 CWD 检测 .dproj)
 # delphi_kb(action="build", kb_type="project", project_path="path/to/project.dproj")
 
 # Build Delphi help document knowledge base (via MCP tool, async)
@@ -178,7 +178,7 @@ python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
 | kb_type | Description | Build Command |
 |---------|------------|---------------|
 | `delphi` | Delphi 官方源码 (RTL/VCL/FMX 等) | `action=build, version=<ver>` |
-| `project` | 项目级知识库 (项目源码 + 三方库) | `action=build, project_path=<.dproj>` |
+| `project` | 项目级知识库 (项目源码 + 三方库) | `action=build` (project_path 可选，不传时自动检测) |
 | `thirdparty` | 全局共享第三方库知识库 | `action=build, version=<ver>` |
 | `document` | 通用文档 (txt/md/html/docx/pdf/epub/hlp/chm/网页) | `action=build` + `directory`/`url`/`urls` |
 
@@ -323,7 +323,7 @@ delphi_kb(
 
 搜索 Delphi API 时，按以下优先级：
 
-1. `delphi_kb(kb_type="project", project_path=..., ...)` — 项目知识库（项目特有代码，最优先）
+1. `delphi_kb(kb_type="project", ...)` — 项目知识库（项目特有代码，最优先；`project_path` 可选，不传时自动从当前目录检测 `.dproj`）
 2. `delphi_kb(kb_type="document", ...)` — 文档知识库（API 描述、示例、用法）
 3. `delphi_kb(kb_type="delphi", ...)` — 源码知识库（RTL/VCL/FMX 定义声明）
 4. `delphi_kb(kb_type="thirdparty", ...)` — 三方库知识库（第三方组件）
