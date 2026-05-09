@@ -69,7 +69,7 @@ def load_model():
             # 强制离线模式（避免联网验证 SSL 证书失败）
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             os.environ["HF_HUB_OFFLINE"] = "1"
-            _model = SentenceTransformer(_model_name)
+            _model = SentenceTransformer(_model_name, local_files_only=True)
             logger.info("embedding 模型加载完成")
             return _model
         except Exception as e:
