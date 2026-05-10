@@ -40,11 +40,22 @@ except ImportError:
         handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
         logger.addHandler(handler)
 
+    # 测试模式下 fallback 实现
+    def expand_delphi_path_macros(path: str, version: Optional[str] = None) -> str:
+        import os
+        return os.path.expandvars(path)
+
+    def get_delphi_version() -> Optional[str]:
+        return None
+
+    def get_catalog_repository_paths(version: Optional[str] = None) -> list:
+        return []
+
 
 class ThirdPartyKnowledgeBase:
     """第三方库知识库管理器"""
 
-    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
+    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None) -> None:
         """
         初始化第三方库知识库
 
@@ -52,6 +63,7 @@ class ThirdPartyKnowledgeBase:
             kb_dir: 知识库目录路径,如果为 None 则使用默认路径
             progress_callback: 进度回调函数
         """
+        self.kb_dir: Path
         if kb_dir is None:
             # 默认路径: MCP 服务器目录下的 data/thirdparty-knowledge-base
             server_root = Path(__file__).parent.parent.parent.parent
@@ -126,7 +138,7 @@ class ThirdPartyKnowledgeBase:
                     version_path = winreg.OpenKey(key, version_key)
                     try:
                         root_dir = winreg.QueryValueEx(version_path, "RootDir")[0]
-                    except:
+                    except OSError:
                         continue
                     finally:
                         winreg.CloseKey(version_path)
@@ -423,7 +435,7 @@ class ThirdPartyKnowledgeBase:
                             p_list = [p.strip() for p in browsing_path.split(';') if p.strip()]
                             paths.extend(p_list)
                             logger.debug(f"平台 {platform_name} Browsing Path: {len(p_list)} 个路径")
-                    except:
+                    except OSError:
                         pass
 
                     # 读取 Search Path
@@ -433,7 +445,7 @@ class ThirdPartyKnowledgeBase:
                             p_list = [p.strip() for p in search_path.split(';') if p.strip()]
                             paths.extend(p_list)
                             logger.debug(f"平台 {platform_name} Search Path: {len(p_list)} 个路径")
-                    except:
+                    except OSError:
                         pass
 
                 finally:
@@ -1127,7 +1139,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     paths_data = json.load(f)
                     stats["thirdparty_paths_count"] = paths_data.get("count", 0)
                     stats["delphi_version"] = paths_data.get("version", {}).get("name", "Unknown")
-            except:
+            except (OSError, json.JSONDecodeError):
                 pass
 
         return stats
