@@ -111,7 +111,7 @@ class CompilerService:
                         root_dir, _ = winreg.QueryValueEx(version_path_key, "RootDir")
                         if root_dir and Path(root_dir).exists():
                             versions.append((version_key, root_dir))
-                    except:
+                    except OSError:
                         pass
                     finally:
                         winreg.CloseKey(version_path_key)
@@ -181,7 +181,8 @@ class CompilerService:
                  f"Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, Path | ConvertTo-Json"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             
             if result.returncode == 0 and result.stdout.strip():
@@ -313,7 +314,8 @@ class CompilerService:
                 cwd=project_dir,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             
             if result.returncode != 0 and not ignore_exit_code:
@@ -909,7 +911,7 @@ class CompilerService:
                 # 删除临时文件
                 try:
                     os.unlink(batch_file)
-                except:
+                except OSError:
                     pass
                 
                 # 6. 解析输出
