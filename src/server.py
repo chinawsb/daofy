@@ -231,7 +231,8 @@ async def run_server():
                         "domain_filter": {"type": "string", "description": "域名过滤（自动爬取时，只爬取该域名）"},
                         "url_pattern": {"type": "string", "description": "URL正则模式过滤（自动爬取时）"},
                         "content_type": {"type": "string", "description": "文档类型过滤（可选，如'markdown', 'html', 'docx'）"},
-                        "max_workers": {"type": "integer", "description": "最大工作进程数（可选）"}
+                        "max_workers": {"type": "integer", "description": "最大工作进程数（可选）"},
+                        "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "排除的子目录名列表（仅action=build且kb_type=document时有效，默认排除多语言帮助子目录如['ja','fr','de']）"}
                     },
                     "required": []
                 }
@@ -287,15 +288,16 @@ async def run_server():
             ),
             Tool(
                 name="async_task",
-                description="【后台任务】管理长时间运行的后台任务(如构建知识库)。action=start启动任务; action=status查进度; action=result取结果; action=list列任务; action=cancel取消任务。",
+                description="【后台任务】管理长时间运行的后台任务(如构建知识库)。action=start启动任务; action=status查进度(支持长轮询); action=result取结果; action=list列任务; action=cancel取消任务。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动后台任务, status=查状态(含进度), result=查结果, list=列表, cancel=取消"},
+                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动后台任务, status=查状态(含进度，支持long_poll_seconds长轮询), result=查结果, list=列表, cancel=取消"},
                         "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base", "build_document_knowledge_base", "build_embedding"], "description": "任务类型 (action=start时需要)"},
-                        "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path 等"},
+                        "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path, exclude_dirs(文档KB时可选，排除多语言子目录如['ja','fr','de']), extensions 等"},
                         "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
-                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"}
+                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
+                        "long_poll_seconds": {"type": "integer", "default": 0, "description": "长轮询秒数（action=status时有效，等待进度变化再返回，默认0即立即返回，推荐120秒减少AI轮询次数）"}
                     },
                     "required": []
                 }
@@ -419,7 +421,8 @@ async def run_server():
                                 "max_pages": arguments.get("max_pages", 100),
                                 "max_depth": arguments.get("max_depth", 3),
                                 "domain_filter": arguments.get("domain_filter"),
-                                "url_pattern": arguments.get("url_pattern")
+                                "url_pattern": arguments.get("url_pattern"),
+                                "exclude_dirs": arguments.get("exclude_dirs")
                             }
                         elif task_type == "init_project_knowledge_base":
                             from src.tools.knowledge_base import _resolve_project_path

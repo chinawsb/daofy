@@ -129,6 +129,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             max_depth = kwargs.get("max_depth", 3)
             domain_filter = kwargs.get("domain_filter")
             url_pattern = kwargs.get("url_pattern")
+            exclude_dirs = kwargs.get("exclude_dirs")
             progress_callback = kwargs.get("_progress_callback")
             
             server_root = FilePath(__file__).parent.parent.parent
@@ -162,7 +163,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             
             # 扫描目录
             if directory:
-                scan_result = scanner.scan_directory(directory, extensions=extensions)
+                scan_result = scanner.scan_directory(directory, extensions=extensions, exclude_dirs=exclude_dirs)
                 results["scan"] = scan_result
             
             return results
@@ -224,11 +225,12 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
 async def get_task_status(arguments: Any) -> CallToolResult:
     """
-    获取任务状态
+    获取任务状态（支持长轮询）
 
     Args:
         arguments: 包含以下参数:
             - task_id: 任务ID (必需)
+            - long_poll_seconds: 长轮询等待秒数（可选，默认0即立即返回）
 
     Returns:
         任务状态信息
@@ -241,7 +243,13 @@ async def get_task_status(arguments: Any) -> CallToolResult:
         )
 
     task_manager = get_task_manager()
-    task_info = task_manager.get_task_info(task_id)
+    
+    # 长轮询：等待进度变化再返回
+    long_poll = arguments.get("long_poll_seconds", 0)
+    if long_poll > 0:
+        task_info = task_manager.wait_for_progress_change(task_id, long_poll)
+    else:
+        task_info = task_manager.get_task_info(task_id)
 
     if not task_info:
         return CallToolResult(

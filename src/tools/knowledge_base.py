@@ -429,7 +429,7 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
     
     # 解析知识库类型
     if kb_type == "all":
-        kb_types = ["delphi", "project", "thirdparty", "help"]
+        kb_types = ["delphi", "project", "thirdparty"]
     elif isinstance(kb_type, str):
         kb_types = [k.strip() for k in kb_type.split(",")]
     else:
@@ -514,17 +514,63 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             results[kb] = {"error": str(e)}
     
     # 格式化输出
+    # 若 kb_type=all 或包含 document，补充文档知识库统计
+    if kb_type in ("all", "document"):
+        try:
+            import sqlite3
+            server_root = Path(__file__).parent.parent.parent
+            db_path = server_root / "data" / "document-knowledge-base" / "documents.sqlite"
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM documents")
+                total = cursor.fetchone()[0]
+                cursor.execute("SELECT extension, COUNT(*) FROM documents GROUP BY extension ORDER BY COUNT(*) DESC")
+                by_ext = dict(cursor.fetchall())
+                cursor.execute("SELECT content_type, COUNT(*) FROM documents GROUP BY content_type ORDER BY COUNT(*) DESC")
+                by_type = dict(cursor.fetchall())
+                conn.close()
+                results["document"] = {
+                    "total_documents": total,
+                    "by_type": by_type,
+                    "by_extension": by_ext,
+                }
+            else:
+                results["document"] = {"error": f"文档知识库不存在: {db_path}"}
+        except Exception as e:
+            results["document"] = {"error": str(e)}
+    
     output = f"知识库统计 ({kb_type}):\n\n"
     
     for kb, stats in results.items():
         output += f"【{kb.upper()}】\n"
-        if "error" in stats:
+        if isinstance(stats, dict) and "error" in stats:
             output += f"  错误: {stats['error']}\n"
         else:
+            if isinstance(stats, dict) and 'by_type' in stats and 'total_documents' in stats:
+                # Document KB stats has different key structure (by_type + total_documents)
+                output += f"  总文档数: {stats.get('total_documents', 0)}\n"
+                by_type = stats.get('by_type', {})
+                if by_type:
+                    output += f"  按类型统计:\n"
+                    for ct, cnt in by_type.items():
+                        output += f"    {ct}: {cnt}\n"
+                by_ext = stats.get('by_extension', {})
+                if by_ext:
+                    output += f"  按扩展名统计:\n"
+                    for ext, cnt in sorted(by_ext.items(), key=lambda x: x[1], reverse=True):
+                        output += f"    {ext}: {cnt}\n"
+                continue
             output += f"  文件: {stats.get('total_documents', stats.get('files', 0))}\n"
             output += f"  类: {stats.get('total_classes', stats.get('classes', 0))}\n"
             output += f"  函数: {stats.get('total_functions', stats.get('functions', 0))}\n"
             output += f"  数据库: {stats.get('database_size_mb', 0)} MB\n"
+            # 文件类型/扩展名分布
+            by_ext = stats.get('by_extension', {})
+            if by_ext:
+                output += f"  文件类型分布:\n"
+                for ext, cnt in sorted(by_ext.items(), key=lambda x: x[1], reverse=True):
+                    output += f"    {ext}: {cnt}\n"
         output += "\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])

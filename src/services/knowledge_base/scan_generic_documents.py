@@ -25,6 +25,9 @@ from .fts5_lazy_manager import FTS5LazyManager
 
 logger = logging.getLogger(__name__)
 
+# 默认排除的多语言子目录
+DEFAULT_EXCLUDE_DIRS = {'ja', 'fr', 'de', 'es', 'it', 'ko', 'pt', 'ru', 'zh'}
+
 try:
     from bs4 import BeautifulSoup
 except ImportError:
@@ -1498,6 +1501,16 @@ class GenericDocumentScanner:
         
         return max_lang
     
+    @staticmethod
+    def _apply_performance_pragmas(conn, for_build=False):
+        """应用 SQLite 性能 PRAGMA 设置（镜像 sqlite_vector_query_knowledge_base.py 的配置）"""
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=OFF" if for_build else "PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-256000")  # 256MB 缓存
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA mmap_size=268435456")  # 256MB 内存映射
+        conn.execute("PRAGMA busy_timeout=10000")
+
     def _load_config(self) -> Dict:
         """加载配置文件"""
         config_path = self.kb_dir / "config.json"
@@ -1543,6 +1556,7 @@ class GenericDocumentScanner:
     
     def _init_database(self):
         conn = sqlite3.connect(str(self.db_path))
+        self._apply_performance_pragmas(conn)
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -1610,15 +1624,17 @@ class GenericDocumentScanner:
             conn.create_function("my_lower", 1, lambda s: s.lower() if s else '')
             cursor.execute("UPDATE documents SET title_lower = my_lower(title), title_rev = my_reverse(title) WHERE title IS NOT NULL AND title_rev IS NULL")
         
-        # 填充已有数据的语言字段
-        cursor.execute("SELECT COUNT(*) FROM documents WHERE language IS NULL OR language = 'en'")
+        # 填充已有数据的语言字段（仅处理 language IS NULL 的记录）
+        cursor.execute("SELECT COUNT(*) FROM documents WHERE language IS NULL")
         missing_lang = cursor.fetchone()[0]
-        if missing_lang > 0:
-            cursor.execute("SELECT id, title, content FROM documents WHERE language IS NULL OR language = 'en'")
+        if missing_lang > 0 and missing_lang < 50000:
+            cursor.execute("SELECT id, title, content FROM documents WHERE language IS NULL")
             for row in cursor.fetchall():
                 doc_id, title, content = row
                 lang = self._detect_language(title or '', content or '')
                 cursor.execute("UPDATE documents SET language = ? WHERE id = ?", (lang, doc_id))
+        elif missing_lang >= 50000:
+            logger.warning(f"跳过 {missing_lang} 条语言检测（数量过大），新插入文档会自动检测语言")
         
         # 创建 FTS5 虚拟表（懒加载，不填充数据）
         self.fts5_manager.create_fts_table(conn)
@@ -1627,7 +1643,8 @@ class GenericDocumentScanner:
         conn.close()
     
     def scan_directory(self, directory: str, extensions: Optional[List[str]] = None,
-                      max_workers: Optional[int] = None) -> Dict:
+                      max_workers: Optional[int] = None,
+                      exclude_dirs: Optional[List[str]] = None) -> Dict:
         """
         扫描目录中的文档
         
@@ -1635,6 +1652,7 @@ class GenericDocumentScanner:
             directory: 要扫描的目录
             extensions: 要处理的文件扩展名列表
             max_workers: 最大工作进程数
+            exclude_dirs: 要排除的子目录名列表（默认排除多语言帮助子目录）
         
         Returns:
             扫描统计信息
@@ -1646,9 +1664,15 @@ class GenericDocumentScanner:
         extensions = extensions or self.config.get('build', {}).get('supported_extensions', self.SUPPORTED_EXTENSIONS)
         extensions = [e.lower() for e in extensions]
         
+        exclude_set = set(exclude_dirs) if exclude_dirs else DEFAULT_EXCLUDE_DIRS
+        
         all_files = []
         for ext in extensions:
-            all_files.extend(directory.rglob(f'*{ext}'))
+            for f in directory.rglob(f'*{ext}'):
+                # 排除语言子目录（如 ja/、fr/、de/ 等）
+                if exclude_set.intersection(f.relative_to(directory).parts):
+                    continue
+                all_files.append(f)
         
         if not all_files:
             return {'total_files': 0, 'processed': 0, 'failed': 0}
@@ -1736,6 +1760,7 @@ class GenericDocumentScanner:
                     })
         
         conn = sqlite3.connect(str(self.db_path))
+        self._apply_performance_pragmas(conn, for_build=True)
         cursor = conn.cursor()
         
         existing_mtimes = {}
@@ -1811,7 +1836,16 @@ class GenericDocumentScanner:
                             title = result.get('title', '')
                             title_lower = title.lower() if title else ''
                             title_rev = title[::-1].lower() if title else ''
-                            language = self._detect_language(title, result.get('content', ''))
+                            content = result.get('content', '')
+                            language = self._detect_language(title, content)
+                            
+                            # 清理 Base64 data URI（html2text ignore_images=True 已处理，此处做防御性清理）
+                            content = re.sub(
+                                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
+                                '[Base64 Image]',
+                                content
+                            )
+                            requires_extraction = result.get('requires_extraction', 0)
                             
                             cursor.execute("""
                                 INSERT INTO documents (
@@ -1826,7 +1860,7 @@ class GenericDocumentScanner:
                                 title,
                                 title_lower,
                                 title_rev,
-                                result.get('content'),
+                                content,
                                 result.get('content_type'),
                                 result.get('file_size'),
                                 result.get('size'),
@@ -1836,7 +1870,7 @@ class GenericDocumentScanner:
                                 json.dumps(result.get('sections', [])),
                                 json.dumps(result.get('code_examples', [])),
                                 result.get('url'),
-                                result.get('requires_extraction', 0),
+                                requires_extraction,
                                 language
                             ))
                             processed += 1
@@ -1856,7 +1890,29 @@ class GenericDocumentScanner:
             
             conn.commit()
             
+            # 数据库维护：回收碎片、优化查询计划
+            if processed > 0:
+                if self.progress_callback:
+                    self.progress_callback(total_files, "正在优化数据库（VACUUM）...")
+                conn.execute("PRAGMA incremental_vacuum")
+                conn.execute("VACUUM")
+                conn.execute("PRAGMA optimize")
+                conn.execute("ANALYZE")
+                
+                # 构建完成后全量构建 FTS5 索引
+                if self.progress_callback:
+                    self.progress_callback(total_files, "正在构建 FTS5 全文索引...")
+                try:
+                    self.fts5_manager.rebuild_full()
+                except Exception as e:
+                    logger.warning(f"FTS5 索引构建失败（后续查询自动降级）: {e}")
+            
         finally:
+            # 恢复 synchronous 为非构建模式
+            try:
+                conn.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
             conn.close()
         
         return {
@@ -1869,7 +1925,8 @@ class GenericDocumentScanner:
         }
     
     def scan_directory_async(self, directory: str, extensions: Optional[List[str]] = None,
-                            max_workers: Optional[int] = None, callback: Optional[Callable] = None):
+                            max_workers: Optional[int] = None, callback: Optional[Callable] = None,
+                            exclude_dirs: Optional[List[str]] = None):
         """
         异步扫描目录中的文档（立即返回，后台处理）
         
@@ -1889,7 +1946,7 @@ class GenericDocumentScanner:
         def _scan_task():
             try:
                 self._scanning = True
-                result = self.scan_directory(directory, extensions, max_workers)
+                result = self.scan_directory(directory, extensions, max_workers, exclude_dirs)
                 if callback:
                     callback(result)
                 if self.progress_callback:
@@ -1938,11 +1995,18 @@ class GenericDocumentScanner:
             
             if result:
                 conn = sqlite3.connect(str(self.db_path))
+                self._apply_performance_pragmas(conn)
                 cursor = conn.cursor()
                 
                 try:
                     title = result.get('title', '')
                     content = result.get('content', '')
+                    # 防御性清理 Base64 data URI
+                    content = re.sub(
+                        r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
+                        '[Base64 Image]',
+                        content
+                    )
                     title_lower = title.lower() if title else ''
                     title_rev = title[::-1].lower() if title else ''
                     language = self._detect_language(title, content)
@@ -2021,6 +2085,7 @@ class GenericDocumentScanner:
             匹配的文档列表
         """
         conn = sqlite3.connect(str(self.db_path))
+        self._apply_performance_pragmas(conn)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
@@ -2215,6 +2280,7 @@ class GenericDocumentScanner:
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         conn = sqlite3.connect(str(self.db_path))
+        self._apply_performance_pragmas(conn)
         cursor = conn.cursor()
         
         try:
@@ -2228,18 +2294,19 @@ class GenericDocumentScanner:
             """)
             by_type = dict(cursor.fetchall())
             
-            # 直接从数据库查询语言分布
+            # 直接从数据库查询扩展名分布（替代不存在的 language 列）
             cursor.execute("""
-                SELECT language, COUNT(*) 
-                FROM documents 
-                GROUP BY language
+                SELECT COALESCE(extension, '(no ext)') AS ext, COUNT(*) AS cnt
+                FROM documents
+                GROUP BY ext
+                ORDER BY cnt DESC
             """)
-            by_language = dict(cursor.fetchall())
+            by_extension = dict(cursor.fetchall())
             
             return {
                 'total_documents': total_documents,
                 'by_type': by_type,
-                'by_language': by_language
+                'by_extension': by_extension,
             }
         finally:
             conn.close()

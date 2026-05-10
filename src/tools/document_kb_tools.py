@@ -207,6 +207,13 @@ async def get_document_statistics(arguments: Any) -> CallToolResult:
         output += "按类型统计:\n"
         for content_type, count in by_type.items():
             output += f"  {content_type}: {count}\n"
+        output += "\n"
+    
+    by_extension = stats.get('by_extension', {})
+    if by_extension:
+        output += "按扩展名统计:\n"
+        for ext, count in sorted(by_extension.items(), key=lambda x: x[1], reverse=True):
+            output += f"  {ext}: {count}\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])
 
@@ -231,6 +238,7 @@ async def read_document(arguments: Any) -> CallToolResult:
     
     try:
         conn = sqlite3.connect(str(db_path))
+        conn.execute("PRAGMA busy_timeout=10000")
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         

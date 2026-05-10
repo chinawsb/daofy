@@ -344,6 +344,13 @@ class DelphiKnowledgeBaseService:
             if has_files:
                 cursor.execute("SELECT COUNT(*) FROM files")
                 stats["files"] = cursor.fetchone()[0]
+                cursor.execute("""
+                    SELECT COALESCE(extension, '(no ext)') AS ext, COUNT(*) AS cnt
+                    FROM files
+                    GROUP BY ext
+                    ORDER BY cnt DESC
+                """)
+                stats["by_extension"] = dict(cursor.fetchall())
 
             if has_vocab:
                 cursor.execute("SELECT COUNT(*) FROM vocabularies")

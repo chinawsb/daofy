@@ -56,6 +56,7 @@ class AsyncTaskManager:
         self._tasks: Dict[str, TaskInfo] = {}
         self._task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        self._progress_condition = threading.Condition(self._lock)
         self._task_counter = 0
 
     def _generate_task_id(self) -> str:
@@ -190,6 +191,36 @@ class AsyncTaskManager:
         with self._lock:
             return self._tasks.get(task_id)
 
+    def wait_for_progress_change(self, task_id: str, timeout_seconds: float = 120) -> Optional[TaskInfo]:
+        """长轮询等待任务进度变化
+        
+        阻塞等待直到进度变化、任务完成/失败/取消、或超时。
+        
+        Args:
+            task_id: 任务ID
+            timeout_seconds: 最大等待秒数（默认 120）
+        
+        Returns:
+            变化后的 TaskInfo，或 None（任务不存在）
+        """
+        deadline = time.time() + timeout_seconds
+        with self._progress_condition:
+            while time.time() < deadline:
+                task = self._tasks.get(task_id)
+                if not task:
+                    return None
+                if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED):
+                    return task
+                old_progress = task.progress
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                self._progress_condition.wait(timeout=min(30.0, remaining))
+                task = self._tasks.get(task_id)
+                if task and task.progress != old_progress:
+                    return task  # 进度有变化，立即返回
+            return self._tasks.get(task_id)  # 超时返回当前状态
+
     def get_all_tasks(self) -> Dict[str, TaskInfo]:
         """获取所有任务"""
         with self._lock:
@@ -197,9 +228,10 @@ class AsyncTaskManager:
 
     def update_task_progress(self, task_id: str, progress: float, message: str = "",
                             current_step: str = "", step_index: int = 0, total_steps: int = 0):
-        """更新任务进度"""
+        """更新任务进度（通知所有等待的长轮询）"""
         with self._lock:
             if task_id in self._tasks:
+                old_progress = self._tasks[task_id].progress
                 # Always update progress
                 self._tasks[task_id].progress = min(100.0, max(0.0, progress))
                 # Always update message (even if empty to show current status)
@@ -210,6 +242,9 @@ class AsyncTaskManager:
                     self._tasks[task_id].step_index = step_index
                 if total_steps > 0:
                     self._tasks[task_id].total_steps = total_steps
+                # 进度有变化则通知等待的长轮询
+                if progress != old_progress:
+                    self._progress_condition.notify_all()
 
     def cancel_task(self, task_id: str) -> bool:
         """取消任务（仅对支持取消的任务有效）"""
