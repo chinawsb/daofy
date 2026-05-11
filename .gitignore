@@ -61,6 +61,8 @@ tools/7z/
 *.obj
 tests/*.py
 !tests/__init__.py
+!tests/test_*.py
+!tests/run_*.py
 
 # Config (可能包含本地路径)
 config/compilers.json

@@ -208,7 +208,8 @@ def test_concurrent_access():
     import threading
     import time
     
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         test_dir = Path(tmpdir) / "docs"
         test_dir.mkdir()
         
@@ -237,6 +238,12 @@ def test_concurrent_access():
         assert len(errors) == 0, f"并发访问出错: {errors}"
         print(f"  5 个并发查询全部成功")
         print("  ✓ 测试通过")
+    finally:
+        del scanner
+        import gc
+        gc.collect()
+        gc.collect()
+        shutil.rmtree(tmpdir, ignore_errors=True)
     
     return True
 
