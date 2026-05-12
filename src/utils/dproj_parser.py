@@ -452,3 +452,28 @@ class DprojParser:
                     return platform
 
         return None
+
+
+def resolve_target_platform_from_dproj(project_path: str, default_platform: str = "win32") -> str:
+    """
+    从 .dproj 文件解析目标平台，失败时返回默认值。
+    
+    封装 try/parse/get_target_platform/fallback 的通用逻辑，
+    避免 compile_project.py 和 get_args.py 中重复代码。
+    
+    Args:
+        project_path: .dproj 文件路径
+        default_platform: 未找到时的默认平台
+        
+    Returns:
+        平台名称小写，如 "win32", "android", "linux64"
+    """
+    try:
+        parser = DprojParser(project_path)
+        if parser.parse():
+            platform = parser.get_target_platform()
+            if platform:
+                return platform.lower()
+    except Exception:
+        pass
+    return default_platform

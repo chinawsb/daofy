@@ -72,18 +72,9 @@ async def get_compiler_args(
     try:
         # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
         if not target_platform or target_platform == "win32":
-            try:
-                from ..utils.dproj_parser import DprojParser
-                parser = DprojParser(project_path)
-                if parser.parse():
-                    dproj_platform = parser.get_target_platform()
-                    if dproj_platform:
-                        target_platform = dproj_platform.lower()
-                        logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
-                    else:
-                        target_platform = "win32"
-            except Exception:
-                target_platform = "win32"
+            from ..utils.dproj_parser import resolve_target_platform_from_dproj
+            target_platform = resolve_target_platform_from_dproj(project_path)
+            logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
         else:
             target_platform = target_platform.lower()
         
