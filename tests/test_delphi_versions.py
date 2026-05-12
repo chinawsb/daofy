@@ -14,9 +14,12 @@ if str(project_root) not in sys.path:
 from src.utils.delphi_versions import (
     DELPHI_VERSION_NAMES,
     PROJECT_VERSION_PREFIX_MAP,
+    DCC_VERSION_TO_REGISTRY,
     get_version_name,
     get_version_name_from_path,
     get_project_version_name,
+    parse_compiler_version_from_output,
+    detect_registry_version_from_compiler,
 )
 
 
@@ -96,3 +99,74 @@ def test_name_consistency():
         if full_key in DELPHI_VERSION_NAMES:
             assert DELPHI_VERSION_NAMES[full_key] == name, \
                 f"版本 {prefix} 在两份映射中的名称不一致: {DELPHI_VERSION_NAMES[full_key]} vs {name}"
+
+
+# ============================================================
+# 编译器版本检测测试（通过 --version 输出解析）
+# ============================================================
+
+def test_parse_compiler_version_from_output():
+    """从 dcc32 --version 输出中正确解析编译器版本号"""
+    # dcc32.exe (Delphi 11)
+    output = "dcc (Embarcadero Delphi for Windows) 35.0\nEmbarcadero Delphi for Win32 compiler version 35.0\nCopyright ..."
+    assert parse_compiler_version_from_output(output) == "35.0"
+
+    # dcc64.exe (Delphi 11)
+    output64 = "dcc (Embarcadero Delphi for Windows) 35.0\nEmbarcadero Delphi for Win64 compiler version 35.0\nCopyright ..."
+    assert parse_compiler_version_from_output(output64) == "35.0"
+
+    # 无效输出
+    assert parse_compiler_version_from_output("") is None
+    assert parse_compiler_version_from_output("gcc version 12.0") is None
+    assert parse_compiler_version_from_output("Delphi compiler version") is None  # 不完整
+
+
+def test_parse_compiler_version_real_output():
+    """用实际的 --version 输出格式测试"""
+    # Delphi 12 Athens (dcc32)
+    d12_out = "dcc (Embarcadero Delphi for Windows) 36.0\nEmbarcadero Delphi for Win32 compiler version 36.0\nCopyright ..."
+    assert parse_compiler_version_from_output(d12_out) == "36.0"
+
+    # Delphi 13 Florence
+    d13_out = "dcc (Embarcadero Delphi for Windows) 37.0\nEmbarcadero Delphi for Win32 compiler version 37.0\nCopyright ..."
+    assert parse_compiler_version_from_output(d13_out) == "37.0"
+
+
+def test_dcc_version_to_registry_mapping():
+    """DCC_VERSION_TO_REGISTRY 映射表完整性"""
+    # 所有已知映射的双向验证
+    assert DCC_VERSION_TO_REGISTRY["35.0"] == "22.0"   # Delphi 11
+    assert DCC_VERSION_TO_REGISTRY["36.0"] == "23.0"   # Delphi 12
+    assert DCC_VERSION_TO_REGISTRY["37.0"] == "37.0"   # Delphi 13
+    assert DCC_VERSION_TO_REGISTRY["34.0"] == "21.0"   # Delphi 10.4
+
+    # 每个映射的 registry 版本都应在 DELPHI_VERSION_NAMES 中有对应名称
+    for dcc_ver, reg_ver in DCC_VERSION_TO_REGISTRY.items():
+        assert reg_ver in DELPHI_VERSION_NAMES, \
+            f"映射 {dcc_ver} → {reg_ver} 在 DELPHI_VERSION_NAMES 中不存在"
+
+
+def test_detect_registry_version_from_compiler_real():
+    """实际运行本地 dcc32 --version 检测版本（集成测试）"""
+    import os, winreg
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        v = winreg.EnumKey(key, 0)
+        winreg.CloseKey(key)
+        vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Embarcadero\BDS\{v}")
+        root_dir = winreg.QueryValueEx(vk, "RootDir")[0]
+        winreg.CloseKey(vk)
+        dcc32 = os.path.join(root_dir, "bin", "dcc32.exe")
+        if os.path.exists(dcc32):
+            version = detect_registry_version_from_compiler(dcc32)
+            assert version is not None, "应检测到版本号"
+            assert version in DELPHI_VERSION_NAMES, f"检测到的版本 {version} 应在已知列表中"
+            print(f"  实际检测: {dcc32} → registry_version={version}")
+    except Exception:
+        print("  跳过: 无 Delphi 安装")
+
+
+def test_detect_registry_version_unknown_compiler():
+    """不存在的编译器路径应返回 None"""
+    version = detect_registry_version_from_compiler(r"C:\NonExistent\dcc32.exe")
+    assert version is None

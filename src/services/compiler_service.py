@@ -10,6 +10,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import time
 import os
+import winreg
 from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -52,29 +53,66 @@ class CompilerService:
 
     def _find_msbuild(self) -> Optional[str]:
         """
-        查找 MSBuild 可执行文件
+        查找 MSBuild 可执行文件。
+        
+        搜索优先级：
+        1. vswhere.exe（VS 2017+ 官方工具，最准确）
+        2. %ProgramFiles(x86)%/Microsoft Visual Studio/Installer/vswhere.exe
+        3. 常见 VS 安装路径列表（回退方案）
         
         Returns:
             MSBuild 路径,如果未找到则返回 None
         """
-        # 常见的 MSBuild 路径
-        possible_paths = [
-            r"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-            r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        import subprocess
+
+        # 方法1: 使用 vswhere.exe 查询最新 VS 的 MSBuild 路径
+        vswhere_candidates = [
+            Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"))
+            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
+            Path(os.environ.get("ProgramFiles", "C:\\Program Files"))
+            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
         ]
-        
+        for vswhere in vswhere_candidates:
+            if vswhere.exists():
+                try:
+                    result = subprocess.run(
+                        [
+                            str(vswhere),
+                            "-latest", "-products", "*",
+                            "-requires", "Microsoft.Component.MSBuild",
+                            "-find", "MSBuild\\**\\Bin\\MSBuild.exe",
+                        ],
+                        capture_output=True, text=True, timeout=15,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        for line in result.stdout.strip().splitlines():
+                            msbuild_path = line.strip()
+                            if msbuild_path and Path(msbuild_path).exists():
+                                logger.info(f"通过 vswhere 找到 MSBuild: {msbuild_path}")
+                                return msbuild_path
+                except (subprocess.TimeoutExpired, OSError) as e:
+                    logger.debug(f"vswhere 查询失败: {e}")
+
+        # 方法2: 常见 VS 安装路径列表（回退方案）
+        pf86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        pf = os.environ.get("ProgramFiles", "C:\\Program Files")
+        editions = ["BuildTools", "Community", "Professional", "Enterprise"]
+        years = ["2019", "2022"]
+        possible_paths = []
+        for year in years:
+            for edition in editions:
+                base = Path(pf86) if year == "2019" else Path(pf)
+                possible_paths.append(
+                    str(base / f"Microsoft Visual Studio\\{year}\\{edition}\\MSBuild\\Current\\Bin\\MSBuild.exe")
+                )
+
         for path in possible_paths:
             if Path(path).exists():
                 logger.info(f"找到 MSBuild: {path}")
                 return path
-        
-        logger.warning("未找到 MSBuild")
+
+        logger.warning("未找到 MSBuild，将回退到直接编译")
         return None
 
     def _get_delphi_root_from_registry(self, version: Optional[str] = None) -> Optional[str]:
@@ -87,8 +125,6 @@ class CompilerService:
         Returns:
             Delphi 安装根目录，如果未找到则返回 None
         """
-        import winreg
-        
         try:
             # 打开 Delphi 注册表项
             key = winreg.OpenKey(
@@ -1104,10 +1140,14 @@ class CompilerService:
                     duration=int((time.time() - start_time) * 1000)
                 )
 
-            # 2. 获取默认编译器配置
-            compiler_config = self.config_manager.get_compiler()
+            # 2. 获取编译器配置（优先使用传入版本，默认用最新安装的）
+            compiler_config = (
+                self.config_manager.get_compiler(request.compiler_version)
+                if request.compiler_version
+                else self.config_manager.get_newest_compiler()
+            )
             if not compiler_config:
-                error_msg = "未配置默认编译器"
+                error_msg = "未找到可用的编译器"
                 logger.error(error_msg)
                 return CompileResult(
                     status=CompileStatus.FAILED,
@@ -1208,7 +1248,18 @@ class CompilerService:
             # 确保输出目录存在
             Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-            # 5. 生成参数
+            # 5. 从编译器配置获取 Delphi 数值版本号，用于标准库路径
+            delphi_version = compiler_config.registry_version
+            if not delphi_version:
+                # 注册表不可用时（如手动配置的编译器），从编译器 --version 输出解析
+                from ..utils.delphi_versions import detect_registry_version_from_compiler
+                detected = detect_registry_version_from_compiler(compiler_config.path)
+                if detected:
+                    delphi_version = detected
+                    logger.info(f"从编译器输出检测到版本: {delphi_version}")
+                else:
+                    delphi_version = "22.0"  # 最终回退
+
             args = self.args_generator.generate_for_file(
                 request.file_path,
                 all_unit_paths,
@@ -1216,7 +1267,8 @@ class CompilerService:
                 request.disabled_warnings,
                 namespaces=namespaces,
                 include_paths=include_paths if include_paths else None,
-                output_dir=output_dir
+                output_dir=output_dir,
+                delphi_version=delphi_version
             )
 
             # 5. 执行编译

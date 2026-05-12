@@ -99,7 +99,8 @@ async def compile_file(
     file_path: str,
     unit_search_paths: Optional[List[str]] = None,
     warning_level: int = 2,
-    disabled_warnings: Optional[List[str]] = None
+    disabled_warnings: Optional[List[str]] = None,
+    compiler_version: Optional[str] = None
 ) -> CallToolResult:
     """
     编译单个 Delphi 单元文件(仅语法检查)
@@ -109,6 +110,7 @@ async def compile_file(
         unit_search_paths: 单元搜索路径列表(可选，为空时自动从.dproj或Delphi默认路径获取)
         warning_level: 警告级别(0-4)
         disabled_warnings: 禁用的警告列表
+        compiler_version: 编译器版本名称（可选，不传时使用最新安装的版本）
 
     Returns:
         编译结果
@@ -150,7 +152,8 @@ async def compile_file(
             file_path=file_path,
             unit_search_paths=search_paths,
             warning_level=warning_level,
-            disabled_warnings=disabled_warnings or []
+            disabled_warnings=disabled_warnings or [],
+            compiler_version=compiler_version,
         )
 
         result = await _compiler_service.compile_file(request)

@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable
 
+import winreg
 from src.utils.delphi_versions import get_version_name
 from ...utils.logger import get_logger
 
@@ -64,8 +65,6 @@ class DelphiKnowledgeBaseService:
         Returns:
             Delphi 版本列表
         """
-        import winreg
-
         versions = []
 
         try:

@@ -88,6 +88,7 @@ class FileCompileRequest:
     unit_search_paths: List[str] = field(default_factory=list)
     warning_level: int = 2
     disabled_warnings: List[str] = field(default_factory=list)
+    compiler_version: Optional[str] = None
 
     def __post_init__(self):
         """验证文件路径"""

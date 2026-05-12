@@ -189,18 +189,28 @@ def test_project_version_mapping():
 
 
 def test_project_version_unknown_prefix_falls_back():
-    """未知版本前缀回退到默认编译器"""
+    """未知版本前缀回退到最新编译器"""
     tmpdir = tempfile.mkdtemp()
     try:
         config_path = os.path.join(tmpdir, "compilers.json")
         cm = ConfigManager(config_path, os.path.join(tmpdir, "history.json"))
-        default = CompilerConfig(
-            name="DefaultC", path=r"C:\dcc32.exe", version="Any", is_default=True
+        # 先清空自动检测的编译器，添加两个测试用编译器
+        for c in cm.get_all_compilers():
+            cm.config.remove_compiler(c.name)
+        old_compiler = CompilerConfig(
+            name="OldC", path=r"C:\dcc32_old.exe", version="Any",
+            registry_version="5.0",
         )
-        cm.add_compiler(default)
+        new_compiler = CompilerConfig(
+            name="NewC", path=r"C:\dcc32_new.exe", version="Any",
+            registry_version="23.0",
+        )
+        cm.add_compiler(old_compiler)
+        cm.add_compiler(new_compiler)
+        # 未知版本前缀应回退到最新版本
         compiler = cm.get_compiler_for_project("99.0")
         assert compiler is not None
-        assert compiler.name == "DefaultC"
+        assert compiler.name == "NewC", f"应回退到最新版本, 得到={compiler.name}"
     finally:
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)

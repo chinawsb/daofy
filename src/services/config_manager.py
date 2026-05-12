@@ -16,6 +16,7 @@ from typing import Optional, List
 from datetime import datetime
 from ..models.compiler_config import CompilerConfig, ConfigFile
 from ..models.compile_history import CompileHistoryEntry, HistoryFile
+from ..utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -131,7 +132,6 @@ class ConfigManager:
                 logger.warning("未配置默认编译器")
             return compiler
 
-    from src.utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
     PROJECT_VERSION_MAP = PROJECT_VERSION_PREFIX_MAP.copy()
 
     def get_compiler_for_project(self, project_version: str, platform: str = "win32") -> Optional[CompilerConfig]:
@@ -146,13 +146,13 @@ class ConfigManager:
             最适配的编译器配置,如果未找到则返回默认编译器
         """
         if not project_version:
-            logger.warning("项目版本号为空,使用默认编译器")
-            return self.get_compiler()
+            logger.warning("项目版本号为空,使用最新编译器")
+            return self.get_newest_compiler() or self.get_compiler()
 
         delphi_version = self._map_project_version_to_delphi(project_version)
         if not delphi_version:
-            logger.warning(f"无法识别的项目版本: {project_version},使用默认编译器")
-            return self.get_compiler()
+            logger.warning(f"无法识别的项目版本: {project_version},使用最新编译器")
+            return self.get_newest_compiler() or self.get_compiler()
 
         compilers = self.config.compilers
         if not compilers:
@@ -174,8 +174,8 @@ class ConfigManager:
                         return c
                 return matching_compilers[0]
 
-        logger.warning(f"未找到匹配版本 {delphi_version} 的编译器,使用默认编译器")
-        return self.get_compiler()
+        logger.warning(f"未找到匹配版本 {delphi_version} 的编译器,使用最新编译器")
+        return self.get_newest_compiler() or self.get_compiler()
 
     def _map_project_version_to_delphi(self, project_version: str) -> Optional[str]:
         """
@@ -197,6 +197,17 @@ class ConfigManager:
         Args:
             compiler: 编译器配置
         """
+        # 如果没有 registry_version，尝试从编译器 --version 输出检测
+        if not compiler.registry_version and compiler.path:
+            try:
+                from ..utils.delphi_versions import detect_registry_version_from_compiler
+                detected = detect_registry_version_from_compiler(compiler.path)
+                if detected:
+                    compiler.registry_version = detected
+                    logger.info(f"通过编译器输出检测到版本: {compiler.name} → {detected}")
+            except Exception:
+                pass
+
         self.config.add_compiler(compiler)
         self.save_config()
         logger.info(f"添加编译器配置: {compiler.name}")
@@ -251,6 +262,27 @@ class ConfigManager:
         else:
             logger.warning(f"设置默认编译器失败,不存在: {name}")
         return result
+
+    def get_newest_compiler(self) -> Optional[CompilerConfig]:
+        """
+        获取最新安装的编译器（按 registry_version 数值最大者）。
+
+        当用户未指定编译器版本时，默认使用最新版本，而非"默认编译器"。
+        """
+        compilers = self.config.compilers
+        if not compilers:
+            return None
+
+        def sort_key(c: CompilerConfig) -> tuple:
+            if c.registry_version:
+                try:
+                    parts = c.registry_version.split('.')
+                    return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+                except (ValueError, IndexError):
+                    return (0, 0)
+            return (0, 0)
+
+        return max(compilers, key=sort_key)
 
     def get_all_compilers(self) -> List[CompilerConfig]:
         """获取所有编译器配置"""
@@ -396,14 +428,25 @@ class ConfigManager:
             logger.warning(f"bin 目录不存在: {bin_path}")
             return compilers
 
-        # 检测编译器版本名称
-        if registry_version:
+        # 检测编译器版本名称和注册表版本号
+        effective_registry_version = registry_version
+        if not effective_registry_version:
+            from ..utils.delphi_versions import detect_registry_version_from_compiler
+            # 先通过 bin 下的任意一个 dcc*.exe 尝试 --version 检测
+            if os.path.exists(bin_path):
+                for fname in os.listdir(bin_path):
+                    if fname.lower().startswith('dcc') and fname.lower().endswith('.exe'):
+                        detected = detect_registry_version_from_compiler(os.path.join(bin_path, fname))
+                        if detected:
+                            effective_registry_version = detected
+                            logger.info(f"通过编译器输出检测到版本: {effective_registry_version}")
+                        break
+
+        if effective_registry_version:
             from src.utils.delphi_versions import get_version_name
-            version_name = get_version_name(registry_version)
+            version_name = get_version_name(effective_registry_version)
         else:
             version_name = self._get_delphi_version_name(delphi_path)
-
-        # 文件名→平台映射表
         filename_to_platform = {
             "dcc32": "Win32",
             "dcc64": "Win64",
@@ -434,7 +477,8 @@ class ConfigManager:
                         name=f"{version_name} {platform_name}",
                         path=full_path,
                         is_default=False,
-                        version=version_name
+                        version=version_name,
+                        registry_version=effective_registry_version,
                     )
                     compilers.append(compiler)
                     logger.debug(f"检测到 {platform_name} 编译器: {full_path}")

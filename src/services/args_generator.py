@@ -28,8 +28,7 @@ class ArgsGenerator:
         TargetPlatform.LINUX64: 'Linux64',
     }
 
-    @staticmethod
-    def _get_platform_lib_path(delphi_version: str, platform: TargetPlatform) -> str:
+    def _get_platform_lib_path(self, delphi_version: str, platform: TargetPlatform) -> str:
         """获取目标平台的库路径"""
         lib_dir = self._PLATFORM_LIB_DIR.get(platform, 'Win32')
         return f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/{lib_dir}/release"
@@ -180,7 +179,7 @@ class ArgsGenerator:
         from pathlib import Path
         if unit_search_paths is None:
             unit_search_paths = []
-        delphi_lib_path = Path(self._get_platform_lib_path(delphi_version, options.target_platform))
+        delphi_lib_path = Path(self._get_platform_lib_path(delphi_version, TargetPlatform.WIN32))
         if delphi_lib_path.exists():
             # 将标准库路径添加到搜索路径的开头
             unit_search_paths.insert(0, str(delphi_lib_path))

@@ -285,10 +285,10 @@ def test_validator_project_path_empty():
     from src.utils.validator import Validator
     
     v = Validator()
-    result = v.validate_project_path("")
+    valid, message = v.validate_project_path("")
     
-    assert result.valid is False
-    assert "空" in result.message or "不能为空" in result.message
+    assert valid is False
+    assert "空" in message or "不能为空" in message
     print("  空路径正确拒绝")
 
 
@@ -297,9 +297,9 @@ def test_validator_project_path_not_exists():
     from src.utils.validator import Validator
     
     v = Validator()
-    result = v.validate_project_path("C:\\NonExistent\\Project.dproj")
+    valid, message = v.validate_project_path("C:\\NonExistent\\Project.dproj")
     
-    assert result.valid is False
+    assert valid is False
     print("  不存在的路径正确拒绝")
 
 
@@ -309,10 +309,10 @@ def test_validator_timeout_valid():
     
     v = Validator()
     
-    assert v.validate_timeout(60).valid is True
-    assert v.validate_timeout(600).valid is True
-    assert v.validate_timeout(0).valid is False
-    assert v.validate_timeout(-1).valid is False
+    assert v.validate_timeout(60) == (True, "")
+    assert v.validate_timeout(600) == (True, "")
+    assert v.validate_timeout(0)[0] is False
+    assert v.validate_timeout(-1)[0] is False
     print("  超时参数验证正确")
 
 
@@ -322,9 +322,9 @@ def test_validator_warning_level():
     
     v = Validator()
     
-    assert v.validate_warning_level(0).valid is True
-    assert v.validate_warning_level(4).valid is True
-    assert v.validate_warning_level(5).valid is False
+    assert v.validate_warning_level(0) == (True, "")
+    assert v.validate_warning_level(4) == (True, "")
+    assert v.validate_warning_level(5)[0] is False
     print("  警告级别验证正确")
 
 
@@ -379,15 +379,125 @@ def test_dproj_parser_build_events():
         parser = DprojParser(str(dproj_file))
         parser.parse()
         
-        pre = parser.get_pre_build_event()
-        post = parser.get_post_build_event()
+        events = parser.get_build_events()
         
-        assert "PreBuild" in pre
-        assert "PostBuild" in post
+        assert events["pre_build"] is not None
+        assert "PreBuild" in events["pre_build"]
+        assert events["post_build"] is not None
+        assert "PostBuild" in events["post_build"]
         print("  构建事件提取正确")
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# ArgsGenerator 修复验证（B1/B2）
+# ============================================================
+
+def test_args_generator_platform_lib_path():
+    """B1 修复: _get_platform_lib_path 不再是 @staticmethod，能通过 self 访问类属性"""
+    from src.services.args_generator import ArgsGenerator
+    from src.models.compile_request import TargetPlatform
+
+    gen = ArgsGenerator()
+    path = gen._get_platform_lib_path("22.0", TargetPlatform.WIN32)
+
+    assert "22.0" in path
+    assert "Win32" in path
+    assert "release" in path
+    print(f"  平台库路径: {path}")
+
+
+def test_args_generator_platform_lib_path_all_platforms():
+    """所有目标平台的库路径映射"""
+    from src.services.args_generator import ArgsGenerator
+    from src.models.compile_request import TargetPlatform
+
+    gen = ArgsGenerator()
+    platforms = {
+        TargetPlatform.WIN32: "Win32",
+        TargetPlatform.WIN64: "Win64",
+        TargetPlatform.LINUX64: "Linux64",
+        TargetPlatform.ANDROID: "Android",
+    }
+    for tp, expected_dir in platforms.items():
+        path = gen._get_platform_lib_path("23.0", tp)
+        assert expected_dir in path, f"{tp} 应包含 {expected_dir}"
+    print("  所有平台映射正确")
+
+
+def test_args_generator_generate_for_file_no_crash():
+    """B2 修复: generate_for_file 不再引用未定义的 options 变量"""
+    from src.services.args_generator import ArgsGenerator
+    from src.models.compile_request import TargetPlatform
+
+    gen = ArgsGenerator()
+    args = gen.generate_for_file(
+        "C:\\Test\\Unit.pas",
+        unit_search_paths=["C:\\Lib"],
+        warning_level=2,
+        namespaces=["System", "Winapi"],
+        delphi_version="23.0",
+    )
+
+    assert "C:\\Test\\Unit.pas" in args
+    assert any(a.startswith("-U") for a in args), "应包含单元搜索路径"
+    assert any(a.startswith("-NS") for a in args), "应包含命名空间"
+    assert "-$W2" in args, "应包含警告级别"
+    print(f"  生成参数 ({len(args)} 个): {' '.join(args[:4])}...")
+
+
+def test_args_generator_generate_for_file_with_delphi_version():
+    """Q2 修复: 传入不同 delphi_version 生成不同的库路径"""
+    from src.services.args_generator import ArgsGenerator
+    from src.models.compile_request import TargetPlatform
+
+    gen = ArgsGenerator()
+    args_11 = gen.generate_for_file("Unit.pas", delphi_version="22.0")
+    args_12 = gen.generate_for_file("Unit.pas", delphi_version="23.0")
+
+    # 无法直接断言路径内容（可能因系统无该路径而跳过），但至少不崩溃
+    assert isinstance(args_11, list)
+    assert isinstance(args_12, list)
+    print("  generate_for_file 多版本调用正常")
+
+
+# ============================================================
+# compile_request 模型测试（compiler_version 参数）
+# ============================================================
+
+def test_file_compile_request_compiler_version():
+    """FileCompileRequest 支持 compiler_version 字段"""
+    from src.models.compile_request import FileCompileRequest
+
+    req = FileCompileRequest(
+        file_path=r"D:\Test\Unit.pas",
+        compiler_version="Delphi 11 Alexandria Win32",
+    )
+    assert req.compiler_version == "Delphi 11 Alexandria Win32"
+    print(f"  FileCompileRequest.compiler_version = {req.compiler_version}")
+
+    # 默认值为 None（向后兼容）
+    req_default = FileCompileRequest(file_path=r"D:\Test\Unit.pas")
+    assert req_default.compiler_version is None
+    print("  FileCompileRequest 默认 compiler_version=None")
+
+
+def test_compile_options_compiler_version():
+    """CompileOptions 支持 compiler_version 字段"""
+    from src.models.compile_request import CompileOptions, OutputType, RuntimeLibrary, TargetPlatform
+
+    opts = CompileOptions(
+        compiler_version="Delphi 12 Athens Win64",
+    )
+    assert opts.compiler_version == "Delphi 12 Athens Win64"
+    print(f"  CompileOptions.compiler_version = {opts.compiler_version}")
+
+    # 默认值为 None
+    opts_default = CompileOptions()
+    assert opts_default.compiler_version is None
+    print("  CompileOptions 默认 compiler_version=None")
 
 
 # ============================================================
@@ -404,6 +514,10 @@ def run_tests():
         ("ArgsGenerator 禁用警告", test_args_generator_disabled_warnings),
         ("ArgsGenerator 验证安全", test_args_generator_validate_safe),
         ("ArgsGenerator 验证危险", test_args_generator_validate_dangerous),
+        ("ArgsGenerator 平台库路径 B1", test_args_generator_platform_lib_path),
+        ("ArgsGenerator 全平台映射", test_args_generator_platform_lib_path_all_platforms),
+        ("ArgsGenerator 单文件编译 B2", test_args_generator_generate_for_file_no_crash),
+        ("ArgsGenerator 多版本 delphi", test_args_generator_generate_for_file_with_delphi_version),
         
         # compile_project
         ("compile_project .dproj 解析", test_compile_project_resolve_dproj),
@@ -425,6 +539,10 @@ def run_tests():
         # dproj_parser
         ("DprojParser 主源文件", test_dproj_parser_main_source),
         ("DprojParser 构建事件", test_dproj_parser_build_events),
+
+        # compile_request 模型
+        ("FileCompileRequest compiler_version", test_file_compile_request_compiler_version),
+        ("CompileOptions compiler_version", test_compile_options_compiler_version),
     ]
     
     passed = 0

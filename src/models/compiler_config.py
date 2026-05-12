@@ -15,6 +15,7 @@ class CompilerConfig:
     path: str
     is_default: bool = False
     version: Optional[str] = None
+    registry_version: Optional[str] = None  # 注册表数值版本号，如 "22.0"
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -27,7 +28,8 @@ class CompilerConfig:
             name=data.get('name', ''),
             path=data.get('path', ''),
             is_default=data.get('is_default', False),
-            version=data.get('version')
+            version=data.get('version'),
+            registry_version=data.get('registry_version')
         )
 
 

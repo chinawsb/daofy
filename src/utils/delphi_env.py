@@ -6,18 +6,17 @@ Delphi 环境工具函数
 
 import os
 import re
+import winreg
 from typing import Dict, Optional, List
 
 
 def get_delphi_version() -> Optional[str]:
     """
     获取当前系统安装的 Delphi 版本
-    
+     
     Returns:
         Delphi 版本号 (如 "23.0")，未安装则返回 None
     """
-    import winreg
-    
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, 
@@ -51,15 +50,13 @@ def get_delphi_version() -> Optional[str]:
 def get_delphi_root_dir(version: Optional[str] = None) -> Optional[str]:
     """
     获取 Delphi 安装根目录
-    
+     
     Args:
         version: Delphi 版本号，默认获取最新版本
         
     Returns:
         Delphi 根目录路径
     """
-    import winreg
-    
     if not version:
         version = get_delphi_version()
         if not version:
@@ -80,15 +77,13 @@ def get_delphi_root_dir(version: Optional[str] = None) -> Optional[str]:
 def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
     """
     获取 Delphi 环境变量
-    
+     
     Args:
         version: Delphi 版本号，默认获取最新版本
         
     Returns:
         环境变量字典
     """
-    import winreg
-    
     env_vars = {}
     
     if not version:
@@ -121,7 +116,7 @@ def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
 def get_delphi_library_paths(version: Optional[str] = None, platform: str = "Win32") -> List[str]:
     """
     获取 Delphi 库搜索路径
-    
+     
     Args:
         version: Delphi 版本号，默认获取最新版本
         platform: 目标平台 (Win32/Win64)
@@ -129,8 +124,6 @@ def get_delphi_library_paths(version: Optional[str] = None, platform: str = "Win
     Returns:
         搜索路径列表
     """
-    import winreg
-    
     paths = []
     
     if not version:

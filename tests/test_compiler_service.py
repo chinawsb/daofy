@@ -147,24 +147,50 @@ def test_compiler_service_init():
 
 
 def test_compiler_service_find_msbuild():
-    """测试 MSBuild 查找"""
-    possible_paths = [
-        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-    ]
-    
-    msbuild = None
-    for path in possible_paths:
-        if Path(path).exists():
-            msbuild = path
-            break
-    
+    """测试 MSBuild 查找（Q5 修复: vswhere + 动态回退）"""
+    from src.services.compiler_service import CompilerService
+    from src.services.config_manager import ConfigManager
+
+    cm = ConfigManager()
+    cs = CompilerService(cm)
+    msbuild = cs._find_msbuild()
+
     if msbuild:
         print(f"  找到 MSBuild: {msbuild}")
+        assert Path(msbuild).exists(), f"MSBuild 路径应存在: {msbuild}"
+        assert msbuild.endswith("MSBuild.exe"), "应为 MSBuild.exe"
     else:
         print("  未找到 MSBuild（可能未安装 Visual Studio）")
+
+
+def test_compiler_config_registry_version():
+    """Q2 修复: CompilerConfig 保留 registry_version 数值版本号"""
+    from src.models.compiler_config import CompilerConfig
+
+    # 模拟自动检测时写入 registry_version
+    cfg = CompilerConfig(
+        name="Delphi 11 Alexandria Win32",
+        path=r"C:\Program Files (x86)\Embarcadero\Studio\22.0\bin\dcc32.exe",
+        version="Delphi 11 Alexandria",
+        registry_version="22.0",
+    )
+    assert cfg.registry_version == "22.0"
+    print(f"  registry_version: {cfg.registry_version}")
+
+    # 序列化/反序列化后保留
+    d = cfg.to_dict()
+    assert "registry_version" in d
+    assert d["registry_version"] == "22.0"
+
+    cfg2 = CompilerConfig.from_dict(d)
+    assert cfg2.registry_version == "22.0"
+    print("  序列化/反序列化正确保留")
+
+    # 旧配置无 registry_version 时兼容
+    old_dict = {"name": "Legacy", "path": r"C:\Old\dcc32.exe", "version": "Delphi 10.4"}
+    cfg3 = CompilerConfig.from_dict(old_dict)
+    assert cfg3.registry_version is None
+    print("  旧配置兼容: registry_version=None")
 
 
 def test_compiler_service_get_delphi_root():
@@ -287,6 +313,53 @@ def test_config_manager_get_compiler():
         print(f"  获取编译器: {name}")
 
 
+def test_config_manager_get_newest_compiler():
+    """Q2: get_newest_compiler 返回 registry_version 最大的编译器"""
+    from src.services.config_manager import ConfigManager
+    from src.models.compiler_config import CompilerConfig
+
+    cm = ConfigManager()
+    newest = cm.get_newest_compiler()
+
+    if newest:
+        all_compilers = cm.get_all_compilers()
+
+        # 对每个有 registry_version 的编译器，验证 get_newest_compiler 的版本 >= 其他版本
+        def _ver_tuple(v: str) -> tuple:
+            parts = v.split('.')
+            return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+
+        if newest.registry_version:
+            newest_tuple = _ver_tuple(newest.registry_version)
+            for c in all_compilers:
+                if c.registry_version:
+                    assert newest_tuple >= _ver_tuple(c.registry_version), \
+                        f"get_newest_compiler() 应返回最高版本, 当前={newest.registry_version}, {c.name}={c.registry_version}"
+            print(f"  最新编译器: {newest.name} (registry_version={newest.registry_version})")
+        else:
+            # registry_version 为 None 是允许的（旧配置或无 --version 检测能力）
+            print(f"  最新编译器: {newest.name} (registry_version=None, 所有编译器均无版本号)")
+    else:
+        print("  跳过: 无可用编译器")
+
+
+def test_config_manager_get_newest_compiler_fallback():
+    """get_compiler_for_project 在无匹配版本时回退到 get_newest_compiler"""
+    from src.services.config_manager import ConfigManager
+
+    cm = ConfigManager()
+    # 用不存在的版本号触发回退
+    fallback = cm.get_compiler_for_project("99.99", "win32")
+    
+    if fallback:
+        newest = cm.get_newest_compiler()
+        assert fallback is newest, \
+            f"无匹配时应回退到最新版本, 得到={fallback.name}"
+        print(f"  版本回退正确: {fallback.name}")
+    else:
+        print("  跳过: 无可用编译器")
+
+
 def test_actual_compile_simple_pas():
     """测试实际编译一个简单的 PAS 文件"""
     from src.services.config_manager import ConfigManager
@@ -358,11 +431,14 @@ def run_tests():
         ("ProcessManager 空环境", test_process_manager_env_no_match),
         ("同步进程执行", test_process_execute_sync),
         ("CompilerService 初始化", test_compiler_service_init),
-        ("查找 MSBuild", test_compiler_service_find_msbuild),
+        ("查找 MSBuild (Q5)", test_compiler_service_find_msbuild),
+        ("CompilerConfig registry_version (Q2)", test_compiler_config_registry_version),
         ("获取 Delphi 根目录", test_compiler_service_get_delphi_root),
         ("获取 rsvars.bat", test_compiler_service_get_rsvars),
         ("配置管理器自动检测", test_config_manager_auto_detect),
         ("获取编译器配置", test_config_manager_get_compiler),
+        ("get_newest_compiler (Q2)", test_config_manager_get_newest_compiler),
+        ("get_newest_compiler 回退", test_config_manager_get_newest_compiler_fallback),
         ("实际编译 PAS 文件", test_actual_compile_simple_pas),
     ]
     
