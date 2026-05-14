@@ -404,10 +404,12 @@ async def run_server():
                             "【触发词】格式化代码、整理格式、代码风格、pasfmt、自动排版\n"
                             "❌ 不得手动调整缩进排版（不一致）\n"
                             "✅ 统一 Delphi 代码风格必须用此（自动应用项目格式规则）\n"
+                            "✅ 默认压缩 uses 为单行（uses_style=compact），可切换 pasfmt 默认多行\n"
                             "【协作链】改代码→format→compile\n"
                             "【示例】\n"
                             '   format_delphi(action="file", file_path="src/Unit1.pas")  # 格式化文件\n'
                             '   format_delphi(action="check", file_path="src/Unit1.pas")  # 仅检查\n'
+                            '   format_delphi(uses_style="pasfmt_default")  # 保留 pasfmt 原样\n'
                             "【action】file=格式化; code=格式化代码; check=检查; status=检查安装; set_path=设路径",
                 inputSchema={
                     "type": "object",
@@ -419,7 +421,8 @@ async def run_server():
                         "backup": {"type": "boolean", "default": True, "description": "是否创建备份"},
                         "in_place": {"type": "boolean", "default": True, "description": "是否原地修改"},
                         "path": {"type": "string", "description": "pasfmt路径 (action=set_path时需要)"},
-                        "check_rad": {"type": "boolean", "default": False, "description": "检查IDE插件"}
+                        "check_rad": {"type": "boolean", "default": False, "description": "检查IDE插件"},
+                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses 子句风格（默认 compact=合并为一行, pasfmt_default=保留 pasfmt 原样）"}
                     },
                     "required": []
                 }
@@ -698,11 +701,13 @@ async def run_server():
                         config_path=arguments.get("config_path"),
                         backup=arguments.get("backup", True),
                         in_place=arguments.get("in_place", True),
+                        uses_style=arguments.get("uses_style"),
                     )
                 elif action == "code":
                     result = await pasfmt.format_code(
                         code=arguments.get("code", ""),
                         config_path=arguments.get("config_path"),
+                        uses_style=arguments.get("uses_style"),
                     )
                 elif action == "check":
                     result = await pasfmt.format_file(file_path=arguments.get("file_path"), check_only=True)

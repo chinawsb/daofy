@@ -418,7 +418,169 @@ def _extract_all_entities(content: str, file_ext: str = '') -> List[Dict]:
     # ========== 字符串字面量提取 ==========
     entities.extend(_extract_string_literals(content, file_ext))
 
+    # ========== 类内 type 段后处理 ==========
+    # 处理: private type / public type / type (在类内部独占一行)
+    # 用途: ① 补充现有 entity 的 parent 信息; ② 提取漏掉的类型别名
+    # 示例 (TDictionary):
+    #   private type
+    #     TItem = record ... end;
+    #     PItem = ^TItem;
+    #     TItemArray = array of TItem;
+    #   public
+    #     type
+    #       TPairEnumerator = class(...) ... end;
+    _extract_nested_type_section(content, entities)
+
     return entities
+
+
+# 匹配类内 type 段开始行: 可选 visibility 前缀 + type (独占一行)
+# 如: "private type", "public type", "  type"
+_NESTED_TYPE_SECTION = re.compile(
+    r'^\s*(?:(?:private|public|protected|strict\s+private|strict\s+protected)\s+)?type\s*$',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# 从 type 段内提取类型别名: Name = array of ...; 或 Name = SomeAlias;
+_NESTED_TYPE_ALIAS = re.compile(
+    r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?!class\b|record\b|interface\b|set\b|of\b)(.+?);\s*$',
+    re.MULTILINE
+)
+
+
+def _extract_nested_type_section(content: str, entities: List[Dict]) -> None:
+    """
+    后处理：扫描类内 type 段，补充 parent 信息 + 提取漏掉的类型别名。
+
+    在 _extract_all_entities 完成后调用，不会添加重复 entity，
+    只会给已有的 class/record/interface entity 补充 parent 字段，
+    以及添加未提取的类型别名（PItem = ^TItem, TItemArray = array of TItem 等）。
+    """
+    # 收集所有已有 entities 的 (name, line) 用于查重
+    existing_set = {(e['name'], e['line']) for e in entities}
+
+    # 收集所有 class/record/interface 的位置（用于确定 parent）
+    container_positions = []  # [(offset, name, kind, line), ...]
+    for i, e in enumerate(entities):
+        if e['kind'] in (KIND_CLASS, KIND_RECORD, KIND_INTERFACE):
+            offset = e.get('start_offset', -1)
+            if offset >= 0:
+                container_positions.append((offset, e['name'], e['kind'], e['line']))
+    container_positions.sort(key=lambda x: x[0])
+
+    # 遍历每个 type 段
+    for tm in _NESTED_TYPE_SECTION.finditer(content):
+        section_start = tm.start()
+        section_indent = tm.end() - len(tm.group().lstrip()) if tm.group() else 0
+
+        # 确定这个 type 段所属的 parent class/record/interface
+        parent_name = None
+        for off, name, kind, line in reversed(container_positions):
+            if off < section_start:
+                # 取 class 声明行算出缩进，比较 type 段缩进是否更深
+                class_bol = content.rfind('\n', 0, off) + 1 if off > 0 else 0
+                class_line = content[class_bol:content.find('\n', off)]
+                class_indent = len(class_line) - len(class_line.lstrip())
+                if section_indent > class_indent:
+                    parent_name = name
+                break
+
+        # 提取 type 段的范围：到下一个缩进 <= section_indent 的非空行
+        after_type = content[tm.end():]
+        type_end = 0
+        lines_iter = re.finditer(r'^', after_type, re.MULTILINE)
+        for m in lines_iter:
+            ls = m.start()
+            le = after_type.find('\n', ls)
+            if le == -1:
+                le = len(after_type)
+            line_text = after_type[ls:le]
+            line_indent = len(line_text) - len(line_text.lstrip())
+            if line_indent <= section_indent and line_text.strip() \
+               and not line_text.strip().startswith('//') \
+               and not line_text.strip().startswith('{$'):
+                type_end = ls
+                break
+        else:
+            type_end = len(after_type)
+
+        section_body = after_type[:type_end]
+        if not section_body.strip():
+            continue
+
+        abs_section_line = content[:section_start].count('\n') + 1
+
+        # --- 第一步：为已有 entity 补充 parent 字段 ---
+        if parent_name:
+            for m in _CLASS_PATTERN.finditer(section_body):
+                name = m.group(1)
+                line_in_section = section_body[:m.start()].count('\n') + 1
+                global_line = abs_section_line + line_in_section
+                for e in entities:
+                    if e['name'] == name and e['line'] == global_line and e.get('parent') is None:
+                        e['parent'] = parent_name
+
+            for m in _RECORD_PATTERN.finditer(section_body):
+                name = m.group(1)
+                line_in_section = section_body[:m.start()].count('\n') + 1
+                global_line = abs_section_line + line_in_section
+                for e in entities:
+                    if e['name'] == name and e['line'] == global_line and e.get('parent') is None:
+                        e['parent'] = parent_name
+
+            for m in _INTERFACE_PATTERN.finditer(section_body):
+                name = m.group(1)
+                line_in_section = section_body[:m.start()].count('\n') + 1
+                global_line = abs_section_line + line_in_section
+                for e in entities:
+                    if e['name'] == name and e['line'] == global_line and e.get('parent') is None:
+                        e['parent'] = parent_name
+
+        # --- 第二步：提取漏掉的类型别名 (非 class/record/interface) ---
+        for m in _NESTED_TYPE_ALIAS.finditer(section_body):
+            name = m.group(1)
+            definition = m.group(2).strip()
+            line_in_section = section_body[:m.start()].count('\n') + 1
+            global_line = abs_section_line + line_in_section
+            key = (name, global_line)
+
+            if key in existing_set:
+                continue
+
+            # 判断类型
+            is_pointer = definition.startswith('^')
+            is_array = definition.lower().startswith('array')
+
+            if is_pointer:
+                pointed = definition[1:].strip()
+                entities.append({
+                    'name': name, 'kind': 'TY', 'parent': parent_name,
+                    'line': global_line, 'definition': f'pointer to {pointed}',
+                    'start_line': global_line,
+                })
+            else:
+                entities.append({
+                    'name': name, 'kind': 'TY', 'parent': parent_name,
+                    'line': global_line, 'definition': definition[:100],
+                    'start_line': global_line,
+                })
+
+        # --- 第三步：提取指针类型 (PItem = ^TItem) ---
+        for m in _TYPE_PATTERN_PTR.finditer(section_body):
+            name = m.group(1)
+            key = (name, global_line)  # will recalc below
+            line_in_section = section_body[:m.start()].count('\n') + 1
+            global_line = abs_section_line + line_in_section
+            key = (name, global_line)
+            if key in existing_set:
+                continue
+            pointed = m.group(2).strip() if m.lastindex and m.lastindex >= 2 and m.group(2) else ''
+            entities.append({
+                'name': name, 'kind': 'TY', 'parent': parent_name,
+                'line': global_line,
+                'definition': f'pointer to {pointed}' if pointed else 'pointer',
+                'start_line': global_line,
+            })
 
 
 def _decode_dfm_value(raw: str) -> str:

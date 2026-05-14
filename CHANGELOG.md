@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **代码风格统一**：`server.py` 中 3 处 `== False` 改为 `is False`。
 - **死代码清理**：移除 `progress_tracker.py` 中未使用的 `ProgressCallback` 类（34 行，含 `print()` 调用）。
 - **`test_semantic_search` 修复**：反转索引降级适配 + `search_by_class_name/function_name→search_by_name` 方法名修正（预存 bug，之前被 `return False` 静默隐藏）。
+- **pasfmt uses 压缩后处理**：pasfmt 默认展开 uses 为每行一个，新增 `uses_style="compact"` 选项将 uses 子句合并回单行，通过 `uses_style="pasfmt_default"` 恢复 pasfmt 原样。全局设置 `set_uses_style()` 支持持久化。
+- **类内 type 段扫描**：`scan_delphi_sources._extract_all_entities` 新增 `_extract_nested_type_section()`，识别 `private type` / `public type` / 类内 `type` 段中的类型别名（如 `PItem = ^TItem`、`TItemArray = array of TItem`），补全 parent 链接。
+- **泛型格式化实测验证**：确认 pasfmt 删除 `>>` 空格在 Delphi 12 编译通过，CODING_RULES.mdc 修正相关误导规则。
 
 ## [2026.05.13] - 2026-05-13
 

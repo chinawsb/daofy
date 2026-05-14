@@ -38,6 +38,9 @@ logger = get_logger(__name__)
 # pasfmt 可执行文件路径
 _PASFMT_PATH: Optional[str] = None
 
+# uses 子句风格: "compact"=合并为一行, "pasfmt_default"=保留 pasfmt 每行一个
+_USES_STYLE: str = "compact"
+
 # 下载源配置
 PASFMT_DOWNLOAD_SOURCES = [
     {
@@ -154,23 +157,93 @@ def get_pasfmt_path() -> Optional[str]:
     return None
 
 
+def set_uses_style(style: str) -> None:
+    """设置 uses 子句风格: "compact"=合并为一行, "pasfmt_default"=保留 pasfmt 原样"""
+    global _USES_STYLE
+    if style not in ("compact", "pasfmt_default"):
+        logger.warning(f"未知的 uses_style: {style}，使用默认 compact")
+        _USES_STYLE = "compact"
+    else:
+        _USES_STYLE = style
+        logger.info(f"设置 uses 风格: {style}")
+
+
+def get_uses_style() -> str:
+    """获取当前 uses 子句风格设置"""
+    return _USES_STYLE
+
+
+def _compact_uses_clause(content: str) -> str:
+    """
+    将 pasfmt 展开的多行 uses 子句压缩回单行。
+
+    pasfmt 默认:
+      uses
+        System.SysUtils,
+        System.Classes;
+
+    压缩后:
+      uses System.SysUtils, System.Classes;
+    """
+    lines = content.split('\n')
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        trimmed = line.strip()
+
+        # 检测独占一行的 "uses"（pasfmt 风格）
+        if trimmed.lower() == 'uses' and not trimmed.endswith(';'):
+            items = []
+            j = i + 1
+            while j < len(lines):
+                next_line = lines[j]
+                next_trimmed = next_line.strip()
+
+                # 空行或非缩进行 = uses 块结束
+                if not next_trimmed or not (next_line.startswith(' ') or next_line.startswith('\t')):
+                    break
+
+                item = next_trimmed.rstrip(',').rstrip(';').strip()
+                if item:
+                    items.append(item)
+
+                if next_trimmed.endswith(';'):
+                    j += 1
+                    break  # 分号结束
+                j += 1
+
+            if items:
+                indent = line[:len(line) - len(trimmed)]
+                result.append(f"{indent}uses {', '.join(items)};")
+                i = j
+                continue
+
+        result.append(line)
+        i += 1
+
+    return '\n'.join(result)
+
+
 async def format_file(
     file_path: str,
     config_path: Optional[str] = None,
     backup: bool = True,
     in_place: bool = True,
-    check_only: bool = False
+    check_only: bool = False,
+    uses_style: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     格式化 Delphi 源代码文件
-    
+
     Args:
         file_path: 要格式化的 Delphi 文件路径
         config_path: pasfmt 配置文件路径（可选）
         backup: 是否创建备份文件（在 __history 目录下）
         in_place: 是否原地格式化（修改原文件）
         check_only: 仅检查格式，不实际修改文件
-    
+        uses_style: uses 子句风格，None=使用全局设置, "compact"=合并为一行, "pasfmt_default"=保留 pasfmt 原样
+
     Returns:
         格式化结果字典
     """
@@ -347,6 +420,20 @@ async def format_file(
                     "backup_file": backup_path
                 }
             else:
+                # in_place 成功，应用 uses 压缩后处理
+                effective_uses_style = uses_style if uses_style is not None else _USES_STYLE
+                if effective_uses_style == "compact":
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            file_content = f.read()
+                        compacted = _compact_uses_clause(file_content)
+                        if compacted != file_content:
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(compacted)
+                            logger.info(f"uses 子句已压缩: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"uses 压缩失败: {str(e)}")
+
                 return {
                     "status": "success",
                     "formatted": True,
@@ -394,15 +481,17 @@ async def format_file(
 
 async def format_code(
     code: str,
-    config_path: Optional[str] = None
+    config_path: Optional[str] = None,
+    uses_style: Optional[str] = None
 ) -> CallToolResult:
     """
     格式化 Delphi 代码字符串
-    
+
     Args:
         code: 要格式化的 Delphi 代码
         config_path: pasfmt 配置文件路径（可选）
-    
+        uses_style: uses 子句风格，None=使用全局设置, "compact"=合并为一行, "pasfmt_default"=保留 pasfmt 原样
+
     Returns:
         格式化结果字典
     """
@@ -461,7 +550,12 @@ async def format_code(
                 formatted_content = lines[1]
             else:
                 formatted_content = stdout
-            
+
+            # 应用 uses 压缩后处理
+            effective_uses_style = uses_style if uses_style is not None else _USES_STYLE
+            if effective_uses_style == "compact":
+                formatted_content = _compact_uses_clause(formatted_content)
+
             return CallToolResult(
                 content=[{"type": "text", "text": formatted_content}],
                 isError=False

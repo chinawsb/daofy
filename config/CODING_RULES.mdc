@@ -83,7 +83,9 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
 ### 格式
 - 缩进 2 空格，行宽 ≤120
 - 赋值/运算符前后加空格，逗号后加，括号内侧不加
-- `begin` 独占一行；格式化后检查泛型是否被错误合并
+- `begin` 独占一行；泛型嵌套 `>>` 在现代 Delphi 中无需额外空格
+- `uses` 子句默认合并为单行（`format_delphi` 的 `uses_style="compact"`），
+  如需 pasfmt 默认展开风格传 `uses_style="pasfmt_default"`
 ```delphi
 uses System.SysUtils, System.Classes,  // 系统
      Vcl.Forms, Vcl.Controls,          // VCL/FMX
@@ -124,7 +126,7 @@ uses System.SysUtils, System.Classes,  // 系统
 ## ④ 格式化
 ```python
 format_delphi(action="file", file_path="src/Unit1.pas")
-# 格式化后检查泛型嵌套 `>` 间的空格是否被误删，如 `TArray<TList<string> >` 中两个 `>` 间空格被删除会导致编译错误
+# pasfmt 会自动处理泛型嵌套 `>>` 格式，现代 Delphi 完全支持无空格语法
 ```
 
 ## ⑤ 编译
