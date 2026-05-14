@@ -463,7 +463,7 @@ class ProjectKnowledgeBase:
                         if (i + 1) % 1000 == 0:
                             logger.info(f"日志: 解析进度 {i+1}/{len(files_to_parse)}")
             _p_end = time.time()
-            logger.info(f"多线程解析耗时: {_p_end-_p_start:.1f}s, 结果={len(parsed_results)}")
+            logger.info(f"多进程解析耗时: {_p_end-_p_start:.1f}s, 结果={len(parsed_results)}")
 
             # 入库：构建 items_data 统一列表（smart_cache 模式）
             self._report_progress(55, "入库中...")
