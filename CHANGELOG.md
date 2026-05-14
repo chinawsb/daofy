@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.05.14] - 2026-05-14
+
+### Added
+
+- **`get_coding_rules` 新增 `section` 参数**：支持按章节获取编码规范（workflow/writing/review/safety 等 20+ 命名章节），默认返回工作流总览+章节索引，引导 Agent 按需拉取节省 token。新增元章节 `review`（审核指南+审核表）和 `coding`（写代码+格式化+编译）。
+- **CODING_RULES.mdc 补充编码规范**：新增泛型命名与约束、运算符重载、异步与多线程、代码组织、版本兼容原则；审核表补充日志输出、数据转换、测试方法命名通用原则；新增规则模板格式。
+- **工作流嵌入审核步骤**：①-⑥ → ①-⑦，编译通过后强制代码审核环节。
+- **新增 3 个测试文件**：`test_coding_rules.py`(20例/90%覆盖)、`test_process_manager.py`(16例/92%覆盖)、`test_environment.py`(12例/95%覆盖)，总测试数从 144 增至 186。
+- **测试弃用警告清理**：消除 40 条 `PytestReturnNotNoneWarning`（`return→assert`）；消除 9 处 `DeprecationWarning: Element truth value`（`if not self.root→is None`）。
+
+### Fixed
+
+- **`print()` 泄漏修复**：`install_package.py` 注册组件包时的 `print()` 改为 `logger.info/error`；`scan_generic_documents.py` 异步扫描状态的 `print()` 改为 `logger.warning/info`；`dynamic_worker_optimizer.py` Worker 测试失败的 `print()` 改为 `logger.warning`。
+- **静默异常处理改进**：`server.py` 中 `_auto_detect_delphi_help_dir` 和 `_cleanup_resources` 的 `except:pass` 改为 `logger.debug/warning`；消除 `# type: ignore`（`async_task_manager` 声明 `_dedup_key` 字段）。
+- **代码风格统一**：`server.py` 中 3 处 `== False` 改为 `is False`。
+- **死代码清理**：移除 `progress_tracker.py` 中未使用的 `ProgressCallback` 类（34 行，含 `print()` 调用）。
+- **`test_semantic_search` 修复**：反转索引降级适配 + `search_by_class_name/function_name→search_by_name` 方法名修正（预存 bug，之前被 `return False` 静默隐藏）。
+
 ## [2026.05.13] - 2026-05-13
 
 ### Changed
