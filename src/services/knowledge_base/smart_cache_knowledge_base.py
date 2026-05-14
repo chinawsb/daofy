@@ -109,6 +109,7 @@ class SmartCacheKnowledgeBase:
         'TH': 'helper',
         'AT': 'attribute',
         'GT': 'generic type',
+        'KS': 'string literal',
     }
     # 反向映射
     TYPE_REVERSE_MAP = {v: k for k, v in TYPE_MAP.items()}
@@ -707,13 +708,13 @@ class SmartCacheKnowledgeBase:
         # 转义 LIKE 通配符
         escaped = name_lower.replace('%', '\\%').replace('_', '\\_')
         
-        # 精确匹配 name_lower + 查询 description 中匹配的 DF 项
+        # 精确匹配 name_lower + 查询 description 中匹配的 DF/KS 项
         cursor.execute("""
             SELECT v.*, f.relative_path, f.category
             FROM vocabularies v
             LEFT JOIN files f ON v.file_id = f.id
             WHERE v.name_lower = ?
-               OR (v.type = 'DF' AND v.description IS NOT NULL AND v.description != ''
+               OR (v.type IN ('DF', 'KS') AND v.description IS NOT NULL AND v.description != ''
                    AND v.description LIKE '%' || ? || '%' ESCAPE '\\')
         """, (name_lower, escaped))
         

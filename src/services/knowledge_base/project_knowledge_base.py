@@ -501,7 +501,7 @@ class ProjectKnowledgeBase:
                         ename.lower()[::-1],     # name_lower_rev
                         None, ent.get('line', 0),  # file_id 占位
                         ent.get('parent', '') or '',
-                        ent.get('definition', '')[:500],
+                        ent.get('definition', '') if ent.get('kind') == 'KS' else ent.get('definition', '')[:500],
                         'pending'
                     ))
 
@@ -552,7 +552,7 @@ class ProjectKnowledgeBase:
                             ent.get('kind', 'TY'), ename, ename.lower(),
                             ename.lower()[::-1], fid, ent.get('line', 0),
                             ent.get('parent', '') or '',
-                            ent.get('definition', '')[:500], 'pending'
+                            ent.get('definition', '') if ent.get('kind') == 'KS' else ent.get('definition', '')[:500], 'pending'
                         ))
                     # 单元名
                     unit_names = file_info.get('units', [])

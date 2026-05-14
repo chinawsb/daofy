@@ -181,7 +181,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
         'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'],
         'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
-        'method': ['MM'], 'unit': ['UI'], 'event': ['ME'],
+        'method': ['MM'], 'unit': ['UI'], 'event': ['ME'], 'string': ['KS'],
     }
 
     def _filter_by_search_type(symbols, st):

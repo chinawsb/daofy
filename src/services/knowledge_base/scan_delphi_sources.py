@@ -53,7 +53,7 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
         rel_path = file_path.relative_to(source_dir)
         
         # 提取实体（统一 entities 格式）
-        entities = _extract_all_entities(content)
+        entities = _extract_all_entities(content, file_path.suffix.lower())
         
         # 提取文件信息
         # hash 使用 mtime+size，避免计算 MD5（除非 config.json 配置 hash_mode=md5）
@@ -96,6 +96,7 @@ KIND_CONST = 'CC'      # const
 KIND_RESOURCE = 'CR'   # resourcestring
 KIND_UNIT = 'UI'       # unit in uses
 KIND_HELPER = 'TH'     # class helper for / record helper for
+KIND_STRING_LITERAL = 'KS'  # string literal (error messages, UI strings, etc.)
 
 
 def _add_func_entity(entities: List[Dict], content: str, match: re.Match, name: str, ret_type: Optional[str]) -> None:
@@ -142,7 +143,7 @@ def _add_func_entity(entities: List[Dict], content: str, match: re.Match, name: 
     })
 
 
-def _extract_all_entities(content: str) -> List[Dict]:
+def _extract_all_entities(content: str, file_ext: str = '') -> List[Dict]:
     """
     提取所有实体（统一格式）
     返回带有 kind 两字母代码的实体列表
@@ -398,6 +399,9 @@ def _extract_all_entities(content: str) -> List[Dict]:
                 'definition': decoded[:500]
             })
 
+    # ========== 字符串字面量提取 ==========
+    entities.extend(_extract_string_literals(content, file_ext))
+
     return entities
 
 
@@ -451,6 +455,126 @@ _DFM_PROP_PATTERN = re.compile(
 )
 _DFM_INTERESTING_PROPS = {'Caption', 'Hint', 'Text', 'Title',
                           'Prompt', 'HelpKeyword', 'HelpContext'}
+
+
+# -------- 字符串字面量提取 --------
+# Pascal 字符串: 'text' 或 'it''s' ('' 转义单引号)
+_STRING_PATTERN = re.compile(
+    r"'(?:[^']|'')*'"  # 匹配 '内容' 其中 '' 表示转义的单引号
+)
+
+# 最小字符串长度（过滤掉 '' 和单字符）
+_MIN_STRING_LEN = 3
+
+# 要跳过的字符串模式（纯格式说明符、纯数字、纯空白等）
+_SKIP_STRING_RE = re.compile(
+    r'^(%[\w.%\-]*|\d+|[\s,;:|/\\()\[\]{}<>+=*\-\^@#$&!~`"]+)$'
+)
+
+
+def _strip_pascal_comments(content: str) -> str:
+    """
+    去除 Pascal 注释，用空格替换以保留行号。
+    处理: // 行注释, { 块注释 }, (* 块注释 *), {$ 编译器指令 }
+    """
+    result = list(content)
+    i = 0
+    while i < len(content):
+        ch = content[i]
+        # 行注释 //
+        if ch == '/' and i + 1 < len(content) and content[i + 1] == '/':
+            end = content.find('\n', i)
+            if end == -1:
+                end = len(content)
+            for j in range(i, end):
+                result[j] = ' '
+            i = end
+        # 块注释 { } 或 {$ }
+        elif ch == '{':
+            end = content.find('}', i)
+            if end == -1:
+                end = len(content) - 1
+            for j in range(i, end + 1):
+                result[j] = ' '
+            i = end + 1
+        # 块注释 (* *)
+        elif ch == '(' and i + 1 < len(content) and content[i + 1] == '*':
+            end = content.find('*)', i)
+            if end == -1:
+                end = len(content) - 2
+            for j in range(i, end + 2):
+                result[j] = ' '
+            i = end + 2
+        else:
+            i += 1
+    return ''.join(result)
+
+
+def _decode_pascal_string(match: re.Match) -> str:
+    """
+    解码 Pascal 字符串 '内容' → 实际字符串。
+    处理 '' → ' 转义。
+    """
+    s = match.group(0)
+    # 去掉首尾单引号
+    inner = s[1:-1]
+    # '' → '
+    return inner.replace("''", "'")
+
+
+def _extract_string_literals(content: str, file_ext: str) -> List[Dict]:
+    """
+    从 Pascal 源码中提取有意义的字符串字面量。
+
+    Args:
+        content: 文件内容
+        file_ext: 文件扩展名 (.pas/.dpr/.dpk/.dfm/.fmx/.inc)
+
+    Returns:
+        KS 实体列表
+    """
+    # DFM 文件的字符串已在 DFM 属性提取中处理
+    if file_ext == '.dfm':
+        return []
+
+    entities = []
+    # 去除注释后提取
+    cleaned = _strip_pascal_comments(content)
+
+    found_positions = set()  # 去重
+    for match in _STRING_PATTERN.finditer(cleaned):
+        decoded = _decode_pascal_string(match)
+        stripped = decoded.strip()
+
+        # 过滤过短、无意义字符串
+        if len(stripped) < _MIN_STRING_LEN:
+            continue
+        if _SKIP_STRING_RE.match(stripped):
+            continue
+        # 跳过纯 ASCII 符号/标点
+        if all(c in '.,;:!?-+=*/\\()[]{}<>|&^%$#@~`" \t\r\n' for c in stripped):
+            continue
+
+        # 去重：相同字符串相邻位置视为同一实体
+        key = f"{stripped}|{match.start()}"
+        if key in found_positions:
+            continue
+        found_positions.add(key)
+
+        line_num = content[:match.start()].count('\n') + 1
+        # 字符串本体作为 name（截断到 200 字符用于显示）
+        name = stripped[:200]
+        # 完整内容放进 definition（无长度限制入库）
+        definition = stripped
+        entities.append({
+            'name': name,
+            'kind': KIND_STRING_LITERAL,
+            'parent': None,
+            'line': line_num,
+            'definition': definition,
+        })
+
+    return entities
 
 
 def _find_type_end_line(content: str, start_pos: int) -> int:

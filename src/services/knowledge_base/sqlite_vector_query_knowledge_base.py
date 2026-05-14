@@ -296,7 +296,7 @@ class SQLiteVectorKnowledgeBase:
             'TE': 'enum', 'TS': 'set', 'TY': 'type', 'AT': 'array',
             'PT': 'pointer', 'MM': 'method', 'MF': 'field',
             'FF': 'function', 'FP': 'procedure', 'CC': 'const', 'CR': 'resourcestring',
-            'MP': 'property',
+            'MP': 'property', 'KS': 'string literal',
         }
         name_lower = name.lower()
         conn = self._get_connection()
@@ -311,7 +311,7 @@ class SQLiteVectorKnowledgeBase:
             FROM vocabularies v 
             INNER JOIN files f ON v.file_id = f.id 
             WHERE v.name_lower = ? OR v.name_lower GLOB ?
-               OR (v.type = 'DF' AND v.description IS NOT NULL AND v.description != ''
+               OR (v.type IN ('DF', 'KS') AND v.description IS NOT NULL AND v.description != ''
                    AND v.description LIKE '%' || ? || '%' ESCAPE '\\')
         """, (name_lower, name_lower + '<*', escaped))
         
