@@ -213,7 +213,8 @@ async def compile_project(
     output_type: str = "gui",
     runtime_library: str = "static",
     build_configuration: Optional[str] = None,
-    install_if_design_package: bool = True
+    install_if_design_package: bool = True,
+    run_after_compile: bool = False
 ) -> CallToolResult:
     """
     编译 Delphi 工程
@@ -235,6 +236,7 @@ async def compile_project(
         runtime_library: 运行时库链接方式(static/dynamic)
         build_configuration: 编译配置名称
         install_if_design_package: 如果是设计期包，是否自动安装（默认 True）
+        run_after_compile: 编译成功后，以末次运行参数启动程序
 
     Returns:
         编译结果字典
@@ -323,8 +325,49 @@ async def compile_project(
                 logger.warning("清理 .dcu 后编译仍然失败")
 
         # 返回结果
+        result_text = str(result.to_dict())
+
+        # 编译成功后，如需启动程序
+        if run_after_compile and result.status.value == "success":
+            try:
+                exe_path = result.output_file
+                if exe_path and Path(exe_path).exists():
+                    # 从 .dproj 读取末次运行参数
+                    parser = DprojParser(project_path)
+                    run_params = None
+                    if parser.parse():
+                        plat = (target_platform or "win32").capitalize()
+                        cfg = build_configuration or "Debug"
+                        run_params = parser.get_debugger_run_params(config=cfg, platform=plat)
+
+                    # 拆分参数（空格分隔，支持引号分组）
+                    import shlex
+                    cmd = [exe_path]
+                    if run_params:
+                        try:
+                            cmd.extend(shlex.split(run_params))
+                        except Exception:
+                            cmd.extend(run_params.split())
+
+                    import subprocess
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=Path(exe_path).parent,
+                        creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0),
+                    )
+                    launch_msg = f"\n\n🚀 已启动: {Path(exe_path).name} (PID: {proc.pid})"
+                    if run_params:
+                        launch_msg += f"\n参数: {run_params}"
+                    result_text += launch_msg
+                    logger.info(f"编译后启动程序: {exe_path} PID={proc.pid} args={run_params}")
+                else:
+                    logger.warning(f"编译后启动: 未找到输出文件 {exe_path}")
+            except Exception as e:
+                logger.warning(f"编译后启动失败: {e}")
+                result_text += f"\n⚠️ 自动启动失败: {e}"
+
         return CallToolResult(
-            content=[{"type": "text", "text": str(result.to_dict())}],
+            content=[{"type": "text", "text": result_text}],
             isError=result.status.value != "success"
         )
 

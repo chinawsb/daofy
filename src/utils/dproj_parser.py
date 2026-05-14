@@ -418,6 +418,41 @@ class DprojParser:
 
         return False
 
+    def get_debugger_run_params(self, config: str = None, platform: str = None) -> Optional[str]:
+        """
+        获取调试器运行参数（Debugger_RunParams）。
+        对应 IDE 中 Project > Options > Debugger > Parameters 的设置。
+
+        Args:
+            config: 配置名称（Debug/Release/Dev）
+            platform: 平台名称（Win32/Win64）
+
+        Returns:
+            参数字符串，未找到则返回 None
+        """
+        if not self.root:
+            return None
+
+        for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
+            condition = prop_group.get("Condition", "")
+
+            if config and f"'$(Config)'=='{config}'" not in condition:
+                continue
+            if platform and f"'$(Platform)'=='{platform}'" not in condition:
+                continue
+
+            params_elem = self._find_element(prop_group, "Debugger_RunParams")
+            if params_elem is not None and params_elem.text:
+                return params_elem.text.strip()
+
+        # 找不到匹配配置的，尝试第一个非空值
+        for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
+            params_elem = self._find_element(prop_group, "Debugger_RunParams")
+            if params_elem is not None and params_elem.text:
+                return params_elem.text.strip()
+
+        return None
+
     def get_resource_items(self) -> List[Dict[str, str]]:
         """
         获取项目中所有的资源引用（RcItem 条目）。

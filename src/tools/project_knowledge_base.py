@@ -93,21 +93,15 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
 
         output = f"项目知识库初始化: {project_kb.project_name}\n\n"
 
-        # 构建三方库知识库
-        if build_thirdparty:
-            logger.info("构建三方库知识库...")
-            if project_kb.build_thirdparty_knowledge_base(force_rebuild=force_rebuild):
-                output += "✓ 三方库知识库构建成功\n"
-            else:
-                output += "⚠ 三方库知识库构建跳过 (未找到三方库路径)\n"
-
-        # 构建项目源码知识库
-        if build_project:
-            logger.info("构建项目源码知识库...")
+        # 构建项目知识库（含三方库）
+        if not (build_project or build_thirdparty):
+            output += "请指定 build_thirdparty 或 build_project 参数\n"
+        else:
+            logger.info("构建项目知识库...")
             if project_kb.build_project_knowledge_base(force_rebuild=force_rebuild):
-                output += "✓ 项目源码知识库构建成功\n"
+                output += "✓ 项目知识库构建成功\n"
             else:
-                output += "✗ 项目源码知识库构建失败\n"
+                output += "✗ 项目知识库构建失败\n"
 
         # 获取统计信息
         stats = project_kb.get_statistics()

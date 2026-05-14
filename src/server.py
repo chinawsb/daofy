@@ -19,8 +19,14 @@ import io
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['PYTHONUTF8'] = '1'
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
+# 保护: 子进程(multiprocessing spawn) 的 stdout 已经 pipe,
+# TextIOWrapper 可能失败。失败时跳过不影响子进程通信。
+if __name__ != '__mp_main__':
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
+    except Exception:
+        pass
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent

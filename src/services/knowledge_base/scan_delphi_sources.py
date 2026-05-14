@@ -31,6 +31,8 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
     Returns:
         文件信息字典或None
     """
+    import time as _time
+    _ts = _time.time()
     file_path_str, source_dir_str = args
     file_path = Path(file_path_str)
     source_dir = Path(source_dir_str)
@@ -66,7 +68,8 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
             'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
             'units': _extract_units(content),
             'uses': _extract_uses(content),
-            'entities': entities  # 统一实体表
+            'entities': entities,  # 统一实体表
+            '_worker_ts': _ts,    # worker 开始处理的时间戳(用于诊断)
         }
         
         return file_info
@@ -371,7 +374,83 @@ def _extract_all_entities(content: str) -> List[Dict]:
             'definition': type_def
         })
     
+    # ========== .dfm 表单属性提取 ==========
+    # Delphi .dfm 中文编码: #ddd(十进制Unicode) / #$xxxx(十六进制) / 'text' 混合
+    # 只在文件开头有 object 或 inherited 关键字时才尝试
+    first_line = content.lstrip()
+    if first_line.startswith('object ') or first_line.startswith('inherited '):
+        for match in _DFM_PROP_PATTERN.finditer(content):
+            prop_name = match.group(1)
+            if prop_name not in _DFM_INTERESTING_PROPS:
+                continue
+            raw_value = match.group(2).strip()
+            if not raw_value:
+                continue
+            decoded = _decode_dfm_value(raw_value)
+            if not decoded.strip():
+                continue
+            line_num = content[:match.start()].count('\n') + 1
+            entities.append({
+                'name': f"DFM.{prop_name}",
+                'kind': 'DF',
+                'parent': None,
+                'line': line_num,
+                'definition': decoded[:500]
+            })
+
     return entities
+
+
+def _decode_dfm_value(raw: str) -> str:
+    """
+    解码 .dfm 字符串值，处理 #ddd/#$hex/'text' 混合格式。
+    Delphi .dfm 用 #23548#20837 表示 Unicode 字符（十进制码位）。
+    """
+    parts = []
+    i = 0
+    while i < len(raw):
+        if raw[i] == "'":
+            j = i + 1
+            while j < len(raw):
+                if raw[j] == "'":
+                    if j + 1 < len(raw) and raw[j + 1] == "'":
+                        parts.append("'")
+                        j += 2
+                    else:
+                        j += 1
+                        break
+                else:
+                    parts.append(raw[j])
+                    j += 1
+            i = j
+        elif raw[i] == '#':
+            j = i + 1
+            if j < len(raw) and raw[j] == '$':
+                k = j + 1
+                while k < len(raw) and raw[k] in '0123456789ABCDEFabcdef':
+                    k += 1
+                if k > j + 1:
+                    parts.append(chr(int(raw[j+1:k], 16)))
+                i = k
+            else:
+                while j < len(raw) and raw[j].isdigit():
+                    j += 1
+                if j > i + 1:
+                    parts.append(chr(int(raw[i+1:j])))
+                i = j
+        else:
+            if not raw[i].isspace():
+                parts.append(raw[i])
+            i += 1
+    return ''.join(parts)
+
+
+_DFM_PROP_PATTERN = re.compile(
+    r"^\s+([A-Z][a-zA-Z0-9]*)\s*=\s*(.+?)$",
+    re.MULTILINE
+)
+_DFM_INTERESTING_PROPS = {'Caption', 'Hint', 'Text', 'Title',
+                          'Prompt', 'HelpKeyword', 'HelpContext'}
 
 
 def _find_type_end_line(content: str, start_pos: int) -> int:

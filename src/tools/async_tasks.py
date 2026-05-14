@@ -88,18 +88,15 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         def init_project_task(**kwargs):
             project_path = kwargs.get("project_path")
-            build_thirdparty = kwargs.get("build_thirdparty", True)
-            build_project = kwargs.get("build_project", True)
             force_rebuild = kwargs.get("force_rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
 
             project_kb = ProjectKnowledgeBase(project_path, progress_callback)
+            # 三方库和项目源码已在 build_project_knowledge_base 中合并构建
 
             results = {}
-            if build_thirdparty:
-                results["thirdparty"] = project_kb.build_thirdparty_knowledge_base(force_rebuild=force_rebuild)
-            if build_project:
-                results["project"] = project_kb.build_project_knowledge_base(force_rebuild=force_rebuild)
+            results["project"] = project_kb.build_project_knowledge_base(
+                force_rebuild=force_rebuild)
 
             stats = project_kb.get_statistics()
             results["statistics"] = stats

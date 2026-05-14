@@ -699,18 +699,23 @@ class SmartCacheKnowledgeBase:
         }
     
     def search_by_name(self, name: str) -> List[Dict]:
-        """按名称搜索 (返回所有类型)"""
+        """按名称搜索 (返回所有类型)，也搜索 description（支持 DF 属性值）"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         name_lower = name.lower()
+        # 转义 LIKE 通配符
+        escaped = name_lower.replace('%', '\\%').replace('_', '\\_')
         
+        # 精确匹配 name_lower + 查询 description 中匹配的 DF 项
         cursor.execute("""
             SELECT v.*, f.relative_path, f.category
             FROM vocabularies v
             LEFT JOIN files f ON v.file_id = f.id
             WHERE v.name_lower = ?
-        """, (name_lower,))
+               OR (v.type = 'DF' AND v.description IS NOT NULL AND v.description != ''
+                   AND v.description LIKE '%' || ? || '%' ESCAPE '\\')
+        """, (name_lower, escaped))
         
         results = []
         for row in cursor.fetchall():

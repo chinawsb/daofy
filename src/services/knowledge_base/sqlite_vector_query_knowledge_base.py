@@ -302,15 +302,18 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        # 1. 精确名称 + GLOB 前缀匹配
+        # 1. 精确名称 + GLOB 前缀匹配 + DF 属性值匹配
+        escaped = name_lower.replace('%', '\\%').replace('_', '\\_')
         cursor.execute("""
             SELECT v.name, v.type, v.base_class, v.description, v.line, 
                    f.relative_path, f.full_path, f.extension, f.size, 
                    f.line_count, f.hash, f.last_modified, f.category 
             FROM vocabularies v 
             INNER JOIN files f ON v.file_id = f.id 
-            WHERE (v.name_lower = ? OR v.name_lower GLOB ?)
-        """, (name_lower, name_lower + '<*'))
+            WHERE v.name_lower = ? OR v.name_lower GLOB ?
+               OR (v.type = 'DF' AND v.description IS NOT NULL AND v.description != ''
+                   AND v.description LIKE '%' || ? || '%' ESCAPE '\\')
+        """, (name_lower, name_lower + '<*', escaped))
         
         results = []
         for row in cursor.fetchall():
