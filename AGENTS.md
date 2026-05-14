@@ -163,6 +163,7 @@ python src/server.py --config config/config.json
 | **FP** | Procedure | procedure |
 | **CC** | Constant | const |
 | **CR** | Constant | resourcestring |
+| **KS** | String | string literal |
 
 ### Search Functions
 
@@ -498,6 +499,7 @@ KIND_FUNC = 'FF'       # function
 KIND_PROC = 'FP'       # procedure
 KIND_CONST = 'CC'      # const
 KIND_RESOURCE = 'CR'   # resourcestring
+KIND_STRING = 'KS'     # string literal
 ```
 
 ---
