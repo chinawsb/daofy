@@ -591,6 +591,10 @@ def _act_git_clone(platform=None, **kw):
     target_dir = os.path.join(work_dir, url.split("/")[-1].replace(".git", ""))
 
     def _do_clone(**_kw):
+        # 确保目标父目录存在
+        parent = os.path.dirname(target_dir)
+        if parent and not os.path.exists(parent):
+            os.makedirs(parent, exist_ok=True)
         args = ["clone"]
         if branch:
             args.extend(["-b", branch])
