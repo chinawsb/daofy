@@ -1,0 +1,28 @@
+{
+  "priority": [
+    {"name": "优先级/紧急", "color": "e53e3e", "description": "需要立即处理", "exclusive": true},
+    {"name": "优先级/高",   "color": "ed8936", "description": "重要问题，应尽快处理", "exclusive": true},
+    {"name": "优先级/中",   "color": "ecc94b", "description": "常规问题", "exclusive": true},
+    {"name": "优先级/低",   "color": "a0aec0", "description": "可延后处理", "exclusive": true}
+  ],
+  "review": [
+    {"name": "审阅/待审阅", "color": "4299e1", "description": "等待代码审阅", "exclusive": true},
+    {"name": "审阅/需修改", "color": "ed8936", "description": "审阅发现问题，需要修改", "exclusive": true},
+    {"name": "审阅/已通过", "color": "48bb78", "description": "审阅通过", "exclusive": true},
+    {"name": "审阅/已拒绝", "color": "e53e3e", "description": "审阅不通过", "exclusive": true}
+  ],
+  "status": [
+    {"name": "状态/待确认",   "color": "a0aec0", "description": "待确认是否有效", "exclusive": true},
+    {"name": "状态/处理中",   "color": "4299e1", "description": "正在修复中", "exclusive": true},
+    {"name": "状态/已验证",   "color": "48bb78", "description": "修复已完成并验证", "exclusive": true},
+    {"name": "状态/已关闭",   "color": "718096", "description": "问题已关闭", "exclusive": true},
+    {"name": "状态/无法复现", "color": "9f7aea", "description": "无法复现该问题", "exclusive": true}
+  ],
+  "type": [
+    {"name": "类型/缺陷", "color": "e53e3e", "description": "功能缺陷", "exclusive": true},
+    {"name": "类型/需求", "color": "48bb78", "description": "新功能需求", "exclusive": true},
+    {"name": "类型/改进", "color": "4299e1", "description": "优化/重构", "exclusive": true},
+    {"name": "类型/文档", "color": "ecc94b", "description": "文档相关", "exclusive": true},
+    {"name": "类型/测试", "color": "9f7aea", "description": "测试相关", "exclusive": true}
+  ]
+}

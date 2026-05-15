@@ -321,8 +321,8 @@ async def run_server():
                             "  git_status | git_add | git_commit\n"
                             "  --- 异步操作（后台执行，返回 task_id） ---\n"
                             "  git_clone | git_push | git_push_retry\n"
-                            "  --- 查询任务 ---\n"
-                            "  git_task_status",
+                            "  --- 查询异步任务状态 ---\n"
+                            '  async_task(action="status", task_id="...")',
                 inputSchema={
                     "type": "object",
                     "properties": {

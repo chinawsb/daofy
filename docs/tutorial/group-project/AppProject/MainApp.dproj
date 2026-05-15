@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</ProjectGuid>
+    <MainSource>MainApp.dpr</MainSource>
+    <ProjectVersion>21.0</ProjectVersion>
+    <FrameworkType>VCL</FrameworkType>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
+    <DCC_Namespace>System;System.SysUtils</DCC_Namespace>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug'">
+    <DCC_ConsoleApp>true</DCC_ConsoleApp>
+    <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="MainApp.dpr"/>
+    <DCCReference Include="MainApp.pas"/>
+  </ItemGroup>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+</Project>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{D4E5F6A7-B8C9-0123-DEF4-567890ABCDEF}</ProjectGuid>
+    <ProjectVersion>21.0</ProjectVersion>
+    <FrameworkType>VCL</FrameworkType>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+  </PropertyGroup>
+</Project>

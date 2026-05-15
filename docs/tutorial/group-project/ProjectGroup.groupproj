@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ProjectGroup xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ProjectReference Include="LibProject\LibUtils.dproj">
+    <Project>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</Project>
+    <Name>LibUtils</Name>
+  </ProjectReference>
+  <ProjectReference Include="AppProject\MainApp.dproj">
+    <Project>{C3D4E5F6-A7B8-9012-CDEF-123456789012}</Project>
+    <Name>MainApp</Name>
+  </ProjectReference>
+  <BuildOrder>
+    <ProjectReference>LibProject\LibUtils.dproj</ProjectReference>
+    <ProjectReference>AppProject\MainApp.dproj</ProjectReference>
+  </BuildOrder>
+</ProjectGroup>

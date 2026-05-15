@@ -1,0 +1,16 @@
+{
+  "server": {
+    "host": "localhost",
+    "port": 8080,
+    "last_start": "2026-05-15 09:00:00"
+  },
+  "logging": {
+    "level": "debug",
+    "file": "app.log"
+  },
+  "database": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "name": "demo_db"
+  }
+}

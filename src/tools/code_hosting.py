@@ -27,14 +27,18 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
-import threading
 import time
 from typing import Optional
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, quote
 import base64
+
+# 复用项目已有的异步任务管理器
+try:
+    from ..services.knowledge_base.async_task_manager import get_task_manager
+except ImportError:
+    get_task_manager = None
 
 logger = logging.getLogger(__name__)
 
@@ -78,30 +82,30 @@ _API_PATHS = {
 
 ISSUE_LABELS = {
     "priority": [
-        {"name": "优先级: 紧急", "color": "e53e3e", "description": "需要立即处理"},
-        {"name": "优先级: 高",   "color": "ed8936", "description": "重要问题，应尽快处理"},
-        {"name": "优先级: 中",   "color": "ecc94b", "description": "常规问题"},
-        {"name": "优先级: 低",   "color": "a0aec0", "description": "可延后处理"},
+        {"name": "优先级/紧急", "color": "e53e3e", "description": "需要立即处理", "exclusive": True},
+        {"name": "优先级/高",   "color": "ed8936", "description": "重要问题，应尽快处理", "exclusive": True},
+        {"name": "优先级/中",   "color": "ecc94b", "description": "常规问题", "exclusive": True},
+        {"name": "优先级/低",   "color": "a0aec0", "description": "可延后处理", "exclusive": True},
     ],
     "review": [
-        {"name": "审阅: 待审阅", "color": "4299e1", "description": "等待代码审阅"},
-        {"name": "审阅: 需修改", "color": "ed8936", "description": "审阅发现问题，需要修改"},
-        {"name": "审阅: 已通过", "color": "48bb78", "description": "审阅通过"},
-        {"name": "审阅: 已拒绝", "color": "e53e3e", "description": "审阅不通过"},
+        {"name": "审阅/待审阅", "color": "4299e1", "description": "等待代码审阅", "exclusive": True},
+        {"name": "审阅/需修改", "color": "ed8936", "description": "审阅发现问题，需要修改", "exclusive": True},
+        {"name": "审阅/已通过", "color": "48bb78", "description": "审阅通过", "exclusive": True},
+        {"name": "审阅/已拒绝", "color": "e53e3e", "description": "审阅不通过", "exclusive": True},
     ],
     "status": [
-        {"name": "状态: 待确认",   "color": "a0aec0", "description": "待确认是否有效"},
-        {"name": "状态: 处理中",   "color": "4299e1", "description": "正在修复中"},
-        {"name": "状态: 已验证",   "color": "48bb78", "description": "修复已验证"},
-        {"name": "状态: 已关闭",   "color": "718096", "description": "问题已关闭"},
-        {"name": "状态: 无法复现", "color": "9f7aea", "description": "无法复现"},
+        {"name": "状态/待确认",   "color": "a0aec0", "description": "待确认是否有效", "exclusive": True},
+        {"name": "状态/处理中",   "color": "4299e1", "description": "正在修复中", "exclusive": True},
+        {"name": "状态/已验证",   "color": "48bb78", "description": "修复已验证", "exclusive": True},
+        {"name": "状态/已关闭",   "color": "718096", "description": "问题已关闭", "exclusive": True},
+        {"name": "状态/无法复现", "color": "9f7aea", "description": "无法复现", "exclusive": True},
     ],
     "type": [
-        {"name": "类型: 缺陷", "color": "e53e3e", "description": "功能缺陷"},
-        {"name": "类型: 需求", "color": "48bb78", "description": "新功能需求"},
-        {"name": "类型: 改进", "color": "4299e1", "description": "优化/重构"},
-        {"name": "类型: 文档", "color": "ecc94b", "description": "文档相关"},
-        {"name": "类型: 测试", "color": "9f7aea", "description": "测试相关"},
+        {"name": "类型/缺陷", "color": "e53e3e", "description": "功能缺陷", "exclusive": True},
+        {"name": "类型/需求", "color": "48bb78", "description": "新功能需求", "exclusive": True},
+        {"name": "类型/改进", "color": "4299e1", "description": "优化/重构", "exclusive": True},
+        {"name": "类型/文档", "color": "ecc94b", "description": "文档相关", "exclusive": True},
+        {"name": "类型/测试", "color": "9f7aea", "description": "测试相关", "exclusive": True},
     ],
 }
 
@@ -203,13 +207,14 @@ def _split_repo(repo):
     return parts[0], parts[1]
 
 
-def _repo_path(platform, action, owner, repo, index=None):
+def _repo_path(platform, action, owner, repo, index=None, **extra):
     tmpl = _API_PATHS[platform].get(action)
     if tmpl is None:
         raise ValueError(f"{platform} 不支持 {action}")
     kw = {"owner": owner, "repo": repo}
     if index is not None:
         kw["index"] = index
+    kw.update(extra)
     if platform == "gitlab" and "{encoded}" in tmpl:
         kw["encoded"] = quote(f"{owner}/{repo}", safe="")
     return tmpl.format(**kw)
@@ -224,16 +229,18 @@ def _act_create_token(platform, **kw):
     base_url, username, password = kw["base_url"], kw["username"], kw["password"]
     name = kw.get("token_name", "delphi-mcp")
 
-    path = _repo_path(platform, "create_token", None, None)
+    path = _repo_path(platform, "create_token", None, None, username=username)
     body = {"name": name, "scopes": ["write:repository", "write:issue"]}
     result = _request(base_url, "", "POST", path, body=body, platform=platform,
                       basic_auth=(username, password))
-    val = result.get("sha1") or result.get("token", "")
-    return _ok(
+    token_val = result.get("sha1") or result.get("token", "")
+    d = _ok(
         f"✅ Token 创建成功\n"
         f"  平台: {platform} | 名称: {result.get('name', name)}\n"
-        f"  值: {val[:8]}...{val[-4:]}"
+        f"  值: {token_val[:8]}...{token_val[-4:]}"
     )
+    d["token"] = token_val
+    return d
 
 
 # ============================================================
@@ -408,132 +415,29 @@ def _git_run(work_dir, *args, timeout=300):
         raise RuntimeError(f"git 执行失败: {e}")
 
 
-@_reg("git_clone")
-def _act_git_clone(platform=None, **kw):
-    """克隆远程仓库。
 
-    支持 GitHub 镜像源（解决国内访问问题）:
-      设置 mirror="https://hub.fastgit.xyz" 或 "https://github.com.cnpmjs.org"
-      会自动将 repo_url 中的 github.com 替换为镜像地址。
-    """
-    url = kw["repo_url"]
-    work_dir = kw.get("work_dir", ".")
-    branch = kw.get("branch", "")
-    mirror = kw.get("mirror", "")
-    args = ["clone"]
-
-    # GitHub 镜像：替换 repo_url 中的 github.com
-    if mirror and "github.com" in url.lower():
-        url = url.replace("github.com", mirror.rstrip("/").replace("https://", ""))
-        url = url.replace("http://", "https://")
-
-    if branch:
-        args.extend(["-b", branch])
-    args.append(url)
-    if kw.get("work_dir") and kw["work_dir"] != ".":
-        args.append(kw["work_dir"])
-    else:
-        name = url.split("/")[-1].replace(".git", "")
-        args.append(os.path.join(work_dir, name))
-
-    _git_run(work_dir, *args)
-    return _ok(f"✅ 仓库已克隆\n  地址: {url}" + (f"\n  分支: {branch}" if branch else ""))
-
-
-@_reg("git_status")
-def _act_git_status(platform=None, **kw):
-    """查看仓库状态。"""
-    work_dir = kw.get("work_dir", ".")
-    out = _git_run(work_dir, "status")
-    return _ok(f"📋 Git 状态:\n{out}")
-
-
-@_reg("git_add")
-def _act_git_add(platform=None, **kw):
-    """暂存文件。"""
-    work_dir = kw.get("work_dir", ".")
-    files = kw.get("files", [])
-    if not files:
-        return _err("请指定要暂存的文件列表 (files 参数)")
-    _git_run(work_dir, "add", *files)
-    return _ok(f"✅ 已暂存: {', '.join(files)}")
-
-
-@_reg("git_commit")
-def _act_git_commit(platform=None, **kw):
-    """创建提交。"""
-    work_dir = kw.get("work_dir", ".")
-    msg = kw.get("commit_message", "")
-    if not msg:
-        return _err("请指定提交信息 (commit_message 参数)")
-    _git_run(work_dir, "commit", "-m", msg)
-    # 返回 commit hash
-    try:
-        h = _git_run(work_dir, "rev-parse", "HEAD")
-        return _ok(f"✅ 提交成功\n  Hash: {h[:12]}\n  信息: {msg}")
-    except RuntimeError:
-        return _ok(f"✅ 提交成功\n  信息: {msg}")
-
-
-@_reg("git_push")
-def _act_git_push(platform=None, **kw):
-    """推送到远程。
-
-    推送方式取决于用户的 Git 配置:
-      - SSH: 配置好 ~/.ssh/config 或 ssh-agent
-      - HTTPS: 配置好 git-credential 或 GIT_ASKPASS
-      - 代理: 配置 git config http.proxy / https.proxy
-    本工具不做任何网络假设，直接调用 git push。
-    """
-    work_dir = kw.get("work_dir", ".")
-    remote = kw.get("remote_name", "origin")
-    branch = kw.get("branch", "")
-    args = ["push", remote]
-    if branch:
-        args.append(branch)
-    _git_run(work_dir, *args)
 # ============================================================
-# 异步 Git 任务引擎（所有耗时 git 操作走后台）
+# 异步 Git 任务（复用 AsyncTaskManager）
 # ============================================================
 
-_git_tasks = {}
-_git_tasks_lock = threading.Lock()
-_git_task_counter = 0
 
+def _submit_git_task(name: str, fn, **kw) -> tuple:
+    """通过 AsyncTaskManager 提交后台 git 任务。
 
-def _start_git_task(task_name, fn, **kw):
-    """启动后台 git 任务，返回 task_id。"""
-    global _git_task_counter
-    with _git_tasks_lock:
-        _git_task_counter += 1
-        task_id = f"git_{task_name}_{int(time.time())}_{_git_task_counter}"
-        status = {
-            "task_id": task_id,
-            "name": task_name,
-            "status": "pending",
-            "done": False,
-            "success": False,
-            "result": "",
-            "error": "",
-        }
-        _git_tasks[task_id] = status
-
-    def _run():
-        status["status"] = "running"
-        try:
-            result = fn(**kw)
-            status["result"] = result.get("message", "")
-            status["success"] = True
-            status["status"] = "success"
-        except Exception as e:
-            status["error"] = str(e)
-            status["status"] = "failed"
-        finally:
-            status["done"] = True
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return task_id, status
+    Returns:
+        (task_id, message_dict)
+    """
+    if get_task_manager is None:
+        return "", _err("异步任务管理器不可用")
+    # submit_task 会给 fn 注入 _progress_callback, _cancellation_check, _task_id
+    task_id = get_task_manager().submit_task(name, fn, **kw)
+    msg = (
+        f"🔄 Git 任务已提交\n"
+        f"  任务ID: {task_id}\n"
+        f"  操作: {name}\n"
+        f"  查询: async_task(action='status', task_id='{task_id}')"
+    )
+    return task_id, _ok(msg)
 
 
 # ============================================================
@@ -611,13 +515,13 @@ def _act_git_clone(platform=None, **kw):
         _git_run(work_dir, *args)
         return _ok(f"✅ 仓库已克隆到 {target_dir}\n  地址: {url}")
 
-    task_id, status = _start_git_task("clone", _do_clone)
+    task_id, status = _submit_git_task("git_clone", _do_clone)
     return _ok(
         f"🔄 克隆任务已启动\n"
         f"  任务ID: {task_id}\n"
         f"  地址: {url}\n"
         f"  目标: {target_dir}\n"
-        f"  查询: code_hosting(action='git_task_status', task_id='{task_id}')"
+        f"  查询: async_task(action='status', task_id='{task_id}')"
     )
 
 
@@ -639,13 +543,8 @@ def _act_git_push(platform=None, **kw):
         _git_run(work_dir, *args)
         return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}")
 
-    task_id, status = _start_git_task("push", _do_push)
-    return _ok(
-        f"🔄 推送任务已启动\n"
-        f"  任务ID: {task_id}\n"
-        f"  远程: {remote}{'/' + branch if branch else ''}\n"
-        f"  查询: code_hosting(action='git_task_status', task_id='{task_id}')"
-    )
+    tid, resp = _submit_git_task("git_push", _do_push)
+    return resp
 
 
 @_reg("git_push_retry")
@@ -673,36 +572,8 @@ def _act_git_push_retry(platform=None, **kw):
             except RuntimeError as e:
                 logger.warning("推送失败(第%s次): %s", attempt, e)
                 if attempt == 1:
-                    raise  # 第一次失败就向上抛，由 _start_git_task 记录
-                # 后续重试在循环内静默重试
+                    raise
                 time.sleep(interval)
 
-    task_id, status = _start_git_task("push_retry", _do_retry_push)
-    return _ok(
-        f"🔄 后台推送重试任务已启动\n"
-        f"  任务ID: {task_id}\n"
-        f"  远程: {remote}{'/' + branch if branch else ''}\n"
-        f"  重试间隔: {interval}秒\n"
-        f"  查询: code_hosting(action='git_task_status', task_id='{task_id}')"
-    )
-
-
-@_reg("git_task_status")
-def _act_git_task_status(platform=None, **kw):
-    """查询异步 Git 任务状态。"""
-    task_id = kw.get("task_id", "")
-    with _git_tasks_lock:
-        s = _git_tasks.get(task_id)
-    if not s:
-        return _err(f"未找到任务: {task_id}")
-    lines = [
-        f"📋 Git 任务状态",
-        f"  任务ID: {task_id}",
-        f"  操作: {s['name']}",
-        f"  状态: {s['status']}",
-    ]
-    if s["result"]:
-        lines.append(f"  结果: {s['result'][:200]}")
-    if s["error"]:
-        lines.append(f"  错误: {s['error'][:200]}")
-    return _ok("\n".join(lines))
+    tid, resp = _submit_git_task("git_push_retry", _do_retry_push)
+    return resp

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}</ProjectGuid>
+    <MainSource>DemoApp.dpr</MainSource>
+    <ProjectVersion>21.0</ProjectVersion>
+    <FrameworkType>VCL</FrameworkType>
+    <Base>True</Base>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
+    <DCC_Namespace>System;System.Win;Winapi;System.Win;Vcl;Vcl.Imaging;Vcl.Controls;Vcl.Forms;Data;Datasnap;Xml;Soap;Web;System.Generics;System.Net;System.Json</DCC_Namespace>
+    <DCC_BuildAllUnits>true</DCC_BuildAllUnits>
+    <DCC_UnitSearchPath>C:\User\delphi-complier-mcp-server\docs\tutorial\demo-project</DCC_UnitSearchPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug'">
+    <DCC_Optimize>false</DCC_Optimize>
+    <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
+    <DCC_Define>DEBUG</DCC_Define>
+    <DCC_ConsoleApp>true</DCC_ConsoleApp>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Release'">
+    <DCC_Optimize>true</DCC_Optimize>
+    <DCC_DebugInfoInExe>false</DCC_DebugInfoInExe>
+    <DCC_Define>RELEASE</DCC_Define>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="DemoApp.dpr">
+      <MainSource>MainForm</MainSource>
+    </DelphiCompile>
+    <DCCReference Include="MainForm.pas"/>
+    <DCCReference Include="JsonConfigManager.pas"/>
+  </ItemGroup>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+</Project>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{B2C3D4E5-F6A7-8901-BCDE-F12345678901}</ProjectGuid>
+    <MainSource>LibUtils.dpr</MainSource>
+    <ProjectVersion>21.0</ProjectVersion>
+    <FrameworkType>VCL</FrameworkType>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
+    <DCC_Namespace>System;System.SysUtils;System.Classes</DCC_Namespace>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug'">
+    <DCC_DebugInfoInExe>true</DCC_DebugInfoInExe>
+    <DCC_Optimize>false</DCC_Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="LibUtils.dpr"/>
+    <DCCReference Include="LibUtils.pas"/>
+  </ItemGroup>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Delphi.Targets')"/>
+</Project>

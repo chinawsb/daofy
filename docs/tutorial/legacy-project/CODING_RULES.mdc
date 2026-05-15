@@ -1,0 +1,20 @@
+# LegacyApp 旧项目编码规范
+
+## 命名规则
+- 类型名: 不加 T 前缀，直接名词（如 JsonConfigManager、StringHelper）
+- 方法名: 小驼峰（如 loadConfig、getValue）
+- 变量名: 匈牙利命名法（如 strName、intCount、blnEnabled）
+- 参数名: 无前缀小驼峰（如 fileName、section）
+- 常量名: 小写下划线（如 default_port、max_retry_count）
+
+## 格式规则
+- 缩进: 4 空格
+- begin 放在行尾（如 if x then begin）
+- uses 子句每行一个，按字母序
+
+## 异常处理
+- 允许 except Exception: 兜底
+- 错误处理使用 ShowMessage 直接提示
+
+## 文件头
+- 无强制文件头要求
