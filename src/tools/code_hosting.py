@@ -382,18 +382,30 @@ def _act_list_issues(platform, **kw):
 # ============================================================
 
 
-def _git_run(work_dir, *args):
-    """在指定目录执行 git 命令，返回输出。"""
+def _git_run(work_dir, *args, timeout=300):
+    """在指定目录执行 git 命令，返回输出。
+    
+    Args:
+        work_dir: 工作目录（不存在则自动创建父目录）
+        timeout: 超时秒数，默认 300（5 分钟，适合大项目克隆）
+    """
+    if work_dir and not os.path.exists(work_dir):
+        os.makedirs(work_dir, exist_ok=True)
+    # 确保 work_dir 在命令执行前是存在的目录
+    cwd = work_dir if (work_dir and os.path.isdir(work_dir)) else None
     cmd = ["git"] + list(args)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=work_dir, timeout=60)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
         if r.returncode != 0:
-            raise RuntimeError(f"git {' '.join(args)} 失败:\n{r.stderr.strip()}")
+            stderr = r.stderr.strip()[:500]
+            raise RuntimeError(f"git {' '.join(args)} 失败:\n{stderr}")
         return r.stdout.strip()
     except FileNotFoundError:
         raise RuntimeError("git 命令未找到，请确保已安装 Git")
     except subprocess.TimeoutExpired:
-        raise RuntimeError("git 操作超时")
+        raise RuntimeError(f"git 操作超时 ({timeout}秒)")
+    except OSError as e:
+        raise RuntimeError(f"git 执行失败: {e}")
 
 
 @_reg("git_clone")
@@ -591,10 +603,6 @@ def _act_git_clone(platform=None, **kw):
     target_dir = os.path.join(work_dir, url.split("/")[-1].replace(".git", ""))
 
     def _do_clone(**_kw):
-        # 确保目标父目录存在
-        parent = os.path.dirname(target_dir)
-        if parent and not os.path.exists(parent):
-            os.makedirs(parent, exist_ok=True)
         args = ["clone"]
         if branch:
             args.extend(["-b", branch])
