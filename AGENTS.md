@@ -18,7 +18,7 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 ```
 src/
 ├── server.py              # MCP entry point
-├── tools/                 # MCP tool implementations
+├── tools/                 # MCP tool implementations (file_tool, code_hosting, create_component_dfm, compile_project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
 │   └── knowledge_base/    # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)

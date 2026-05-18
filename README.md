@@ -106,6 +106,12 @@ delphi_kb(
 |----------|----------|----------|
 | `generate_component_dfm` | 编译+运行 AI 写的 Pascal 代码来生成组件 DFM 定义 | `code`(必需), `uses`, `type_decl`, `init_code`, `compile_timeout`, `exec_timeout` |
 
+### 代码托管工具
+
+| 工具名称 | 功能描述 | 主要参数 |
+|----------|----------|----------|
+| `code_hosting` | 统一操作 Gitea/GitHub/GitLab 平台 + Git 本地操作 | `platform`(gitea/github/gitlab), `action`(create_issue/close_issue/add_comment/list_issues/git_clone/git_commit/git_push等), `base_url`, `token`, `repo`, `work_dir` |
+
 ### 异步任务工具
 
 | 工具名称 | 功能描述 | 主要参数 |

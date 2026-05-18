@@ -239,10 +239,11 @@ If you need to manually configure or add a custom compiler, you can directly edi
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `compile_project` | Compile Delphi project or check .pas file syntax | `project_path`, `target_platform`(win32/win64), `build_configuration`, `get_args_only` |
-| `check_environment` | Diagnose environment, detect compilers, install pasfmt | `action`(check/detect/install/format_install) |
-| `install_package` | Compile and install Delphi package to IDE | `package_path`, `target_platform`, `install` |
+| `compile_project` | Compile Delphi project or check .pas file syntax | `project_path`, `target_platform`(win32/win64), `build_configuration`(Debug/Release), `output_path`, `timeout`, `debug_info_enabled`, `get_args_only`(optional) |
+| `check_environment` | Diagnose environment, detect compilers, install pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
+| `install_package` | Compile and install Delphi package to IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
 | `list_installed_packages` | List packages installed to IDE | - |
+| `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval | `project_path`(optional), `section`(optional, e.g. workflow/writing/review/safety) |
 
 ### Knowledge Base Tools
 
@@ -254,7 +255,19 @@ If you need to manually configure or add a custom compiler, you can directly edi
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `file_tool` | Unified file operations: read/write/format/backup | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`
+| `file_tool` | Unified file operations: read/write/format/backup | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`(see action descriptions for details)
+
+### DFM Code Generation
+
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `generate_component_dfm` | Compile + run AI-written Pascal code to generate component DFM definitions | `code`(required), `uses`, `type_decl`, `init_code`, `compile_timeout`, `exec_timeout` |
+
+### Code Hosting Tools
+
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `code_hosting` | Unified operations for Gitea/GitHub/GitLab + local Git operations | `platform`(gitea/github/gitlab), `action`(create_issue/close_issue/add_comment/list_issues/git_clone/git_commit/git_push, etc.), `base_url`, `token`, `repo`, `work_dir` |
 
 ### Async Task Tools
 
@@ -300,7 +313,16 @@ MIT License - See [LICENSE](LICENSE) file.
 
 ## Version History
 
-### v2026.05.13 (Latest)
+### v2026.05.14 (Latest)
+
+- New `generate_component_dfm` tool: compile+run Pascal code to generate DFM
+- `file_tool` enhanced: DFM binary auto-conversion, backup management, search positioning
+- Install script refactored: Python-first with bat bootstrap, global/project modes
+- Server restructuring: MCP tool registration and invocation logic separation
+- New tests: file_tool, create_component_dfm, mcp_client, pasfmt
+- New `code_hosting` tool: unified Gitea/GitHub/GitLab operations
+
+### v2026.05.13
 
 - Regex overhaul: constructor/destructor/class function support
 - Search enhancement: function matches FF+FP, unit name fallback, top_k default 200
