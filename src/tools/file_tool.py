@@ -78,7 +78,7 @@ async def _read_content(
             if ansi.lower() not in (e.lower() for e in fallback_encodings):
                 fallback_encodings.append(ansi)
         except Exception:
-            pass
+            logger.debug("获取系统默认编码失败，跳过ANSI回退")
 
         last_error = None
         for enc in fallback_encodings:
@@ -237,6 +237,119 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
 
+async def _handle_partial_write(
+    file_path: str,
+    content: str,
+    backup: bool,
+    encoding: str,
+    format_after: bool,
+    start_line: Optional[int],
+    end_line: Optional[int],
+    original_encoding: str,
+    is_dfm_binary: bool,
+) -> Dict[str, Any]:
+    """
+    部分写入：仅替换指定行范围的内容，其余部分保持不变。
+
+    start_line/end_line 为 1-indexed 闭区间：
+      - 不传 start_line 时从第 1 行开始
+      - 不传 end_line 时到文件末尾
+    """
+    read_path = file_path
+    tmp_cleanup = None
+
+    # 二进制 DFM → 文本
+    if is_dfm_binary:
+        tmp_dir = tempfile.mkdtemp(prefix="filetool_")
+        text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
+        result = await dfm_utils.convert_dfm(file_path, text_path, to_text=True)
+        if not result.get("success"):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            return _wrap_error(f"二进制 DFM 转换失败: {result.get('message', '未知错误')}")
+        read_path = text_path
+        tmp_cleanup = tmp_dir
+
+    try:
+        enc = original_encoding or "utf-8"
+        with open(read_path, 'r', encoding=enc, newline='') as f:
+            lines = f.readlines()
+
+        total = len(lines)
+        s = (start_line - 1) if start_line is not None else 0   # 0-indexed inclusive
+        e = end_line if end_line is not None else total           # 0-indexed exclusive
+
+        if s < 0:
+            return _wrap_error(f"start_line ({start_line}) 不能小于 1")
+        if e > total:
+            return _wrap_error(f"end_line ({end_line}) 超出文件总行数 ({total})")
+        if s >= e:
+            return _wrap_error(f"start_line ({start_line}) 必须小于 end_line ({end_line})")
+
+        before = ''.join(lines[:s])
+        after = ''.join(lines[e:])
+        new_text = before + content + after
+
+        # 备份原文件
+        backup_path = None
+        if backup:
+            backup_path = create_backup(file_path)
+
+        # 写出
+        try:
+            with open(file_path, 'w', encoding=enc, newline='') as f:
+                f.write(new_text)
+        except UnicodeEncodeError:
+            logger.warning(f"编码 {enc} 写出失败，回退到 utf-8")
+            with open(file_path, 'w', encoding="utf-8", newline='') as f:
+                f.write(new_text)
+            enc = "utf-8"
+
+        # DFM 二进制 → 转换回二进制
+        if is_dfm_binary:
+            text_tmp = file_path + ".txt"
+            os.rename(file_path, text_tmp)
+            try:
+                conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
+                if not conv_result.get("success"):
+                    os.rename(text_tmp, file_path)
+                    logger.warning(f"DFM 二进制转换失败，已保留文本: {conv_result.get('message')}")
+                else:
+                    os.remove(text_tmp)
+            except Exception as ex:
+                if os.path.exists(text_tmp):
+                    os.rename(text_tmp, file_path)
+                logger.warning(f"DFM 转换异常，已保留文本: {ex}")
+
+        # 写入后自动格式化
+        fmt_msg = ""
+        if format_after:
+            try:
+                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
+                if fmt_result.get("formatted"):
+                    fmt_msg = "，写入后已格式化"
+            except Exception as ex:
+                logger.warning(f"写入后自动格式化失败: {ex}")
+
+        range_desc = f"第 {s + 1}~{e} 行"
+        result_lines = [
+            f"文件已更新: {file_path}",
+            f"替换范围: {range_desc}",
+            f"编码: {enc}",
+        ]
+        if backup:
+            result_lines.append(f"备份已创建: {backup_path}")
+        if is_dfm_binary:
+            result_lines.append("格式: 已转换为二进制 DFM")
+        if fmt_msg:
+            result_lines.append(fmt_msg)
+
+        return {"status": "success", "message": "\n".join(result_lines)}
+
+    finally:
+        if tmp_cleanup:
+            shutil.rmtree(tmp_cleanup, ignore_errors=True)
+
+
 async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     处理 write action。
@@ -245,12 +358,15 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - 自动备份原文件到 __history（backup=True 默认）
       - 自动检测并保持原始编码
       - DFM 文件自动处理：如果原文件是二进制，写出后自动转回二进制
+      - 支持 start_line/end_line 部分写入：仅替换指定行范围，其余不变
     """
     file_path = arguments.get("file_path")
     content = arguments.get("content")
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
     format_after = arguments.get("format_after_write", False)
+    start_line = arguments.get("start_line")
+    end_line = arguments.get("end_line")
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
@@ -276,9 +392,25 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         else:
             original_encoding = encoding
 
+        # 部分写入: 指定行范围替换
+        if start_line is not None or end_line is not None:
+            return await _handle_partial_write(
+                file_path=file_path,
+                content=content,
+                backup=backup,
+                encoding=encoding,
+                format_after=format_after,
+                start_line=start_line,
+                end_line=end_line,
+                original_encoding=original_encoding,
+                is_dfm_binary=is_dfm_binary,
+            )
+
         if backup:
             backup_path = create_backup(file_path)
     else:
+        if start_line is not None or end_line is not None:
+            return _wrap_error("start_line/end_line 仅对已有文件有效，不能用于新建文件")
         # 新文件默认 UTF-8 BOM（避免中文 Windows 下 Delphi/pasfmt 误判为 GBK）
         original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
@@ -354,8 +486,8 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
-            except Exception:
-                pass
+            except OSError as e:
+                logger.debug(f"清理临时DFM文件失败: {tmp_path}: {e}")
 
 
 async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
