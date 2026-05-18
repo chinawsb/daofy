@@ -291,3 +291,191 @@ def test_backup_file_with_spaces():
         assert "my unit.pas.~1~" in bp
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# 补充测试：编码检测 + 边界场景
+# ============================================================
+
+
+def test_detect_encoding_utf16_le_no_bom():
+    """UTF-16 LE 无 BOM 应被检测为 utf-16-le"""
+    # ASCII 内容 — 奇数位集中出现空字节
+    text = "unit Test;\nbegin\nend.\n"
+    utf16_bytes = text.encode('utf-16-le')
+    fd, path = tempfile.mkstemp(suffix=".pas")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(utf16_bytes)
+        enc = detect_encoding(path)
+        assert enc == "utf-16-le", f"expected utf-16-le, got {enc}"
+        # 验证解码正确
+        with open(path, 'r', encoding=enc) as f:
+            assert "unit Test" in f.read()
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_utf16_be_no_bom():
+    """UTF-16 BE 无 BOM 应被检测为 utf-16-be"""
+    text = "unit Test;\nbegin\nend.\n"
+    utf16_bytes = text.encode('utf-16-be')
+    fd, path = tempfile.mkstemp(suffix=".pas")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(utf16_bytes)
+        enc = detect_encoding(path)
+        assert enc == "utf-16-be", f"expected utf-16-be, got {enc}"
+        # 验证解码正确
+        with open(path, 'r', encoding=enc) as f:
+            assert "unit Test" in f.read()
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_utf16_mixed_chinese_no_bom():
+    """UTF-16 LE 含中文无 BOM — 中文高低字节均非空，但连续 ASCII 段产生密集的空字节"""
+    text = "unit Test;\n// 中文注释\nend.\n"
+    utf16_bytes = text.encode('utf-16-le')
+    fd, path = tempfile.mkstemp(suffix=".pas")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(utf16_bytes)
+        enc = detect_encoding(path)
+        # 中文 UTF-16 可能降低空字节占比，检测可能回退到 GBK
+        # 但只要能正确解码即可
+        assert enc in ("utf-16-le", "utf-16", "gbk", "utf-8"), f"unexpected: {enc}"
+        with open(path, 'r', encoding=enc) as f:
+            content = f.read()
+            assert "unit Test" in content
+            assert "中文" in content
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_empty_file():
+    """空文件应返回 utf-8"""
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
+    try:
+        enc = detect_encoding(path)
+        assert enc == "utf-8", f"expected utf-8 for empty file, got {enc}"
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_binary_data():
+    """二进制（非文本）文件应回退到 utf-8（不会报错）"""
+    fd, path = tempfile.mkstemp(suffix=".bin")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(b'\x00\x01\x02\xff\xfe\xfd\xfc\xfb')
+        enc = detect_encoding(path)
+        # 二进制数据通常解码失败，回退到 utf-8
+        assert enc == "utf-8", f"expected utf-8 fallback, got {enc}"
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_utf8_with_unicode_chars():
+    """UTF-8 含 Unicode 字符（非 ASCII）"""
+    fd, path = tempfile.mkstemp(suffix=".pas")
+    os.close(fd)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("unit Test;\n// © 2026 测试\nend.\n")
+        enc = detect_encoding(path)
+        assert enc == "utf-8", f"expected utf-8, got {enc}"
+    finally:
+        os.unlink(path)
+
+
+def test_detect_encoding_utf8_bom_only_ascii():
+    """UTF-8 BOM + 纯 ASCII 内容"""
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
+    try:
+        with open(path, "wb") as f:
+            f.write(b'\xef\xbb\xbfHello World')
+        enc = detect_encoding(path)
+        assert enc == "utf-8-sig", f"expected utf-8-sig, got {enc}"
+    finally:
+        os.unlink(path)
+
+
+def test_create_backup_in_subdir():
+    """备份应在源文件同级目录创建 __history"""
+    tmp_dir = tempfile.mkdtemp()
+    sub_dir = os.path.join(tmp_dir, "src", "units")
+    os.makedirs(sub_dir)
+    path = os.path.join(sub_dir, "Unit1.pas")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("unit Unit1;")
+    try:
+        bp = create_backup(path)
+        assert bp is not None
+        # __history 应该在 sub_dir 下
+        expected_history = os.path.join(sub_dir, "__history")
+        assert os.path.isdir(expected_history)
+        assert bp.startswith(expected_history)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_list_backups_with_corrupt_files():
+    """备份目录中有损坏文件（命名不规范）应被跳过"""
+    tmp_dir = tempfile.mkdtemp()
+    path = os.path.join(tmp_dir, "TestUnit.pas")
+    history_dir = os.path.join(tmp_dir, "__history")
+    os.makedirs(history_dir)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("unit TestUnit;")
+    try:
+        # 创建规范备份
+        create_backup(path)
+        # 创建损坏文件（命名不规范）
+        with open(os.path.join(history_dir, "TestUnit.pas.~bad~"), "w") as f:
+            f.write("garbage")
+        with open(os.path.join(history_dir, "random_file.txt"), "w") as f:
+            f.write("noise")
+        # 创建第二个规范备份
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("unit TestUnit; // v2")
+        create_backup(path)
+
+        backups = list_backups(path)
+        assert len(backups) == 2, f"expected 2 valid backups, got {len(backups)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def test_restore_backup_creates_backup_first():
+    """restore_backup 应在恢复前先创建当前文件的备份（安全网）"""
+    tmp_dir = tempfile.mkdtemp()
+    path = os.path.join(tmp_dir, "TestUnit.pas")
+    history_dir = os.path.join(tmp_dir, "__history")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("v1 original")
+    try:
+        # 创建备份
+        create_backup(path)
+        # 修改文件
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("v2 modified")
+        # 恢复前应该有 1 个备份
+        assert len(list_backups(path)) == 1
+        # 恢复
+        restore_backup(path)
+        # 恢复后应有 2 个备份（原来的 + 恢复前自动创建的当前文件备份）
+        backups = list_backups(path)
+        assert len(backups) == 2, f"expected 2 backups after restore, got {len(backups)}"
+        # 文件内容为 v1
+        with open(path, "r") as f:
+            assert f.read() == "v1 original"
+    finally:
+        shutil.rmtree(history_dir, ignore_errors=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)

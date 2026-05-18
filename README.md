@@ -100,6 +100,12 @@ delphi_kb(
 |----------|----------|----------|
 | `file_tool` | 统一文件操作：读/写/格式化/备份管理 | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`(详见对应action说明) |
 
+### DFM 代码生成工具
+
+| 工具名称 | 功能描述 | 主要参数 |
+|----------|----------|----------|
+| `generate_component_dfm` | 编译+运行 AI 写的 Pascal 代码来生成组件 DFM 定义 | `code`(必需), `uses`, `type_decl`, `init_code`, `compile_timeout`, `exec_timeout` |
+
 ### 异步任务工具
 
 | 工具名称 | 功能描述 | 主要参数 |

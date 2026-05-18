@@ -38,6 +38,8 @@ from .pasfmt import (
     check_pasfmt_rad_installation,
     compile_from_source
 )
+from .file_tool import handle_file_tool
+from .dfm_utils import convert_dfm, set_compiler_path
 
 __all__ = [
     # 编译工具

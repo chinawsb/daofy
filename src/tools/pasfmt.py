@@ -138,6 +138,13 @@ def get_pasfmt_path() -> Optional[str]:
         _PASFMT_PATH = env_path
         return _PASFMT_PATH
     
+    # 尝试从 PATH 环境变量搜索
+    path_in_path = shutil.which('pasfmt') or shutil.which('pasfmt.exe')
+    if path_in_path:
+        _PASFMT_PATH = path_in_path
+        logger.info(f"找到 pasfmt 在 PATH 中: {path_in_path}")
+        return path_in_path
+    
     # 尝试从默认安装位置获取
     project_root = Path(__file__).parent.parent.parent
     default_paths = [
@@ -265,7 +272,10 @@ async def format_file(
     # 获取 pasfmt 路径
     pasfmt_path = get_pasfmt_path()
     if not pasfmt_path:
-        error_msg = "未找到 pasfmt 可执行文件，请先安装 pasfmt 并设置 PASFMT_PATH 环境变量"
+        error_msg = (
+            "pasfmt 未安装。下载地址: https://github.com/integrated-application-development/pasfmt/releases\n"
+            "由 AI Agent 根据操作系统下载最新版本并安装"
+        )
         logger.error(error_msg)
         return {
             "status": "failed",
@@ -450,17 +460,20 @@ async def format_code(
     # 获取 pasfmt 路径
     pasfmt_path = get_pasfmt_path()
     if not pasfmt_path:
-        error_msg = "未找到 pasfmt 可执行文件，请先安装 pasfmt 并设置 PASFMT_PATH 环境变量"
+        error_msg = (
+            "pasfmt 未安装。下载地址: https://github.com/integrated-application-development/pasfmt/releases\n"
+            "由 AI Agent 根据操作系统下载最新版本并安装"
+        )
         logger.error(error_msg)
         return CallToolResult(
             content=[{"type": "text", "text": error_msg}],
             isError=True
         )
     
-    # 创建临时文件
+    # 创建临时文件（先保存路径再写内容，避免 write 异常导致 temp_input 未定义）
     with tempfile.NamedTemporaryFile(mode='w', suffix='.pas', delete=False, encoding='utf-8') as tmp:
-        tmp.write(code)
         temp_input = tmp.name
+        tmp.write(code)
     
     try:
         # 构建 pasfmt 命令

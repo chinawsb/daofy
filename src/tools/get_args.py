@@ -9,6 +9,7 @@ from mcp.types import CallToolResult, TextContent
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
 from ..services.compiler_service import CompilerService
 from ..utils.logger import get_logger
+from ..utils.dproj_parser import resolve_target_platform_from_dproj
 
 logger = get_logger(__name__)
 
@@ -72,7 +73,6 @@ async def get_compiler_args(
     try:
         # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
         if not target_platform or target_platform == "win32":
-            from ..utils.dproj_parser import resolve_target_platform_from_dproj
             target_platform = resolve_target_platform_from_dproj(project_path)
             logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
         else:

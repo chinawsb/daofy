@@ -9,7 +9,7 @@ echo ============================================================
 echo:
 
 set "SCRIPT_DIR=%~dp0"
-if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR%"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
 :: 1. venv Python
 set "PYTHON="
@@ -22,9 +22,19 @@ if exist "%SCRIPT_DIR%\venv\Scripts\python.exe" (
 if not defined PYTHON (
     where python >nul 2>&1
     if !ERRORLEVEL! equ 0 (
-        for /f "delims=" %%p in ('where python 2^>nul') do (
-            set "PYTHON=%%p"
-            echo [INFO] 使用系统 Python: %%p
+        for /f "delims=" %%p in ('where python 2^>nul') do if not defined PYTHON (
+            echo "%%p" | findstr /I "WindowsApps" >nul 2>&1
+            if !ERRORLEVEL! neq 0 (
+                "%%p" -c "import sys; v=sys.version_info; sys.exit(0 if v.major==3 and v.minor>=10 else 1)" 2>nul
+                if !ERRORLEVEL! equ 0 (
+                    set "PYTHON=%%p"
+                    echo [INFO] 使用系统 Python: %%p
+                ) else (
+                    echo [INFO] 系统 Python %%p 版本过低（需要 3.10+），继续搜索...
+                )
+            ) else (
+                echo [INFO] 跳过 WindowsApps 中的 Python 占位: %%p
+            )
         )
     )
 )
@@ -53,26 +63,52 @@ if not defined PYTHON (
     echo:
 
     set "PY_INSTALLER=%TEMP%\python-3.14.0-amd64.exe"
-    set "PY_URL=https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe"
 
-    echo [INFO] 正在下载 Python 3.14.0 ...
-    echo        !PY_URL!
+    :: 国内镜像源优先，下载更快
+    set "PY_URLS="
+    set "PY_URLS=https://mirrors.tuna.tsinghua.edu.cn/python/3.14.0/python-3.14.0-amd64.exe"
+    set "PY_URLS=!PY_URLS! https://mirrors.aliyun.com/python/3.14.0/python-3.14.0-amd64.exe"
+    set "PY_URLS=!PY_URLS! https://mirrors.ustc.edu.cn/python/3.14.0/python-3.14.0-amd64.exe"
+    set "PY_URLS=!PY_URLS! https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe"
 
-    where curl >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        curl -L -o "!PY_INSTALLER!" "!PY_URL!" 2>nul
-    ) else (
-        echo [INFO] curl 不可用，尝试 PowerShell 下载 ...
-        powershell -NoProfile -Command "Invoke-WebRequest -Uri '!PY_URL!' -OutFile '!PY_INSTALLER!'" 2>nul
+    for %%u in (!PY_URLS!) do (
+        if not exist "!PY_INSTALLER!" (
+            echo [INFO] 正在下载 Python 3.14.0 ...
+            echo        %%u
+
+            where curl >nul 2>&1
+            if !ERRORLEVEL! equ 0 (
+                curl -L --connect-timeout 10 --progress-bar -o "!PY_INSTALLER!" "%%u"
+                echo:
+            ) else (
+                echo [INFO] 使用 PowerShell 下载（显示进度条）...
+                powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%%u' -OutFile '!PY_INSTALLER!' -TimeoutSec 120 -ErrorAction Stop } catch {}"
+            )
+
+            :: 验证下载的文件是否完整
+            set "DL_VALID=1"
+            if not exist "!PY_INSTALLER!" set "DL_VALID=0"
+            if exist "!PY_INSTALLER!" for %%f in ("!PY_INSTALLER!") do if %%~zf LSS 20000000 set "DL_VALID=0"
+            if exist "!PY_INSTALLER!" (
+                findstr /M "MZ" "!PY_INSTALLER!" >nul 2>&1
+                if !ERRORLEVEL! neq 0 set "DL_VALID=0"
+            )
+            if !DL_VALID! equ 0 (
+                echo [WARNING] 文件下载不完整，尝试下一个镜像源 ...
+                del "!PY_INSTALLER!" 2>nul
+            )
+        )
     )
 
     if not exist "!PY_INSTALLER!" (
-        echo [ERROR] Python 下载失败，请手动安装: https://www.python.org/downloads/
+        echo [ERROR] Python 下载失败，请尝试手动安装:
+        echo        winget install Python.Python.3.14
+        echo        或访问: https://www.python.org/downloads/
         pause
         exit /b 1
     )
 
-    echo [INFO] 正在安装 Python 3.14.0 (InstallAllUsers=0, PrependPath=1) ...
+    echo [INFO] 正在安装 Python 3.14.0 ^(InstallAllUsers=0, PrependPath=1^) ...
     echo        请等待安装完成 ...
     echo:
 
@@ -101,7 +137,13 @@ if not defined PYTHON (
     if not defined PYTHON (
         where python >nul 2>&1
         if !ERRORLEVEL! equ 0 (
-            for /f "delims=" %%p in ('where python 2^>nul') do set "PYTHON=%%p"
+            for /f "delims=" %%p in ('where python 2^>nul') do if not defined PYTHON (
+                echo "%%p" | findstr /I "WindowsApps" >nul 2>&1
+                if !ERRORLEVEL! neq 0 (
+                    "%%p" -c "import sys; v=sys.version_info; sys.exit(0 if v.major==3 and v.minor>=10 else 1)" 2>nul
+                    if !ERRORLEVEL! equ 0 set "PYTHON=%%p"
+                )
+            )
         )
     )
 
@@ -123,34 +165,43 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-:: 如果 install_mcp.py 不存在，先从 GitHub release 下载引导
+:: 如果 install_mcp.py 不存在，先从 GitHub release 下载引导（多镜像回退）
 if not exist "%SCRIPT_DIR%\install_mcp.py" (
     echo [INFO] install_mcp.py 不存在，正在从 GitHub 下载引导脚本...
 
-    :: 创建临时下载脚本（避免 python -c 引号转义问题）
-    set "DL_SCRIPT=%TEMP%\_daofy_dl_install_mcp.py"
-    echo import urllib.request> "!DL_SCRIPT!"
-    echo import time>> "!DL_SCRIPT!"
-    echo import sys>> "!DL_SCRIPT!"
-    echo url = 'https://raw.githubusercontent.com/daofy-nlp/delphi-complier-mcp-server/main/install_mcp.py'>> "!DL_SCRIPT!"
-    echo dest = r'%SCRIPT_DIR%\install_mcp.py'>> "!DL_SCRIPT!"
-    echo for attempt in range(1, 31):>> "!DL_SCRIPT!"
-    echo     try:>> "!DL_SCRIPT!"
-    echo         urllib.request.urlretrieve(url, dest)>> "!DL_SCRIPT!"
-    echo         sys.exit(0)>> "!DL_SCRIPT!"
-    echo     except Exception as e:>> "!DL_SCRIPT!"
-    echo         if attempt %% 5 == 0:>> "!DL_SCRIPT!"
-    echo             print('[INFO] 下载重试 {}/30 ...'.format(attempt))>> "!DL_SCRIPT!"
-    echo         time.sleep(min(attempt * 2, 30))>> "!DL_SCRIPT!"
-    echo sys.exit(1)>> "!DL_SCRIPT!"
+    :: GitHub raw 内容 URL 列表（原始源 + 国内代理，自动回退）
+    set "GH_URLS="
+    set "GH_URLS=https://raw.githubusercontent.com/chinawsb/delphi-complier-mcp-server/main/install_mcp.py"
+    set "GH_URLS=!GH_URLS! https://ghproxy.net/https://raw.githubusercontent.com/chinawsb/delphi-complier-mcp-server/main/install_mcp.py"
 
-    "%PYTHON%" "!DL_SCRIPT!"
-    set "DL_RESULT=!ERRORLEVEL!"
-    del "!DL_SCRIPT!" 2>nul
+    for %%s in (!GH_URLS!) do (
+        if not exist "%SCRIPT_DIR%\install_mcp.py" (
+            echo [INFO] 正在下载引导脚本...
+            echo        %%s
 
-    if !DL_RESULT! neq 0 (
-        if exist "%SCRIPT_DIR%\install_mcp.py" del "%SCRIPT_DIR%\install_mcp.py" 2>nul
-        echo [ERROR] 无法下载 install_mcp.py（已重试30次），请手动下载完整包
+            where curl >nul 2>&1
+            if !ERRORLEVEL! equ 0 (
+                curl -L --connect-timeout 10 --progress-bar -o "%SCRIPT_DIR%\install_mcp.py" "%%s"
+                echo:
+            ) else (
+                echo [INFO] 使用 PowerShell 下载...
+                powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%%s' -OutFile '%SCRIPT_DIR%\install_mcp.py' -TimeoutSec 30 -ErrorAction Stop } catch {}"
+            )
+
+            :: 验证下载文件是否正常（存在且 > 100 字节）
+            set "DL_VALID=1"
+            if not exist "%SCRIPT_DIR%\install_mcp.py" set "DL_VALID=0"
+            if exist "%SCRIPT_DIR%\install_mcp.py" for %%f in ("%SCRIPT_DIR%\install_mcp.py") do if %%~zf LSS 100 set "DL_VALID=0"
+            if !DL_VALID! equ 0 (
+                echo [WARNING] 文件下载不完整，尝试下一个镜像源 ...
+                if exist "%SCRIPT_DIR%\install_mcp.py" del "%SCRIPT_DIR%\install_mcp.py" 2>nul
+            )
+        )
+    )
+
+    if not exist "%SCRIPT_DIR%\install_mcp.py" (
+        echo [ERROR] 无法下载 install_mcp.py，请手动下载完整包
+        echo         https://github.com/chinawsb/delphi-complier-mcp-server
         pause
         exit /b 1
     )

@@ -12,10 +12,24 @@ import sys
 import tempfile
 import subprocess
 import shutil
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Set
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 跟踪通过 ensure_dfm_text 创建的临时目录，供 _cleanup_dfm_temp_dirs 清理
+_dfm_temp_dirs: Set[str] = set()
+
+
+def _cleanup_dfm_temp_dirs():
+    """清理 ensure_dfm_text 留下的所有临时目录。在服务关闭时调用。"""
+    for d in list(_dfm_temp_dirs):
+        try:
+            shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+    _dfm_temp_dirs.clear()
+
 
 # 全局编译器搜索路径缓存
 _compiler_dcc32_path: Optional[str] = None
@@ -159,6 +173,7 @@ def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
         )
 
         # 如果失败且有库路径，重试
+        first_error = result.stderr if result.returncode != 0 else None
         if result.returncode != 0 and lib_path:
             cmd2 = [dcc32, dpr_path, f"-E{tmp_dir}", "-Q", "-B", f"-U{lib_path}"]
             logger.info(f"重试编译 DFM 转换器(带-U): {' '.join(cmd2)}")
@@ -168,7 +183,8 @@ def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
             )
 
         if result.returncode != 0:
-            logger.error(f"编译 DFM 转换器失败: {result.stderr}")
+            err_detail = result.stderr.strip() or first_error or "未知错误"
+            logger.error(f"编译 DFM 转换器失败: {err_detail}")
             return None
 
         if os.path.isfile(exe_path):
@@ -212,13 +228,22 @@ def _detect_dfm_format(file_path: str) -> str:
 
     Returns:
         "text" 或 "binary"
+
+    Raises:
+        FileNotFoundError: 文件不存在
+        PermissionError: 无权限读取
     """
+    if not os.path.isfile(file_path):
+        raise FileNotFoundError(f"DFM 文件不存在: {file_path}")
     try:
         with open(file_path, 'rb') as f:
             header = f.read(32)
 
         # 文本 DFM 以 object 或 inherited 开头（ASCII 可读）
         # 二进制 DFM 开头通常是 FF FF FF FF 或其他非文本标记
+        # 先去除 UTF-8 BOM（EF BB BF），避免 BOM 导致 ASCII 解码失败
+        if header[:3] == b'\xef\xbb\xbf':
+            header = header[3:]
         try:
             text = header.decode('ascii', errors='strict')
             text_stripped = text.strip().lower()
@@ -227,9 +252,11 @@ def _detect_dfm_format(file_path: str) -> str:
             return "binary"
         except (UnicodeDecodeError, ValueError):
             return "binary"
+    except (FileNotFoundError, PermissionError):
+        raise
     except Exception as e:
         logger.warning(f"检测 DFM 格式失败: {e}")
-        return "text"  # 保守默认
+        return "text"  # 保守默认：无法判断时假设文本格式
 
 
 async def convert_dfm(in_file: str, out_file: str, to_text: bool = True) -> Dict[str, Any]:
@@ -311,7 +338,7 @@ async def convert_dfm(in_file: str, out_file: str, to_text: bool = True) -> Dict
         try:
             shutil.rmtree(tmp_dir, ignore_errors=True)
         except Exception:
-            pass
+            logger.debug("清理 DFM 转换临时目录失败: %s", tmp_dir, exc_info=True)
 
 
 async def ensure_dfm_text(file_path: str) -> Optional[str]:
@@ -324,7 +351,11 @@ async def ensure_dfm_text(file_path: str) -> Optional[str]:
     Returns:
         如果是文本格式，返回原路径；
         如果是二进制且转换成功，返回临时文本文件路径；
-        失败返回 None
+        失败返回 None，并清理临时目录
+
+    Note:
+        返回的临时路径在进程生命周期内有效。
+        服务关闭时自动清理，也可手动调用 _cleanup_dfm_temp_dirs()。
     """
     fmt = _detect_dfm_format(file_path)
     if fmt == "text":
@@ -335,7 +366,10 @@ async def ensure_dfm_text(file_path: str) -> Optional[str]:
     tmp_text = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
     result = await convert_dfm(file_path, tmp_text, to_text=True)
     if result["success"]:
+        _dfm_temp_dirs.add(tmp_dir)
         return tmp_text
+    # 失败时立即清理
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     return None
 
 

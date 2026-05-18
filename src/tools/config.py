@@ -10,6 +10,8 @@ from ..models.compiler_config import CompilerConfig
 from ..services.config_manager import ConfigManager
 from ..utils.validator import Validator
 from ..utils.logger import get_logger
+import os
+from pathlib import Path
 
 logger = get_logger(__name__)
 
@@ -188,9 +190,6 @@ async def search_compilers(search_path: Optional[str] = None) -> CallToolResult:
             return CallToolResult(content=[{"type": "text", "text": output}])
         else:
             # 搜索模式：在指定路径搜索
-            import os
-            from pathlib import Path
-            
             common_paths = [search_path]
             
             for base_path in common_paths:

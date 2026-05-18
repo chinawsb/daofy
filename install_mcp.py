@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 """Daofy MCP Server 安装/卸载脚本 - 配置 AI Agent"""
 
+VERSION = "2026-05-16 16:30"  # 版本号随实际修改时间更新
+
+import argparse
+import ctypes
 import json
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 import zipfile
+import winreg
 from pathlib import Path
 
 MCP_SERVER_NAME = "daofy-delphi-mcp-server"
@@ -19,7 +29,6 @@ def _enable_ansi() -> bool:
     if sys.platform != "win32":
         return True
     try:
-        import ctypes
         kernel32 = ctypes.windll.kernel32
         for handle_id in (-11, -12):
             handle = kernel32.GetStdHandle(handle_id)
@@ -77,10 +86,54 @@ def get_script_dir() -> Path:
 
 
 def get_python_exe() -> str:
+    """返回可用的 Python 解释器路径（>= 3.10），优先 venv，否则搜索系统。"""
+
+    # 优先 venv，但检查版本是否满足要求
     venv = get_script_dir() / "venv" / "Scripts" / "python.exe"
     if venv.exists():
-        return str(venv)
-    return sys.executable
+        try:
+            r = subprocess.run(
+                [str(venv), "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"],
+                capture_output=True, timeout=15
+            )
+            if r.returncode == 0:
+                return str(venv)
+            warn("虚拟环境 Python 版本过低（需要 3.10+），继续搜索系统 Python")
+        except Exception as e:
+            warn(f"虚拟环境 Python 不可用: {e}，继续搜索系统 Python")
+
+    # 当前解释器——验证版本，且不能是 WindowsApps 占位
+    candidates: list[str] = []
+    this_py = sys.executable
+    if this_py and os.path.exists(this_py) and "windowsapps" not in this_py.lower():
+        candidates.append(this_py)
+
+    # 从 PATH 搜索（跳过 WindowsApps）
+    try:
+        r = subprocess.run(["where", "python"], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            for p in r.stdout.strip().splitlines():
+                p = p.strip()
+                if p and "windowsapps" not in p.lower() and p not in candidates:
+                    candidates.append(p)
+    except Exception:
+        pass
+
+    # 逐个验证版本
+    for p in candidates:
+        try:
+            r = subprocess.run(
+                [p, "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)"],
+                capture_output=True, timeout=15
+            )
+            if r.returncode == 0:
+                return p
+        except Exception:
+            continue
+
+    error("未找到 Python 3.10+，请先安装 Python 3.10 或更高版本")
+    error("下载地址: https://www.python.org/downloads/")
+    sys.exit(1)
 
 
 # ============================================================
@@ -139,6 +192,8 @@ def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> b
     if server_name not in node:
         return False
     del node[server_name]
+    if not node:
+        del data[node_key]
     write_json(config_path, data)
     return True
 
@@ -155,10 +210,108 @@ def _userprofile() -> str:
     return _env("USERPROFILE") or _env("HOME") or str(Path.home())
 
 
-def _detect_path(paths: list[str]) -> str | None:
+def _detect_path(paths: list[str], agent_name: str = "") -> str | None:
+    """检测可执行文件是否存在（优先直接路径，其次快捷方式，最后注册表）。"""
+
+    # 根据 agent_name 确定要搜索的关键词
+    keywords_map = {
+        "Trae": ["trae cn", "trae-cn"],
+        "TRAE SOLO CN": ["trae solo", "solo cn"],
+        "Claude Desktop": ["claude"],
+        "CodeArts Agent": ["codearts"],
+        "Cursor": ["cursor"],
+        "OpenCode": ["opencode"],
+        "Windsurf": ["windsurf"],
+        "Cline": ["cline"],
+    }
+    keywords = keywords_map.get(agent_name, [])
+
+    # 1. 先检查直接路径（优先）
     for p in paths:
-        if p and os.path.exists(p):
+        if p and os.path.isfile(p):
             return p
+
+    # 2. 检查 Start Menu 快捷方式（仅搜索匹配的关键词）
+    if not keywords:
+        return None
+
+    start_menu_paths = [
+        os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs"),
+        os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "Microsoft", "Windows", "Start Menu", "Programs"),
+    ]
+
+    def parse_lnk_shortcut(path: str) -> str | None:
+        """解析 .lnk 文件获取目标路径（纯 Python 实现）。"""
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+                if len(data) < 0x4C:
+                    return None
+                if data[:4] != b'\x4c\x00\x00\x00':
+                    return None
+                match = re.search(rb"([A-Za-z]:\\[^\x00]+\.exe)", data)
+                if match:
+                    return match.group(0).decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        return None
+
+    def find_exe_in_shortcut(folder: str, kwlist: list[str]) -> str | None:
+        """在文件夹中递归搜索包含关键词的快捷方式。"""
+        if not os.path.isdir(folder):
+            return None
+        for root, _, files in os.walk(folder):
+            for f in files:
+                if f.lower().endswith(".lnk"):
+                    full_path = os.path.join(root, f)
+                    matched = any(kw.lower() in f.lower() for kw in kwlist)
+                    if matched:
+                        target = parse_lnk_shortcut(full_path)
+                        if target and os.path.isfile(target):
+                            return target
+        return None
+
+    # 搜索关键词对应的快捷方式
+    for folder in start_menu_paths:
+        result = find_exe_in_shortcut(folder, keywords)
+        if result:
+            return result
+
+    # 3. 检查注册表 Uninstall 项
+    registry_keys = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+
+    def find_exe_in_registry(hkey: int, subkey: str, kwlist: list[str]) -> str | None:
+        try:
+            with winreg.OpenKey(hkey, subkey, 0, winreg.KEY_READ) as key:
+                i = 0
+                while True:
+                    try:
+                        name = winreg.EnumKey(key, i)
+                        i += 1
+                        for kw in kwlist:
+                            if kw.lower() in name.lower():
+                                with winreg.OpenKey(key, name) as sub:
+                                    try:
+                                        exe_path, _ = winreg.QueryValueEx(sub, "DisplayIcon")
+                                        if exe_path and os.path.isfile(exe_path):
+                                            return exe_path
+                                    except Exception:
+                                        pass
+                    except OSError:
+                        break
+        except Exception:
+            pass
+        return None
+
+    for hkey, subkey in registry_keys:
+        result = find_exe_in_registry(hkey, subkey, keywords)
+        if result:
+            return result
+
     return None
 
 
@@ -179,10 +332,13 @@ AGENT_DEFINITIONS = {
             p if os.path.exists(p := os.path.join(_userprofile(), ".trae-cn", "mcp_config.json"))
             else os.path.join(_userprofile(), ".trae", "mcp_config.json")
         ),
-        "detect_paths": lambda: [
-            os.path.join(_env("LOCALAPPDATA"), "Programs", "Trae", "Trae.exe"),
-            os.path.join(_env("ProgramFiles"), "Trae", "Trae.exe"),
-        ],
+        "detect_paths": lambda: [],  # 现在通过快捷方式和注册表检测
+    },
+    "TRAE SOLO CN": {
+        "config_type": "Standard",
+        "doc_url": "https://docs.trae.com/",
+        "config_path": lambda: os.path.join(_env("APPDATA"), "TRAE SOLO CN", "User", "mcp.json"),
+        "detect_paths": lambda: [],  # 通过快捷方式检测
     },
     "CodeArts Agent": {
         "config_type": "Standard",
@@ -310,28 +466,45 @@ def _check_vscode_ext(pattern: str) -> bool:
 
 
 def detect_agents() -> list[dict]:
+    """检测所有已注册 AI Agent 的安装状态和 MCP 配置情况。
+
+    Returns:
+        每个 Agent 的检测结果列表，包含：name, installed, path,
+        config_path, config_type, modes, doc_url, experimental, was_configured。
+    """
     results = []
     for name, defn in AGENT_DEFINITIONS.items():
         installed = False
         install_path = None
 
+        # 1. 首先检查可执行文件是否存在（必须要有）
         paths = defn.get("detect_paths", lambda: [])()
-        install_path = _detect_path(paths)
+        install_path = _detect_path(paths, name)
         if install_path:
             installed = True
 
+        # 2. 检查命令行（仅适用于 CLI 工具如 OpenCode）
         if not installed and defn.get("detect_command", lambda: False)():
             installed = True
             install_path = shutil.which("opencode") or "CLI"
 
+        # 3. 检查 VS Code 扩展
         ext_pattern = defn.get("detect_vscode_ext", None)
         if not installed and ext_pattern and _check_vscode_ext(ext_pattern):
             installed = True
 
+        # 4. 配置文件存在时，检查是否有 MCP 配置（但仅作为"已配置"标记，
+        #    不作为"已安装"的唯一依据——必须有可执行文件才算已安装）
         config_path = defn["config_path"]()
-        if not installed and os.path.exists(config_path):
-            installed = True
-            install_path = install_path or "Unknown"
+        was_configured = False
+        if os.path.exists(config_path):
+            try:
+                data = read_json(config_path)
+                node_key = "mcp" if defn.get("config_type") == "OpenCode" else "mcpServers"
+                node = data.get(node_key, {})
+                was_configured = MCP_SERVER_NAME in node or LEGACY_SERVER_NAME in node
+            except Exception:
+                pass
 
         experimental = defn.get("experimental", False)
         results.append({
@@ -344,6 +517,7 @@ def detect_agents() -> list[dict]:
             "project_config_relpath": defn.get("project_config_relpath", ""),
             "doc_url": defn["doc_url"],
             "experimental": experimental,
+            "was_configured": was_configured,  # 曾配置过 MCP（即使应用已卸载）
         })
     return results
 
@@ -389,8 +563,101 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "") -> 
 # 安装
 # ============================================================
 
-def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All", force: bool = False) -> None:
+
+def _get_process_pids(exe_name: str) -> list[str]:
+    """通过 tasklist 获取指定可执行文件的所有进程 PID。"""
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH", "/FI", f"IMAGENAME eq {exe_name}"],
+            capture_output=True, text=True, timeout=10
+        )
+        pids: list[str] = []
+        for line in result.stdout.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # CSV 格式: "exe_name","pid","session","session#","mem usage"
+            parts = line.strip('"').split('","')
+            if len(parts) >= 2:
+                pids.append(parts[1])
+        return pids
+    except Exception:
+        return []
+
+
+def _restart_agent(agent: dict) -> bool:
+    """重启指定 AI Agent 进程（先杀后启）。
+
+    使用 PID 精准杀进程，避免 /IM 误杀所有同名进程（多用户/多实例场景）。
+    """
+    exe_path = agent.get("path")
+    if not exe_path or not os.path.isfile(exe_path):
+        return False
+
+    exe_name = os.path.basename(exe_path)
+    pids = _get_process_pids(exe_name)
+    for pid in pids:
+        try:
+            subprocess.run(["taskkill", "/F", "/PID", pid],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass  # 进程可能已结束
+
+    time.sleep(1)  # 等待进程完全退出
+
+    try:
+        subprocess.Popen([exe_path])
+        return True
+    except Exception:
+        return False
+
+
+def _prompt_restart(agents: list[dict], auto_restart: bool | None = None) -> None:
+    """提示是否重启已操作的 Agent。auto_restart=None 时交互询问。"""
+    if not agents:
+        return
+
+    restartable = [a for a in agents if a.get("path") and os.path.isfile(a["path"])]
+    if not restartable:
+        info("请手动重启 AI Agent 使配置生效")
+        return
+
+    names = ", ".join(a["name"] for a in restartable)
+    should_restart = auto_restart
+
+    if should_restart is None:
+        try:
+            choice = input(f"{CYAN}是否自动重启 {names}？[y/N]: {RESET}").strip().lower()
+            should_restart = choice == "y"
+        except EOFError:
+            should_restart = False
+
+    if should_restart:
+        ok = 0
+        for a in restartable:
+            if _restart_agent(a):
+                ok += 1
+            else:
+                warn(f"{a['name']} 重启失败，请手动重启")
+        if ok:
+            success(f"已自动重启 {ok} 个 AI Agent")
+    else:
+        info("请手动重启 AI Agent 使配置生效")
+
+
+def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All",
+               force: bool = False, restart: bool | None = None) -> None:
+    """安装/配置 MCP Server 到指定 AI Agent。
+
+    Args:
+        python_exe: Python 解释器路径。
+        project_dir: 项目目录（项目级 MCP 配置使用）。
+        agent_filter: Agent 名称过滤器（"All" 或特定名称）。
+        force: 是否强制重新配置已存在的 MCP Server。
+        restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
+    """
     separator("道飞/Daofy Delphi MCP Server 安装脚本")
+    info(f"版本: {VERSION}")
 
     server_script = os.path.join(str(get_script_dir()), "src", "server.py")
     if not os.path.exists(server_script):
@@ -399,10 +666,13 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
 
     agents = detect_agents()
 
+    # 预先设置 target，确保在第二个 agent_filter 检查块中始终有定义
+    target = agent_filter
+
     # 按过滤器筛选
     if agent_filter != "All":
         filter_map = {
-            "Claude": "Claude Desktop", "Trae": "Trae", "CodeArts": "CodeArts Agent",
+            "Claude": "Claude Desktop", "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
@@ -443,12 +713,21 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             # 项目级：安装时不知道路径，不显示状态和路径
             cprint(f"  [{i:2d}] {a['name']}{exp}", YELLOW)
         else:
-            configured = is_mcp_configured_any(a["config_path"], a["config_type"])
-            status = "已配置" if configured else "未配置"
+            was_configured = a.get("was_configured", False)
+            if a["installed"]:
+                status = "已安装 (MCP 已配置)" if was_configured else "已安装"
+            elif was_configured:
+                status = "配置文件存在（应用未安装）"
+            else:
+                status = "未安装"
             cprint(f"  [{i:2d}] {a['name']}{exp} ({status})", GREEN)
             if a["path"] and a["path"] != "Unknown":
                 cprint(f"        路径: {a['path']}", GRAY)
-            cprint(f"        配置: {a['config_path']}", GRAY)
+            if was_configured:
+                cfg_label = "MCP 已配置" if a["installed"] else "曾配置过 MCP"
+                cprint(f"        配置: {a['config_path']} ({cfg_label})", GRAY)
+            else:
+                cprint(f"        配置: {a['config_path']}", GRAY)
 
     if not_installed_agents:
         names = ", ".join(a["name"] for a in not_installed_agents)
@@ -456,13 +735,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
 
     # 交互选择
     if agent_filter != "All":
-        filter_map = {
-            "Claude": "Claude Desktop", "Trae": "Trae", "CodeArts": "CodeArts Agent",
-            "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
-            "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
-            "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
-        }
-        target = filter_map.get(agent_filter, agent_filter)
+        # target 和 agents 已在之前的 agent_filter 检查中筛选完毕
         selected = [a for a in installed_agents if a["name"] == target]
         # 自动推断 implied_mode
         for a in selected:
@@ -537,6 +810,35 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     for a in selected:
         cprint(f"  - {a['name']}", GREEN)
 
+    # 先安装 Python 依赖
+    separator("安装 Python 依赖")
+    req_file = os.path.join(str(get_script_dir()), "requirements.txt")
+    if os.path.exists(req_file):
+        info("正在通过 pip 安装依赖 ...")
+        try:
+            mirror = "https://pypi.tuna.tsinghua.edu.cn/simple"
+            result = subprocess.run(
+                [python_exe, "-m", "pip", "install", "-r", req_file, "-i", mirror],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                success("Python 依赖安装完成")
+                for line in result.stdout.strip().splitlines():
+                    if line.strip():
+                        info(f"  {line.strip()}")
+            else:
+                error(f"pip install 失败 (return code {result.returncode})")
+                for line in result.stderr.strip().splitlines():
+                    if line.strip():
+                        error(f"  {line.strip()}")
+                error("请手动运行: pip install -r requirements.txt")
+        except subprocess.TimeoutExpired:
+            error("pip install 超时（>120s）")
+        except Exception as e:
+            error(f"安装依赖时出错: {e}")
+    else:
+        warn(f"未找到 requirements.txt: {req_file}")
+
     separator("配置 MCP Server")
     success_count = 0
 
@@ -566,44 +868,52 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     info(f"成功配置: {success_count} 个 AI Agent")
     if success_count > 0:
         success("MCP Server 安装完成！")
-        info("请重启相应的 AI Agent 使配置生效")
+        _prompt_restart(selected, restart)
 
 
 # ============================================================
 # 卸载
 # ============================================================
 
-def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
+def do_uninstall(agent_filter: str = "All", project_dir: str = "",
+                 restart: bool | None = None) -> None:
+    """从指定 AI Agent 卸载 MCP Server 配置。
+
+    Args:
+        agent_filter: Agent 名称过滤器（"All" 或特定名称）。
+        project_dir: 项目目录（项目级 MCP 配置使用）。
+        restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
+    """
     separator("道飞/Daofy Delphi MCP Server 卸载脚本")
 
     agents = detect_agents()
 
-    # 如果 CLI 指定了 project_dir，直接应用到所有支持项目级的 Agent
+    # 如果 CLI 指定了 project_dir，预先设置配置文件路径（但不改变 installed 状态）
+    # 这样项目级 Agent 会在选择时显示正确的配置路径，但需要用户主动选择才安装
     if project_dir:
         for a in agents:
             if "project" in a["modes"]:
                 rel_path = _get_project_relative_config_path(a["name"], a)
                 if rel_path:
                     a["config_path"] = os.path.join(project_dir, rel_path)
-                a["installed"] = True
 
-    installed_agents = [a for a in agents if a["installed"]]
+    # 只显示尚有 MCP 配置可卸载的 Agent（应用已装但无配置的无需列出）
+    display_items: list[tuple[dict, str]] = []
+    for a in agents:
+        if "global" in a["modes"] and a.get("was_configured"):
+            display_items.append((a, "global"))
+    project_start = len(display_items) + 1
+    for a in agents:
+        if "project" in a["modes"] and a.get("was_configured"):
+            display_items.append((a, "project"))
 
-    if not installed_agents:
-        warn("未检测到任何已安装的 AI Agent")
+    if not display_items:
+        info("没有需要卸载的 AI Agent")
         sys.exit(0)
 
     # ================================================================
     # 分两组展示：全局配置 / 项目级配置（同安装流程）
     # ================================================================
-    display_items: list[tuple[dict, str]] = []
-    for a in installed_agents:
-        if "global" in a["modes"]:
-            display_items.append((a, "global"))
-    project_start = len(display_items) + 1
-    for a in installed_agents:
-        if "project" in a["modes"]:
-            display_items.append((a, "project"))
 
     info("（输入编号选择，a=全选，q=退出）")
     info("")
@@ -617,22 +927,33 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
         if is_project_item and not project_dir:
             cprint(f"  [{i:2d}] {a['name']}{exp}", YELLOW)
         else:
-            configured = is_mcp_configured_any(a["config_path"], a["config_type"])
-            status = "已配置" if configured else "未配置"
-            color = GREEN if configured else YELLOW
+            was_configured = a.get("was_configured", False)
+            if a["installed"]:
+                status = "已安装 (MCP 已配置)" if was_configured else "已安装"
+                color = GREEN
+            elif was_configured:
+                status = "配置文件存在（应用未安装）"
+                color = YELLOW
+            else:
+                status = "未安装"
+                color = YELLOW
             cprint(f"  [{i:2d}] {a['name']}{exp} ({status})", color)
-            cprint(f"      配置: {a['config_path']}", GRAY)
+            if was_configured:
+                cfg_label = "MCP 已配置" if a["installed"] else "曾配置过 MCP"
+                cprint(f"      配置: {a['config_path']} ({cfg_label})", GRAY)
+            else:
+                cprint(f"      配置: {a['config_path']}", GRAY)
 
     # 交互选择
     if agent_filter != "All":
         filter_map = {
-            "Claude": "Claude Desktop", "Trae": "Trae", "CodeArts": "CodeArts Agent",
+            "Claude": "Claude Desktop", "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
         }
         target = filter_map.get(agent_filter, agent_filter)
-        selected = [a for a in installed_agents if a["name"] == target]
+        selected = [a for a in agents if a["name"] == target and a.get("was_configured")]
         for a in selected:
             a["_implied_mode"] = "project" if "project" in a["modes"] and "global" not in a["modes"] else "global"
     else:
@@ -721,6 +1042,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
 
     separator("卸载 MCP Server")
     success_count = 0
+    uninstalled_agents: list[dict] = []
 
     for a in to_uninstall:
         info(f"正在卸载 {a['name']}...")
@@ -732,6 +1054,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
         if removed_any:
             success(f"已从 {a['name']} 移除 MCP Server 配置")
             success_count += 1
+            uninstalled_agents.append(a)
         else:
             info(f"{a['name']} 未配置此 MCP Server，跳过")
 
@@ -739,7 +1062,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
     info(f"成功卸载: {success_count} 个 AI Agent")
     if success_count > 0:
         success("MCP Server 卸载完成！")
-        info("请重启相应的 AI Agent 使配置生效")
+        _prompt_restart(uninstalled_agents, restart)
 
 
 # ============================================================
@@ -750,7 +1073,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
 # 自安装：检查当前目录是否为 MCP Server 目录
 # ============================================================
 
-RELEASE_REPO = "daofy-nlp/delphi-complier-mcp-server"
+RELEASE_REPO = "chinawsb/delphi-complier-mcp-server"
 RELEASE_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
 
 
@@ -760,15 +1083,42 @@ def _is_server_dir() -> bool:
     return (script_dir / "src" / "server.py").exists() and (script_dir / "requirements.txt").exists()
 
 
-MAX_RETRY = 30
+MAX_RETRY = 5   # 每个 URL 最多重试次数（已有镜像回退，无需 30 次）
 RETRY_DELAY = 2  # 秒
+DOWNLOAD_TIMEOUT = 30  # 单次下载超时（秒），urlretrieve 无默认超时
+
+# GitHub 国内镜像代理（用于加速下载和失败回退）
+# ghproxy 模式：只需在 GitHub URL 前添加前缀即可
+# fastgit 模式：替换 hostname
+GITHUB_MIRRORS: list[str] = [
+    "",  # 原始源（优先尝试）
+    "https://ghproxy.net",  # 国内 GitHub 代理（实测可用）
+]
+
+
+def _build_mirror_urls(url: str) -> list[str]:
+    """将 GitHub URL 扩展为多镜像 URL 列表（原始源 + 国内代理）。
+
+    ghproxy 风格：https://proxy/原始GitHub完整URL
+    """
+    urls: list[str] = []
+    for m in GITHUB_MIRRORS:
+        if not m:
+            urls.append(url)
+        else:
+            urls.append(f"{m}/{url}")
+    # 去重（保留顺序）
+    seen: set[str] = set()
+    result: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            result.append(u)
+    return result
 
 
 def _retry_urlopen(url: str, headers: dict | None = None, timeout: int = 15, max_retry: int = MAX_RETRY) -> bytes:
     """带重试的 urllib 请求，最多重试 max_retry 次"""
-    import urllib.request
-    import urllib.error
-    import time
 
     last_err = None
     for attempt in range(1, max_retry + 1):
@@ -786,42 +1136,59 @@ def _retry_urlopen(url: str, headers: dict | None = None, timeout: int = 15, max
 
 
 def _get_latest_release_url() -> tuple[str, str]:
-    """获取最新 release 的 zip 下载地址和版本号"""
-    try:
-        data = json.loads(_retry_urlopen(RELEASE_API, headers={"User-Agent": "daofy-installer"}).decode("utf-8"))
-        version = data.get("tag_name", "unknown")
-        for asset in data.get("assets", []):
-            name = asset.get("name", "")
-            if name.endswith(".zip"):
-                return asset["browser_download_url"], version
-    except Exception as e:
-        warn(f"获取 Release 信息失败: {e}")
-    return "", ""
-
-
-def _download_file(url: str, dest: str) -> bool:
-    """下载文件到指定路径，带重试"""
-    import urllib.request
-    import time
-
-    last_err = None
-    for attempt in range(1, MAX_RETRY + 1):
+    """获取最新 release 的 zip 下载地址和版本号（自动回退国内镜像）"""
+    api_urls = _build_mirror_urls(RELEASE_API)
+    last_err: Exception | None = None
+    for api_url in api_urls:
         try:
-            if attempt == 1:
-                info(f"正在下载: {url}")
-            else:
-                info(f"重试下载(第{attempt}次)...")
-            urllib.request.urlretrieve(url, dest)
-            return True
+            data = json.loads(
+                _retry_urlopen(api_url, headers={"User-Agent": "daofy-installer"}).decode("utf-8")
+            )
+            version = data.get("tag_name", "unknown")
+            for asset in data.get("assets", []):
+                name = asset.get("name", "")
+                if name.endswith(".zip"):
+                    return asset["browser_download_url"], version
         except Exception as e:
             last_err = e
-            if os.path.exists(dest):
-                os.remove(dest)
-            if attempt < MAX_RETRY:
-                wait = RETRY_DELAY * min(attempt, 10)
-                warn(f"下载失败(第{attempt}次): {e}，{wait}秒后重试...")
-                time.sleep(wait)
-    error(f"下载失败(已重试{MAX_RETRY}次): {last_err}")
+            warn(f"从镜像获取 Release 信息失败: {api_url} — {e}")
+            continue
+    if last_err:
+        warn(f"所有镜像获取 Release 信息均失败: {last_err}")
+    return "", ""
+
+def _download_file(url: str, dest: str) -> bool:
+    """下载文件到指定路径，带重试 + 多镜像回退"""
+
+    download_urls = _build_mirror_urls(url)
+    last_err: Exception | None = None
+    for dl_url in download_urls:
+        info(f"正在下载: {dl_url}")
+        for attempt in range(1, MAX_RETRY + 1):
+            try:
+                if attempt > 1:
+                    info(f"重试下载(第{attempt}次): {dl_url}")
+                # urlretrieve 无默认超时，设 socket 超时避免卡死
+                socket.setdefaulttimeout(DOWNLOAD_TIMEOUT)
+                urllib.request.urlretrieve(dl_url, dest)
+                socket.setdefaulttimeout(None)
+                return True
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if os.path.exists(dest):
+                    os.remove(dest)
+                warn(f"HTTP {e.code} — {dl_url}")
+                break  # HTTP 错误无需重试（404/403 重试也没用），切下一个镜像
+            except Exception as e:
+                last_err = e
+                if os.path.exists(dest):
+                    os.remove(dest)
+                if attempt < MAX_RETRY:
+                    wait = RETRY_DELAY * min(attempt, 5)
+                    warn(f"下载失败(第{attempt}次): {e}，{wait}秒后重试...")
+                    time.sleep(wait)
+        warn(f"镜像源失败，尝试下一个: {dl_url}")
+    error(f"所有镜像源下载失败: {last_err}")
     return False
 
 
@@ -907,8 +1274,7 @@ def ensure_server_files() -> bool:
 
 
 def main() -> None:
-    import argparse
-
+    """安装/卸载脚本入口函数，解析命令行参数并执行对应操作。"""
     parser = argparse.ArgumentParser(description="Daofy MCP Server 安装/卸载脚本")
     parser.add_argument("--uninstall", action="store_true", help="卸载模式")
     parser.add_argument("--agent", default="All",
@@ -917,13 +1283,23 @@ def main() -> None:
                                  "Kimi", "ChatGLM", "All"],
                         help="指定 AI Agent")
     parser.add_argument("--force", action="store_true", help="强制重新配置")
+    parser.add_argument("--restart", action="store_true", help="操作后自动重启 AI Agent（不交互询问）")
+    parser.add_argument("--no-restart", action="store_true", help="操作后不重启 AI Agent（不交互询问）")
     parser.add_argument("--python", default="", help="Python 解释器路径")
     parser.add_argument("--project-dir", default="",
                         help="项目目录路径（项目级 MCP 配置的 Agent 使用，不传则交互式输入）")
     args = parser.parse_args()
 
+    # 确定重启策略
+    if args.restart:
+        restart = True
+    elif args.no_restart:
+        restart = False
+    else:
+        restart = None  # 交互询问
+
     if args.uninstall:
-        do_uninstall(agent_filter=args.agent, project_dir=args.project_dir)
+        do_uninstall(agent_filter=args.agent, project_dir=args.project_dir, restart=restart)
     else:
         # 检查 MCP Server 文件是否存在，不存在则自动下载解压
         if not ensure_server_files():
@@ -935,7 +1311,7 @@ def main() -> None:
             error(f"Python 不存在: {python_exe}")
             sys.exit(1)
         do_install(python_exe, project_dir=args.project_dir,
-                   agent_filter=args.agent, force=args.force)
+                   agent_filter=args.agent, force=args.force, restart=restart)
 
 
 if __name__ == "__main__":

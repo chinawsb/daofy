@@ -15,9 +15,11 @@ Action 模式:
 """
 
 import os
+import locale
 import shutil
 import tempfile
 from typing import Any, Optional, Dict
+from mcp.types import CallToolResult
 from ..utils.logger import get_logger
 from ..utils.file_backup import create_backup, list_backups, restore_backup, detect_encoding
 from . import pasfmt
@@ -52,8 +54,75 @@ async def _read_content(
     max_lines: int = 500,
     search_in: str = "all",
     project_path: Optional[str] = None,
+    end_line: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """读取文件内容的内部实现，委托给 read_source_file 并统一返回格式"""
+    """
+    读取文件内容的内部实现。
+
+    如果文件在本地直接存在，检测编码后直接读取（支持 UTF-8/GBK/UTF-16 等）。
+    否则委托给 read_source_file 走知识库搜索路径。
+    """
+    # 直接文件读取（支持编码检测 + 降级链）
+    if os.path.isfile(file_path):
+        # 构建编码降级链：检测编码 → UTF-8 → CP_ACP（系统 ANSI 代码页）
+        detected = detect_encoding(file_path)
+        fallback_encodings = [detected]
+
+        # UTF-8 无 BOM（与检测编码不同时补充）
+        if detected not in ('utf-8', 'utf-8-sig'):
+            fallback_encodings.append('utf-8')
+
+        # CP_ACP — 系统 ANSI 代码页（中文 Windows 通常是 GBK）
+        try:
+            ansi = locale.getpreferredencoding()
+            if ansi.lower() not in (e.lower() for e in fallback_encodings):
+                fallback_encodings.append(ansi)
+        except Exception:
+            pass
+
+        last_error = None
+        for enc in fallback_encodings:
+            try:
+                with open(file_path, 'r', encoding=enc, newline='') as f:
+                    all_lines = f.readlines()
+
+                total_lines = len(all_lines)
+                if start_line < 1:
+                    start_line = 1
+                if end_line is not None:
+                    # clamp end_line 到文件末尾，不超过实际行数
+                    end_line = min(end_line, total_lines)
+                    selected = all_lines[start_line - 1:end_line]
+                else:
+                    selected = all_lines[start_line - 1:start_line - 1 + max_lines]
+
+                text = ''.join(selected)
+                if not text.endswith('\n'):
+                    text += '\n'
+
+                lines_shown = len(selected)
+                base_name = os.path.basename(file_path)
+                summary = (
+                    f"文件: {base_name}\n"
+                    f"完整路径: {os.path.abspath(file_path)}\n"
+                    f"总行数: {total_lines}\n"
+                    f"显示范围: 第 {start_line} 行 到 第 {start_line + lines_shown - 1} 行\n"
+                    f"编码: {enc}\n"
+                    f"============================================================\n\n"
+                )
+                return {"status": "success", "message": summary + text}
+            except UnicodeDecodeError:
+                last_error = f"编码 {enc} 解码失败"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        # 所有编码尝试均失败，返回错误（不降级到 KB — 文件在本地，KB 会读空）
+        logger.warning(f"读取文件 {file_path} 失败，尝试编码 {fallback_encodings} 均无效: {last_error}")
+        return _wrap_error(f"无法读取文件（编码检测失败）: {last_error}")
+
+    # 文件不在本地（可能是知识库中的路径） — 委托给 read_source_file
     args = {
         "file_path": file_path,
         "start_line": start_line,
@@ -61,8 +130,9 @@ async def _read_content(
         "search_in": search_in,
         "project_path": project_path,
     }
+    if end_line is not None:
+        args["end_line"] = end_line
     result = await _read_file(args)
-    # read_source_file 返回 CallToolResult，转为 dict
     if result.isError:
         return {"status": "failed", "message": result.content[0].text if result.content else "读取失败"}
     return {"status": "success", "message": result.content[0].text if result.content else ""}
@@ -105,7 +175,11 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     file_path = arguments.get("file_path")
     search_type = arguments.get("search_type", "path")
     start_line = arguments.get("start_line", 1)
-    max_lines = min(arguments.get("max_lines", 500), 1000)
+    end_line = arguments.get("end_line")
+    if end_line is not None:
+        max_lines = min(end_line - start_line + 1, 1000)
+    else:
+        max_lines = min(arguments.get("max_lines", 500), 1000)
     search_in = arguments.get("search_in", "all")
     project_path = arguments.get("project_path")
 
@@ -128,7 +202,12 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     # DFM 二进制→文本透明转换
     tmp_cleanup = None
     if _is_dfm_file(file_path):
-        fmt = dfm_utils._detect_dfm_format(file_path)
+        try:
+            fmt = dfm_utils._detect_dfm_format(file_path)
+        except FileNotFoundError:
+            return _wrap_error(f"DFM 文件不存在: {file_path}")
+        except PermissionError:
+            return _wrap_error(f"无权限读取 DFM 文件: {file_path}")
         if fmt == "binary":
             tmp_dir = tempfile.mkdtemp(prefix="filetool_")
             tmp_text = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
@@ -136,6 +215,13 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             if result.get("success"):
                 file_path = tmp_text
                 tmp_cleanup = tmp_dir
+            else:
+                # 转换失败时返回明确错误，不尝试读二进制文件
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return _wrap_error(
+                    f"二进制 DFM 转换失败: {result.get('message', '未知错误')}。"
+                    "请检查 Delphi 编译器(dcc32)是否可用"
+                )
 
     try:
         return await _read_content(
@@ -144,6 +230,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             max_lines=max_lines,
             search_in=search_in,
             project_path=project_path,
+            end_line=end_line,
         )
     finally:
         if tmp_cleanup:
@@ -178,8 +265,11 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if file_exists:
         if _is_dfm_file(file_path):
-            fmt = dfm_utils._detect_dfm_format(file_path)
-            is_dfm_binary = (fmt == "binary")
+            try:
+                fmt = dfm_utils._detect_dfm_format(file_path)
+                is_dfm_binary = (fmt == "binary")
+            except (FileNotFoundError, PermissionError) as e:
+                return _wrap_error(str(e))
 
         if encoding == "auto":
             original_encoding = detect_encoding(file_path)
@@ -189,9 +279,11 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if backup:
             backup_path = create_backup(file_path)
     else:
-        original_encoding = encoding if encoding != "auto" else "utf-8"
+        # 新文件默认 UTF-8 BOM（避免中文 Windows 下 Delphi/pasfmt 误判为 GBK）
+        original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
     # 写入文件
+    tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(
             suffix=os.path.splitext(file_path)[1],
@@ -200,6 +292,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         os.close(tmp_fd)
 
         write_encoding = original_encoding or "utf-8"
+        encoding_fallback = False
         try:
             with open(tmp_path, "w", encoding=write_encoding, newline='') as f:
                 f.write(content)
@@ -208,6 +301,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             with open(tmp_path, "w", encoding="utf-8", newline='') as f:
                 f.write(content)
             write_encoding = "utf-8"
+            encoding_fallback = True
 
         # DFM 二进制格式处理
         if is_dfm_binary:
@@ -226,6 +320,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 logger.warning(f"DFM 转换异常，已保留文本格式: {e}")
 
         shutil.move(tmp_path, file_path)
+        tmp_path = None  # 成功写入，标记无需清理
 
         # 写入后自动格式化
         fmt_msg = ""
@@ -234,13 +329,15 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
                 if fmt_result.get("formatted"):
                     fmt_msg = "，写入后已格式化"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"写入后自动格式化失败: {e}")
 
         result_lines = [
             f"文件已写入: {file_path}",
             f"编码: {write_encoding}",
         ]
+        if encoding_fallback:
+            result_lines.append(f"⚠ 原始编码 {original_encoding or 'utf-8'} 无法编码写入内容，已回退到 UTF-8")
         if backup and file_exists:
             result_lines.append(f"备份已创建: {backup_path}")
         if is_dfm_binary:
@@ -253,16 +350,19 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"写入文件失败: {e}", exc_info=True)
         return _wrap_error(f"写入文件失败: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 
 async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    处理 format action — 委托给 pasfmt.format_file。
+    处理 format action — 委托给 pasfmt.format_file / format_code。
     """
     file_path = arguments.get("file_path")
-    if not file_path:
-        return _wrap_error("请提供 file_path 参数")
-
     action = arguments.get("format_action", "file")
     uses_style = arguments.get("uses_style")
     check_only = arguments.get("check_only", False)
@@ -272,26 +372,38 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
         code = arguments.get("code", "")
         if not code:
             return _wrap_error("请提供 code 参数")
-        result = await pasfmt.format_code(
+        raw_result = await pasfmt.format_code(
             code=code,
             config_path=arguments.get("config_path"),
             uses_style=uses_style,
         )
-    elif action == "check":
-        result = await pasfmt.format_file(
-            file_path=file_path,
-            check_only=True,
-        )
+        # format_code 返回 CallToolResult，统一转为 dict
+        if isinstance(raw_result, CallToolResult):
+            text = raw_result.content[0].text if raw_result.content else ""
+            if raw_result.isError:
+                result = _wrap_error(text)
+            else:
+                result = {"status": "success", "message": text, "formatted": True}
+        else:
+            result = raw_result
     else:
-        result = await pasfmt.format_file(
-            file_path=file_path,
-            config_path=arguments.get("config_path"),
-            backup=backup_flag,
-            in_place=True,
-            uses_style=uses_style,
-        )
+        if not file_path:
+            return _wrap_error("请提供 file_path 参数")
+        if action == "check":
+            result = await pasfmt.format_file(
+                file_path=file_path,
+                check_only=True,
+            )
+        else:
+            result = await pasfmt.format_file(
+                file_path=file_path,
+                config_path=arguments.get("config_path"),
+                backup=backup_flag,
+                in_place=True,
+                uses_style=uses_style,
+            )
 
-    # pasfmt.format_file 已经返回 dict，透传即可
+    # pasfmt.format_file / format_code 结果已统一为 dict
     return result
 
 

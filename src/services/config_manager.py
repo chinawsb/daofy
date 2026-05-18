@@ -216,7 +216,7 @@ class ConfigManager:
                     compiler.registry_version = detected
                     logger.info(f"通过编译器输出检测到版本: {compiler.name} → {detected}")
             except Exception:
-                pass
+                logger.debug("通过编译器输出检测版本失败: %s", compiler.path, exc_info=True)
 
         self.config.add_compiler(compiler)
         self.save_config()

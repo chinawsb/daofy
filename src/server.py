@@ -26,7 +26,8 @@ if __name__ != '__mp_main__':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
     except Exception:
-        pass
+        logger = get_logger(__name__)
+        logger.warning("stdout/stderr 编码设置失败，部分输出可能乱码", exc_info=True)
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent
@@ -49,7 +50,7 @@ else:
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import CallToolResult, TextContent
+    from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
@@ -65,7 +66,8 @@ else:
         set_thirdparty_kb_service,
         search_knowledge,
         build_unified_knowledge_base,
-        get_unified_knowledge_stats
+        get_unified_knowledge_stats,
+        _resolve_project_path,
     )
     from src.tools.read_source_file import set_knowledge_base_services, read_source_file
     from src.tools import knowledge_base as kb_tools
@@ -77,6 +79,8 @@ else:
     from src.tools.code_hosting import code_hosting
     from src.tools import file_tool
     from src.tools import dfm_utils as dfm_utils_mod
+    from src.tools import create_component_dfm as create_component_dfm_mod
+    from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
@@ -115,7 +119,8 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
         logger.debug("打开注册表 BDS 键失败", exc_info=True)
 
     # 注册表失败，尝试默认路径（版本号与注册表一致：37.0=Delphi13, 23.0=Delphi12, 22.0=Delphi11...）
-    for ver in ["37.0", "23.0", "22.0", "21.0", "20.0", "19.0", "18.0", "17.0", "16.0", "15.0", "14.0", "12.0", "11.0", "10.0", "9.0", "8.0", "7.0", "6.0", "5.0", "4.0", "3.0"]:
+    # 只有 17.0 (XE) 及以上版本使用此目录结构
+    for ver in ["37.0", "23.0", "22.0", "21.0", "20.0", "19.0", "18.0", "17.0"]:
         path = rf"C:\Program Files (x86)\Embarcadero\Studio\{ver}\Help\Doc"
         if Path(path).exists():
             logger.info(f"使用默认帮助目录: {path}")
@@ -253,8 +258,12 @@ async def run_server():
     # 设置 DFM 工具编译器路径
     newest = config_manager.get_newest_compiler()
     if newest and newest.path:
-        dfm_utils_mod.set_compiler_path(newest.path)
-        logger.info(f"DFM 工具编译器路径已设置: {newest.path}")
+        if os.path.isfile(newest.path):
+            dfm_utils_mod.set_compiler_path(newest.path)
+            create_component_dfm_mod.set_compiler_path(newest.path)
+            logger.info(f"DFM 工具编译器路径已设置: {newest.path}")
+        else:
+            logger.warning("编译器文件不存在: %s，DFM 转换功能将不可用。请重新检测编译器。", newest.path)
     else:
         logger.warning("未找到可用编译器，DFM 转换功能将不可用")
 
@@ -271,7 +280,6 @@ async def run_server():
     @server.list_tools()
     async def list_tools():
         """列出所有可用工具"""
-        from mcp.types import Tool
         return [
             # ===== 编译/检查 — 构建 Delphi ⭐⭐⭐ =====
             Tool(
@@ -446,6 +454,38 @@ async def run_server():
                 }
             ),
 
+            # ===== DFM 组件生成 ⭐⭐ =====
+            Tool(
+                name="generate_component_dfm",
+                description="【优先级 ⭐⭐】DFM 组件生成 — 通过编译+运行 Delphi 代码获取组件 DFM 定义\n"
+                            "【触发词】生成DFM、组件序列化、WriteComponent、OBTT\n"
+                            "【原理】AI 写 Pascal 代码创建组件+设属性 → 注入模板项目 → 编译 →\n"
+                            "       运行 → WriteComponent 序列化 → ObjectBinaryToText → 返回 DFM 文本\n"
+                            "【使用步骤】\n"
+                            "  1. 先用 delphi_kb 查组件类定义，确认类名和所在单元\n"
+                            "  2. 写 function CreateComponent(AOwner: TComponent): TComponent; 代码\n"
+                            "     （推荐创建 TForm 容器并设置 Parent，确保属性完整序列化）\n"
+                            "  3. 传 code + uses 给此工具 → 获得 DFM 文本\n"
+                            "  4. 使用 file_tool(backup) 备份目标 DFM → 合并 DFM 文本\n"
+                            "【注意】事件名称会序列化到 DFM，但函数体需要额外写到 .pas\n"
+                            "【示例】\n"
+                            "  代码示例（带容器+事件）:\n"
+                            '    code="type TGenForm = class(TForm) procedure BtnClick(Sender: TObject); end;...",\n'
+                            '    uses=["Vcl.Forms","Vcl.StdCtrls"]',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "code": {"type": "string", "description": "[必需] Pascal 实现代码，必须包含 function CreateComponent(AOwner: TComponent): TComponent; 定义"},
+                        "uses": {"type": "array", "items": {"type": "string"}, "description": "需引用的单元列表，如 [\"Vcl.Forms\", \"Vcl.StdCtrls\"]"},
+                        "type_decl": {"type": "string", "description": "类型声明段（可选），用于声明 Form 类、事件桩等"},
+                        "init_code": {"type": "string", "description": "初始化代码（可选），在 CreateComponent 前执行。自定义 Form 类需 RegisterClass。"},
+                        "compile_timeout": {"type": "integer", "default": 60, "description": "编译超时秒数"},
+                        "exec_timeout": {"type": "integer", "default": 15, "description": "执行超时秒数（组件创建代码可能耗时操作）"},
+                    },
+                    "required": ["code"]
+                }
+            ),
+
             # ===== 环境检查 ⭐⭐⭐ =====
             Tool(
                 name="check_environment",
@@ -617,263 +657,189 @@ async def run_server():
             ),
         ]
 
+    # ============================================================
+    # 工具分发 — 将工具名映射到对应的 handler 函数
+    # ============================================================
+    async def _handle_compile_project(arguments: dict) -> Any:
+        proj_path = arguments.get("project_path", "")
+        if proj_path.lower().endswith('.pas'):
+            return await compile_file(
+                file_path=proj_path,
+                unit_search_paths=arguments.get('unit_search_paths'),
+                warning_level=arguments.get('warning_level', 2),
+                disabled_warnings=arguments.get('disabled_warnings'),
+                compiler_version=arguments.get('compiler_version'),
+            )
+        elif arguments.get("get_args_only"):
+            _ACCEPTED_GET_ARGS_KEYS = {
+                "project_path", "target_platform", "output_path", "compiler_version",
+                "conditional_defines", "unit_search_paths", "resource_search_paths",
+                "optimization_enabled", "debug_info_enabled", "warning_level",
+                "disabled_warnings", "output_type", "runtime_library", "build_configuration",
+            }
+            filtered = {k: v for k, v in arguments.items() if k in _ACCEPTED_GET_ARGS_KEYS}
+            return await get_compiler_args(**filtered)
+        else:
+            return await compile_project(**arguments)
+
+    async def _handle_delphi_kb(arguments: dict) -> Any:
+        action = arguments.get("action", "search")
+        kb_type = arguments.get("kb_type", "all")
+        if action == "search":
+            return await doc_tools.search_documents(arguments) if kb_type == "document" else await kb_tools.search_knowledge(arguments)
+        elif action == "stats":
+            return await doc_tools.get_document_statistics(arguments) if kb_type == "document" else await kb_tools.get_unified_knowledge_stats(arguments)
+        elif action == "build":
+            async_mode = arguments.get("async_mode", True)
+            if not async_mode:
+                return await kb_tools.build_unified_knowledge_base(arguments)
+            version = arguments.get("version")
+            force_rebuild = arguments.get("force_rebuild", False)
+            kb_type_map = {"all": "build_knowledge_base", "delphi": "build_knowledge_base",
+                           "thirdparty": "build_thirdparty_knowledge_base", "project": "init_project_knowledge_base",
+                           "document": "build_document_knowledge_base"}
+            task_type = kb_type_map.get(kb_type, "build_knowledge_base")
+            incremental = arguments.get("incremental", False)
+            if task_type == "build_document_knowledge_base":
+                directory = arguments.get("directory")
+                if not directory:
+                    detected = _auto_detect_delphi_help_dir()
+                    if detected:
+                        directory = detected
+                        logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
+                    else:
+                        logger.warning("未提供 directory 且未检测到 Delphi 帮助目录")
+                task_params = {"urls": arguments.get("urls", []), "directory": directory,
+                               "extensions": arguments.get("extensions", [".chm"]),
+                               "start_url": arguments.get("start_url"), "max_pages": arguments.get("max_pages", 100),
+                               "max_depth": arguments.get("max_depth", 3), "domain_filter": arguments.get("domain_filter"),
+                               "url_pattern": arguments.get("url_pattern"), "exclude_dirs": arguments.get("exclude_dirs"),
+                               "force_rebuild": arguments.get("force_rebuild", False)}
+            elif task_type == "init_project_knowledge_base":
+                resolved_path = _resolve_project_path(arguments.get("project_path"))
+                task_params = {"project_path": resolved_path, "version": version,
+                               "force_rebuild": force_rebuild, "build_thirdparty": arguments.get("build_thirdparty", True),
+                               "build_project": arguments.get("build_project", True)}
+            else:
+                task_params = {"version": version, "force_rebuild": force_rebuild, "incremental": incremental}
+            return await async_tools.start_async_task({"task_type": task_type, "task_params": task_params,
+                                                        "show_progress": arguments.get("show_progress", True)})
+        elif action == "build_embedding":
+            pp = _resolve_project_path(arguments.get("project_path"))
+            if not pp:
+                return {"error": "未检测到项目路径"}
+            return await async_tools.start_async_task({"task_type": "build_embedding", "task_params": {"project_path": pp}, "show_progress": True})
+        elif action == "scan":
+            return await doc_tools.scan_documents(arguments) if kb_type == "document" else {"error": "action=scan 仅支持 kb_type=document"}
+        elif action == "web":
+            return await doc_tools.add_web_document(arguments) if kb_type == "document" else {"error": "action=web 仅支持 kb_type=document"}
+        elif action == "read":
+            if arguments.get("url") or arguments.get("doc_id"):
+                return await doc_tools.read_document(arguments)
+            elif arguments.get("file_path"):
+                return await read_source_file(arguments)
+            return {"error": "action=read 需要 url/doc_id 或 file_path 参数"}
+        return {"error": f"未知action: {action}"}
+
+    async def _handle_file_tool(arguments: dict) -> Any:
+        return await file_tool.handle_file_tool(arguments)
+
+    async def _handle_generate_component_dfm(arguments: dict) -> Any:
+        return await create_component_dfm_mod.generate_component_dfm(
+            code=arguments.get("code", ""), uses=arguments.get("uses"),
+            type_decl=arguments.get("type_decl", ""), init_code=arguments.get("init_code", ""),
+            compile_timeout=arguments.get("compile_timeout", 60), exec_timeout=arguments.get("exec_timeout", 15))
+
+    async def _handle_check_environment(arguments: dict) -> Any:
+        action = arguments.get("action", "check")
+        if action == "detect":
+            return await search_compilers(search_path=arguments.get("search_path"))
+        elif action == "check":
+            return await check_environment()
+        elif action == "install":
+            return await pasfmt.download_and_install_pasfmt(install_dir=arguments.get("install_dir"))
+        elif action == "format_install":
+            return await pasfmt.download_and_install_pasfmt_rad(delphi_version=arguments.get("delphi_version", "11"), install_dir=arguments.get("install_dir"))
+        return {"error": f"未知action: {action}"}
+
+    async def _handle_async_task(arguments: dict) -> Any:
+        action = arguments.get("action", "list")
+        handlers = {"start": async_tools.start_async_task, "status": async_tools.get_task_status,
+                     "result": async_tools.get_task_result, "list": async_tools.list_tasks,
+                     "cancel": async_tools.cancel_task}
+        handler = handlers.get(action)
+        if handler:
+            return await handler(arguments)
+        return {"error": f"未知action: {action}"}
+
+    async def _handle_install_package(arguments: dict) -> Any:
+        return await install_package(package_path=arguments.get("package_path", ""),
+                                      target_platform=arguments.get("target_platform", "win32"),
+                                      build_configuration=arguments.get("build_configuration", "Debug"),
+                                      timeout=arguments.get("timeout", 300), install=arguments.get("install", True))
+
+    async def _handle_list_installed_packages(arguments: dict) -> Any:
+        return await list_installed_packages()
+
+    async def _handle_get_coding_rules(arguments: dict) -> Any:
+        return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"))
+
+    async def _handle_code_hosting(arguments: dict) -> Any:
+        return code_hosting(**arguments)
+
+    _TOOL_HANDLERS = {
+        "compile_project": _handle_compile_project,
+        "delphi_kb": _handle_delphi_kb,
+        "file_tool": _handle_file_tool,
+        "generate_component_dfm": _handle_generate_component_dfm,
+        "check_environment": _handle_check_environment,
+        "async_task": _handle_async_task,
+        "install_package": _handle_install_package,
+        "list_installed_packages": _handle_list_installed_packages,
+        "get_coding_rules": _handle_get_coding_rules,
+        "code_hosting": _handle_code_hosting,
+    }
+
     @server.call_tool()
     async def call_tool(name: str, arguments: dict):
-        """调用工具"""
+        """调用工具（由 _TOOL_HANDLERS dispatch）"""
         logger.info(f"调用工具: {name}")
         result = None
-        
+
         try:
-            if name == "compile_project":
-                # 合并 compile_file, get_compiler_args
-                proj_path = arguments.get("project_path", "")
-                if proj_path.lower().endswith('.pas'):
-                    # 文件模式：检查语法
-                    result = await compile_file(
-                        file_path=proj_path,
-                        unit_search_paths=arguments.get('unit_search_paths'),
-                        warning_level=arguments.get('warning_level', 2),
-                        disabled_warnings=arguments.get('disabled_warnings'),
-                        compiler_version=arguments.get('compiler_version'),
-                    )
-                elif arguments.get("get_args_only"):
-                    # 仅获取参数 — 过滤出 get_compiler_args 接受的参数
-                    _ACCEPTED_GET_ARGS_KEYS = {
-                        "project_path", "target_platform", "output_path", "compiler_version",
-                        "conditional_defines", "unit_search_paths", "resource_search_paths",
-                        "optimization_enabled", "debug_info_enabled", "warning_level",
-                        "disabled_warnings", "output_type", "runtime_library", "build_configuration",
-                    }
-                    filtered = {k: v for k, v in arguments.items() if k in _ACCEPTED_GET_ARGS_KEYS}
-                    result = await get_compiler_args(**filtered)
-                else:
-                    # 项目模式：编译
-                    result = await compile_project(**arguments)
-            
-            elif name == "delphi_kb":
-                action = arguments.get("action", "search")
-                kb_type = arguments.get("kb_type", "all")
-                
-                if action == "search":
-                    if kb_type == "document":
-                        result = await doc_tools.search_documents(arguments)
-                    else:
-                        result = await kb_tools.search_knowledge(arguments)
-                elif action == "stats":
-                    if kb_type == "document":
-                        result = await doc_tools.get_document_statistics(arguments)
-                    else:
-                        result = await kb_tools.get_unified_knowledge_stats(arguments)
-                elif action == "build":
-                    # action=build 需要数分钟到数十分钟，自动使用异步任务方式
-                    from src.tools.async_tasks import start_async_task
-                    async_mode = arguments.get("async_mode", True)
-                    if async_mode:
-                        # 异步模式：启动后台任务并立即返回 task_id，让 AI 轮询进度
-                        version = arguments.get("version")
-                        force_rebuild = arguments.get("force_rebuild", False)
-                        
-                        # 根据 kb_type 决定任务类型
-                        if kb_type in ["all", "delphi"]:
-                            task_type = "build_knowledge_base"
-                        elif kb_type == "thirdparty":
-                            task_type = "build_thirdparty_knowledge_base"
-                        elif kb_type == "project":
-                            task_type = "init_project_knowledge_base"
-                        elif kb_type == "document":
-                            # 文档知识库构建
-                            task_type = "build_document_knowledge_base"
-                        else:
-                            task_type = "build_knowledge_base"
-                        
-                        incremental = arguments.get("incremental", False)
-                        
-                        # 根据任务类型准备参数
-                        if task_type == "build_document_knowledge_base":
-                            directory = arguments.get("directory")
-                            if not directory:
-                                detected = _auto_detect_delphi_help_dir()
-                                if detected:
-                                    directory = detected
-                                    logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
-                                else:
-                                    logger.warning("未提供 directory 且未检测到 Delphi 帮助目录")
-                            task_params = {
-                                "urls": arguments.get("urls", []),
-                                "directory": directory,
-                                "extensions": arguments.get("extensions", [".chm"]),
-                                "start_url": arguments.get("start_url"),
-                                "max_pages": arguments.get("max_pages", 100),
-                                "max_depth": arguments.get("max_depth", 3),
-                                "domain_filter": arguments.get("domain_filter"),
-                                "url_pattern": arguments.get("url_pattern"),
-                                "exclude_dirs": arguments.get("exclude_dirs"),
-                                "force_rebuild": arguments.get("force_rebuild", False)
-                            }
-                        elif task_type == "init_project_knowledge_base":
-                            from src.tools.knowledge_base import _resolve_project_path
-                            resolved_path = _resolve_project_path(arguments.get("project_path"))
-                            task_params = {
-                                "project_path": resolved_path,
-                                "version": version,
-                                "force_rebuild": force_rebuild,
-                                "build_thirdparty": arguments.get("build_thirdparty", True),
-                                "build_project": arguments.get("build_project", True),
-                            }
-                        else:
-                            task_params = {
-                                "version": version,
-                                "force_rebuild": force_rebuild,
-                                "incremental": incremental
-                            }
-                        
-                        task_result = await start_async_task({
-                            "task_type": task_type,
-                            "task_params": task_params,
-                            "show_progress": arguments.get("show_progress", True)
-                        })
-                        result = task_result
-                    else:
-                        # 同步模式（非推荐）
-                        result = await kb_tools.build_unified_knowledge_base(arguments)
-                elif action == "build_embedding":
-                    # 构建 embedding 向量（异步，避免模型加载超时）
-                    from src.tools.knowledge_base import _resolve_project_path
-                    pp = _resolve_project_path(arguments.get("project_path"))
-                    if not pp:
-                        result = {"error": "未检测到项目路径"}
-                    else:
-                        from src.tools.async_tasks import start_async_task
-                        task_result = await start_async_task({
-                            "task_type": "build_embedding",
-                            "task_params": {"project_path": pp},
-                            "show_progress": True
-                        })
-                        result = task_result
-                elif action == "scan":
-                    if kb_type == "document":
-                        result = await doc_tools.scan_documents(arguments)
-                    else:
-                        result = {"error": f"action=scan 仅支持 kb_type=document"}
-                elif action == "web":
-                    if kb_type == "document":
-                        result = await doc_tools.add_web_document(arguments)
-                    else:
-                        result = {"error": f"action=web 仅支持 kb_type=document"}
-                elif action == "read":
-                    url = arguments.get("url")
-                    doc_id = arguments.get("doc_id")
-                    file_path = arguments.get("file_path")
-                    
-                    if url or doc_id:
-                        result = await doc_tools.read_document(arguments)
-                    elif file_path:
-                        result = await read_source_file(arguments)
-                    else:
-                        result = {"error": "action=read 需要 url/doc_id 或 file_path 参数"}
-                else:
-                    result = {"error": f"未知action: {action}"}
-            
-            elif name == "file_tool":
-                result = await file_tool.handle_file_tool(arguments)
-            
-            elif name == "check_environment":
-                # 合并 search_compilers, install_pasfmt, install_pasfmt_rad
-                action = arguments.get("action", "check")
-                if action == "detect":
-                    result = await search_compilers(search_path=arguments.get("search_path"))
-                elif action == "check":
-                    result = await check_environment()
-                elif action == "install":
-                    result = await pasfmt.download_and_install_pasfmt(install_dir=arguments.get("install_dir"))
-                elif action == "format_install":
-                    result = await pasfmt.download_and_install_pasfmt_rad(
-                        delphi_version=arguments.get("delphi_version", "11"),
-                        install_dir=arguments.get("install_dir"),
-                    )
-                else:
-                    result = {"error": f"未知action: {action}"}
-            
-            elif name == "async_task":
-                # 合并 start_async_task, get_task_status, get_task_result, list_tasks, cancel_task
-                action = arguments.get("action", "list")
-                if action == "start":
-                    result = await async_tools.start_async_task(arguments)
-                elif action == "status":
-                    result = await async_tools.get_task_status(arguments)
-                elif action == "result":
-                    result = await async_tools.get_task_result(arguments)
-                elif action == "list":
-                    result = await async_tools.list_tasks(arguments)
-                elif action == "cancel":
-                    result = await async_tools.cancel_task(arguments)
-                else:
-                    result = {"error": f"未知action: {action}"}
-            
-            elif name == "install_package":
-                result = await install_package(
-                    package_path=arguments.get("package_path", ""),
-                    target_platform=arguments.get("target_platform", "win32"),
-                    build_configuration=arguments.get("build_configuration", "Debug"),
-                    timeout=arguments.get("timeout", 300),
-                    install=arguments.get("install", True)
-                )
-            
-            elif name == "list_installed_packages":
-                result = await list_installed_packages()
-            
-            elif name == "get_coding_rules":
-                from src.tools.coding_rules import get_coding_rules
-                result = await get_coding_rules(
-                    project_path=arguments.get("project_path"),
-                    section=arguments.get("section")
-                )
-
-            elif name == "code_hosting":
-                result = code_hosting(**arguments)
-
+            handler = _TOOL_HANDLERS.get(name)
+            if handler:
+                result = await handler(arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
 
-            # ============================================================
-            # P2: 智能提示 — 在工具返回结果中注入下一步建议
-            # ============================================================
+            # P2: 智能提示
             hint = _get_smart_hint(name, result, arguments)
             if hint:
                 if isinstance(result, CallToolResult):
                     if result.content and hasattr(result.content[0], 'text'):
-                        original_text = result.content[0].text
-                        result.content[0].text = original_text + "\n\n" + hint
+                        result.content[0].text = result.content[0].text + "\n\n" + hint
                 elif isinstance(result, dict):
                     msg = result.get('message', '')
                     if isinstance(msg, str):
                         result['message'] = msg + "\n\n" + hint
 
-            # ============================================================
-            # P3: API 调用日志 (受 log_api_calls 开关控制)
-            # ============================================================
+            # P3: API 调用日志
             log_api_call(logger, name, arguments, result)
 
-            # 统一返回格式：确保返回 CallToolResult
+            # 统一返回格式
             if isinstance(result, dict):
                 text = str(result.get('message', str(result)))
-                is_error = (
-                    result.get('status') == 'failed'
-                    or result.get('success') is False
-                    or 'error' in result
-                )
+                is_error = (result.get('status') == 'failed'
+                            or result.get('success') is False
+                            or 'error' in result)
                 return CallToolResult(content=[{"type": "text", "text": text}], isError=is_error)
-            else:
-                return result
+            return result
 
         except Exception as e:
-            # 异常也记录到 API 日志
             log_api_call(logger, name, arguments, {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
-            return CallToolResult(
-                content=[{"type": "text", "text": f"错误: {str(e)}"}],
-                isError=True
-            )
+            return CallToolResult(content=[{"type": "text", "text": f"错误: {str(e)}"}], isError=True)
 
     # 注册 MCP 资源
     _resources_dir = project_root / "config"
@@ -881,7 +847,6 @@ async def run_server():
     @server.list_resources()
     async def list_resources():
         """列出可用资源"""
-        from mcp.types import Resource
         resources = []
         coding_rules_path = _resources_dir / "CODING_RULES.mdc"
         if coding_rules_path.exists():
@@ -897,8 +862,7 @@ async def run_server():
     @server.read_resource()
     async def read_resource(uri: str):
         """读取资源内容"""
-        from mcp.types import ReadResourceResult, TextResourceContents
-        from pydantic import AnyUrl
+        from pydantic import AnyUrl  # pydantic import 延迟以避免不必要的依赖加载
 
         if uri == "delphi://coding-rules":
             rules_path = _resources_dir / "CODING_RULES.mdc"
@@ -931,13 +895,18 @@ async def run_server():
 
 
 def _cleanup_resources():
-    """清理资源：关闭后台任务、DB连接等"""
+    """清理资源：关闭后台任务、DB连接、临时文件等"""
     logger.info("清理资源中...")
     try:
-        from src.tools.knowledge_base import _cleanup_pkb_cache
+        from src.tools.knowledge_base import _cleanup_pkb_cache  # 延迟导入避免循环import
         _cleanup_pkb_cache()
     except Exception:
-        logger.warning("清理资源时发生异常", exc_info=True)
+        logger.warning("清理 pkb_cache 时发生异常", exc_info=True)
+    try:
+        from src.tools.dfm_utils import _cleanup_dfm_temp_dirs
+        _cleanup_dfm_temp_dirs()
+    except Exception:
+        logger.warning("清理 DFM 临时文件时发生异常", exc_info=True)
     logger.info("资源清理完成")
 
 

@@ -12,6 +12,7 @@ from ..models.compile_request import FileCompileRequest
 from ..services.compiler_service import CompilerService
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import DprojParser
+from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
 
 logger = get_logger(__name__)
 
@@ -82,7 +83,6 @@ def _get_delphi_default_library_paths(platform: str = "Win32") -> List[str]:
         库搜索路径列表
     """
     try:
-        from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
         delphi_lib_paths = get_delphi_library_paths(platform=platform)
         expanded_paths = []
         for p in delphi_lib_paths:

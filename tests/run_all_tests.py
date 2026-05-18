@@ -21,6 +21,13 @@ BASIC_TESTS = [
     ("test_kb_service_extended.py", "知识库服务扩展测试"),
     ("test_edge_cases.py", "边界条件测试"),
     ("test_config_usage.py", "配置使用测试"),
+    ("test_file_tool.py", "文件操作工具测试"),
+    ("test_file_backup.py", "文件备份编码检测测试"),
+    ("test_dfm_utils.py", "DFM 转换工具测试"),
+    ("test_create_component_dfm.py", "组件 DFM 生成测试"),
+    ("test_coding_rules.py", "编码规则工具测试"),
+    ("test_code_hosting.py", "代码托管平台工具测试"),
+    ("test_pasfmt.py", "pasfmt 格式化工具测试"),
 ]
 
 # 扩展测试（需要 Delphi 编译器或特定依赖）

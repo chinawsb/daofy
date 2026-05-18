@@ -3,14 +3,20 @@
 
 提供与 Delphi IDE 兼容的 __history 备份机制。
 备份文件命名: 文件名.~版本号~ (如 Unit.pas.~1~)
+超过 RETENTION_DAYS 天的旧备份自动清理。
 """
 
 import os
 import shutil
+import time
 from typing import Optional, List, Dict
 from .logger import get_logger
 
 logger = get_logger(__name__)
+
+# 备份保留策略：超过此数量且超出保留天数的最旧备份自动清理
+MAX_BACKUPS = 20
+RETENTION_DAYS = 7
 
 
 def detect_encoding(file_path: str) -> str:
@@ -19,37 +25,117 @@ def detect_encoding(file_path: str) -> str:
 
     检测顺序:
         1. BOM (UTF-16 LE/BE, UTF-8 with BOM)
-        2. UTF-8 解码尝试
-        3. GBK 解码尝试
-        4. 回退: UTF-8
+        2. 无 BOM UTF-16 启发式检测（通过空字节高低位分布判断）
+        3. UTF-8 解码尝试
+        4. GBK 解码尝试
+        5. 回退: UTF-8
 
     Args:
         file_path: 文件路径
 
     Returns:
-        编码名称: "utf-8", "utf-8-sig", "utf-16", "gbk"
+        编码名称: "utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "gbk"
     """
     try:
         with open(file_path, 'rb') as f:
-            raw_data = f.read()
+            raw_data = f.read(16384)  # 只读前 16KB 做检测，大文件无需全读
 
+        if not raw_data:
+            return 'utf-8'
+
+        # ── 1. BOM 检测 ──
         if raw_data.startswith(b'\xff\xfe') or raw_data.startswith(b'\xfe\xff'):
             return 'utf-16'
         elif raw_data.startswith(b'\xef\xbb\xbf'):
             return 'utf-8-sig'
-        else:
-            try:
-                raw_data.decode('utf-8')
-                return 'utf-8'
-            except UnicodeDecodeError:
+
+        # ── 2. 无 BOM UTF-16 启发式检测 ──
+        # 原理：ASCII 字符在 UTF-16 LE 中编码为 [char, \x00]，
+        # 空字节集中出现在奇数位(LE)或偶数位(BE)。
+        # 对于中文 UTF-16，高低字节均非空，但连续 ASCII 段会产生密集的空字节模式。
+        if len(raw_data) >= 8:
+            odd_positions = raw_data[1::2]   # 索引 1,3,5,...
+            even_positions = raw_data[0::2]  # 索引 0,2,4,...
+            null_odd = sum(1 for b in odd_positions if b == 0)
+            null_even = sum(1 for b in even_positions if b == 0)
+            total_odd = len(odd_positions)
+
+            # UTF-16 LE: 奇数位空字节占比高（ASCII 高字节为 0x00）
+            # 返回 'utf-16-le'（无 BOM 时 Python 需明确指定字节序）
+            if null_odd > total_odd * 0.3 and null_even < total_odd * 0.1:
                 try:
-                    raw_data.decode('gbk')
-                    return 'gbk'
-                except UnicodeDecodeError:
-                    return 'utf-8'
+                    raw_data.decode('utf-16-le')
+                    return 'utf-16-le'
+                except (UnicodeDecodeError, ValueError):
+                    pass
+
+            # UTF-16 BE: 偶数位空字节占比高
+            if null_even > total_odd * 0.3 and null_odd < total_odd * 0.1:
+                try:
+                    raw_data.decode('utf-16-be')
+                    return 'utf-16-be'
+                except (UnicodeDecodeError, ValueError):
+                    pass
+
+        # ── 3. UTF-8 解码尝试 ──
+        try:
+            raw_data.decode('utf-8')
+            return 'utf-8'
+        except UnicodeDecodeError:
+            pass
+
+        # ── 4. GBK 解码尝试 ──
+        try:
+            raw_data.decode('gbk')
+            return 'gbk'
+        except UnicodeDecodeError:
+            return 'utf-8'
+
     except Exception as e:
         logger.warning(f"检测文件编码失败: {e}，使用默认编码 utf-8")
         return 'utf-8'
+
+
+def _prune_backups(history_dir: str, base_name: str) -> None:
+    """
+    按策略清理旧备份：超过 MAX_BACKUPS 个时，清理超出部分中超过 RETENTION_DAYS 天的。
+    不足 MAX_BACKUPS 个时全部保留。
+
+    Args:
+        history_dir: __history 目录路径
+        base_name: 文件名（如 Unit.pas）
+    """
+    try:
+        # 收集所有合法备份，按版本号降序排列
+        backups = []
+        for f in os.listdir(history_dir):
+            if not (f.startswith(f"{base_name}.~") and f.endswith("~")):
+                continue
+            try:
+                ver = int(f[len(base_name) + 2:-1])
+                path = os.path.join(history_dir, f)
+                mtime = os.path.getmtime(path)
+                backups.append((ver, path, mtime))
+            except (ValueError, IndexError, OSError):
+                continue
+
+        if len(backups) <= MAX_BACKUPS:
+            return
+
+        # 按版本号降序，保留最新的 MAX_BACKUPS 个
+        backups.sort(key=lambda x: x[0], reverse=True)
+        protected = set(backups[:MAX_BACKUPS])
+        cutoff = time.time() - RETENTION_DAYS * 86400
+
+        for ver, path, mtime in backups[MAX_BACKUPS:]:
+            if mtime < cutoff:
+                try:
+                    os.remove(path)
+                    logger.debug(f"清理过期备份: {path} (版本 {ver}, {RETENTION_DAYS}天前)")
+                except OSError:
+                    pass
+    except Exception as e:
+        logger.warning(f"清理旧备份失败: {e}")
 
 
 def create_backup(file_path: str) -> Optional[str]:
@@ -92,11 +178,20 @@ def create_backup(file_path: str) -> Optional[str]:
             except (ValueError, IndexError):
                 continue
 
-        new_version = max_version + 1 if max_version > 0 else 1
-        backup_path = os.path.join(history_dir, f"{base_name}.~{new_version}~")
+        # 递增版本号；若目标路径已被占用（如因垃圾文件导致版本冲突）则继续递增
+        new_version = max_version + 1
+        while True:
+            backup_path = os.path.join(history_dir, f"{base_name}.~{new_version}~")
+            if not os.path.exists(backup_path):
+                break
+            new_version += 1
 
         shutil.copy2(file_path, backup_path)
         logger.info(f"创建备份文件: {backup_path}")
+
+        # 清理超出上限的旧备份
+        _prune_backups(history_dir, base_name)
+
         return backup_path
 
     except Exception as e:

@@ -253,8 +253,6 @@ def get_catalog_repository_paths(version: Optional[str] = None) -> List[str]:
     Returns:
         组件源码路径列表
     """
-    import os
-    
     paths = []
     
     if not version:
@@ -292,8 +290,6 @@ def resolve_delphi_search_paths(
     Returns:
         所有搜索路径列表
     """
-    import os
-    
     all_paths = []
     seen = set()
     

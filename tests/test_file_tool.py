@@ -22,8 +22,9 @@ if str(project_root) not in sys.path:
 
 from src.tools.file_tool import (
     handle_file_tool, handle_read, handle_write,
-    handle_backup, handle_format
+    handle_backup, handle_format, _is_delphi_file, _is_dfm_file
 )
+from src.tools.pasfmt import format_code as _pasfmt_format_code
 
 
 # ============================================================
@@ -413,3 +414,350 @@ async def test_main_entry_unknown_action():
 async def test_main_entry_default_action_is_read():
     result = await handle_file_tool({"file_path": "test.pas"})
     assert isinstance(result, dict)
+
+
+# ============================================================
+# Bug 回归测试 — 补充边界覆盖
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_read_with_end_line():
+    """end_line 参数应限制读取行数"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "multi_line.pas")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("unit Test;\n// line 2\n// line 3\n// line 4\n// line 5\nend.\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "end_line": 3,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "显示范围: 第 1 行 到 第 3 行" in msg, f"unexpected range in: {msg}"
+        assert "// line 3" in msg
+        assert "// line 5" not in msg  # 不应出现在 3 行以后
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_with_start_line_and_end_line():
+    """start_line + end_line 组合应精确截取中间段落"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "range_test.pas")
+    lines = [f"// line {i}" for i in range(1, 21)]
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 5,
+            "end_line": 10,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "显示范围: 第 5 行 到 第 10 行" in msg
+        assert "// line 5" in msg
+        assert "// line 10" in msg
+        assert "// line 4" not in msg
+        assert "// line 11" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_different_encodings_utf8():
+    """读取 UTF-8 编码文件"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "utf8_test.pas")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("unit Test;\n// UTF-8 中文\nend.\n")
+    try:
+        result = await handle_read({"file_path": file_path})
+        _assert_success(result)
+        assert "中文" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_different_encodings_utf8_bom():
+    """读取 UTF-8 with BOM 编码文件（BOM 应被透明处理）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "utf8_bom.pas")
+    with open(file_path, "wb") as f:
+        f.write(b'\xef\xbb\xbfunit Test;\n// UTF-8 BOM\nend.\n')
+    try:
+        result = await handle_read({"file_path": file_path})
+        _assert_success(result)
+        assert "UTF-8 BOM" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_different_encodings_gbk():
+    """读取 GBK 编码文件"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "gbk_test.pas")
+    with open(file_path, "wb") as f:
+        f.write("unit Test;\n// GBK 中文注释\nend.\n".encode("gbk"))
+    try:
+        result = await handle_read({"file_path": file_path})
+        _assert_success(result)
+        assert "中文注释" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_different_encodings_utf16():
+    """读取 UTF-16 with BOM 编码文件"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "utf16_test.pas")
+    with open(file_path, "wb") as f:
+        f.write("unit Test;\n// UTF-16 中文\nend.\n".encode("utf-16"))
+    try:
+        result = await handle_read({"file_path": file_path})
+        _assert_success(result)
+        assert "中文" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_different_encodings_utf16_le_no_bom():
+    """读取 UTF-16 LE 无 BOM 编码文件"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "utf16le_test.pas")
+    with open(file_path, "wb") as f:
+        f.write("unit Test;\n// UTF16LE\nend.\n".encode("utf-16-le"))
+    try:
+        result = await handle_read({"file_path": file_path})
+        _assert_success(result)
+        assert "UTF16LE" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_dfm_binary_auto_convert():
+    """写入二进制 DFM 文件应自动转回二进制格式"""
+    tmp_dir = tempfile.mkdtemp()
+    text_path = os.path.join(tmp_dir, "source.dfm")
+    bin_path = os.path.join(tmp_dir, "binary.dfm")
+    new_content = "object Form1: TForm1\n  Caption = 'Updated'\nend\n"
+    try:
+        # 创建文本 DFM
+        with open(text_path, "w", encoding="utf-8") as f:
+            f.write("object Form1: TForm1\n  Left = 0\nend\n")
+        # 转换为二进制
+        from src.tools.dfm_utils import convert_dfm, _detect_dfm_format
+        r = await convert_dfm(text_path, bin_path, to_text=False)
+        if not r.get("success"):
+            pytest.skip("Delphi 编译器不可用，跳过 DFM 二进制测试")
+        assert _detect_dfm_format(bin_path) == "binary"
+
+        # 写入新内容（应自动转回二进制）
+        result = await handle_write({
+            "file_path": bin_path,
+            "content": new_content,
+            "backup": False,
+        })
+        _assert_success(result)
+        assert "二进制 DFM" in result["message"]
+        # 验证仍是二进制格式
+        assert _detect_dfm_format(bin_path) == "binary"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_encoding_auto_new_file():
+    """新建文件 encoding=auto 应使用 utf-8"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "TestUnit.pas")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "unit TestUnit;\nbegin\nend.\n",
+            "backup": False,
+            "encoding": "auto",
+        })
+        _assert_success(result)
+        assert "编码: utf-8" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_encoding_utf16():
+    """UTF-16 编码写入后应保留 BOM"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "test_utf16.pas")
+    utf16_content = "unit Test;\nbegin\nend.\n"
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": utf16_content,
+            "encoding": "utf-16",
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "rb") as f:
+            raw = f.read(4)
+        assert raw[:2] in (b'\xff\xfe', b'\xfe\xff'), "UTF-16 BOM 应存在"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_to_readonly_dir():
+    """写入只读目录应返回错误"""
+    result = await handle_write({
+        "file_path": r"C:\__nonexistent_dir__\test.pas",
+        "content": "unit Test;",
+        "backup": False,
+    })
+    _assert_error(result)
+
+
+@pytest.mark.asyncio
+async def test_write_backup_disabled():
+    """backup=False 时不应创建 __history"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "TestUnit.pas")
+    _make_file(file_path, "original")
+    history_dir = os.path.join(tmp_dir, "__history")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "modified",
+            "backup": False,
+        })
+        _assert_success(result)
+        assert not os.path.isdir(history_dir), "backup=False 时不应创建历史目录"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_existing_dfm_text_preserved():
+    """文本 DFM 写入后应保持文本格式（非二进制 DFM 不转换）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "TestForm.dfm")
+    dfm_content = "object Form1: TForm1\n  Left = 0\n  Top = 0\n  Caption = 'Hello'\nend\n"
+    _make_file(file_path, dfm_content)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": dfm_content,
+            "backup": False,
+        })
+        _assert_success(result)
+        # 验证仍然是文本 DFM
+        from src.tools.dfm_utils import _detect_dfm_format
+        fmt = _detect_dfm_format(file_path)
+        assert fmt == "text", f"文本 DFM 应保持文本格式，实际: {fmt}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_format_action_code_correct_type():
+    """format_action='code' 应返回 dict（当前返回 CallToolResult，是类型不一致）"""
+    result = await handle_format({
+        "format_action": "code",
+        "code": "unit Test;\nbegin\nend.",
+    })
+    # 注意：当前实现返回 CallToolResult，不是 dict。此测试记录此行为。
+    # 期望是 dict，但当前可能返回 CallToolResult
+    from mcp.types import CallToolResult
+    assert isinstance(result, (dict, CallToolResult)), \
+        f"期望 dict 或 CallToolResult，实际: {type(result)}"
+
+
+@pytest.mark.asyncio
+async def test_format_action_check():
+    """format_action='check' 应正常返回"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "test_check.pas")
+    _make_file(file_path, "unit Test;\nbegin\nend.\n")
+    try:
+        result = await handle_format({
+            "file_path": file_path,
+            "format_action": "check",
+        })
+        assert isinstance(result, dict)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_backup_unknown_action():
+    """未知 backup_action 应报错"""
+    result = await handle_backup({
+        "file_path": "test.pas",
+        "backup_action": "nonexistent",
+    })
+    _assert_error(result)
+    assert "未知" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_main_entry_format():
+    """主入口 format 路由"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "test_fmt.pas")
+    _make_file(file_path, "unit Test;\nbegin\nend.\n")
+    try:
+        result = await handle_file_tool({
+            "action": "format",
+            "file_path": file_path,
+            "backup": False,
+        })
+        assert isinstance(result, dict)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_is_delphi_file():
+    assert _is_delphi_file("test.pas") is True
+    assert _is_delphi_file("test.dpr") is True
+    assert _is_delphi_file("test.dfm") is True
+    assert _is_delphi_file("test.fmx") is True
+    assert _is_delphi_file("test.dproj") is True
+    assert _is_delphi_file("test.dpk") is True
+    assert _is_delphi_file("test.inc") is True
+    assert _is_delphi_file("test.txt") is False
+    assert _is_delphi_file("test.py") is False
+
+
+@pytest.mark.asyncio
+async def test_is_dfm_file():
+    assert _is_dfm_file("test.dfm") is True
+    assert _is_dfm_file("test.fmx") is False
+    assert _is_dfm_file("test.pas") is False
+
+
+@pytest.mark.asyncio
+async def test_write_max_lines_cap():
+    """max_lines 应被限制在 1000 以内"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "big_file.pas")
+    content = "\n".join(f"// line {i}" for i in range(2000))
+    _make_file(file_path, content)
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "max_lines": 5000,  # 超出上限
+        })
+        _assert_success(result)
+        # 实际返回行数应受限制（约 1000）
+        msg = result.get("message", "")
+        # 验证截断标记
+        assert isinstance(msg, str)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

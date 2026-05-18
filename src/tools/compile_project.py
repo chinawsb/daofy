@@ -12,6 +12,9 @@ from ..models.compile_result import CompileResult
 from ..services.compiler_service import CompilerService
 from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
+from ..utils.dproj_parser import resolve_target_platform_from_dproj
+import shlex
+import subprocess as _subprocess
 
 # 导入 install_package 中的函数（复用已有逻辑）
 try:
@@ -84,7 +87,6 @@ def _detect_compiler_from_project(project_path: str, target_platform: str) -> Op
 
 def _cleanup_project_dcu(project_dir: Path):
     """递归清理项目目录下的所有 .dcu / .dcpp / .dpu 缓存文件"""
-    import glob
     patterns = ['**/*.dcu', '**/*.dcpp', '**/*.dpu']
     deleted = 0
     for pattern in patterns:
@@ -253,7 +255,6 @@ async def compile_project(
     try:
         # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
         if not target_platform or target_platform == "win32":
-            from ..utils.dproj_parser import resolve_target_platform_from_dproj
             target_platform = resolve_target_platform_from_dproj(project_path)
             logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
         else:
@@ -340,7 +341,6 @@ async def compile_project(
                         run_params = parser.get_debugger_run_params(config=cfg, platform=plat)
 
                     # 拆分参数（空格分隔，支持引号分组）
-                    import shlex
                     cmd = [exe_path]
                     if run_params:
                         try:
@@ -348,11 +348,10 @@ async def compile_project(
                         except Exception:
                             cmd.extend(run_params.split())
 
-                    import subprocess
-                    proc = subprocess.Popen(
+                    proc = _subprocess.Popen(
                         cmd,
                         cwd=Path(exe_path).parent,
-                        creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0),
+                        creationflags=getattr(_subprocess, 'CREATE_NEW_CONSOLE', 0),
                     )
                     launch_msg = f"\n\n🚀 已启动: {Path(exe_path).name} (PID: {proc.pid})"
                     if run_params:
