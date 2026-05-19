@@ -78,45 +78,18 @@ delphi_kb(
 
 ## MCP 工具列表
 
-### 编译相关工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `compile_project` | 编译 Delphi 项目或检查 .pas 文件语法 | `project_path`, `target_platform`(win32/win64), `build_configuration`(Debug/Release), `output_path`, `timeout`, `debug_info_enabled`, `get_args_only`(可选) |
-| `check_environment` | 诊断编译环境、检测编译器、安装pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
-| `install_package` | 编译并安装 Delphi 组件包到 IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
-| `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 | - |
-| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选，如 workflow/env/kb_search/writing/format/compile/review/safety/agent_rules/kb_build/cleanup等) |
-
-### 知识库工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=函数+过程, procedure=仅过程), `top_k`(默认200,最大500), `project_path`(项目知识库可选，不传时自动从当前目录检测 .dproj), `directory`(扫描目录, 构建文档KB时可省略自动检测), `url`(网页URL), `content_type`(文档类型), `extensions`(文件扩展名) |
-
-### 文件操作工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `file_tool` | 统一文件操作：读/写/格式化/备份管理 | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`(详见对应action说明) |
-
-### DFM 代码生成工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `generate_component_dfm` | 编译+运行 AI 写的 Pascal 代码来生成组件 DFM 定义 | `code`(必需), `uses`, `type_decl`, `init_code`, `compile_timeout`, `exec_timeout` |
-
-### 代码托管工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `code_hosting` | 统一操作 Gitea/GitHub/GitLab 平台 + Git 本地操作 | `platform`(gitea/github/gitlab), `action`(create_issue/close_issue/add_comment/list_issues/git_clone/git_commit/git_push等), `base_url`, `token`, `repo`, `work_dir` |
-
-### 异步任务工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `async_task` | 管理后台任务（构建知识库等） | `action`(start/status/result/list/cancel), `task_id`, `task_type`, `task_params`, `show_progress` |
+| 工具名称 | 功能描述 |
+|----------|----------|
+| `compile_project` | 编译 Delphi 项目或检查 .pas 文件语法 |
+| `check_environment` | 诊断编译环境、检测编译器、安装 pasfmt |
+| `install_package` | 编译并安装 Delphi 组件包到 IDE |
+| `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 |
+| `get_coding_rules` | 获取 Delphi 编码规范，支持按章节分段获取 |
+| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 |
+| `file_tool` | 统一文件操作：读/写/格式化/备份管理 |
+| `generate_component_dfm` | 编译+运行 AI 写的 Pascal 代码来生成组件 DFM 定义 |
+| `code_hosting` | 统一操作 Gitea/GitHub/GitLab 平台 + Git 本地操作 |
+| `async_task` | 管理后台任务（构建知识库等） |
 
 ## 系统要求
 

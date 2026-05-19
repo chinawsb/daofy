@@ -271,47 +271,20 @@ The following configs apply to users who installed via git clone. Replace the pa
 }
 ```
 
-## Usage
+## Tools
 
-### Compilation Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `compile_project` | Compile Delphi project or check .pas file syntax | `project_path`, `target_platform`(win32/win64), `build_configuration`(Debug/Release), `output_path`, `timeout`, `debug_info_enabled`, `get_args_only`(optional) |
-| `check_environment` | Diagnose environment, detect compilers, install pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
-| `install_package` | Compile and install Delphi package to IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
-| `list_installed_packages` | List packages installed to IDE | - |
-| `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval | `project_path`(optional), `section`(optional, e.g. workflow/env/kb_search/writing/format/compile/review/safety) |
-
-### Knowledge Base Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=functions+procedures, procedure=procedures only), `top_k`(default 200, max 500), `project_path`(optional, auto-detect from CWD .dproj), `directory`, `url`, `content_type`, `extensions` |
-
-### File Operations
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `file_tool` | Unified file operations: read/write/format/backup | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`(see action descriptions for details)
-
-### DFM Code Generation
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `generate_component_dfm` | Compile + run AI-written Pascal code to generate component DFM definitions | `code`(required), `uses`, `type_decl`, `init_code`, `compile_timeout`, `exec_timeout` |
-
-### Code Hosting Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `code_hosting` | Unified operations for Gitea/GitHub/GitLab + local Git operations | `platform`(gitea/github/gitlab), `action`(create_issue/close_issue/add_comment/list_issues/git_clone/git_commit/git_push, etc.), `base_url`, `token`, `repo`, `work_dir` |
-
-### Async Task Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `async_task` | Manage background tasks (e.g., build knowledge base) | `action`(start/status/result/list/cancel), `task_id`, `task_type`, `task_params`, `show_progress` |
+| Tool Name | Description |
+|-----------|-------------|
+| `compile_project` | Compile Delphi project or check .pas file syntax |
+| `check_environment` | Diagnose environment, detect compilers, install pasfmt |
+| `install_package` | Compile and install Delphi package to IDE |
+| `list_installed_packages` | List packages installed to IDE |
+| `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval |
+| `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base |
+| `file_tool` | Unified file operations: read/write/format/backup |
+| `generate_component_dfm` | Compile + run AI-written Pascal code to generate component DFM definitions |
+| `code_hosting` | Unified operations for Gitea/GitHub/GitLab + local Git operations |
+| `async_task` | Manage background tasks (e.g., build knowledge base) |
 
 ## Knowledge Base
 
