@@ -350,19 +350,19 @@ Your support means a lot! ❤️
 
 **Account**: guansonghuan@sina.com (Name: 管耸寰, please include your QQ number)
 
-![Alipay QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg" alt="Alipay QR Code" width="200"/>
 
 ### WeChat
 
 **Account**: wangshengbo (send red packets or transfer)
 
-![WeChat QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg" alt="WeChat QR Code" width="200"/>
 
 ### QQ
 
 Send red packets to group owner directly.
 
-![QQ QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png" alt="QQ QR Code" width="200"/>
 
 **QQ Official Group**: 250530692
 

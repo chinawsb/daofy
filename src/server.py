@@ -386,81 +386,73 @@ async def run_server():
             Tool(
                 name="file_tool",
                 description="【优先级 ⭐⭐⭐】读写文件 / 格式化 / 备份管理 — .pas/.dfm/.dproj 等 Delphi 文件\n"
-                            "【触发词】修改代码、编辑文件、写入代码、新建文件、改代码、替换内容、覆盖文件、读文件、查看源码、打开文件、cat文件、\n"
-                            "           格式化代码、整理代码、排版、代码风格、自动格式化、恢复备份、备份文件、历史版本、\n"
+                            "【触发词】修改代码、编辑文件、写入代码、新建文件、改代码、替换内容、覆盖文件、\n"
+                            "           读文件、查看源码、打开文件、cat文件、格式化代码、整理代码、排版、\n"
+                            "           代码风格、自动格式化、恢复备份、备份文件、历史版本、\n"
                             "           查看备份、还原文件、回退修改、修改前备份、差异对比、diff\n"
-                            "【Delphi 文件触发】操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此，\n"
+                            "【Delphi 文件触发】操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此\n"
                             "【严禁】使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份机制）\n"
-                            "\n"
-                            "四种工作模式(action)，每种只使用自己的参数：\n"
-                            "\n"
-                            "═══ action=\"read\" — 读文件 / 查源码 ═══\n"
-                            '  file_tool(action="read", file_path="Unit1.pas", start_line=1)\n'
-                            '  file_tool(action="read", search_type="class", type_name="TForm1")   # 搜类定义位置\n'
-                            '  file_tool(action="read", search_type="function", function_name="Create")  # 搜函数\n'
-                            "  ⭐ DFM 自动转文本：二进制 DFM 读成文本，无需手动转换\n"
-                            "\n"
-                            "═══ action=\"write\" — 写文件 / 改代码 / 替换内容 ═══\n"
-                            '  file_tool(action="write", file_path="src/Unit1.pas", content="...", backup=True)\n'
-                            "  ⭐ 自动备份到 __history（backup=True 默认）\n"
-                            "  ⭐ 自动识别并保持原始编码（UTF-8/GBK/UTF-16），不乱码\n"
-                            "  ⭐ DFM 二进制自动转换：写入文本后自动转回二进制格式\n"
-                            '  📌 写入后自动格式化: auto_format=True\n'
-                            "\n"
-                            "═══ action=\"format\" — 格式化 / 整理代码 ═══\n"
-                            '  file_tool(action="format", file_path="src/Unit1.pas")\n'
-                            "  使用 pasfmt 格式化 .pas/.dfm 代码（自动备份）\n"
-                            '  file_tool(action="format", file_path="Unit1.pas", dry_run=True)   # 仅检查不修改\n'
-                            '  file_tool(action="format", mode="code", code="procedure...")  # 格式化代码段\n'
-                            "\n"
-                            "═══ action=\"backup\" — 备份管理 / 历史版本 / 恢复 ═══\n"
-                            '  file_tool(action="backup", file_path="src/Unit1.pas")             # 手动创建备份\n'
-                            '  file_tool(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出所有版本\n'
+                            "【action 说明】\n"
+                            '  action="read"    读文件/查源码。可选 start_line/limit/end_line 分段读取。\n'
+                            "                  可选 search_type+type_name/function_name 定位查找。\n"
+                            '  action="write"   写文件/替换内容。不传 start_line/end_line 时替换全文。\n'
+                            "                  传 start_line/end_line 时仅替换指定行范围（部分写入）。\n"
+                            '  action="format"  使用 pasfmt 格式化代码。可选 dry_run 仅检查不修改。\n'
+                            '  action="backup"  备份管理。可选 backup_action=list/restore。\n'
+                            '  action="uses"    增删 uses 子句。需指定 uses_action+unit_name。\n'
+                            "【协作链】get_coding_rules→file_tool(read)→file_tool(write)→file_tool(format)→compile_project\n"
+                            "【示例】\n"
+                            '  file_tool(action="read", file_path="Unit1.pas")  # 读文件\n'
+                            '  file_tool(action="read", search_type="class", type_name="TForm1")  # 搜索类定义\n'
+                            '  file_tool(action="write", file_path="src/Unit1.pas", content="完整内容")  # 全文写入\n'
+                            '  file_tool(action="write", file_path="src/Unit1.pas", content="替换行", start_line=5, end_line=10)  # 部分写入\n'
+                            '  file_tool(action="format", file_path="src/Unit1.pas")  # 格式化代码\n'
+                            '  file_tool(action="format", file_path="Unit1.pas", dry_run=True)  # 仅检查格式\n'
+                            '  file_tool(action="backup", file_path="Unit1.pas")  # 手动创建备份\n'
+                            '  file_tool(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出备份\n'
                             '  file_tool(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)  # 恢复\n'
-                            "\n"
-                            "【协作链】get_coding_rules→file_tool(read)→file_tool(write)→file_tool(format)→compile_project",
+                            '  file_tool(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  # 增uses',
                 inputSchema={
                     "type": "object",
+                    "required": ["action"],
                     "properties": {
-                        # ---- 全局参数 ----
+                        # ---- 全局参数（所有 action 都可用）----
                         "action": {"type": "string", "enum": ["read", "write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), format=格式化, backup=备份管理, uses=增删uses子句"},
-
-                        # ---- 所有 action 共用 ----
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
 
-                        # ---- read 参数 ----
-                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "读取模式: path=按路径, class=按类名定位, function=按函数名定位, record=按record名定位"},
-                        "type_name": {"type": "string", "description": "类名/接口名/枚举名（search_type=class时使用，如 'TForm1'）"},
-                        "class_name": {"type": "string", "description": "类名（与type_name二选一，兼容旧版）"},
-                        "record_name": {"type": "string", "description": "Record 类型名（search_type=record时使用）"},
-                        "function_name": {"type": "string", "description": "函数/过程名（search_type=function时使用，如 'Create'）"},
-                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始），读大文件时分段使用"},
-                        "limit": {"type": "integer", "default": 500, "description": "最大返回行数，读大文件时建议用此参数分段（原 max_lines）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围: all=所有知识库, delphi=官方源码, thirdparty=第三方库"},
-                        "project_path": {"type": "string", "description": "项目文件路径(可选)，用于在项目知识库中查找 .pas"},
-                        "end_line": {"type": "integer", "description": "结束行号，不传则到文件末尾"},
+                        # ---- [仅 action=read] 参数 ----
+                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[仅 action=read] 读取模式: path=按路径, class=按类名定位, function=按函数名定位, record=按record名定位"},
+                        "type_name": {"type": "string", "description": "[仅 action=read, search_type=class] 类名/接口名/枚举名，如 'TForm1'"},
+                        "class_name": {"type": "string", "description": "[仅 action=read, search_type=class] 类名（与type_name二选一，兼容旧版）"},
+                        "record_name": {"type": "string", "description": "[仅 action=read, search_type=record] Record 类型名"},
+                        "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
+                        "limit": {"type": "integer", "default": 2000, "description": "[仅 action=read] 最大返回行数。当文件超长时分段读取"},
+                        "end_line": {"type": "integer", "description": "结束行号（含），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
+                        "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
 
-                        # ---- write 参数 ----
-                        "content": {"type": "string", "description": "写入的完整文件内容（action=write时必需）"},
-                        "encoding": {"type": "string", "default": "auto", "description": "写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "写入后自动调用 pasfmt 格式化代码"},
-                        "backup": {"type": "boolean", "default": True, "description": "写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+                        # ---- [仅 action=write] 参数 ----
+                        "content": {"type": "string", "description": "【action=write 必需】写入的内容。不传 start_line/end_line 时替换全文，必须包含完整文件内容。配合 start_line/end_line 时仅替换指定行范围。"},
+                        "encoding": {"type": "string", "default": "auto", "description": "[仅 action=write] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "[仅 action=write] 写入后自动调用 pasfmt 格式化代码"},
+                        "backup": {"type": "boolean", "default": True, "description": "[仅 action=write] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
 
-                        # ---- format 参数 ----
-                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
-                        "code": {"type": "string", "description": "待格式化的代码文本（mode=code时使用）"},
-                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选，高级用法）"},
-                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses子句风格: compact=合并为一行, pasfmt_default=每行一个"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅检查格式不修改文件（原 check_only）"},
+                        # ---- [仅 action=format] 参数 ----
+                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
+                        "code": {"type": "string", "description": "[仅 action=format, mode=code] 待格式化的代码文本"},
+                        "config_path": {"type": "string", "description": "[仅 action=format] pasfmt 配置文件路径（可选，高级用法）"},
+                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "[仅 action=format] uses子句风格: compact=合并为一行, pasfmt_default=每行一个"},
+                        "dry_run": {"type": "boolean", "default": False, "description": "[仅 action=format] true=仅检查格式不修改文件"},
 
-                        # ---- backup 参数 ----
-                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "备份子操作: create=创建备份, list=列出版本, restore=恢复指定版本"},
-                        "version": {"type": "integer", "description": "要恢复的版本号（backup_action=restore时使用，不传则恢复最新版）"},
+                        # ---- [仅 action=backup] 参数 ----
+                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[仅 action=backup] 备份子操作: create=创建备份, list=列出版本, restore=恢复指定版本"},
+                        "version": {"type": "integer", "description": "[仅 action=backup, backup_action=restore] 要恢复的版本号，不传则恢复最新版"},
 
-                        # ---- uses 参数 ----
-                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "uses子句操作: add=添加单元, remove=删除单元"},
-                        "unit_name": {"type": "string", "description": "单元名（uses操作时使用，如 Vcl.Dialogs、System.SysUtils）"},
-                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "uses子句所在区域: interface 或 implementation"},
+                        # ---- [仅 action=uses] 参数 ----
+                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[仅 action=uses] uses子句操作: add=添加单元, remove=删除单元"},
+                        "unit_name": {"type": "string", "description": "[仅 action=uses] 单元名，如 Vcl.Dialogs、System.SysUtils"},
+                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[仅 action=uses] uses子句所在区域: interface 或 implementation"},
                     }
                 }
             ),

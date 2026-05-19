@@ -391,19 +391,19 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 **账号**: guansonghuan@sina.com（姓名：管耸寰，请标明QQ号）
 
-![支付宝收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg" alt="支付宝收款码" width="200"/>
 
 ### 微信
 
 **账号**: wangshengbo（发送红包或转账）
 
-![微信收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg" alt="微信收款码" width="200"/>
 
 ### QQ
 
 直接群支付，或给群主发红包
 
-![QQ收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png)
+<img src="https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png" alt="QQ收款码" width="200"/>
 
 **QQ官方群**: 250530692
 

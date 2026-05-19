@@ -18,7 +18,8 @@ import os
 import locale
 import shutil
 import tempfile
-from typing import Any, Optional, Dict
+import re
+from typing import Any, Optional, Dict, List
 from mcp.types import CallToolResult
 from ..utils.logger import get_logger
 from ..utils.file_backup import create_backup, list_backups, restore_backup, detect_encoding
@@ -28,8 +29,35 @@ from . import dfm_utils
 
 logger = get_logger(__name__)
 
-# 支持的文件扩展名
 _DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj'}
+
+_SYSTEM_SENSITIVE_DIRS: List[str] = []
+if os.name == 'nt':
+    _windir = os.environ.get('WINDIR', r'C:\Windows')
+    _SYSTEM_SENSITIVE_DIRS = [
+        os.path.join(_windir, 'System32', 'config'),
+        os.path.join(_windir, 'System32', 'drivers', 'etc'),
+    ]
+else:
+    _SYSTEM_SENSITIVE_DIRS = ['/etc/shadow', '/etc/ssh']
+
+
+def _validate_path(file_path: str) -> Optional[str]:
+    """校验文件路径安全性，返回 None 表示安全，否则返回错误信息"""
+    if '\0' in file_path:
+        return "路径包含 null 字节"
+    try:
+        resolved = os.path.abspath(os.path.realpath(file_path))
+    except (OSError, ValueError) as e:
+        return "路径解析失败: %s" % str(e)
+    for sensitive_dir in _SYSTEM_SENSITIVE_DIRS:
+        try:
+            resolved_relative = os.path.relpath(resolved, sensitive_dir)
+            if not resolved_relative.startswith('..'):
+                return "路径位于系统敏感目录中: %s" % sensitive_dir
+        except ValueError:
+            pass
+    return None
 
 
 def _is_delphi_file(file_path: str) -> bool:
@@ -51,7 +79,7 @@ def _wrap_error(msg: str) -> Dict[str, Any]:
 async def _read_content(
     file_path: str,
     start_line: int = 1,
-    max_lines: int = 500,
+    limit: int = 500,
     search_in: str = "all",
     project_path: Optional[str] = None,
     end_line: Optional[int] = None,
@@ -94,7 +122,7 @@ async def _read_content(
                     end_line = min(end_line, total_lines)
                     selected = all_lines[start_line - 1:end_line]
                 else:
-                    selected = all_lines[start_line - 1:start_line - 1 + max_lines]
+                    selected = all_lines[start_line - 1:start_line - 1 + limit]
 
                 text = ''.join(selected)
                 if not text.endswith('\n'):
@@ -126,7 +154,7 @@ async def _read_content(
     args = {
         "file_path": file_path,
         "start_line": start_line,
-        "max_lines": max_lines,
+        "max_lines": limit,  # read_source_file 内部仍用 max_lines
         "search_in": search_in,
         "project_path": project_path,
     }
@@ -145,7 +173,7 @@ async def _search_and_read(
     function_name: Optional[str] = None,
     search_in: str = "all",
     start_line: int = 1,
-    max_lines: int = 100,
+    limit: int = 100,
 ) -> Dict[str, Any]:
     """按类名/函数名搜索并读取文件"""
     args = {
@@ -154,7 +182,7 @@ async def _search_and_read(
         "function_name": function_name,
         "search_in": search_in,
         "start_line": start_line,
-        "max_lines": max_lines,
+        "max_lines": limit,  # read_source_file 内部仍用 max_lines
     }
     result = await _search_read_file(args)
     if result.isError:
@@ -177,9 +205,9 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     start_line = arguments.get("start_line", 1)
     end_line = arguments.get("end_line")
     if end_line is not None:
-        max_lines = min(end_line - start_line + 1, 1000)
+        limit = min(end_line - start_line + 1, 1000)
     else:
-        max_lines = min(arguments.get("max_lines", 500), 1000)
+        limit = min(arguments.get("limit", 500), 1000)
     search_in = arguments.get("search_in", "all")
     project_path = arguments.get("project_path")
 
@@ -192,12 +220,16 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             function_name=arguments.get("function_name"),
             search_in=search_in,
             start_line=start_line,
-            max_lines=max_lines,
+            limit=limit,
         )
 
     # --- 路径模式 ---
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
+
+    path_err = _validate_path(file_path)
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
 
     # DFM 二进制→文本透明转换
     tmp_cleanup = None
@@ -227,7 +259,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await _read_content(
             file_path=file_path,
             start_line=start_line,
-            max_lines=max_lines,
+            limit=limit,
             search_in=search_in,
             project_path=project_path,
             end_line=end_line,
@@ -242,7 +274,7 @@ async def _handle_partial_write(
     content: str,
     backup: bool,
     encoding: str,
-    format_after: bool,
+    auto_format: bool,
     start_line: Optional[int],
     end_line: Optional[int],
     original_encoding: str,
@@ -287,7 +319,28 @@ async def _handle_partial_write(
 
         before = ''.join(lines[:s])
         after = ''.join(lines[e:])
-        new_text = before + content + after
+
+        # 空内容 = 删除行：before + after 直接拼接
+        # 非空内容 = 替换行：统一换行符后拼接
+        if content == '':
+            new_text = before + after
+        else:
+            # 检测原文件换行符风格，将 content 的换行符统一为与原文件一致
+            # 避免原文件 CRLF + content LF 导致混合换行符
+            # 也避免原文件 LF + content CRLF 导致混合换行符
+            has_crlf_in_original = ('\r\n' in before) or ('\r\n' in after)
+            if has_crlf_in_original:
+                content = content.replace('\r\n', '\n').replace('\n', '\r\n')
+            else:
+                content = content.replace('\r\n', '\n')
+
+            # 确保 content 末尾有换行，避免替换区最后一行与后续行粘连
+            # readlines() 返回的每行都含换行符，替换区也应保持一致
+            if after and not content.endswith('\n') and not content.endswith('\r\n'):
+                line_ending = '\r\n' if has_crlf_in_original else '\n'
+                content = content + line_ending
+
+            new_text = before + content + after
 
         # 备份原文件
         backup_path = None
@@ -322,7 +375,7 @@ async def _handle_partial_write(
 
         # 写入后自动格式化
         fmt_msg = ""
-        if format_after:
+        if auto_format:
             try:
                 fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
                 if fmt_result.get("formatted"):
@@ -364,7 +417,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     content = arguments.get("content")
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
-    format_after = arguments.get("format_after_write", False)
+    auto_format = arguments.get("auto_format", False)
     start_line = arguments.get("start_line")
     end_line = arguments.get("end_line")
 
@@ -372,6 +425,10 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return _wrap_error("请提供 file_path 参数")
     if content is None:
         return _wrap_error("请提供 content 参数")
+
+    path_err = _validate_path(file_path)
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
 
     # 检测原始文件状态
     backup_path = None
@@ -399,7 +456,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 content=content,
                 backup=backup,
                 encoding=encoding,
-                format_after=format_after,
+                auto_format=auto_format,
                 start_line=start_line,
                 end_line=end_line,
                 original_encoding=original_encoding,
@@ -456,7 +513,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         # 写入后自动格式化
         fmt_msg = ""
-        if format_after and _is_delphi_file(file_path):
+        if auto_format and _is_delphi_file(file_path):
             try:
                 fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
                 if fmt_result.get("formatted"):
@@ -495,10 +552,15 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
     处理 format action — 委托给 pasfmt.format_file / format_code。
     """
     file_path = arguments.get("file_path")
-    action = arguments.get("format_action", "file")
+    action = arguments.get("mode", "file")
     uses_style = arguments.get("uses_style")
-    check_only = arguments.get("check_only", False)
+    dry_run = arguments.get("dry_run", False)
     backup_flag = arguments.get("backup", True)
+
+    if action != "code" and file_path:
+        path_err = _validate_path(file_path)
+        if path_err:
+            return _wrap_error("路径安全校验失败: %s" % path_err)
 
     if action == "code":
         code = arguments.get("code", "")
@@ -524,7 +586,7 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if action == "check":
             result = await pasfmt.format_file(
                 file_path=file_path,
-                check_only=True,
+                dry_run=True,
             )
         else:
             result = await pasfmt.format_file(
@@ -554,6 +616,10 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
+
+    path_err = _validate_path(file_path)
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
 
     if backup_action == "create":
         bp = create_backup(file_path)
@@ -585,6 +651,242 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# uses 子句操作
+# ============================================================
+
+# 匹配 uses 子句的正则：uses Unit1, Unit2; 可以跨多行
+# 先剥离 Pascal 花括号注释 { ... }，避免注释内的 ; 干扰匹配
+# 捕获组: (1)uses关键字 (2)整个单元列表 (3)分号
+_USES_RE = re.compile(
+    r'\b(uses)\b\s+(.*?)\s*(;)',
+    re.DOTALL | re.IGNORECASE,
+)
+
+# 剥离 Pascal 花括号注释（含 $ 开头的条件编译指令）
+_STRIP_BRACE_COMMENTS = re.compile(r'\{[^}]*\}', re.DOTALL)
+
+
+def _find_uses_section(text: str, section: str) -> Optional[tuple]:
+    """在指定区域(interface/implementation)查找 uses 子句。
+
+    搜索前会剥离花括号注释，避免 { ... } 内的 ';' 干扰正则匹配。
+    返回的偏移量基于原始 text（注释剥离后的偏移映射）。
+
+    返回 (uses_start, uses_end, units_text) 元组，或 None。
+    uses_start/uses_end 是基于原始 text 的偏移。
+    """
+    section_lower = section.lower()
+
+    # 剥离花括号注释，同时构建原始偏移映射
+    stripped = _STRIP_BRACE_COMMENTS.sub('', text)
+
+    if section_lower == "interface":
+        impl_pos = re.search(r'\bimplementation\b', stripped, re.IGNORECASE)
+        end = impl_pos.start() if impl_pos else len(stripped)
+        header = re.search(r'\b(?:unit|program|library)\b', stripped[:end], re.IGNORECASE)
+        start = header.end() if header else 0
+        chunk = stripped[start:end]
+        match = _USES_RE.search(chunk)
+        if match:
+            return (match.start() + start, match.end() + start, match.group(2))
+        return None
+
+    elif section_lower == "implementation":
+        impl_pos = re.search(r'\bimplementation\b', stripped, re.IGNORECASE)
+        if not impl_pos:
+            return None
+        start = impl_pos.end()
+        chunk = stripped[start:]
+        match = _USES_RE.search(chunk)
+        if match:
+            return (match.start() + start, match.end() + start, match.group(2))
+        return None
+
+    return None
+
+
+def _parse_units_from_uses(units_text: str) -> List[str]:
+    """从 uses 子句的单元列表文本中解析出各个单元条目。
+
+    每个条目保留 'in ...' 部分，如 "Unit1 in 'Unit1.pas'"。
+    """
+    flat = units_text.replace('\r\n', ' ').replace('\n', ' ')
+    parts = [p.strip() for p in flat.split(',') if p.strip()]
+    return parts
+
+
+def _build_uses_text(unit_names: List[str], original_text: str) -> str:
+    """从单元名列表重建 uses 子句文本，保持原始换行风格。
+
+    如果原始是单行，保持单行；如果跨多行，每行一个单元。
+    """
+    line_ending = '\r\n' if '\r\n' in original_text else '\n'
+    has_multiline = '\n' in original_text.strip()
+
+    if has_multiline and len(unit_names) > 1:
+        # 多行格式：每行一个单元，缩进 2 空格，逗号在行尾
+        lines = []
+        for i, name in enumerate(unit_names):
+            if i < len(unit_names) - 1:
+                lines.append(f"  {name},{line_ending}")
+            else:
+                lines.append(f"  {name}")
+        return ''.join(lines)
+    else:
+        # 单行格式
+        return ', '.join(unit_names)
+
+
+async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    处理 uses action — 增加/删除 uses 子句中的单元。
+
+    参数:
+      file_path: 文件路径(.pas/.dpr/.dpk)
+      uses_action: "add" 或 "remove"
+      unit_name: 单元名(如 "Vcl.Dialogs")，可含命名空间
+      uses_section: "interface" 或 "implementation" (默认 "interface")
+    """
+    file_path = arguments.get("file_path")
+    uses_action = arguments.get("uses_action", "add")
+    unit_name = arguments.get("unit_name", "")
+    uses_section = arguments.get("uses_section", "interface")
+
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+    if not unit_name:
+        return _wrap_error("请提供 unit_name 参数")
+
+    path_err = _validate_path(file_path)
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+    if uses_action not in ("add", "remove"):
+        return _wrap_error("uses_action 必须是 'add' 或 'remove'")
+
+    if not os.path.isfile(file_path):
+        return _wrap_error(f"文件不存在: {file_path}")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.pas', '.dpr', '.dpk', '.inc'):
+        return _wrap_error(f"uses 操作仅支持 .pas/.dpr/.dpk/.inc 文件，不支持 {ext}")
+
+    # 读取文件
+    original_encoding = detect_encoding(file_path)
+    with open(file_path, 'r', encoding=original_encoding, newline='') as f:
+        text = f.read()
+
+    # 查找 uses 子句
+    result = _find_uses_section(text, uses_section)
+    if not result:
+        section_hint = f"{uses_section} 区域"
+        return _wrap_error(
+            f"在 {section_hint} 中未找到 uses 子句。"
+            "如果文件是新单元，请先用 write action 写入完整单元结构"
+        )
+
+    uses_start, uses_end, units_text = result
+    existing_units = _parse_units_from_uses(units_text)
+
+    # 检查单元是否已存在/不存在
+    unit_name_stripped = unit_name.strip()
+
+    # 提取单元名（不含 'in' 子句）用于比较
+    def _get_unit_name(entry: str) -> str:
+        in_match = re.match(r"(\S+)\s+in\s+", entry, re.IGNORECASE)
+        return in_match.group(1) if in_match else entry
+
+    def _get_short_name(name: str) -> str:
+        """提取短名（去掉命名空间前缀），如 'Vcl.Forms' → 'Forms'"""
+        return name.rsplit('.', 1)[-1]
+
+    existing_names = [_get_unit_name(e) for e in existing_units]
+    existing_names_lower = [n.lower() for n in existing_names]
+    unit_name_lower = unit_name_stripped.lower()
+
+    if uses_action == "add":
+        if unit_name_lower in existing_names_lower:
+            return {"status": "success", "message": f"{unit_name_stripped} 已在 {uses_section} uses 中，无需添加"}
+        # 检查命名空间前缀冲突：短名相同且至少一方无命名空间时才视为冲突
+        # Forms ↔ Vcl.Forms 冲突，Vcl.Forms ↔ FMX.Forms 不冲突（不同单元）
+        new_short = _get_short_name(unit_name_stripped).lower()
+        collision_idx = None
+        for i, existing in enumerate(existing_names):
+            if existing.lower() != unit_name_lower and _get_short_name(existing).lower() == new_short:
+                # 至少一方是短名（无命名空间）才算冲突
+                if '.' not in unit_name_stripped or '.' not in existing:
+                    collision_idx = i
+                    break
+        if collision_idx is not None:
+            if '.' in unit_name_stripped and '.' not in existing_names[collision_idx]:
+                # 长名替换短名：Vcl.Forms 替换 Forms
+                replaced_unit = existing_units[collision_idx]
+                new_units = existing_units.copy()
+                new_units[collision_idx] = unit_name_stripped
+                new_units.sort(key=lambda e: _get_unit_name(e).lower())
+            else:
+                # 短名冲突长名，已有长名则跳过
+                return {"status": "success", "message": f"{unit_name_stripped} 与已有单元 {existing_names[collision_idx]} 短名相同，视为同一单元，跳过"}
+        else:
+            # 无冲突，直接插入
+            new_units = existing_units + [unit_name_stripped]
+            new_units.sort(key=lambda e: _get_unit_name(e).lower())
+    else:  # remove
+        if unit_name_lower not in existing_names_lower:
+            return {"status": "success", "message": f"{unit_name_stripped} 不在 {uses_section} uses 中，无需删除"}
+        new_units = [e for e in existing_units if _get_unit_name(e).lower() != unit_name_lower]
+
+    if not new_units:
+        return _wrap_error(f"删除 {unit_name_stripped} 后 uses 子句将为空，请改用 write action 重写文件")
+
+    # 重建 uses 文本
+    new_units_text = _build_uses_text(new_units, units_text)
+    new_uses_clause = f"uses {new_units_text};"
+
+    # 替换原 uses 子句
+    new_text = text[:uses_start] + new_uses_clause + text[uses_end:]
+
+    # 备份
+    backup_path = None
+    backup = arguments.get("backup", True)
+    if backup:
+        backup_path = create_backup(file_path)
+
+    # 写出
+    try:
+        with open(file_path, 'w', encoding=original_encoding, newline='') as f:
+            f.write(new_text)
+    except UnicodeEncodeError:
+        logger.warning(f"编码 {original_encoding} 写出失败，回退到 utf-8")
+        with open(file_path, 'w', encoding="utf-8", newline='') as f:
+            f.write(new_text)
+        original_encoding = "utf-8"
+
+    # 自动格式化
+    fmt_msg = ""
+    if arguments.get("auto_format", False):
+        try:
+            fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
+            if fmt_result.get("formatted"):
+                fmt_msg = "，已格式化"
+        except Exception as ex:
+            logger.warning(f"uses 操作后格式化失败: {ex}")
+
+    action_desc = "添加" if uses_action == "add" else "删除"
+    result_lines = [
+        f"已{action_desc}单元: {unit_name_stripped}",
+        f"区域: {uses_section}",
+        f"当前 uses: {', '.join(new_units)}",
+        f"编码: {original_encoding}",
+    ]
+    if backup_path:
+        result_lines.append(f"备份: {backup_path}")
+    if fmt_msg:
+        result_lines.append(fmt_msg)
+
+    return {"status": "success", "message": "\n".join(result_lines)}
+
+
+# ============================================================
 # 主入口
 # ============================================================
 
@@ -608,5 +910,7 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await handle_format(arguments)
     elif action == "backup":
         return await handle_backup(arguments)
+    elif action == "uses":
+        return await handle_uses(arguments)
     else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, format, backup")
+        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, format, backup, uses")
