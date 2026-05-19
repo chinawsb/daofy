@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "delphi-mcp-server"
+name = "daofy-for-delphi"
 version = "2026.05.13"
-description = "MCP Server for Delphi project compilation and knowledge base query"
+description = "Daofy for Delphi - MCP Server for Delphi project compilation and knowledge base query"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -29,7 +29,7 @@ dependencies = [
     "html2text>=2024.2.25",
     "lxml>=4.9.0",
     "python-docx>=0.8.11",
-    "requests>=2.28.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-delphi-mcp-server = "src.server:main"
+daofy = "src.server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

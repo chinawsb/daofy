@@ -1,10 +1,21 @@
-"""代码托管平台统一工具 — 兼容 Gitea / GitHub / GitLab + Git 本地操作
+"""代码托管平台统一工具 — 兼容 Gitea / GitHub / GitLab / Gitee / GitCode + Git 本地操作
 
 通过 action 参数分发操作，platform 参数切换后端。
 支持以下平台:
-  - gitea  : 自托管 Gitea
-  - github : GitHub
-  - gitlab : GitLab
+  - gitea   : 自托管 Gitea
+  - github  : GitHub (github.com)
+  - gitlab  : GitLab CE/EE (gitlab.com)
+  - gitee   : Gitee 码云 (gitee.com) — API v5，GitHub 兼容风格
+  - gitcode : GitCode (gitcode.net) — GitLab 兼容风格
+
+API 认证方式:
+  平台      | 认证头                          | base_url 示例
+  ----------|---------------------------------|------------------------
+  gitea     | Authorization: token {token}     | https://your-gitea.com
+  github    | Authorization: Bearer {token}    | https://api.github.com
+  gitlab    | PRIVATE-TOKEN: {token}           | https://gitlab.com
+  gitee     | Authorization: Bearer {token}    | https://gitee.com/api/v5
+  gitcode   | PRIVATE-TOKEN: {token}           | https://gitcode.net
 
 Git 相关操作（无需 platform 参数）:
   - git_clone  克隆远程仓库（支持 GitHub 镜像源）
@@ -13,14 +24,15 @@ Git 相关操作（无需 platform 参数）:
   - git_commit 创建提交
   - git_push   推送到远程（依赖用户自身的网络/代理/SSH配置）
 
-GitHub 国内访问:
+GitHub / Gitee 国内访问:
   - 拉取: git_clone 支持 mirror 参数指定镜像源
   - 推送: 依赖用户自身配置（SSH/HTTPS代理/VPN），工具不做假设
 
 用法:
-  code_hosting(platform="gitea", action="create_issue", ...)
+  code_hosting(platform="gitee", action="create_issue", ...)
+  code_hosting(platform="gitcode", action="list_issues", ...)
   code_hosting(action="git_clone", repo_url="https://github.com/...", mirror="https://hub.fastgit.xyz")
-  code_hosting(action="git_push", work_dir=".", branch="main")
+  code_hosting(action="git_push", dir=".", branch="main")
 """
 
 import json
@@ -41,6 +53,52 @@ except ImportError:
     get_task_manager = None
 
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# 路径安全 — 阻止目录遍历
+# ============================================================
+
+_ALLOWED_BASE = os.path.abspath(".")  # 默认：当前工作目录
+
+
+def _resolve_safe_dir(dir_path: str) -> str:
+    """解析用户传入的目录路径，阻止路径遍历攻击。
+
+    规则：
+    - 相对路径基于 _ALLOWED_BASE（当前工作目录）resolve
+    - resolve 后的路径必须在 _ALLOWED_BASE 下
+    - 路径不存在时自动创建（安全）
+    - 如果无法判定安全，返回 _ALLOWED_BASE 本身
+
+    Args:
+        dir_path: 用户传入的目录路径
+
+    Returns:
+        安全的绝对路径
+    """
+    if not dir_path:
+        return _ALLOWED_BASE
+
+    resolved = os.path.abspath(os.path.join(_ALLOWED_BASE, dir_path))
+    # 规范化，防止 ..\\..\\Windows 绕过
+    resolved = os.path.normpath(resolved)
+    resolved_lower = resolved.lower()
+
+    allowed_lower = os.path.normpath(_ALLOWED_BASE).lower()
+
+    # 检查是否在允许基目录下
+    if not resolved_lower.startswith(allowed_lower + os.sep) and resolved_lower != allowed_lower:
+        logger.warning("路径遍历拦截: %s -> %s (base: %s)", dir_path, resolved, _ALLOWED_BASE)
+        return _ALLOWED_BASE
+
+    if not os.path.exists(resolved):
+        try:
+            os.makedirs(resolved, exist_ok=True)
+        except OSError:
+            return _ALLOWED_BASE
+
+    return resolved
+
 
 # ============================================================
 # 平台 API 路径模板
@@ -66,6 +124,24 @@ _API_PATHS = {
         "list_issues":  "/repos/{owner}/{repo}/issues",
     },
     "gitlab": {
+        "create_token": None,
+        "list_labels":  "/api/v4/projects/{encoded}/labels",
+        "create_label": "/api/v4/projects/{encoded}/labels",
+        "create_issue": "/api/v4/projects/{encoded}/issues",
+        "edit_issue":   "/api/v4/projects/{encoded}/issues/{index}",
+        "add_comment":  "/api/v4/projects/{encoded}/issues/{index}/notes",
+        "list_issues":  "/api/v4/projects/{encoded}/issues",
+    },
+    "gitee": {
+        "create_token": None,
+        "list_labels":  "/repos/{owner}/{repo}/labels",
+        "create_label": "/repos/{owner}/{repo}/labels",
+        "create_issue": "/repos/{owner}/{repo}/issues",
+        "edit_issue":   "/repos/{owner}/{repo}/issues/{number}",
+        "add_comment":  "/repos/{owner}/{repo}/issues/{number}/comments",
+        "list_issues":  "/repos/{owner}/{repo}/issues",
+    },
+    "gitcode": {
         "create_token": None,
         "list_labels":  "/api/v4/projects/{encoded}/labels",
         "create_label": "/api/v4/projects/{encoded}/labels",
@@ -125,10 +201,11 @@ def _request(base_url, token, method, path, body=None, params=None, platform="gi
     if basic_auth:
         raw = f"{basic_auth[0]}:{basic_auth[1]}".encode()
         headers["Authorization"] = f"Basic {base64.b64encode(raw).decode()}"
-    elif platform == "github":
+    elif platform in ("github", "gitee"):
         headers["Authorization"] = f"Bearer {token}"
-        headers["X-GitHub-Api-Version"] = "2022-11-28"
-    elif platform == "gitlab":
+        if platform == "github":
+            headers["X-GitHub-Api-Version"] = "2022-11-28"
+    elif platform in ("gitlab", "gitcode"):
         headers["PRIVATE-TOKEN"] = token
     else:
         headers["Authorization"] = f"token {token}"
@@ -159,7 +236,7 @@ def _request(base_url, token, method, path, body=None, params=None, platform="gi
 def code_hosting(**kwargs) -> dict:
     """代码托管平台统一操作入口。
 
-    platform: gitea / github / gitlab（默认 gitea）
+    platform: gitea / github / gitlab / gitee / gitcode（默认 gitea）
     action:
       - create_token  创建访问令牌（仅 Gitea）
       - init_labels   批量初始化四维流程标签
@@ -213,10 +290,18 @@ def _ok(msg):
     return {"message": msg, "status": "ok"}
 
 
-def _split_repo(repo):
+def _split_repo(repo: str):
+    """将 repo 参数字符串分割为 owner + repo。
+
+    注意：
+    - GitHub/Gitea: owner/repo（简单分割，无嵌套）
+    - GitLab: group/subgroup/project（支持嵌套组）
+      _repo_path 对 GitLab 会做 URL 编码（quote(f"{owner}/{repo}", safe="")），
+      所以 nested group 场景也能正确处理。这里的 owner 返回的是最上层组名。
+    """
     parts = repo.split("/", 1)
     if len(parts) != 2:
-        raise ValueError("仓库格式应为 owner/repo")
+        raise ValueError("仓库格式应为 owner/repo (如 chinawsb/daofy)")
     return parts[0], parts[1]
 
 
@@ -226,9 +311,13 @@ def _repo_path(platform, action, owner, repo, index=None, **extra):
         raise ValueError(f"{platform} 不支持 {action}")
     kw = {"owner": owner, "repo": repo}
     if index is not None:
-        kw["index"] = index
+        # Gitee 用 {number}，其他平台用 {index}
+        if platform == "gitee":
+            kw["number"] = index
+        else:
+            kw["index"] = index
     kw.update(extra)
-    if platform == "gitlab" and "{encoded}" in tmpl:
+    if platform in ("gitlab", "gitcode") and "{encoded}" in tmpl:
         kw["encoded"] = quote(f"{owner}/{repo}", safe="")
     return tmpl.format(**kw)
 
@@ -247,10 +336,12 @@ def _act_create_token(platform, **kw):
     result = _request(base_url, "", "POST", path, body=body, platform=platform,
                       basic_auth=(username, password))
     token_val = result.get("sha1") or result.get("token", "")
+    masked = "%s...%s" % (token_val[:8], token_val[-4:]) if len(token_val) > 12 else "***"
     d = _ok(
-        f"✅ Token 创建成功\n"
-        f"  平台: {platform} | 名称: {result.get('name', name)}\n"
-        f"  值: {token_val[:8]}...{token_val[-4:]}"
+        "Token 创建成功\n"
+        "  平台: %s | 名称: %s\n"
+        "  值(脱敏): %s\n"
+        "  ⚠ 完整 token 已在返回值 token 字段中，请妥善保管" % (platform, result.get('name', name), masked)
     )
     d["token"] = token_val
     return d
@@ -297,7 +388,7 @@ def _act_create_issue(platform, **kw):
     owner, repo = _split_repo(kw["repo"])
     title = kw["title"]
     body = kw.get("body", "")
-    label_names = kw.get("label_names") or []
+    label_names = kw.get("labels") or []
 
     label_ids = []
     if label_names:
@@ -310,7 +401,15 @@ def _act_create_issue(platform, **kw):
 
     payload = {"title": title, "body": body}
     if label_ids:
-        payload["labels"] = label_ids if platform != "gitlab" else label_names
+        if platform == "gitea":
+            # Gitea 需要标签 ID（数字）
+            payload["labels"] = label_ids
+        elif platform in ("gitlab", "gitcode"):
+            # GitLab/GitCode 接受逗号分隔的标签名
+            payload["labels"] = label_names
+        else:
+            # GitHub/Gitee 接受标签名数组
+            payload["labels"] = label_names
 
     cp = _repo_path(platform, "create_issue", owner, repo)
     result = _request(base_url, token, "POST", cp, body=payload, platform=platform)
@@ -336,7 +435,7 @@ def _act_close_issue(platform, **kw):
     base_url, token = kw["base_url"], kw["token"]
     owner, repo = _split_repo(kw["repo"])
     num = kw["issue_number"]
-    comment = kw.get("comment_body", "")
+    comment = kw.get("comment", "")
 
     if comment:
         cpath = _repo_path(platform, "add_comment", owner, repo, index=num)
@@ -380,9 +479,11 @@ def _act_list_issues(platform, **kw):
     state = kw.get("state", "open")
 
     lp = _repo_path(platform, "list_issues", owner, repo)
+    # 分页参数名因平台而异：gitea=limit, 其他=per_page
+    page_size_key = "limit" if platform == "gitea" else "per_page"
     result = _request(base_url, token, "GET", lp,
                       params={"state": state, "page": str(kw.get("page", 1)),
-                              "limit": str(kw.get("limit", 20))},
+                              page_size_key: str(kw.get("limit", 20))},
                       platform=platform)
 
     if not isinstance(result, list) or not result:
@@ -404,15 +505,14 @@ def _act_list_issues(platform, **kw):
 
 def _git_run(work_dir, *args, timeout=300):
     """在指定目录执行 git 命令，返回输出。
-    
+
     Args:
-        work_dir: 工作目录（不存在则自动创建父目录）
+        work_dir: 工作目录（自动 resolve 防路径遍历）
         timeout: 超时秒数，默认 300（5 分钟，适合大项目克隆）
     """
-    if work_dir and not os.path.exists(work_dir):
-        os.makedirs(work_dir, exist_ok=True)
+    safe_dir = _resolve_safe_dir(work_dir) if work_dir else None
     # 确保 work_dir 在命令执行前是存在的目录
-    cwd = work_dir if (work_dir and os.path.isdir(work_dir)) else None
+    cwd = safe_dir if (safe_dir and os.path.isdir(safe_dir)) else None
     cmd = ["git"] + list(args)
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
@@ -461,7 +561,7 @@ def _submit_git_task(name: str, fn, **kw) -> tuple:
 @_reg("git_status")
 def _act_git_status(platform=None, **kw):
     """查看仓库状态（同步，瞬间完成）。"""
-    work_dir = kw.get("work_dir", ".")
+    work_dir = kw.get("dir", ".")
     out = _git_run(work_dir, "status")
     return _ok(f"📋 Git 状态:\n{out}")
 
@@ -469,7 +569,7 @@ def _act_git_status(platform=None, **kw):
 @_reg("git_add")
 def _act_git_add(platform=None, **kw):
     """暂存文件（同步）。"""
-    work_dir = kw.get("work_dir", ".")
+    work_dir = kw.get("dir", ".")
     files = kw.get("files", [])
     if not files:
         return _err("请指定要暂存的文件列表 (files 参数)")
@@ -480,10 +580,10 @@ def _act_git_add(platform=None, **kw):
 @_reg("git_commit")
 def _act_git_commit(platform=None, **kw):
     """创建提交（同步，本地操作极快）。"""
-    work_dir = kw.get("work_dir", ".")
-    msg = kw.get("commit_message", "")
+    work_dir = kw.get("dir", ".")
+    msg = kw.get("message", "")
     if not msg:
-        return _err("请指定提交信息 (commit_message 参数)")
+        return _err("请指定提交信息 (message 参数)")
     _git_run(work_dir, "commit", "-m", msg)
     try:
         h = _git_run(work_dir, "rev-parse", "HEAD")
@@ -508,13 +608,22 @@ def _act_git_clone(platform=None, **kw):
     返回 task_id，通过 async_task 查询进度。
     """
     url = kw["repo_url"]
-    work_dir = kw.get("work_dir", ".")
+    work_dir = kw.get("dir", ".")
     branch = kw.get("branch", "")
     mirror = kw.get("mirror", "")
 
-    # GitHub 镜像替换
+    # GitHub 镜像替换 — 只替换域名（netloc），不污染路径
     if mirror and "github.com" in url.lower():
-        url = url.replace("github.com", mirror.rstrip("/").replace("https://", ""))
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        # 仅当 netloc 包含 github.com 时才替换
+        if "github.com" in parsed.netloc.lower():
+            mirror_netloc = mirror.rstrip("/").replace("https://", "").replace("http://", "")
+            parsed = parsed._replace(netloc=mirror_netloc)
+            url = urlunparse(parsed)
+        else:
+            # 兼容旧行为：github.com 在路径中的退化情况
+            url = url.replace("github.com", mirror.rstrip("/").replace("https://", ""))
         url = url.replace("http://", "https://")
 
     target_dir = os.path.join(work_dir, url.split("/")[-1].replace(".git", ""))
@@ -545,8 +654,8 @@ def _act_git_push(platform=None, **kw):
     推送方式取决于用户的 Git 配置（SSH/HTTPS代理/VPN），工具不做假设。
     返回 task_id，通过 async_task 查询进度。
     """
-    work_dir = kw.get("work_dir", ".")
-    remote = kw.get("remote_name", "origin")
+    work_dir = kw.get("dir", ".")
+    remote = kw.get("remote", "origin")
     branch = kw.get("branch", "")
 
     def _do_push(**kw2):
@@ -567,15 +676,15 @@ def _act_git_push_retry(platform=None, **kw):
     GitHub 在国内访问不稳定时，此工具在后台自动重试，不阻塞对话。
     返回 task_id，通过 async_task 查询进度。
     """
-    work_dir = kw.get("work_dir", ".")
-    remote = kw.get("remote_name", "origin")
+    work_dir = kw.get("dir", ".")
+    remote = kw.get("remote", "origin")
     branch = kw.get("branch", "")
     interval = int(kw.get("retry_interval", 300))  # 默认 5 分钟
+    max_retries = int(kw.get("max_retries", 12))  # 默认最多 12 次（1 小时内）
 
     def _do_retry_push(**kw2):
-        attempt = 0
-        while True:
-            attempt += 1
+        last_error = None
+        for attempt in range(1, max_retries + 1):
             try:
                 args = ["push", remote]
                 if branch:
@@ -583,10 +692,11 @@ def _act_git_push_retry(platform=None, **kw):
                 _git_run(work_dir, *args)
                 return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}（第{attempt}次成功）")
             except RuntimeError as e:
-                logger.warning("推送失败(第%s次): %s", attempt, e)
-                if attempt == 1:
-                    raise
-                time.sleep(interval)
+                last_error = e
+                logger.warning("推送失败(第%s/%s次): %s", attempt, max_retries, e)
+                if attempt < max_retries:
+                    time.sleep(interval)
+        raise RuntimeError(f"推送失败，已重试 {max_retries} 次: {last_error}")
 
     tid, resp = _submit_git_task("git_push_retry", _do_retry_push)
     return resp

@@ -1,4 +1,4 @@
-# Daofy
+# Daofy for Delphi
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -10,7 +10,7 @@ Daofy — Spread your wings for creativity.
 
 ## Project Introduction
 
-Daofy is a server based on Model Context Protocol (MCP) that allows AI assistants to directly compile Delphi projects and query Delphi knowledge bases. With this tool, you can compile Delphi projects, query API documentation, search code examples directly in conversations with AI assistants, without manually switching to IDE or command line.
+Daofy for Delphi is a server based on Model Context Protocol (MCP) that allows AI assistants to directly compile Delphi projects and query Delphi knowledge bases. With this tool, you can compile Delphi projects, query API documentation, search code examples directly in conversations with AI assistants, without manually switching to IDE or command line.
 
 **Key Advantages:**
 - Seamless integration into AI assistant workflow
@@ -94,7 +94,7 @@ Each knowledge base has a `config.json` file. Configs are auto-generated on firs
 Please follow these steps to install Daofy:
 
 [] Check and install Git/Python 3.10-3.14/7-Zip (prioritize using domestic mirror sources for faster downloads during installation)
-[] Install `https://github.com/chinawsb/delphi-complier-mcp-server.git`
+[] Install `https://github.com/chinawsb/daofy.git`
 [] After installation, verify results and configure current client for me
 
 ### Manual Installation Steps
@@ -102,8 +102,8 @@ Please follow these steps to install Daofy:
 #### 1. Clone or Download Project
 
 ```bash
-git clone https://github.com/chinawsb/delphi-complier-mcp-server.git
-cd delphi-complier-mcp-server
+git clone https://github.com/chinawsb/daofy.git
+cd daofy
 ```
 
 #### 2. Create Virtual Environment
@@ -175,9 +175,9 @@ If you need to manually configure or add a custom compiler, you can directly edi
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "python",
-      "args": ["C:\\path\\to\\delphi_mcp_server\\src\\server.py"],
+      "args": ["C:\\path\\to\\daofy\\src\\server.py"],
       "env": {
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -195,7 +195,7 @@ If you need to manually configure or add a custom compiler, you can directly edi
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\venv\\Scripts\\python.exe",
       "args": [
         "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\src\\server.py"
@@ -219,10 +219,10 @@ If you need to manually configure or add a custom compiler, you can directly edi
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "python",
       "args": ["src\\server.py"],
-      "cwd": "C:\\path\\to\\delphi_mcp_server",
+      "cwd": "C:\\path\\to\\daofy",
       "env": {
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -243,13 +243,13 @@ If you need to manually configure or add a custom compiler, you can directly edi
 | `check_environment` | Diagnose environment, detect compilers, install pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
 | `install_package` | Compile and install Delphi package to IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
 | `list_installed_packages` | List packages installed to IDE | - |
-| `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval | `project_path`(optional), `section`(optional, e.g. workflow/writing/review/safety) |
+| `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval | `project_path`(optional), `section`(optional, e.g. workflow/env/kb_search/writing/format/compile/review/safety) |
 
 ### Knowledge Base Tools
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=functions+procedures, procedure=procedures only), `top_k`(default 200, max 500) |
+| `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=functions+procedures, procedure=procedures only), `top_k`(default 200, max 500), `project_path`(optional, auto-detect from CWD .dproj), `directory`, `url`, `content_type`, `extensions` |
 
 ### File Operations
 
@@ -273,13 +273,7 @@ If you need to manually configure or add a custom compiler, you can directly edi
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `async_task` | Manage background tasks (e.g., build knowledge base) | `action`(start/status/result/list/cancel), `task_id` |
-
-### Coding Standards Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `get_coding_rules` | Get Delphi coding standards | `project_path`(optional) |
+| `async_task` | Manage background tasks (e.g., build knowledge base) | `action`(start/status/result/list/cancel), `task_id`, `task_type`, `task_params`, `show_progress` |
 
 ## Knowledge Base
 
@@ -290,9 +284,15 @@ If you need to manually configure or add a custom compiler, you can directly edi
 | Generic Documents | `data/document-knowledge-base/` | CHM help + generic docs |
 | Project Specific | `<project directory>/.delphi-kb/` | Project-specific KB |
 
-| Knowledge Base | Documents | Classes | Functions |
-|----------------|-----------|---------|-----------|
-| Delphi Source | 3,081 | 17,731 | 168,925 |
+### Knowledge Base Statistics
+
+| Knowledge Base | Documents | Classes | Functions | Size |
+|----------------|-----------|---------|-----------|------|
+| Delphi Source | 2,798 | 163,737 | 300,228 | 260 MB |
+| Third-party Library | 1,800 | 5,724 | 28,801 | 27 MB |
+| Generic Documents | 160,328 | — | — | 1,306 MB |
+
+**Total: ~170K classes, 330K functions, 160K document pages**
 
 ## Troubleshooting
 

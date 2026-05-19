@@ -171,8 +171,8 @@ if not exist "%SCRIPT_DIR%\install_mcp.py" (
 
     :: GitHub raw 内容 URL 列表（原始源 + 国内代理，自动回退）
     set "GH_URLS="
-    set "GH_URLS=https://raw.githubusercontent.com/chinawsb/delphi-complier-mcp-server/main/install_mcp.py"
-    set "GH_URLS=!GH_URLS! https://ghproxy.net/https://raw.githubusercontent.com/chinawsb/delphi-complier-mcp-server/main/install_mcp.py"
+    set "GH_URLS=https://raw.githubusercontent.com/chinawsb/daofy/main/install_mcp.py"
+    set "GH_URLS=!GH_URLS! https://ghproxy.net/https://raw.githubusercontent.com/chinawsb/daofy/main/install_mcp.py"
 
     for %%s in (!GH_URLS!) do (
         if not exist "%SCRIPT_DIR%\install_mcp.py" (
@@ -201,7 +201,7 @@ if not exist "%SCRIPT_DIR%\install_mcp.py" (
 
     if not exist "%SCRIPT_DIR%\install_mcp.py" (
         echo [ERROR] 无法下载 install_mcp.py，请手动下载完整包
-        echo         https://github.com/chinawsb/delphi-complier-mcp-server
+        echo         https://github.com/chinawsb/daofy
         pause
         exit /b 1
     )

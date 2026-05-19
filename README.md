@@ -1,4 +1,4 @@
-# Daofy
+# Daofy for Delphi
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
@@ -10,7 +10,7 @@ Daofy（道飞）——为创意插上翅膀。
 
 ## 项目简介
 
-Delphi MCP Server（Daofy）是一个基于 Model Context Protocol (MCP) 的服务器,它允许 AI 助手直接编译 Delphi 项目并查询 Delphi 知识库。通过这个工具,您可以在与 AI 助手的对话中直接编译 Delphi 工程、查询 API 文档、搜索代码示例,无需手动切换到 IDE 或命令行。
+Daofy for Delphi 是一个基于 Model Context Protocol (MCP) 的 MCP Server，它允许 AI 助手直接编译 Delphi 项目并查询 Delphi 知识库。通过这个工具,您可以在与 AI 助手的对话中直接编译 Delphi 工程、查询 API 文档、搜索代码示例,无需手动切换到 IDE 或命令行。
 
 **主要优势:**
 
@@ -86,7 +86,7 @@ delphi_kb(
 | `check_environment` | 诊断编译环境、检测编译器、安装pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
 | `install_package` | 编译并安装 Delphi 组件包到 IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
 | `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 | - |
-| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选，如 workflow/writing/review/safety) |
+| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选，如 workflow/env/kb_search/writing/format/compile/review/safety/agent_rules/kb_build/cleanup等) |
 
 ### 知识库工具
 
@@ -117,12 +117,6 @@ delphi_kb(
 | 工具名称 | 功能描述 | 主要参数 |
 |----------|----------|----------|
 | `async_task` | 管理后台任务（构建知识库等） | `action`(start/status/result/list/cancel), `task_id`, `task_type`, `task_params`, `show_progress` |
-
-### 编码规范工具
-
-| 工具名称 | 功能描述 | 主要参数 |
-|----------|----------|----------|
-| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选) |
 
 ## 系统要求
 
@@ -168,7 +162,7 @@ delphi_kb(
 
 [] 检查并安装 Git/Python 3.10-3.14/7-Zip (安装时优先使用国内镜像源加速下载)
 
-[] 安装 `https://github.com/chinawsb/delphi-complier-mcp-server.git`
+[] 安装 `https://github.com/chinawsb/daofy.git`
 
 [] 安装完成后验证结果并帮我配置当前客户端
 
@@ -177,8 +171,8 @@ delphi_kb(
 #### 1. 克隆或下载项目
 
 ```bash
-git clone https://github.com/chinawsb/delphi-complier-mcp-server.git
-cd delphi-complier-mcp-server
+git clone https://github.com/chinawsb/daofy.git
+cd daofy
 ```
 
 #### 2. 创建虚拟环境
@@ -256,9 +250,9 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "python",
-      "args": ["C:\\path\\to\\delphi_mcp_server\\src\\server.py"],
+      "args": ["C:\\path\\to\\daofy\\src\\server.py"],
       "env": {
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -276,7 +270,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\venv\\Scripts\\python.exe",
       "args": [
         "F:\\ProPlus\\DelphiPlus\\Experts\\DelphiMCPServer\\delphi-complier-mcp-server\\src\\server.py"
@@ -300,10 +294,10 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```json
 {
   "mcpServers": {
-    "delphi-compiler": {
+    "daofy": {
       "command": "python",
       "args": ["src\\server.py"],
-      "cwd": "C:\\path\\to\\delphi_mcp_server",
+      "cwd": "C:\\path\\to\\daofy",
       "env": {
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
@@ -359,7 +353,15 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.05.13 (最新)
+### v2026.05.14 (最新)
+
+- 新增 `generate_component_dfm` 工具：编译+运行 Pascal 代码生成 DFM
+- `file_tool` 增强：DFM 二进制自动转换、备份管理、搜索定位
+- `get_coding_rules` 增强：支持按章节分段获取，节省 token
+- 新增 `code_hosting` 工具：统一 Gitea/GitHub/GitLab 操作
+- 工作流从 6 步扩展为 7 步（①环境检查→②查KB→③写代码→④格式化→⑤编译→⑥审计→⑦清理）
+
+### v2026.05.13
 
 - 正则表达式大修：覆盖 constructor/destructor/class function 等语法
 - 搜索增强：function 同时匹配 FF+FP，单元名自动回退到文件路径，top_k 默认 200

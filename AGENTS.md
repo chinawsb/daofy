@@ -34,9 +34,10 @@ src/
 ① check_environment(action="check")       → 确认编译器
 ② get_coding_rules(project_path=...)       → 获取编码规则
 ③ delphi_kb(query=...)                     → 搜索 API 定义（下面详述）
-④ file_tool(action="backup", file_path=...)→ 备份到 __history（关键）
-⑤ file_tool(action="read", file_path=...)  → 读源码（确认修改点）
-⑥ 写代码 → file_tool(format) → compile_project
+④ file_tool(action="read", file_path=...)  → 读源码（确认修改点）
+⑤ file_tool(action="write", content=...)   → 写代码（默认自动备份到 __history）
+⑥ file_tool(action="format", file_path=...) → 格式化
+⑦ compile_project(project_path=...)         → 编译验证
 ```
 
 ### 知识库搜索（先猜精确名，再模糊搜）
@@ -119,11 +120,10 @@ src/
 - 修改表结构后 `grep` 全项目旧表名/列名的所有 INSERT/DELETE/SELECT/ALTER 引用
 
 ### 文件修改前备份
-- **修改任何 Delphi 源文件（.pas/.dfm/.dproj/.dpk/.fmx/.inc）前必须先创建 `__history` 备份**
-- ✅ `file_tool(action="write", file_path=..., content=...)` 默认 `backup=True`，自动备份
-- ✅ 如需单独创建备份：`file_tool(action="backup", file_path="src/Unit1.pas")`
-- ✅ 恢复：`file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
-- ✅ 列出备份：`file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")`
+- `file_tool(action="write", file_path=..., content=...)` **默认 `backup=True`**，自动备份到 `__history`，无需手动调用
+- 如需单独创建备份：`file_tool(action="backup", file_path="src/Unit1.pas")`
+- 恢复：`file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
+- 列出备份：`file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")`
 - ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 file_tool 进行备份
 
 ### 编译
@@ -309,15 +309,6 @@ grep / ast_grep_search                      → 搜索 Python 代码中的模式
 lsp_diagnostics / lsp_symbols               → 类型检查和符号分析
 pytest                                      → 审计后运行测试验证
 ```
-get_coding_rules(section="review")          → 获取 Delphi 审核标准
-file_tool(action="read", file_path="unit.pas")  → 查看 Delphi 源码
-delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
-compile_project(project_path="proj.dproj")   → Delphi 审计后验证编译
---- Python 项目审计用以下工具 ---
-grep / ast_grep_search                      → 搜索 Python 代码中的模式
-lsp_diagnostics / lsp_symbols               → 类型检查和符号分析
-pytest                                      → 审计后运行测试验证
-```
 
 ## 发布打包流程
 
@@ -328,7 +319,7 @@ $env:PYTHONIOENCODING='utf-8'
 $7z="$src\tools\7z\7z.exe"
 $src="C:\User\delphi-complier-mcp-server"
 $ver="v2026.05.14"  # 替换为当前版本
-$out="$src\releases\delphi-mcp-server-$ver"
+$out="$src\releases\daofy-for-delphi-$ver"
 
 # 从 git 索引取文件（自动排除 .gitignore 内容）
 git ls-files | Where-Object {
@@ -345,9 +336,9 @@ git ls-files | Where-Object {
 }
 
 # 打包三种格式
-& $7z a -ttar "$src\releases\delphi-mcp-server-$ver.tar" "$out\*" -bb0 -bsp0
-& $7z a -t7z "$src\releases\delphi-mcp-server-$ver.7z" "$src\releases\delphi-mcp-server-$ver.tar" -mx=9 -m0=LZMA2 -bb0 -bsp0
-& $7z a -tzip "$src\releases\delphi-mcp-server-$ver.zip" "$out\*" -mx=9 -bb0 -bsp0
+& $7z a -ttar "$src\releases\daofy-for-delphi-$ver.tar" "$out\*" -bb0 -bsp0
+& $7z a -t7z "$src\releases\daofy-for-delphi-$ver.7z" "$src\releases\daofy-for-delphi-$ver.tar" -mx=9 -m0=LZMA2 -bb0 -bsp0
+& $7z a -tzip "$src\releases\daofy-for-delphi-$ver.zip" "$out\*" -mx=9 -bb0 -bsp0
 Remove-Item "$out" -Recurse -Force
 ```
 

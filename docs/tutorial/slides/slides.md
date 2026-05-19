@@ -137,7 +137,8 @@ AI 从"给建议"变成"帮你做"。
 ① get_coding_rules()    → 获取规范
 ② delphi_kb(TFDConnection) → 查 API 签名
 ③ delphi_kb(TFDQuery)      → 查参数绑定
-④ 生成代码 + 编译验证
+④ file_tool(action="write") → 生成代码（自动备份）
+⑤ compile_project           → 编译验证
 ```
 
 > 💡 不是凭记忆写，而是先查 KB 确认 API
@@ -177,25 +178,25 @@ TDictionary<TCustomKey, string>  // 编译错误！
 **一体化的文件接口 `file_tool`：**
 
 ```
-file_tool(action="read")             — 读文件（DFM 二进制→文本自动转换）
-file_tool(action="write", backup=True)  — 写文件（自动备份到 __history）
-file_tool(action="format")           — 格式化（pasfmt 驱动）
-file_tool(action="backup")           — 备份管理（创建/列表/恢复）
+file_tool(action="read")              — 读文件（DFM 二进制→文本自动转换）
+file_tool(action="write", content=...) — 写文件（默认 backup=True，自动备份到 __history）
+file_tool(action="format")            — 格式化（pasfmt 驱动，自动备份）
+file_tool(action="backup")            — 备份管理（创建/列表/恢复）
 ```
 
-**自动备份机制：**
+**写入即备份 — 无需额外步骤：**
+
+```
+file_tool(action="write", file_path="Unit1.pas", content="...")
+                              ↑ 默认 backup=True，自动创建 __history 备份
+```
+
+**备份机制：**
 
 ```
 源文件                 __history/
 DataProcessor.pas  →  DataProcessor.pas.~1~
                        DataProcessor.pas.~2~  (自动递增)
-```
-
-**⚠️ 不只是格式化才备份 — 每次写入都会备份**
-
-```
-file_tool(action="write", file_path="Unit1.pas", content="...")
-                              ↑ 默认 backup=True，自动创建 __history
 ```
 
 **备份管理：**
@@ -282,10 +283,9 @@ GitHub Issue / Gitee 工单
 
 **AI 工作流：**
 1. 🔗 引用查询 → 评估影响范围
-2. 🛡️ 自动备份（file_tool write 默认 backup=True）
-3. 📝 逐文件修改
-4. ✅ 每改一个编译验证
-5. 🎨 统一格式化
+2. 📝 逐文件修改（file_tool write 默认自动备份）
+3. ✅ 每改一个编译验证
+4. 🎨 统一格式化
 
 > 💡 你做决策，AI 执行 + 验证
 
@@ -357,11 +357,11 @@ AI: 列出所有注册的 BPL 包
 ```
 ① get_coding_rules          → 获取规范
 ② delphi_kb(TJSON*)         → 搜索 API 确认签名
-③ file_tool(action="write", backup=True) → 写入代码（自动备份到 __history）
-④ compile_project           → 编译验证
-⑤ file_tool(action="format") → 格式化代码
+③ file_tool(action="write") → 写入代码（默认自动备份到 __history）
+④ file_tool(action="format") → 格式化代码
+⑤ compile_project           → 编译验证
 ⑥ get_coding_rules(section="review") → 审计
-⑦ 审计报告 → GitHub Issue
+⑦ 清理 + 确认备份
 ```
 
 > 💡 全程在 AI 对话中完成，你做决策、AI 执行
@@ -400,7 +400,7 @@ AI: 列出所有注册的 BPL 包
 
 ## 开源信息
 
-**GitHub**: [github.com/chinawsb/delphi-complier-mcp-server](https://github.com/chinawsb/delphi-complier-mcp-server)
+**GitHub**: [github.com/chinawsb/daofy](https://github.com/chinawsb/daofy)
 
 **许可证**: MIT
 

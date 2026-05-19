@@ -20,7 +20,7 @@ import zipfile
 import winreg
 from pathlib import Path
 
-MCP_SERVER_NAME = "daofy-delphi-mcp-server"
+MCP_SERVER_NAME = "daofy"
 LEGACY_SERVER_NAME = "delphi-compiler"
 
 
@@ -656,7 +656,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
         force: 是否强制重新配置已存在的 MCP Server。
         restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
     """
-    separator("道飞/Daofy Delphi MCP Server 安装脚本")
+    separator("Daofy for Delphi 安装脚本")
     info(f"版本: {VERSION}")
 
     server_script = os.path.join(str(get_script_dir()), "src", "server.py")
@@ -884,7 +884,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
         project_dir: 项目目录（项目级 MCP 配置使用）。
         restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
     """
-    separator("道飞/Daofy Delphi MCP Server 卸载脚本")
+    separator("Daofy for Delphi 卸载脚本")
 
     agents = detect_agents()
 
@@ -1073,7 +1073,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
 # 自安装：检查当前目录是否为 MCP Server 目录
 # ============================================================
 
-RELEASE_REPO = "chinawsb/delphi-complier-mcp-server"
+RELEASE_REPO = "chinawsb/daofy"
 RELEASE_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
 
 
@@ -1215,7 +1215,7 @@ def ensure_server_files() -> bool:
     info(f"最新版本: {version}")
 
     with tempfile.TemporaryDirectory(prefix="daofy-install-") as tmp_dir:
-        zip_path = os.path.join(tmp_dir, f"delphi-mcp-server-{version}.zip")
+        zip_path = os.path.join(tmp_dir, f"daofy-for-delphi-{version}.zip")
         if not _download_file(zip_url, zip_path):
             return False
 
@@ -1275,7 +1275,7 @@ def ensure_server_files() -> bool:
 
 def main() -> None:
     """安装/卸载脚本入口函数，解析命令行参数并执行对应操作。"""
-    parser = argparse.ArgumentParser(description="Daofy MCP Server 安装/卸载脚本")
+    parser = argparse.ArgumentParser(description="Daofy for Delphi 安装/卸载脚本")
     parser.add_argument("--uninstall", action="store_true", help="卸载模式")
     parser.add_argument("--agent", default="All",
                         choices=["Claude", "Trae", "CodeArts", "Cursor", "OpenCode",

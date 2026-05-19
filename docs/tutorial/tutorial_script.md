@@ -11,7 +11,7 @@
 ## 第一部分：开场 & 项目介绍（约 2 分钟）
 
 ### 画面
-- 全屏展示 GitHub 项目页面：<https://github.com/chinawsb/delphi-complier-mcp-server>
+- 全屏展示 GitHub 项目页面：<https://github.com/chinawsb/daofy>
 - 镜头切到 PPT / 项目 README
 
 ### 旁白脚本
@@ -62,7 +62,7 @@ MCP 全称是 Model Context Protocol，由 Anthropic 公司推出的一种开放
 
 [] 检查并安装 Git/Python 3.10-3.14/7-Zip (安装时优先使用国内镜像源加速下载)
 
-[] 安装 https://github.com/chinawsb/delphi-complier-mcp-server.git
+[] 安装 https://github.com/chinawsb/daofy.git
 
 [] 安装完成后验证结果并帮我配置当前客户端
 ```
@@ -103,7 +103,7 @@ AI: 开始安装 Daofy...
   ⚠️ 未检测到 7-Zip，正在自动下载安装... 完成
 
 第二步: 克隆项目...
-  ✅ 已从 github.com/chinawsb/delphi-complier-mcp-server 克隆
+  ✅ 已从 github.com/chinawsb/daofy 克隆
 
 第三步: 配置虚拟环境并安装依赖...
   ✅ 虚拟环境已创建
@@ -195,7 +195,7 @@ AI 会调用 `check_environment` 工具，自动从 Windows 注册表检测 Delp
 
 再来看知识库的状态。输入"查看 Delphi 知识库统计"，AI 会展示内置的 Delphi 源码知识库的规模。
 
-这个知识库已经预先构建好了 Delphi 官方 RTL、VCL、FMX 的源码索引——包含了超过 **27 万文件、16 万类、30 万个函数**的索引，几乎是 Delphi 全系版本的完整覆盖。
+这个知识库已经预先构建好了 Delphi 官方 RTL、VCL、FMX 的源码索引——包含了超过 **16 万文件、16 万类、30 万个函数**的索引，几乎是 Delphi 全系版本的完整覆盖。
 
 ---
 
@@ -1076,18 +1076,17 @@ AI 的做法跟人类完全不同：
 
 你不需要手动打开 IDE、建文件、查帮助，全部在 AI 对话中完成：
 
-**① 获取编码规范** → AI 先了解项目规则  
-**② 搜索 API 确认签名** → 查 `TJSONObject`、`TJSONValue`、`TFile.ReadAllText` 的确切用法  
-**③ 知识库驱动代码生成** → 结合规范 + API 定义生成代码，而不是凭记忆瞎猜  
-**④ 编译验证** → 编译检查语法  
-**⑤ 格式化** → pasfmt 统一风格  
-**⑥ 代码审计 + 创建工单** → 审计后把问题自动登记为 Issue  
+**① 获取编码规范** → AI 先了解项目规则
+**② 搜索 API 确认签名** → 查 `TJSONObject`、`TJSONValue`、`TFile.ReadAllText` 的确切用法
+**③ 知识库驱动代码生成** → 结合规范 + API 定义生成代码（file_tool write 默认自动备份），而不是凭记忆瞎猜
+**④ 格式化** → pasfmt 统一风格
+**⑤ 编译验证** → 编译检查语法
+**⑥ 代码审计 + 创建工单** → 审计后把问题自动登记为 Issue
+**⑦ 清理 & 验证** → 删除未用代码，确认备份存在
 
 关键区别在于 **第②步和第⑥步**：
 - 第②步不是 AI 凭训练数据"回忆"API——它真的去知识库里查了 `TJSONObject` 的类继承链和构造函数签名
-- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `code_hosting` 工具一键转为工单，纳入 Gitea 问题追踪
-
-**⑧ Gitea 缺陷闭环** → 审计工单 → 修复 → `gitea_close_issue` 关联提交并关闭
+- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `code_hosting` 工具一键转为工单，纳入 Gitea 问题追踪（⑧ Gitea 缺陷闭环：审计工单 → 修复 → `gitea_close_issue` 关联提交并关闭）
 
 整个流程你只需要做决策和提需求，AI 负责执行和验证。这就是 **MCP Server + AI 辅助 Delphi 开发** 的完整形态。
 

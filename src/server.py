@@ -80,6 +80,7 @@ else:
     from src.tools.code_hosting import code_hosting
     from src.tools import file_tool
     from src.tools import dfm_utils as dfm_utils_mod
+    from src.tools import manage_component as manage_component_mod
     from src.tools import create_component_dfm as create_component_dfm_mod
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.utils.logger import init_default_logger, get_logger, log_api_call
@@ -159,12 +160,12 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if is_pas:
                 return ("✨ 提示：编译失败。试试：\n"
                         "  check_environment(action='detect') — 重新检测编译器\n"
-                        "  compile_project(..., get_args_only=True) — 预览编译参数")
+                        "  compile_project(..., dry_run=True) — 预览编译参数")
             return ("✨ 提示：编译失败。试试：\n"
                     "  check_environment(action='detect') — 重新检测编译器\n"
                     "  check_environment(action='check') — 检查编译环境\n"
-                    "  compile_project(..., get_args_only=True) — 预览编译参数")
-        elif not is_pas and not arguments.get("get_args_only"):
+                    "  compile_project(..., dry_run=True) — 预览编译参数")
+        elif not is_pas and not arguments.get("dry_run"):
             return ("✨ 提示：建议用 file_tool(action='format', file_path=...) "
                     "统一格式化代码风格")
 
@@ -268,10 +269,14 @@ async def run_server():
     else:
         logger.warning("未找到可用编译器，DFM 转换功能将不可用")
 
+    # 设置事件签名解析器的 KB 服务引用
+    from src.tools.dfm_parser import set_kb_services as _set_dfm_kb
+    _set_dfm_kb(delphi_kb=kb_service, thirdparty_kb=thirdparty_kb_service)
+
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
-    server = Server("delphi-mcp-server")
+    server = Server("daofy-for-delphi")
     logger.info("MCP Server 实例创建完成")
 
     # ============================================================
@@ -292,12 +297,12 @@ async def run_server():
                             "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
                             "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
                             "【协作链】get_coding_rules→file_tool→compile→失败→check_environment\n"
-                            "【降级】MSBuild 不可用→dcc32；get_args_only 预览参数\n"
+                            "【降级】MSBuild 不可用→dcc32；dry_run 预览参数\n"
                             "【示例】\n"
                             '   compile_project(build_configuration="Release")  # "编译Release版本"\n'
                             '   compile_project(target_platform="win64")        # "生成64位exe"\n'
                             '   compile_project(project_path="unit.pas")        # "检查语法"\n'
-                            '   compile_project(get_args_only=True)             # "只看参数不执行"',
+                            '   compile_project(dry_run=True)             # "只看参数不执行"',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -309,15 +314,15 @@ async def run_server():
                         "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译符号列表，如 [\"DEBUG\", \"USE_MYLIB\"]"},
                         "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "额外单元搜索路径列表，系统会自动从.dproj和Delphi默认路径获取"},
                         "resource_search_paths": {"type": "array", "items": {"type": "string"}, "description": "资源搜索路径列表"},
-                        "optimization_enabled": {"type": "boolean", "default": True, "description": "是否启用编译器优化"},
-                        "debug_info_enabled": {"type": "boolean", "default": True, "description": "是否生成调试信息（含行号信息）"},
+                        "optimize": {"type": "boolean", "default": True, "description": "是否启用编译器优化"},
+                        "debug": {"type": "boolean", "default": True, "description": "是否生成调试信息（含行号信息）"},
                         "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，越高越严格"},
                         "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "要禁用的编译器警告编号列表，如 [\"W1000\"]"},
                         "output_type": {"type": "string", "default": "gui", "enum": ["console", "gui", "dll"], "description": "输出类型: console=控制台程序, gui=窗口程序, dll=动态库"},
                         "runtime_library": {"type": "string", "default": "static", "enum": ["static", "dynamic"], "description": "运行时库链接方式: static=静态链接, dynamic=动态链接"},
                         "timeout": {"type": "integer", "default": 600, "description": "编译超时秒数（默认600秒，即10分钟）"},
-                        "install_if_design_package": {"type": "boolean", "default": True, "description": "设计期包是否自动安装到IDE（仅.dpk有效）"},
-                        "get_args_only": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译，用于调试编译选项"}
+                        "auto_install": {"type": "boolean", "default": True, "description": "设计期包是否自动安装到IDE（仅.dpk有效）"},
+                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译（预览模式）"}
                     },
                     "required": ["project_path"]
                 }
@@ -354,7 +359,7 @@ async def run_server():
                         "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj）"},
                         "version": {"type": "string", "description": "Delphi版本（构建知识库时使用）"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行（build操作时生效，默认true）"},
-                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（build操作时生效）"},
+                        "rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（build操作时生效）"},
                         "incremental": {"type": "boolean", "default": False, "description": "是否增量更新（build操作时生效）"},
                         "build_thirdparty": {"type": "boolean", "default": True, "description": "构建项目KB时是否同时构建第三方库KB"},
                         "build_project": {"type": "boolean", "default": True, "description": "是否构建项目KB"},
@@ -370,7 +375,7 @@ async def run_server():
                         "max_depth": {"type": "integer", "default": 3, "description": "最大抓取深度（build document KB时使用）"},
                         "domain_filter": {"type": "string", "description": "域名过滤（build document KB时使用）"},
                         "url_pattern": {"type": "string", "description": "URL模式过滤（build document KB时使用）"},
-                        "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "排除目录列表（build document KB时使用）"},
+                        "exclude": {"type": "array", "items": {"type": "string"}, "description": "排除目录列表（build document KB时使用）"},
                         "max_workers": {"type": "integer", "description": "最大工作进程数（action=scan时使用）"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
                     }
@@ -400,13 +405,13 @@ async def run_server():
                             "  ⭐ 自动备份到 __history（backup=True 默认）\n"
                             "  ⭐ 自动识别并保持原始编码（UTF-8/GBK/UTF-16），不乱码\n"
                             "  ⭐ DFM 二进制自动转换：写入文本后自动转回二进制格式\n"
-                            '  📌 写入后自动格式化: format_after_write=True\n'
+                            '  📌 写入后自动格式化: auto_format=True\n'
                             "\n"
                             "═══ action=\"format\" — 格式化 / 整理代码 ═══\n"
                             '  file_tool(action="format", file_path="src/Unit1.pas")\n'
                             "  使用 pasfmt 格式化 .pas/.dfm 代码（自动备份）\n"
-                            '  file_tool(action="format", file_path="Unit1.pas", check_only=True)   # 仅检查不修改\n'
-                            '  file_tool(action="format", format_action="code", code="procedure...")  # 格式化代码段\n'
+                            '  file_tool(action="format", file_path="Unit1.pas", dry_run=True)   # 仅检查不修改\n'
+                            '  file_tool(action="format", mode="code", code="procedure...")  # 格式化代码段\n'
                             "\n"
                             "═══ action=\"backup\" — 备份管理 / 历史版本 / 恢复 ═══\n"
                             '  file_tool(action="backup", file_path="src/Unit1.pas")             # 手动创建备份\n'
@@ -418,7 +423,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         # ---- 全局参数 ----
-                        "action": {"type": "string", "enum": ["read", "write", "format", "backup"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), format=格式化, backup=备份管理"},
+                        "action": {"type": "string", "enum": ["read", "write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), format=格式化, backup=备份管理, uses=增删uses子句"},
 
                         # ---- 所有 action 共用 ----
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
@@ -430,7 +435,7 @@ async def run_server():
                         "record_name": {"type": "string", "description": "Record 类型名（search_type=record时使用）"},
                         "function_name": {"type": "string", "description": "函数/过程名（search_type=function时使用，如 'Create'）"},
                         "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始），读大文件时分段使用"},
-                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数，读大文件时建议用此参数分段"},
+                        "limit": {"type": "integer", "default": 500, "description": "最大返回行数，读大文件时建议用此参数分段（原 max_lines）"},
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围: all=所有知识库, delphi=官方源码, thirdparty=第三方库"},
                         "project_path": {"type": "string", "description": "项目文件路径(可选)，用于在项目知识库中查找 .pas"},
                         "end_line": {"type": "integer", "description": "结束行号，不传则到文件末尾"},
@@ -438,52 +443,77 @@ async def run_server():
                         # ---- write 参数 ----
                         "content": {"type": "string", "description": "写入的完整文件内容（action=write时必需）"},
                         "encoding": {"type": "string", "default": "auto", "description": "写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
-                        "format_after_write": {"type": "boolean", "default": False, "description": "写入后自动调用 pasfmt 格式化代码"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "写入后自动调用 pasfmt 格式化代码"},
                         "backup": {"type": "boolean", "default": True, "description": "写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
 
                         # ---- format 参数 ----
-                        "format_action": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "格式化子操作: file=格式化文件, code=格式化代码段, check=仅检查格式"},
-                        "code": {"type": "string", "description": "待格式化的代码文本（format_action=code时使用）"},
+                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
+                        "code": {"type": "string", "description": "待格式化的代码文本（mode=code时使用）"},
                         "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选，高级用法）"},
                         "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses子句风格: compact=合并为一行, pasfmt_default=每行一个"},
-                        "check_only": {"type": "boolean", "default": False, "description": "true=仅检查格式是否正确但不修改文件"},
+                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅检查格式不修改文件（原 check_only）"},
 
                         # ---- backup 参数 ----
                         "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "备份子操作: create=创建备份, list=列出版本, restore=恢复指定版本"},
                         "version": {"type": "integer", "description": "要恢复的版本号（backup_action=restore时使用，不传则恢复最新版）"},
+
+                        # ---- uses 参数 ----
+                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "uses子句操作: add=添加单元, remove=删除单元"},
+                        "unit_name": {"type": "string", "description": "单元名（uses操作时使用，如 Vcl.Dialogs、System.SysUtils）"},
+                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "uses子句所在区域: interface 或 implementation"},
                     }
                 }
             ),
 
-            # ===== DFM 组件生成 ⭐⭐ =====
+            # ===== 组件管理 ⭐⭐ =====
             Tool(
-                name="generate_component_dfm",
-                description="【优先级 ⭐⭐】DFM 组件生成 — 通过编译+运行 Delphi 代码获取组件 DFM 定义\n"
-                            "【触发词】生成DFM、组件序列化、WriteComponent、OBTT\n"
-                            "【原理】AI 写 Pascal 代码创建组件+设属性 → 注入模板项目 → 编译 →\n"
-                            "       运行 → WriteComponent 序列化 → ObjectBinaryToText → 返回 DFM 文本\n"
-                            "【使用步骤】\n"
-                            "  1. 先用 delphi_kb 查组件类定义，确认类名和所在单元\n"
-                            "  2. 写 function CreateComponent(AOwner: TComponent): TComponent; 代码\n"
-                            "     （推荐创建 TForm 容器并设置 Parent，确保属性完整序列化）\n"
-                            "  3. 传 code + uses 给此工具 → 获得 DFM 文本\n"
-                            "  4. 使用 file_tool(backup) 备份目标 DFM → 合并 DFM 文本\n"
-                            "【注意】事件名称会序列化到 DFM，但函数体需要额外写到 .pas\n"
-                            "【示例】\n"
-                            "  代码示例（带容器+事件）:\n"
-                            '    code="type TGenForm = class(TForm) procedure BtnClick(Sender: TObject); end;...",\n'
-                            '    uses=["Vcl.Forms","Vcl.StdCtrls"]',
+                name="manage_component",
+                description="【优先级 ⭐⭐】组件管理 — DFM 组件增/删/改/生成 + PAS 自动同步\n"
+                            "【触发词】添加组件、删除组件、修改组件、生成DFM、组件同步、manage component\n"
+                            "【action 说明】\n"
+                            '  action="create"  生成组件 DFM（编译+运行序列化，原 generate_component_dfm 功能）\n'
+                            '  action="add"     向现有 DFM 添加子组件，自动同步 PAS 字段+事件+uses\n'
+                            '  action="remove"  从 DFM 删除组件（含子树），自动同步删除 PAS 字段+事件方法\n'
+                            '  action="modify"  修改 DFM 中组件属性，事件变更时自动同步 PAS 声明\n'
+                            "【DFM↔PAS 同步规则】\n"
+                            "  add:    新字段声明 + 事件方法桩 + uses 单元\n"
+                            "  remove: 字段声明 + 事件方法(声明+实现) + 空引用的 uses\n"
+                            "  modify: 事件属性变更 → 增/删/改事件方法声明\n"
+                            "【create 示例】\n"
+                            '  code="function CreateComponent(AOwner: TComponent): TComponent; ...",\n'
+                            '  uses=["Vcl.Forms","Vcl.StdCtrls"]\n'
+                            "【add 示例】\n"
+                            '  action="add", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
+                            '  new_component_class="TButton", new_component_name="BtnOK",\n'
+                            '  properties={"Caption": "OK", "OnClick": "BtnOKClick"}\n'
+                            "【remove 示例】\n"
+                            '  action="remove", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
+                            '  component_name="BtnCancel"\n'
+                            "【modify 示例】\n"
+                            '  action="modify", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
+                            '  component_name="BtnOK", properties={"Caption": "确认", "OnClick": "BtnConfirmClick"}',
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "code": {"type": "string", "description": "[必需] Pascal 实现代码，必须包含 function CreateComponent(AOwner: TComponent): TComponent; 定义"},
-                        "uses": {"type": "array", "items": {"type": "string"}, "description": "需引用的单元列表，如 [\"Vcl.Forms\", \"Vcl.StdCtrls\"]"},
-                        "type_decl": {"type": "string", "description": "类型声明段（可选），用于声明 Form 类、事件桩等"},
-                        "init_code": {"type": "string", "description": "初始化代码（可选），在 CreateComponent 前执行。自定义 Form 类需 RegisterClass。"},
+                        "action": {"type": "string", "enum": ["create", "add", "remove", "modify"], "default": "create",
+                                   "description": "操作类型: create=生成DFM, add=添加组件, remove=删除组件, modify=修改属性"},
+                        "target_dfm": {"type": "string", "description": "目标 DFM 文件路径（add/remove/modify 时必需）"},
+                        "target_pas": {"type": "string", "description": "目标 PAS 文件路径（add/remove/modify 时可选，用于自动同步声明）"},
+                        "component_name": {"type": "string", "description": "组件名称（remove/modify 时必需，指定操作的目标组件）"},
+                        "parent_name": {"type": "string", "description": "父组件名称（add 时可选，默认添加到根组件下）"},
+                        "new_component_class": {"type": "string", "description": "新组件类名（add 时必需，如 TButton）"},
+                        "new_component_name": {"type": "string", "description": "新组件实例名（add 时可选，默认自动生成如 Button1）"},
+                        "properties": {"type": "object", "additionalProperties": {"type": "string"},
+                                       "description": "组件属性字典（add/modify 时使用，如 {\"Caption\": \"OK\", \"OnClick\": \"BtnClick\"}）"},
+                        "dfm_text": {"type": "string", "description": "待添加的 DFM 文本片段（add 时可选，替代 new_component_class+properties）"},
+                        "code": {"type": "string", "description": "[create 必需] Pascal 实现代码，必须包含 function CreateComponent(AOwner: TComponent): TComponent; 定义"},
+                        "uses": {"type": "array", "items": {"type": "string"}, "description": "[create] 需引用的单元列表，如 [\"Vcl.Forms\", \"Vcl.StdCtrls\"]"},
+                        "type_decl": {"type": "string", "description": "[create] 类型声明段（可选），用于声明 Form 类、事件桩等"},
+                        "init_code": {"type": "string", "description": "[create] 初始化代码（可选），在 CreateComponent 前执行。自定义 Form 类需 RegisterClass。"},
                         "compile_timeout": {"type": "integer", "default": 60, "description": "编译超时秒数"},
                         "exec_timeout": {"type": "integer", "default": 15, "description": "执行超时秒数（组件创建代码可能耗时操作）"},
                     },
-                    "required": ["code"]
+                    "required": []
                 }
             ),
 
@@ -602,7 +632,7 @@ async def run_server():
             Tool(
                 name="code_hosting",
                 description="【优先级 ⭐⭐】代码托管平台 — 统一操作 Gitea / GitHub / GitLab + Git 本地操作\n"
-                            "通过 platform 切换后端(gitea/github/gitlab)，action 选择操作。\n"
+                            "通过 platform 切换后端(gitea/github/gitlab/gitee/gitcode)，action 选择操作。\n"
                             "\n"
                             "▶ 平台 API 操作:\n"
                             '  code_hosting(platform="gitea", action="create_issue", ...)\n'
@@ -610,7 +640,7 @@ async def run_server():
                             "\n"
                             "▶ Git 本地操作（无需 platform）:\n"
                             '  code_hosting(action="git_clone", repo_url="...", mirror="镜像源")\n'
-                            '  code_hosting(action="git_commit", work_dir=".", commit_message="...")\n'
+                            '  code_hosting(action="git_commit", dir=".", message="...")\n'
                             "\n"
                             "▶ GitHub 国内访问:\n"
                             "  拉取: git_clone 支持 mirror 参数指定镜像源\n"
@@ -628,7 +658,7 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "platform": {"type": "string", "enum": ["gitea", "github", "gitlab"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
+                        "platform": {"type": "string", "enum": ["gitea", "github", "gitlab", "gitee", "gitcode"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
                         "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "close_issue", "add_comment", "list_issues", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status"], "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_push_retry, git_status"},
                         "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
                         "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
@@ -636,20 +666,20 @@ async def run_server():
                         "issue_number": {"type": "integer", "description": "工单编号 (close_issue/add_comment 需要)"},
                         "title": {"type": "string", "description": "工单标题 (create_issue 需要)"},
                         "body": {"type": "string", "description": "正文内容，支持 Markdown (create_issue/add_comment 需要)"},
-                        "label_names": {"type": "array", "items": {"type": "string"}, "description": "标签名称列表 (create_issue 可选)"},
-                        "comment_body": {"type": "string", "description": "关闭工单时的说明 (close_issue 可选)"},
+                        "labels": {"type": "array", "items": {"type": "string"}, "description": "标签名称列表 (create_issue 可选)"},
+                        "comment": {"type": "string", "description": "关闭工单时的说明 (close_issue 可选)"},
                         "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "工单过滤状态 (list_issues 可选，默认 open)"},
                         "username": {"type": "string", "description": "用户名 (create_token 需要)"},
                         "password": {"type": "string", "description": "密码 (create_token 需要)"},
                         "token_name": {"type": "string", "description": "Token 名称 (create_token 可选，默认 delphi-mcp)"},
                         # Git 操作参数
-                        "work_dir": {"type": "string", "description": "Git 仓库本地路径 (git_* 操作需要)"},
+                        "dir": {"type": "string", "description": "Git 仓库本地路径 (git_* 操作需要)"},
                         "repo_url": {"type": "string", "description": "远程仓库 URL (git_clone 需要)"},
                         "mirror": {"type": "string", "description": "GitHub 镜像源地址，如 https://hub.fastgit.xyz (git_clone 可选)"},
                         "branch": {"type": "string", "description": "分支名 (git_clone/git_push 可选)"},
-                        "commit_message": {"type": "string", "description": "提交信息 (git_commit 需要)"},
+                        "message": {"type": "string", "description": "提交信息 (git_commit 需要)"},
                         "files": {"type": "array", "items": {"type": "string"}, "description": "要 add 的文件列表 (git_add 需要)"},
-                        "remote_name": {"type": "string", "description": "远程名称 (git_push/git_push_retry 可选，默认 origin)"},
+                        "remote": {"type": "string", "description": "远程名称 (git_push/git_push_retry 可选，默认 origin)"},
                         "retry_interval": {"type": "integer", "description": "重试间隔秒数 (git_push_retry 可选，默认 300)"},
                         "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
                     },
@@ -659,29 +689,89 @@ async def run_server():
         ]
 
     # ============================================================
+    # 参数类型校验 — MCP 客户端可能传错类型（如 string 代替 bool）
+    # ============================================================
+
+    def _coerce_bool(val, default: bool = False) -> bool:
+        """将任意输入安全转换为 bool。"""
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ('1', 'true', 'yes', 'on')
+        if isinstance(val, (int, float)):
+            return val != 0
+        return default
+
+    def _coerce_int(val, default: int = 0, minv=None, maxv=None) -> int:
+        """将任意输入安全转换为 int，支持范围裁剪。"""
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str):
+            try:
+                v = int(val)
+            except (ValueError, TypeError):
+                return default
+            if minv is not None:
+                v = max(v, minv)
+            if maxv is not None:
+                v = min(v, maxv)
+            return v
+        if isinstance(val, float):
+            v = int(val)
+            if minv is not None:
+                v = max(v, minv)
+            if maxv is not None:
+                v = min(v, maxv)
+            return v
+        return default
+
+    def _coerce_list(val, default=None):
+        """将任意输入安全转换为 list。"""
+        if isinstance(val, list):
+            return val
+        if isinstance(val, (str, bytes)):
+            return [val]
+        if val is None:
+            return default or []
+        return default or []
+
+    # ============================================================
     # 工具分发 — 将工具名映射到对应的 handler 函数
     # ============================================================
     async def _handle_compile_project(arguments: dict) -> Any:
         proj_path = arguments.get("project_path", "")
+        # 类型安全：确保核心参数类型正确
+        dry_run = _coerce_bool(arguments.get("dry_run"), False)
+        warning_level = _coerce_int(arguments.get("warning_level"), 2, 0, 4)
         if proj_path.lower().endswith('.pas'):
             return await compile_file(
                 file_path=proj_path,
                 unit_search_paths=arguments.get('unit_search_paths'),
-                warning_level=arguments.get('warning_level', 2),
+                conditional_defines=arguments.get('conditional_defines'),
+                warning_level=warning_level,
                 disabled_warnings=arguments.get('disabled_warnings'),
                 compiler_version=arguments.get('compiler_version'),
             )
-        elif arguments.get("get_args_only"):
+        elif dry_run:
             _ACCEPTED_GET_ARGS_KEYS = {
                 "project_path", "target_platform", "output_path", "compiler_version",
                 "conditional_defines", "unit_search_paths", "resource_search_paths",
-                "optimization_enabled", "debug_info_enabled", "warning_level",
+                "optimize", "debug", "warning_level",
                 "disabled_warnings", "output_type", "runtime_library", "build_configuration",
             }
             filtered = {k: v for k, v in arguments.items() if k in _ACCEPTED_GET_ARGS_KEYS}
             return await get_compiler_args(**filtered)
         else:
-            return await compile_project(**arguments)
+            # 过滤 handler 专用参数，不传递给 compile_project
+            _SKIP_KEYS = {"dry_run"}
+            compile_args = {k: v for k, v in arguments.items() if k not in _SKIP_KEYS}
+            # 类型安全：将字符串布尔值转换为正确类型
+            for bool_key in ('optimize', 'debug', 'auto_install'):
+                if bool_key in compile_args:
+                    compile_args[bool_key] = _coerce_bool(compile_args[bool_key])
+            if 'warning_level' in compile_args:
+                compile_args['warning_level'] = _coerce_int(compile_args['warning_level'], 2, 0, 4)
+            return await compile_project(**compile_args)
 
     async def _handle_delphi_kb(arguments: dict) -> Any:
         action = arguments.get("action", "search")
@@ -691,11 +781,11 @@ async def run_server():
         elif action == "stats":
             return await doc_tools.get_document_statistics(arguments) if kb_type == "document" else await kb_tools.get_unified_knowledge_stats(arguments)
         elif action == "build":
-            async_mode = arguments.get("async_mode", True)
+            async_mode = _coerce_bool(arguments.get("async_mode"), True)
             if not async_mode:
                 return await kb_tools.build_unified_knowledge_base(arguments)
             version = arguments.get("version")
-            force_rebuild = arguments.get("force_rebuild", False)
+            rebuild = _coerce_bool(arguments.get("rebuild"), False)
             kb_type_map = {"all": "build_knowledge_base", "delphi": "build_knowledge_base",
                            "thirdparty": "build_thirdparty_knowledge_base", "project": "init_project_knowledge_base",
                            "document": "build_document_knowledge_base"}
@@ -714,15 +804,15 @@ async def run_server():
                                "extensions": arguments.get("extensions", [".chm"]),
                                "start_url": arguments.get("start_url"), "max_pages": arguments.get("max_pages", 100),
                                "max_depth": arguments.get("max_depth", 3), "domain_filter": arguments.get("domain_filter"),
-                               "url_pattern": arguments.get("url_pattern"), "exclude_dirs": arguments.get("exclude_dirs"),
-                               "force_rebuild": arguments.get("force_rebuild", False)}
+                               "url_pattern": arguments.get("url_pattern"), "exclude": arguments.get("exclude"),
+                               "rebuild": arguments.get("rebuild", False)}
             elif task_type == "init_project_knowledge_base":
                 resolved_path = _resolve_project_path(arguments.get("project_path"))
                 task_params = {"project_path": resolved_path, "version": version,
-                               "force_rebuild": force_rebuild, "build_thirdparty": arguments.get("build_thirdparty", True),
+                               "rebuild": rebuild, "build_thirdparty": arguments.get("build_thirdparty", True),
                                "build_project": arguments.get("build_project", True)}
             else:
-                task_params = {"version": version, "force_rebuild": force_rebuild, "incremental": incremental}
+                task_params = {"version": version, "rebuild": rebuild, "incremental": incremental}
             return await async_tools.start_async_task({"task_type": task_type, "task_params": task_params,
                                                         "show_progress": arguments.get("show_progress", True)})
         elif action == "build_embedding":
@@ -745,11 +835,24 @@ async def run_server():
     async def _handle_file_tool(arguments: dict) -> Any:
         return await file_tool.handle_file_tool(arguments)
 
-    async def _handle_generate_component_dfm(arguments: dict) -> Any:
-        return await create_component_dfm_mod.generate_component_dfm(
-            code=arguments.get("code", ""), uses=arguments.get("uses"),
-            type_decl=arguments.get("type_decl", ""), init_code=arguments.get("init_code", ""),
-            compile_timeout=arguments.get("compile_timeout", 60), exec_timeout=arguments.get("exec_timeout", 15))
+    async def _handle_manage_component(arguments: dict) -> Any:
+        return await manage_component_mod.manage_component(
+            action=arguments.get("action", "create"),
+            target_dfm=arguments.get("target_dfm"),
+            target_pas=arguments.get("target_pas"),
+            component_name=arguments.get("component_name"),
+            parent_name=arguments.get("parent_name"),
+            new_component_class=arguments.get("new_component_class"),
+            new_component_name=arguments.get("new_component_name"),
+            properties=arguments.get("properties"),
+            dfm_text=arguments.get("dfm_text"),
+            code=arguments.get("code", ""),
+            uses=arguments.get("uses"),
+            type_decl=arguments.get("type_decl", ""),
+            init_code=arguments.get("init_code", ""),
+            compile_timeout=arguments.get("compile_timeout", 60),
+            exec_timeout=arguments.get("exec_timeout", 15),
+        )
 
     async def _handle_check_environment(arguments: dict) -> Any:
         action = arguments.get("action", "check")
@@ -792,7 +895,7 @@ async def run_server():
         "compile_project": _handle_compile_project,
         "delphi_kb": _handle_delphi_kb,
         "file_tool": _handle_file_tool,
-        "generate_component_dfm": _handle_generate_component_dfm,
+        "manage_component": _handle_manage_component,
         "check_environment": _handle_check_environment,
         "async_task": _handle_async_task,
         "install_package": _handle_install_package,
