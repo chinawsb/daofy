@@ -88,7 +88,7 @@ delphi_kb(
 | `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 |
 | `file_tool` | 统一文件操作：读/写/格式化/备份管理 |
 | `manage_component` | DFM 组件增/删/改/生成 + PAS 自动同步 |
-| `code_hosting` | 统一操作 Gitea/GitHub/GitLab 平台 + Git 本地操作 |
+| `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
 
 ## 系统要求

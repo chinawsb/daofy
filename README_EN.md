@@ -283,7 +283,7 @@ The following configs apply to users who installed via git clone. Replace the pa
 | `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base |
 | `file_tool` | Unified file operations: read/write/format/backup |
 | `manage_component` | Manage DFM components: add/remove/modify/create + PAS auto-sync |
-| `code_hosting` | Unified operations for Gitea/GitHub/GitLab + local Git operations |
+| `code_hosting` | Unified operations for Gitea/GitHub/GitLab/Gitee/GitCode + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
 
 ## Knowledge Base
