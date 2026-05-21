@@ -560,6 +560,6 @@ def resolve_target_platform_from_dproj(project_path: str, default_platform: str 
             platform = parser.get_target_platform()
             if platform:
                 return platform.lower()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("忽略非致命异常: %s", str(e))
     return default_platform

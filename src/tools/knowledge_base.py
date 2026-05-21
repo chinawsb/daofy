@@ -9,7 +9,6 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 """
 
 import logging
-import threading
 from pathlib import Path
 from typing import Any, Optional
 from mcp.types import CallToolResult
@@ -22,7 +21,6 @@ _thirdparty_kb_service = None
 
 # 项目知识库缓存 {project_path: ProjectKnowledgeBase instance}
 _pkb_cache = {}
-_pkb_lock = threading.Lock()
 
 
 def _format_build_info(s: dict) -> str:
@@ -149,23 +147,19 @@ def _get_or_create_pkb(project_path: str, fresh: bool = False):
     if fresh:
         return ProjectKnowledgeBase(project_path)
 
-    global _pkb_cache, _pkb_lock
-    with _pkb_lock:
-        if project_path not in _pkb_cache:
-            _pkb_cache[project_path] = ProjectKnowledgeBase(project_path)
-        return _pkb_cache[project_path]
+    if project_path not in _pkb_cache:
+        _pkb_cache[project_path] = ProjectKnowledgeBase(project_path)
+    return _pkb_cache[project_path]
 
 
 def _cleanup_pkb_cache():
     """关闭并清理所有缓存的 ProjectKnowledgeBase 实例"""
-    global _pkb_cache, _pkb_lock
-    with _pkb_lock:
-        for path, pkb in list(_pkb_cache.items()):
-            try:
-                pkb.close()
-            except Exception:
-                pass
-        _pkb_cache.clear()
+    for path, pkb in list(_pkb_cache.items()):
+        try:
+            pkb.close()
+        except Exception as e:
+            logger.debug("关闭 PKB 缓存失败: %s", str(e))
+    _pkb_cache.clear()
 
 
 async def search_knowledge(arguments: Any) -> CallToolResult:
@@ -195,8 +189,8 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         # 尝试获取统计信息补充到提示中
         try:
             guide = _append_stats_guide(guide, kb_type)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取统计信息失败: %s", str(e))
         return CallToolResult(content=[{"type": "text", "text": guide}])
     
     results = {}
@@ -206,9 +200,11 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     # vocabularies.type 使用 Delphi 双字母编码（与 Delphi KB 一致）
     _SEARCH_TYPE_TO_KIND = {
         'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
-        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'],
-        'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
-        'method': ['MM'], 'unit': ['UI'], 'event': ['ME'], 'string': ['KS'],
+        'set': ['TS'], 'helper': ['TH'],
+        'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'], 'operator': ['OP'],
+        'const': ['CC'], 'resourcestring': ['CR'], 'variable': ['GV'],
+        'property': ['MP'], 'field': ['MF'], 'method': ['MM'], 'event': ['ME'],
+        'unit': ['UI'], 'string': ['KS'], 'dfm': ['DF'], 'attribute': ['AB'],
     }
 
     def _filter_by_search_type(symbols, st):
@@ -294,14 +290,14 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                         semantic_classes = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
                         if semantic_classes:
                             results[f"{kb}_semantic_classes"] = semantic_classes
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("忽略非致命异常: %s", str(e))
                     try:
                         semantic_functions = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
                         if semantic_functions:
                             results[f"{kb}_semantic_functions"] = semantic_functions
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("忽略非致命异常: %s", str(e))
 
             elif kb == "project":
                 # 项目知识库搜索：使用 ProjectKnowledgeBase 独立查询
@@ -328,7 +324,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                                     _pp = kwargs.get("project_path")
                                     _pc = kwargs.get("_progress_callback")
                                     _p = _PKB(_pp, progress_callback=_pc)
-                                    _p.build_project_knowledge_base(force_rebuild=False)
+                                    _p.build_project_knowledge_base(rebuild=False)
                                     _p.close()
                                     return True
 
@@ -370,14 +366,14 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                                 sc = pkb.project_kb.semantic_search_classes(query, top_k=top_k)
                                 if sc:
                                     results["project_semantic_classes"] = sc
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug("忽略非致命异常: %s", str(e))
                             try:
                                 sf = pkb.project_kb.semantic_search_functions(query, top_k=top_k)
                                 if sf:
                                     results["project_semantic_functions"] = sf
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug("忽略非致命异常: %s", str(e))
                     except Exception as e:
                         results["project_error"] = str(e)
 
@@ -400,14 +396,14 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                             semantic_classes = _thirdparty_kb_service.semantic_search_classes(query, top_k=top_k)
                             if semantic_classes:
                                 results["thirdparty_semantic_classes"] = semantic_classes
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("忽略非致命异常: %s", str(e))
                         try:
                             semantic_functions = _thirdparty_kb_service.semantic_search_functions(query, top_k=top_k)
                             if semantic_functions:
                                 results["thirdparty_semantic_functions"] = semantic_functions
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("忽略非致命异常: %s", str(e))
 
         except Exception as e:
             results[f"{kb}_error"] = str(e)
@@ -417,8 +413,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     _KIND_DESC = {
         'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
-        'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程',
-        'CC': '常量', 'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件', 'UI': '单元'
+        'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程', 'OP': '运算符重载',
+        'CC': '常量', 'CR': '资源字符串', 'GV': '全局变量',
+        'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件',
+        'UI': '单元', 'KS': '字符串', 'DF': 'DFM属性', 'AB': '自定义属性',
     }
 
     def _trunc_hint(items, total_key=None):
@@ -440,7 +438,33 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             file_path = file_info.get('full_path') or file_info.get('path', 'N/A')
         else:
             file_path = r.get('full_path') or r.get('relative_path', 'N/A')
-        return f"  - {r.get('name', 'N/A')} ({type_desc})\n    文件: {file_path}\n    行号: {r.get('line', 'N/A')}\n"
+        
+        name = r.get('name', 'N/A')
+        line = r.get('line', 'N/A')
+        definition = r.get('definition', '')
+        
+        # AST 增强字段
+        extra = []
+        sig = r.get('signature', '') or r.get('kind', '')
+        if sig and sig not in ('', name):
+            extra.append(f"签名: {sig}")
+        inherits = r.get('inherits_from') or r.get('base_class', '')
+        if inherits:
+            extra.append(f"继承: {inherits}")
+        visibility = r.get('visibility', '')
+        if visibility and visibility != 'published':
+            extra.append(f"可见性: {visibility}")
+        modifiers = r.get('modifiers')
+        if modifiers and isinstance(modifiers, str) and modifiers != '[]':
+            extra.append(f"修饰: {modifiers}")
+        source = r.get('source', '')
+        if source == 'ast':
+            extra.append("(AST)")
+        
+        result = f"  - {name} ({type_desc})\n    文件: {file_path}\n    行号: {line}\n"
+        if extra:
+            result += f"    {' | '.join(extra)}\n"
+        return result
 
     # 显示符号搜索结果
     if "delphi_symbols" in results and results["delphi_symbols"]:
@@ -574,13 +598,13 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
     - project_path: 项目路径 (仅project类型需要)
     - version: Delphi版本 (仅delphi/thirdparty需要)
     - async_mode: 是否异步
-    - force_rebuild: 是否强制重建
+    - rebuild: 是否强制重建
     """
     kb_type = arguments.get("kb_type", "all")
     project_path = _resolve_project_path(arguments.get("project_path"))
     version = arguments.get("version")
     async_mode = arguments.get("async_mode", True)
-    force_rebuild = arguments.get("force_rebuild", False)
+    rebuild = arguments.get("rebuild", False)
     
     # 解析知识库类型
     if kb_type == "all":
@@ -597,18 +621,18 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
             if kb == "delphi" and _delphi_kb_service:
                 # build 前关闭已有连接（SQLiteVectorKnowledgeBase 以 WAL 模式打开，会阻止其他连接）
                 _delphi_kb_service.close()
-                success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
+                success = _delphi_kb_service.build_knowledge_base(version=version, rebuild=rebuild)
                 results["delphi"] = "成功" if success else "失败"
             elif kb == "project" and project_path:
                 pkb = _get_or_create_pkb(project_path, fresh=True)
                 try:
-                    success = pkb.build_project_knowledge_base(force_rebuild=force_rebuild)
+                    success = pkb.build_project_knowledge_base(rebuild=rebuild)
                     results["project"] = "成功" if success else "失败"
                 finally:
                     pkb.close()
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 _thirdparty_kb_service.close()
-                success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
+                success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, rebuild=rebuild)
                 results["thirdparty"] = "成功" if success else "失败"
         except Exception as e:
             results[kb] = f"错误: {str(e)}"

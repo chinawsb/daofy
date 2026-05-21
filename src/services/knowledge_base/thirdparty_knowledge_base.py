@@ -442,8 +442,8 @@ class ThirdPartyKnowledgeBase:
         if self.progress_callback:
             try:
                 self.progress_callback(percent, message)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
 
     def _save_paths(self, paths: List[str], version_info: Dict):
         """保存路径列表"""
@@ -459,13 +459,13 @@ class ThirdPartyKnowledgeBase:
 
         logger.info(f"路径列表已保存到: {self.paths_file}")
 
-    def build_thirdparty_knowledge_base(self, version: Optional[str] = None, force_rebuild: bool = False) -> bool:
+    def build_thirdparty_knowledge_base(self, version: Optional[str] = None, rebuild: bool = False) -> bool:
         """
         构建第三方库知识库
 
         Args:
             version: Delphi 版本,如果为 None 则使用最新版本
-            force_rebuild: 是否强制重建
+            rebuild: 是否强制重建
 
         Returns:
             是否构建成功
@@ -480,12 +480,12 @@ class ThirdPartyKnowledgeBase:
             return False
 
         # 检查是否需要重建
-        if not force_rebuild and self.kb_instance is not None:
-            logger.info("知识库已存在,使用 force_rebuild=true 强制重建")
+        if not rebuild and self.kb_instance is not None:
+            logger.info("知识库已存在,使用 rebuild=true 强制重建")
             return True
 
-        # force_rebuild时关闭旧连接并清空旧数据
-        if force_rebuild:
+        # rebuild时关闭旧连接并清空旧数据
+        if rebuild:
             if self.kb_instance is not None:
                 self.kb_instance.close()
                 self.kb_instance = None
@@ -566,8 +566,8 @@ class ThirdPartyKnowledgeBase:
         
         current_time = datetime.now().timestamp()
         
-        # force_rebuild时清空旧数据
-        if force_rebuild:
+        # rebuild时清空旧数据
+        if rebuild:
             try:
                 cursor.execute("DELETE FROM files")
                 cursor.execute("DELETE FROM vocabularies")
@@ -579,7 +579,7 @@ class ThirdPartyKnowledgeBase:
         
         # 增量构建：加载现有文件的hash
         existing_files = {}
-        if not force_rebuild:
+        if not rebuild:
             cursor.execute("SELECT id, full_path, hash FROM files")
             for row in cursor.fetchall():
                 existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
@@ -616,7 +616,7 @@ class ThirdPartyKnowledgeBase:
         new_file_paths = set(file_info.get('full_path', '') for file_info in unique_files)
         
         # 检测已删除的文件（保留，仅记录日志）
-        if not force_rebuild:
+        if not rebuild:
             for old_path in existing_files:
                 if old_path not in new_file_paths:
                     deleted_files += 1
@@ -628,7 +628,7 @@ class ThirdPartyKnowledgeBase:
             new_hash = file_info.get('hash', '')
             
             # 增量构建：检查文件是否变更
-            if not force_rebuild and full_path in existing_files:
+            if not rebuild and full_path in existing_files:
                 existing_info = existing_files[full_path]
                 if existing_info['hash'] == new_hash:
                     # 2. 已存在未变更，直接跳过
@@ -737,7 +737,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 self._report_progress(pct, f"保存源文件 [{i+1}/{len(unique_files)}]")
                 logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
         
-        if not force_rebuild:
+        if not rebuild:
             logger.info(f"增量构建: 新增 {new_files} 个, 更新 {updated_files} 个, 跳过 {skipped_files} 个, 删除 {deleted_files} 个（保留）")
 
         # 插入帮助文档
@@ -747,7 +747,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 full_path = help_doc.get('full_path', '')
                 
                 # 增量构建：删除已存在的帮助文档
-                if not force_rebuild and full_path in existing_files:
+                if not rebuild and full_path in existing_files:
                     old_file_id = existing_files[full_path]['id']
                     cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
                 

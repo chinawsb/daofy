@@ -239,7 +239,7 @@ async def format_file(
     config_path: Optional[str] = None,
     backup: bool = True,
     in_place: bool = True,
-    check_only: bool = False,
+    dry_run: bool = False,
     uses_style: Optional[str] = None
 ) -> Dict[str, Any]:
     """
@@ -250,7 +250,7 @@ async def format_file(
         config_path: pasfmt 配置文件路径（可选）
         backup: 是否创建备份文件（在 __history 目录下）
         in_place: 是否原地格式化（修改原文件）
-        check_only: 仅检查格式，不实际修改文件
+        dry_run: 仅检查格式，不实际修改文件
         uses_style: uses 子句风格，None=使用全局设置, "compact"=合并为一行, "pasfmt_default"=保留 pasfmt 原样
 
     Returns:
@@ -300,7 +300,7 @@ async def format_file(
         cmd.extend(["--config-file", config_path])
     
     # 添加模式参数
-    if check_only:
+    if dry_run:
         cmd.extend(["--mode", "check"])
     elif in_place:
         cmd.extend(["--mode", "files"])
@@ -327,7 +327,7 @@ async def format_file(
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
         
-        if check_only:
+        if dry_run:
             # check 模式：returncode != 0 表示格式不正确，这是正常行为
             if result.returncode != 0:
                 # 有格式问题 - 解析 stderr 获取文件名
@@ -350,7 +350,7 @@ async def format_file(
                 return {
                     "status": "success",
                     "formatted": False,
-                    "check_only": True,
+                    "dry_run": True,
                     "issues": issues if issues else [all_output],
                     "message": "代码格式检查完成，发现格式问题",
                     "backup_file": backup_path
@@ -360,7 +360,7 @@ async def format_file(
                 return {
                     "status": "success",
                     "formatted": True,
-                    "check_only": True,
+                    "dry_run": True,
                     "issues": [],
                     "message": "代码格式正确",
                     "backup_file": backup_path
@@ -648,7 +648,7 @@ async def download_and_install_pasfmt(install_dir: str = None) -> Dict[str, Any]
         }
     
     # 临时文件路径
-    temp_zip = os.path.join(tempfile.gettempdir(), "pasfmt.zip")
+    temp_zip = os.path.join(tempfile.gettempdir(), "pasfmt_%d.zip" % os.getpid())
     
     # 尝试从多个源下载
     download_success = False

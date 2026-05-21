@@ -146,13 +146,13 @@ class DelphiKnowledgeBaseService:
 
         return None
 
-    def build_knowledge_base(self, version: Optional[str] = None, force_rebuild: bool = False, incremental: bool = False) -> bool:
+    def build_knowledge_base(self, version: Optional[str] = None, rebuild: bool = False, incremental: bool = False) -> bool:
         """
         构建知识库
 
         Args:
             version: Delphi 版本,如果为 None 则选择最新版本
-            force_rebuild: 是否强制重建
+            rebuild: 是否强制重建
             incremental: 是否增量构建
 
         Returns:
@@ -174,11 +174,11 @@ class DelphiKnowledgeBaseService:
             return False
 
         # 使用智能缓存方案
-        return self._build_with_smart_cache(force_rebuild, incremental=incremental)
+        return self._build_with_smart_cache(rebuild, incremental=incremental)
     
-    def _build_with_smart_cache(self, force_rebuild: bool = False, incremental: bool = False) -> bool:
+    def _build_with_smart_cache(self, rebuild: bool = False, incremental: bool = False) -> bool:
         """使用智能缓存方案构建知识库"""
-        if incremental and not force_rebuild:
+        if incremental and not rebuild:
             logger.info("使用智能缓存方案增量构建知识库...")
         else:
             logger.info("使用智能缓存方案构建知识库...")
@@ -203,7 +203,7 @@ class DelphiKnowledgeBaseService:
             },
             "build": {
                 "auto_rebuild": False,
-                "incremental": not force_rebuild,
+                "incremental": not rebuild,
                 "incremental_hash_mode": "mtime_size",
                 "parallel_workers": 4,
                 "batch_size": 1000
@@ -219,7 +219,7 @@ class DelphiKnowledgeBaseService:
         self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir), config, progress_callback=self.progress_callback)
         
         # 异步重建
-        self.kb_instance.rebuild_async(incremental=incremental and not force_rebuild)
+        self.kb_instance.rebuild_async(incremental=incremental and not rebuild)
         
         elapsed = (time.time() - start_time) * 1000
         logger.info(f"知识库初始化完成! 耗时: {elapsed:.2f}ms")

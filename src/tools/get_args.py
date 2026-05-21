@@ -31,8 +31,8 @@ async def get_compiler_args(
     conditional_defines: Optional[List[str]] = None,
     unit_search_paths: Optional[List[str]] = None,
     resource_search_paths: Optional[List[str]] = None,
-    optimization_enabled: bool = True,
-    debug_info_enabled: bool = False,
+    optimize: bool = True,
+    debug: bool = False,
     warning_level: int = 2,
     disabled_warnings: Optional[List[str]] = None,
     output_type: str = "gui",
@@ -50,8 +50,8 @@ async def get_compiler_args(
         conditional_defines: 条件编译符号列表
         unit_search_paths: 单元搜索路径列表
         resource_search_paths: 资源搜索路径列表
-        optimization_enabled: 是否启用优化
-        debug_info_enabled: 是否生成调试信息
+        optimize: 是否启用优化
+        debug: 是否生成调试信息
         warning_level: 警告级别(0-4)
         disabled_warnings: 禁用的警告列表
         output_type: 输出类型(console/gui/dll)
@@ -86,8 +86,8 @@ async def get_compiler_args(
             conditional_defines=conditional_defines or [],
             unit_search_paths=unit_search_paths or [],
             resource_search_paths=resource_search_paths or [],
-            optimization_enabled=optimization_enabled,
-            debug_info_enabled=debug_info_enabled,
+            optimize=optimize,
+            debug=debug,
             warning_level=warning_level,
             disabled_warnings=disabled_warnings or [],
             output_type=OutputType(output_type),

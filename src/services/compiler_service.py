@@ -209,12 +209,17 @@ class CompilerService:
         """
         import subprocess
         import json
+        import re
+        
+        if not re.match(r'^[A-Za-z0-9_.-]+$', process_name):
+            logger.warning("进程名包含非法字符，已拒绝: %s", process_name)
+            return None
         
         try:
-            # 使用 PowerShell 检查进程
             result = subprocess.run(
-                ['powershell', '-Command', 
-                 f"Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue | Select-Object Id, ProcessName, Path | ConvertTo-Json"],
+                ['powershell', '-Command',
+                 "Get-Process -Name '%s' -ErrorAction SilentlyContinue | "
+                 "Select-Object Id, ProcessName, Path | ConvertTo-Json" % process_name],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -224,7 +229,6 @@ class CompilerService:
             if result.returncode == 0 and result.stdout.strip():
                 output = result.stdout.strip()
                 
-                # 如果返回的是数组（多个进程），取第一个
                 if output.startswith('['):
                     processes = json.loads(output)
                     if processes:
@@ -236,7 +240,7 @@ class CompilerService:
                 else:
                     return None
                 
-                logger.info(f"检测到进程正在运行: {proc.get('ProcessName')} (PID: {proc.get('Id')})")
+                logger.info("检测到进程正在运行: %s (PID: %s)", proc.get('ProcessName'), proc.get('Id'))
                 return {
                     'pid': proc.get('Id'),
                     'name': proc.get('ProcessName'),
@@ -246,7 +250,7 @@ class CompilerService:
             return None
             
         except Exception as e:
-            logger.warning(f"检查进程时发生错误: {str(e)}")
+            logger.warning("检查进程时发生错误: %s", str(e))
             return None
 
     def _cleanup_dcu_files(self, file_path: str):
@@ -300,8 +304,21 @@ class CompilerService:
             (success, error_message, output) 元组
         """
         import subprocess
+        import tempfile
+        import re
         
-        logger.info(f"执行 {event_name}: {event_cmd}")
+        logger.info("执行 %s: %s", event_name, event_cmd[:200])
+        
+        _DANGEROUS_PATTERNS = re.compile(
+            r'(?:^|\b)(?:rm\s+/|del\s+/[sq]|format\s+[a-z]:|net\s+user|'
+            r'reg(?:edit(?:32)?|\.exe)?\s+add|powershell\s+-enc|'
+            r'cmd(?:\.exe)?\s+/c\s*(?:curl|wget|bitsadmin))',
+            re.IGNORECASE
+        )
+        if _DANGEROUS_PATTERNS.search(event_cmd):
+            error_msg = "%s 命令包含危险模式，已拒绝执行: %s" % (event_name, event_cmd[:200])
+            logger.error(error_msg)
+            return (False, error_msg, None)
         
         # 替换 Delphi 支持的变量
         if context:
@@ -344,36 +361,47 @@ class CompilerService:
         event_cmd = event_cmd.replace('$(PROJECTDIR)', project_dir)
         
         try:
-            logger.info("执行编译事件（shell=True）: %s", event_cmd[:200])
             logger.warning("编译事件来自 .dproj 文件配置，请确保项目文件可信")
-            result = subprocess.run(
-                event_cmd,
-                shell=True,
-                cwd=project_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-            )
+            with tempfile.NamedTemporaryFile(
+                mode='w', suffix='.bat', delete=False, encoding='utf-8'
+            ) as bat_f:
+                bat_f.write('@echo off\n')
+                bat_f.write(event_cmd + '\n')
+                bat_path = bat_f.name
+            
+            try:
+                result = subprocess.run(
+                    ['cmd.exe', '/c', bat_path],
+                    cwd=project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                )
+            finally:
+                try:
+                    os.unlink(bat_path)
+                except OSError:
+                    pass
             
             if result.returncode != 0 and not ignore_exit_code:
-                error_msg = f"{event_name} 失败(退出码 {result.returncode}): {result.stderr}"
+                error_msg = "%s 失败(退出码 %d): %s" % (event_name, result.returncode, result.stderr)
                 logger.error(error_msg)
                 return (False, error_msg, result.stdout + result.stderr)
             
-            logger.info(f"{event_name} 执行成功")
+            logger.info("%s 执行成功", event_name)
             if result.stdout:
-                logger.debug(f"{event_name} 输出: {result.stdout}")
+                logger.debug("%s 输出: %s", event_name, result.stdout)
             
             return (True, None, result.stdout + result.stderr)
             
         except subprocess.TimeoutExpired:
-            error_msg = f"{event_name} 执行超时({timeout}秒)"
+            error_msg = "%s 执行超时(%d秒)" % (event_name, timeout)
             logger.error(error_msg)
             return (False, error_msg, None)
         except Exception as e:
-            error_msg = f"{event_name} 执行失败: {str(e)}"
-            logger.error(error_msg)
+            error_msg = "%s 执行失败: %s" % (event_name, str(e))
+            logger.error(error_msg, exc_info=True)
             return (False, error_msg, None)
 
     def _extract_config_from_dproj(self, project_path: str, options: 'CompileOptions') -> 'CompileOptions':
@@ -707,13 +735,13 @@ class CompilerService:
             args.append(f'-R{paths}')
 
         # 优化选项
-        if options.optimization_enabled:
+        if options.optimize:
             args.append('-$O+')
         else:
             args.append('-$O-')
 
         # 调试信息
-        if options.debug_info_enabled:
+        if options.debug:
             args.append('-$D+')
         else:
             args.append('-$D-')
@@ -969,18 +997,24 @@ class CompilerService:
             
             # 6. 创建临时批处理文件来设置环境并执行 MSBuild
             import tempfile
+            if '"' in rsvars_path:
+                error_msg = "rsvars.bat 路径包含非法字符，已拒绝: %s" % rsvars_path
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_PATH",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
             with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
-                # 设置 Delphi 环境变量
                 f.write('@echo off\n')
-                f.write(f'call "{rsvars_path}"\n')
-                # 调用 MSBuild
-                f.write(f'msbuild {" ".join(args)}\n')
+                f.write('call "%s"\n' % rsvars_path)
+                f.write('msbuild %s\n' % ' '.join(args))
                 batch_file = f.name
             
-            logger.info(f"创建批处理文件: {batch_file}")
+            logger.info("创建批处理文件: %s", batch_file)
             logger.debug("=== 完整编译命令 ===\n"
-                         f"rsp: {rsvars_path}\n"
-                         f"{msbuild_cmd}")
+                         "rsp: %s\n%s" % (rsvars_path, msbuild_cmd))
             
             # 6. 执行批处理文件
             try:
@@ -1280,7 +1314,8 @@ class CompilerService:
                 namespaces=namespaces,
                 include_paths=include_paths if include_paths else None,
                 output_dir=output_dir,
-                delphi_version=delphi_version
+                delphi_version=delphi_version,
+                conditional_defines=request.conditional_defines,
             )
 
             # 5. 执行编译

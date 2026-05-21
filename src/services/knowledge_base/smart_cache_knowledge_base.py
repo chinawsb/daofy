@@ -93,23 +93,27 @@ class SmartCacheKnowledgeBase:
         'TE': 'enum',
         'TS': 'set of',
         'TY': 'type alias',
-        # 过程/函数
+        'TH': 'helper',
+        'AT': 'array type',
+        'PT': 'pointer type',
+        # 过程/函数/运算符
         'FF': 'function',
         'FP': 'procedure',
-        'PT': 'procedure type',
+        'OP': 'operator overload',
         # 成员
-        'MM': 'method',
         'MF': 'field',
         'MP': 'property',
+        'MM': 'method',
         'ME': 'event',
-        # 其他
+        # 变量/常量
+        'GV': 'global variable',
         'CC': 'const',
         'CR': 'resourcestring',
+        # 其他
         'UI': 'unit',
-        'TH': 'helper',
-        'AT': 'attribute',
-        'GT': 'generic type',
         'KS': 'string literal',
+        'DF': 'DFM property',
+        'AB': 'custom attribute',
     }
     # 反向映射
     TYPE_REVERSE_MAP = {v: k for k, v in TYPE_MAP.items()}
@@ -168,8 +172,11 @@ class SmartCacheKnowledgeBase:
                 drop_source_tables(cursor)
         
         # 使用统一 schema
-        from .schema import create_source_tables
+        from .schema import create_source_tables, create_ast_tables, migrate_vocabularies_ast_columns
         create_source_tables(cursor)
+        # Schema v3: AST 增强表 + 列迁移
+        create_ast_tables(cursor)
+        migrate_vocabularies_ast_columns(cursor)
         
         conn.commit()
         conn.close()
@@ -190,14 +197,83 @@ class SmartCacheKnowledgeBase:
         
         logger.info("知识库构建完成")
     
-    @staticmethod
-    def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict], int, List[str]]:
-        """静态方法：解析Delphi源文件（用于多进程）
+    # ============================================================
+    # daudit.exe AST 引擎调用
+    # ============================================================
+    
+    _DAUDIT_PATH = None
+    
+    @classmethod
+    def _find_daudit(cls) -> Optional[str]:
+        """查找 daudit.exe 路径（搜索 tools/daudit/）"""
+        if cls._DAUDIT_PATH:
+            return cls._DAUDIT_PATH
+        
+        candidates = [
+            Path(__file__).parent.parent.parent.parent / "tools" / "daudit" / "daudit.exe",
+            Path.cwd() / "tools" / "daudit" / "daudit.exe",
+        ]
+        for p in candidates:
+            if p.exists():
+                cls._DAUDIT_PATH = str(p.resolve())
+                return cls._DAUDIT_PATH
+        return None
+    
+    @classmethod
+    def _call_daudit_kb(cls, file_path_str: str) -> Optional[Dict]:
+        """调用 daudit.exe --mode=kb 单文件模式
         
         Returns:
-            (file_path_str, items, line_count, uses_list)
+            解析结果 dict，或 None（daudit 不可用/解析失败）
         """
-        # 注: re 和 Path 已在模块顶部导入，不在函数内重复 import
+        daudit = cls._find_daudit()
+        if not daudit:
+            return None
+        
+        import json, subprocess
+        
+        try:
+            result = subprocess.run(
+                [daudit, "--mode=kb", "--input", file_path_str, "--format", "json"],
+                capture_output=True, text=True, timeout=60,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return json.loads(result.stdout)
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+            logger.debug("AST 解析失败 %s: %s", file_path_str, e)
+        
+        return None
+    
+    @classmethod
+    def _call_daudit_audit(cls, source_dir: str, rules: str = "P0") -> Optional[Dict]:
+        """调用 daudit.exe --mode=audit 全项目审计
+        
+        Returns:
+            审计报告 dict，或 None
+        """
+        daudit = cls._find_daudit()
+        if not daudit:
+            return None
+        
+        import json, subprocess
+        
+        try:
+            result = subprocess.run(
+                [daudit, "--mode=audit", "--source-dir", source_dir, "--rules", rules],
+                capture_output=True, text=True, timeout=300,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+            if result.returncode in (0, 1) and result.stdout.strip():
+                return json.loads(result.stdout)
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+            logger.error("AST 审计失败: %s", e)
+        
+        return None
+
+    @staticmethod
+    def _regex_fallback(file_path_str: str) -> Tuple[str, List[Dict], int, List[str]]:
+        """正则 fallback 解析（原 _parse_delphi_file_static 逻辑）"""
         from src.services.knowledge_base.scan_delphi_sources import _extract_all_entities, _extract_uses
         
         file_path = Path(file_path_str)
@@ -210,8 +286,6 @@ class SmartCacheKnowledgeBase:
                 content = f.read()
             line_count = content.count('\n') + 1
             uses_list = _extract_uses(content)
-            
-            # 核心实体复用 _extract_all_entities
             entities = _extract_all_entities(content)
             
             # 补充提取: 细分类型 (先收集, 用于覆盖 TY 中被泛化匹配的条目)
@@ -454,8 +528,60 @@ class SmartCacheKnowledgeBase:
             logger.warning("解析文件失败 %s: %s", file_path_str, e)
         
         return (file_path_str, items, line_count, uses_list)
-    
 
+    @staticmethod
+    def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict], int, List[str]]:
+        """解析 Delphi 源文件（主入口）
+        
+        优先级: AST 引擎 (daudit.exe --mode=kb) → 正则 fallback (_regex_fallback)
+        
+        Returns:
+            (file_path_str, items, line_count, uses_list)
+        """
+        # 尝试 AST 引擎解析
+        ast_result = SmartCacheKnowledgeBase._call_daudit_kb(file_path_str)
+        
+        if ast_result and ast_result.get("status") == "ok":
+            items = []
+            for ent in ast_result.get("entities", []):
+                item = {
+                    'type': ent.get('kind', ''),
+                    'name': ent.get('name', ''),
+                    'line': ent.get('start_line', 0),
+                    'base_class': ent.get('inherits_from'),
+                    'description': ent.get('definition', ''),
+                    # AST 增强字段
+                    'end_line': ent.get('end_line'),
+                    'end_offset': ent.get('end_offset'),
+                    'body_length': ent.get('body_length'),
+                    'code_block': ent.get('code_block', ''),
+                    'signature': ent.get('signature', ''),
+                    'modifiers': json.dumps(ent.get('modifiers', []), ensure_ascii=False),
+                    'visibility': ent.get('visibility', 'published'),
+                    'type_refs': json.dumps(ent.get('type_refs', []), ensure_ascii=False),
+                    'member_count': ent.get('member_count'),
+                    'inheritance_chain': json.dumps(ent.get('inheritance_chain', []), ensure_ascii=False),
+                    'generics': json.dumps(ent.get('generics', {}), ensure_ascii=False),
+                    'params': json.dumps(ent.get('params', []), ensure_ascii=False),
+                    'return_type': ent.get('return_type', ''),
+                    'calls': json.dumps(ent.get('calls', []), ensure_ascii=False),
+                    'source': 'ast',
+                }
+                items.append(item)
+            
+            uses_data = ast_result.get('uses', {})
+            uses_list = uses_data.get('interface', []) + uses_data.get('implementation', [])
+            total_lines = ast_result.get('file_stats', {}).get('total_lines', 0)
+            
+            if items:
+                logger.debug(f"AST 解析成功: {file_path_str} ({len(items)} 实体)")
+            
+            return (file_path_str, items, total_lines, uses_list)
+        
+        # AST 不可用或失败 → fallback 到正则
+        if SmartCacheKnowledgeBase._find_daudit():
+            logger.debug(f"AST 解析失败，fallback 到正则: {file_path_str}")
+        return SmartCacheKnowledgeBase._regex_fallback(file_path_str)
     
     def _rebuild_init(self, source_paths: List[Path], incremental: bool = False, build_start_time: float = None):
         """重建初始化阶段
@@ -469,9 +595,11 @@ class SmartCacheKnowledgeBase:
         cursor = conn.cursor()
         
         try:
-            # Schema 升级检测：v1→v2 清理重复词汇并创建唯一索引（与 thirdparty_kb 保持一致）
+            # Schema 升级检测
             from src.services.knowledge_base import get_schema_version_from_db as _smart_get_ver
-            if _smart_get_ver(cursor) < 2:
+            _ver = _smart_get_ver(cursor)
+            # v1→v2: 清理重复词汇并创建唯一索引
+            if _ver < 2:
                 cursor.execute("""
                     DELETE FROM vocabularies WHERE id NOT IN (
                         SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
@@ -480,6 +608,12 @@ class SmartCacheKnowledgeBase:
                 if cursor.rowcount > 0:
                     logger.info(f"升级 schema v1→v2：清理了 {cursor.rowcount} 条重复词汇记录")
                 cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
+            # v2→v3: AST 增强列 + 新表
+            if _ver < 3:
+                from src.services.knowledge_base.schema import migrate_vocabularies_ast_columns, create_ast_tables
+                migrate_vocabularies_ast_columns(cursor)
+                create_ast_tables(cursor)
+                logger.info("升级 schema v2→v3：AST 增强列 + entity_refs/audit_results 表")
 
             if incremental:
                 cursor.execute("DELETE FROM metadata")
@@ -527,7 +661,8 @@ class SmartCacheKnowledgeBase:
                             if incremental and fp in existing_files:
                                 old_id, old_hash = existing_files[fp]
                                 if hash_mode == 'md5':
-                                    file_hash = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
+                                    with open(file_path, 'rb') as _hf:
+                                        file_hash = hashlib.md5(_hf.read()).hexdigest()
                                 else:
                                     file_hash = f"{stat.st_mtime}:{stat.st_size}"
                                 if old_hash == file_hash:

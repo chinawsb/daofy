@@ -31,10 +31,11 @@ class ProcessManager:
             match = re.search(r'(.+Studio\\\d+\.\d+)', compiler_path)
             if match:
                 bds_path = match.group(1)
+                bds_version = bds_path.split('\\')[-1]
                 env = {
                     'BDS': bds_path,
                     'BDSINCLUDE': f"{bds_path}\\include",
-                    'BDSCOMMONDIR': f"C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\{bds_path.split('\\')[-1]}",
+                    'BDSCOMMONDIR': f"C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\{bds_version}",
                     'LANGDIR': 'EN',
                 }
                 logger.debug(f"设置 Delphi 环境变量: {env}")

@@ -26,7 +26,7 @@ def _cleanup_dfm_temp_dirs():
     for d in list(_dfm_temp_dirs):
         try:
             shutil.rmtree(d, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
     _dfm_temp_dirs.clear()
 
@@ -34,11 +34,22 @@ def _cleanup_dfm_temp_dirs():
 # 全局编译器搜索路径缓存
 _compiler_dcc32_path: Optional[str] = None
 
+# 编译好的 dfmconv.exe 缓存路径（避免每次 DFM 转换都重新编译 dcc32）
+_cached_dfmconv_exe: Optional[str] = None
+
 
 def set_compiler_path(path: str):
     """设置 dcc32.exe 路径"""
     global _compiler_dcc32_path
     _compiler_dcc32_path = path
+
+
+def _get_cached_dfmconv() -> Optional[str]:
+    """获取缓存的 dfmconv.exe 路径，存在且有效时返回，否则返回 None"""
+    global _cached_dfmconv_exe
+    if _cached_dfmconv_exe and os.path.isfile(_cached_dfmconv_exe):
+        return _cached_dfmconv_exe
+    return None
 
 
 def _find_dcc32() -> Optional[str]:
@@ -58,7 +69,7 @@ def _find_dcc32() -> Optional[str]:
             path = result.stdout.strip().split('\n')[0].strip()
             if path and os.path.isfile(path):
                 return path
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return None
 
@@ -139,33 +150,28 @@ def _find_library_path(dcc32: str) -> Optional[str]:
     return None
 
 
-def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
+def _compile_dfmconv_to(exe_path: str, dcc32: str) -> bool:
     """
-    编译 DFM 转换器。
+    编译 DFM 转换器到指定路径。
 
     Args:
-        tmp_dir: 临时目录
+        exe_path: 目标 exe 路径
+        dcc32: dcc32.exe 路径
 
     Returns:
-        exe 路径，失败返回 None
+        是否编译成功
     """
-    dpr_path = os.path.join(tmp_dir, "dfmconv.dpr")
-    exe_path = os.path.join(tmp_dir, "dfmconv.exe")
+    out_dir = os.path.dirname(exe_path)
+    dpr_path = os.path.join(out_dir, "dfmconv.dpr")
 
     with open(dpr_path, "w", encoding="utf-8") as f:
         f.write(_dfmconv_dpr("to-text", "", ""))
 
-    dcc32 = _find_dcc32()
-    if not dcc32:
-        logger.error("未找到 dcc32.exe，无法编译 DFM 转换器")
-        return None
-
-    # 编译: dcc32 dfmconv.dpr -E<输出目录> [-U<库路径>]
     try:
         lib_path = _find_library_path(dcc32)
 
         # 先尝试不带库路径（某些环境通过注册表可自动找到）
-        cmd = [dcc32, dpr_path, f"-E{tmp_dir}", "-Q", "-B"]
+        cmd = [dcc32, dpr_path, f"-E{out_dir}", "-Q", "-B"]
         logger.info(f"编译 DFM 转换器: {' '.join(cmd)}")
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30,
@@ -175,7 +181,7 @@ def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
         # 如果失败且有库路径，重试
         first_error = result.stderr if result.returncode != 0 else None
         if result.returncode != 0 and lib_path:
-            cmd2 = [dcc32, dpr_path, f"-E{tmp_dir}", "-Q", "-B", f"-U{lib_path}"]
+            cmd2 = [dcc32, dpr_path, f"-E{out_dir}", "-Q", "-B", f"-U{lib_path}"]
             logger.info(f"重试编译 DFM 转换器(带-U): {' '.join(cmd2)}")
             result = subprocess.run(
                 cmd2, capture_output=True, text=True, timeout=30,
@@ -185,18 +191,76 @@ def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
         if result.returncode != 0:
             err_detail = result.stderr.strip() or first_error or "未知错误"
             logger.error(f"编译 DFM 转换器失败: {err_detail}")
-            return None
+            return False
 
         if os.path.isfile(exe_path):
-            return exe_path
+            return True
         logger.error(f"编译后未找到 exe: {exe_path}")
-        return None
+        return False
     except subprocess.TimeoutExpired:
         logger.error("编译 DFM 转换器超时")
-        return None
+        return False
     except Exception as e:
         logger.error(f"编译 DFM 转换器异常: {e}")
+        return False
+
+
+def _ensure_dfmconv() -> Optional[str]:
+    """
+    确保 DFM 转换器已编译，返回可执行文件路径。
+
+    首次调用时编译并缓存，后续直接返回缓存路径，避免重复编译。
+
+    Returns:
+        dfmconv.exe 路径，失败返回 None
+    """
+    global _cached_dfmconv_exe
+
+    # 1. 检查缓存
+    cached = _get_cached_dfmconv()
+    if cached:
+        return cached
+
+    # 2. 查找 dcc32
+    dcc32 = _find_dcc32()
+    if not dcc32:
+        logger.error("未找到 dcc32.exe，无法编译 DFM 转换器")
         return None
+
+    # 3. 编译到固定缓存路径（系统 temp 下，持续进程生命周期）
+    cache_dir = os.path.join(tempfile.gettempdir(), "daofy_dfmconv_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    exe_path = os.path.join(cache_dir, "dfmconv.exe")
+
+    if _compile_dfmconv_to(exe_path, dcc32):
+        _cached_dfmconv_exe = exe_path
+        logger.info(f"DFM 转换器已编译并缓存: {exe_path}")
+        return exe_path
+
+    return None
+
+
+def _compile_dfmconv(tmp_dir: str) -> Optional[str]:
+    """
+    编译 DFM 转换器（兼容旧接口，直接委托给缓存机制）。
+
+    Args:
+        tmp_dir: 临时目录
+
+    Returns:
+        exe 路径，失败返回 None
+    """
+    exe_path = _ensure_dfmconv()
+    if exe_path:
+        return exe_path
+    # 如果缓存失败但 tmp_dir 需要编译结果（回退路径），尝试直接编译到 tmp_dir
+    dcc32 = _find_dcc32()
+    if not dcc32:
+        return None
+    fallback_exe = os.path.join(tmp_dir, "dfmconv.exe")
+    if _compile_dfmconv_to(fallback_exe, dcc32):
+        return fallback_exe
+    return None
 
 
 def _run_dfmconv(exe_path: str, cmd: str, in_file: str, out_file: str) -> bool:
@@ -304,41 +368,32 @@ async def convert_dfm(in_file: str, out_file: str, to_text: bool = True) -> Dict
             "target_format": "binary"
         }
 
-    # 创建临时目录
-    tmp_dir = tempfile.mkdtemp(prefix="dfmconv_")
-    try:
-        exe_path = _compile_dfmconv(tmp_dir)
-        if not exe_path:
-            return {
-                "success": False,
-                "message": "编译 DFM 转换器失败，请检查 Delphi 编译器是否可用",
-                "source_format": source_fmt,
-                "target_format": target_fmt
-            }
-
-        cmd = "to-text" if to_text else "to-binary"
-        ok = _run_dfmconv(exe_path, cmd, in_file, out_file)
-        if not ok:
-            return {
-                "success": False,
-                "message": f"DFM 转换执行失败 ({cmd})",
-                "source_format": source_fmt,
-                "target_format": target_fmt
-            }
-
+    # 使用缓存的 DFM 转换器（首次调用时编译一次，后续复用）
+    exe_path = _ensure_dfmconv()
+    if not exe_path:
         return {
-            "success": True,
-            "message": f"DFM 转换成功: {source_fmt} → {target_fmt}",
+            "success": False,
+            "message": "编译 DFM 转换器失败，请检查 Delphi 编译器是否可用",
             "source_format": source_fmt,
             "target_format": target_fmt
         }
 
-    finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        except Exception:
-            logger.debug("清理 DFM 转换临时目录失败: %s", tmp_dir, exc_info=True)
+    cmd = "to-text" if to_text else "to-binary"
+    ok = _run_dfmconv(exe_path, cmd, in_file, out_file)
+    if not ok:
+        return {
+            "success": False,
+            "message": f"DFM 转换执行失败 ({cmd})",
+            "source_format": source_fmt,
+            "target_format": target_fmt
+        }
+
+    return {
+        "success": True,
+        "message": f"DFM 转换成功: {source_fmt} → {target_fmt}",
+        "source_format": source_fmt,
+        "target_format": target_fmt
+    }
 
 
 async def ensure_dfm_text(file_path: str) -> Optional[str]:

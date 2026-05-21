@@ -295,8 +295,8 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                                     if path and path.lower().endswith('.pas'):
                                         resolved_via_kb[unit] = {"source": "thirdparty", "path": path}
                                         break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("忽略非致命异常: %s", str(e))
                     
                     # 直接从第三方路径中查找 .pas 文件
                     if unit not in resolved_via_kb:

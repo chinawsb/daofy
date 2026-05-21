@@ -332,6 +332,10 @@ async def _handle_partial_write(
         tmp_cleanup = tmp_dir
 
     try:
+        # ── 1. 安全网：始终在 __history 创建备份
+        #    成功→根据 backup 参数决定保留/删除；失败→从备份恢复
+        bak_path = create_backup(file_path)
+
         enc = original_encoding or "utf-8"
         with open(read_path, 'r', encoding=enc, newline='',
                   buffering=1048576) as f:
@@ -379,22 +383,43 @@ async def _handle_partial_write(
 
             new_text = before + content + after
 
-        # 备份原文件
-        backup_path = None
-        if backup:
-            backup_path = create_backup(file_path)
-
-        # 写出
+        # ── 2. 写入（失败时从 __history 备份恢复） ──
         try:
             with open(file_path, 'w', encoding=enc, newline='',
                       buffering=1048576) as f:
                 f.write(new_text)
-        except UnicodeEncodeError:
-            logger.warning(f"编码 {enc} 写出失败，回退到 utf-8")
-            with open(file_path, 'w', encoding="utf-8", newline='',
-                      buffering=1048576) as f:
-                f.write(new_text)
-            enc = "utf-8"
+        except (UnicodeEncodeError, OSError, IOError) as write_err:
+            logger.warning(f"部分写入失败: {write_err}")
+
+            # UnicodeEncodeError → 先试 UTF-8 回退
+            if isinstance(write_err, UnicodeEncodeError):
+                try:
+                    with open(file_path, 'w', encoding="utf-8", newline='',
+                              buffering=1048576) as f:
+                        f.write(new_text)
+                    enc = "utf-8"
+                    logger.warning("编码回退到 utf-8 后写入成功")
+                except (UnicodeEncodeError, OSError, IOError):
+                    # 回退也失败 → 从备份恢复
+                    if bak_path and os.path.exists(bak_path):
+                        shutil.copy2(bak_path, file_path)
+                    return _wrap_error(
+                        f"文件写入失败，已从备份恢复: {write_err}"
+                    )
+            else:
+                # OSError/IOError → 从备份恢复
+                if bak_path and os.path.exists(bak_path):
+                    shutil.copy2(bak_path, file_path)
+                return _wrap_error(
+                    f"文件写入失败，已从备份恢复: {write_err}"
+                )
+
+        # ── 3. 写入成功，根据 backup 参数决定备份的去留 ──
+        if not backup and bak_path and os.path.exists(bak_path):
+            try:
+                os.remove(bak_path)
+            except OSError:
+                pass
 
         # DFM 二进制 → 转换回二进制
         if is_dfm_binary:
@@ -429,7 +454,7 @@ async def _handle_partial_write(
             f"编码: {enc}",
         ]
         if backup:
-            result_lines.append(f"备份已创建: {backup_path}")
+            result_lines.append(f"备份已创建: {bak_path}")
         if is_dfm_binary:
             result_lines.append("格式: 已转换为二进制 DFM")
         if fmt_msg:

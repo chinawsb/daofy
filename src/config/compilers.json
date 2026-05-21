@@ -2,15 +2,38 @@
   "compilers": [
     {
       "name": "Delphi 11 Alexandria Win32",
-      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dcc32.exe",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\DCC32.EXE",
       "is_default": true,
-      "version": "Delphi 11 Alexandria"
+      "version": "Delphi 11 Alexandria",
+      "registry_version": "22.0"
     },
     {
       "name": "Delphi 11 Alexandria Win64",
       "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dcc64.exe",
       "is_default": false,
-      "version": "Delphi 11 Alexandria"
+      "version": "Delphi 11 Alexandria",
+      "registry_version": "22.0"
+    },
+    {
+      "name": "Delphi 11 Alexandria Android32",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dccaarm.exe",
+      "is_default": false,
+      "version": "Delphi 11 Alexandria",
+      "registry_version": "22.0"
+    },
+    {
+      "name": "Delphi 11 Alexandria Android64",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dccaarm64.exe",
+      "is_default": false,
+      "version": "Delphi 11 Alexandria",
+      "registry_version": "22.0"
+    },
+    {
+      "name": "Delphi 11 Alexandria Linux64",
+      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\bin\\dcclinux64.exe",
+      "is_default": false,
+      "version": "Delphi 11 Alexandria",
+      "registry_version": "22.0"
     }
   ],
   "default_compiler": "Delphi 11 Alexandria Win32"

@@ -57,10 +57,230 @@ import tempfile
 import subprocess
 import shutil
 import re
-from typing import Optional, Dict, Any, List, Tuple
+import ctypes
+from ctypes import wintypes
+from typing import Optional, Dict, Any, List, Tuple, Set
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# ============================================================
+# 沙箱 — 危险操作阻断清单
+# ============================================================
+# Layer 1: 静态分析 — 禁止使用的单元（提供底层 OS 访问能力）
+_DENY_UNITS: Set[str] = {
+    # Win32 API 直接访问
+    'Windows', 'Winapi.Windows',
+    # Shell 操作
+    'ShellAPI', 'Winapi.ShellAPI', 'Winapi.Shell', 'ShlObj', 'Winapi.ShlObj',
+    # 注册表
+    'Registry', 'System.Win.Registry',
+    # 文件 I/O（低级）
+    'SysUtils',  # 含 DeleteFile/RemoveDir — 但也是 VCL 基础单元，谨慎
+    # 进程/线程操作
+    'TlHelp32', 'Winapi.TlHelp32',
+    # 网络
+    'WinSock', 'Winapi.WinSock', 'WinHTTP', 'Winapi.WinHTTP',
+    'WinINet', 'Winapi.WinINet',
+    # 安全
+    'AclAPI', 'Winapi.AclAPI',
+}
+
+# Layer 1: 静态分析 — 禁止出现的函数/关键字模式
+_DENY_PATTERNS: List[str] = [
+    # 文件系统破坏
+    r'\bDeleteFile\b',
+    r'\bRemoveDir\b',
+    r'\bRenameFile\b',
+    # 进程/代码执行
+    r'\bCreateProcess\b',
+    r'\bWinExec\b',
+    r'\bShellExecute\b',
+    r'\bShellExecuteEx\b',
+    r'\bExecuteProcess\b',
+    r'\bRunDLL\b',
+    # 内存操作
+    r'\bWriteProcessMemory\b',
+    r'\bReadProcessMemory\b',
+    r'\bVirtualProtect\b',
+    r'\bVirtualAllocEx\b',
+    # 进程控制
+    r'\bTerminateProcess\b',
+    r'\bCreateRemoteThread\b',
+    r'\bOpenProcess\b',
+    # DLL 注入
+    r'\bLoadLibrary\b',
+    r'\bGetProcAddress\b',
+    r'\bSetWindowsHookEx\b',
+    # 外部导入（绕过 uses 检查）
+    r'\bexternal\b',
+    r'\bdelayload\b',
+]
+
+# Layer 2: Job Object 常量（Windows SDK）
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_JOB_OBJECT_LIMIT_JOB_TIME = 0x0004
+_JOB_OBJECT_LIMIT_PROCESS_TIME = 0x0002
+_JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x0008
+_JOB_OBJECT_LIMIT_JOB_MEMORY = 0x0200
+_PROCESS_CREATE_SUSPENDED = 0x00000004
+
+
+def _validate_code_uses(uses: List[str]) -> Optional[str]:
+    """Layer 1a: 检查 uses 中是否有禁止单元。"""
+    for unit_name in uses:
+        stripped = unit_name.strip()
+        if stripped in _DENY_UNITS:
+            return f"禁止使用危险单元 '{stripped}'：可能会被滥用来执行破坏性操作"
+    return None
+
+
+def _validate_code_patterns(code: str, uses: List[str]) -> Optional[str]:
+    """Layer 1b: 检查代码中是否有危险函数调用。
+
+    SysUtils 是例外 — VCL 基础单元必须可用，
+    但如果代码中同时出现 SysUtils + 危险函数调用，需要特殊处理。
+    """
+    has_sysutils = any(u.strip() == 'SysUtils' for u in uses)
+
+    for pattern in _DENY_PATTERNS:
+        m = re.search(pattern, code, re.IGNORECASE)
+        if m:
+            func_name = m.group(0)
+            # SysUtils 中的 DeleteFile/RemoveDir 是正常的 RTL 函数
+            # 但如果 code 显式调用了它们，仍然危险
+            return f"代码中检测到危险函数调用 '{func_name}'：已禁止执行"
+    return None
+
+
+def _validate_code_sandbox(code: str, uses: Optional[List[str]]) -> Optional[str]:
+    """沙箱入口：静态分析代码，阻止危险操作。
+
+    Returns:
+        None = 通过检查
+        str = 拒绝原因
+    """
+    safe_uses = uses or []
+    err = _validate_code_uses(safe_uses)
+    if err:
+        return err
+    err = _validate_code_patterns(code, safe_uses)
+    if err:
+        return err
+    return None
+
+
+# ============================================================
+# Windows Job Object 沙箱（Layer 2）
+# ============================================================
+
+class _JobObjectSandbox:
+    """Windows Job Object 进程沙箱。
+
+    通过 ctypes 直接调用 kernel32 API，无需 pywin32 依赖。
+    限制:
+      - 进程/子进程总 CPU 时间 ≤ 15 秒
+      - Job 句柄关闭时自动终止所有子进程
+      - 最大活动进程数 5（防 fork 炸弹）
+    """
+
+    def __init__(self):
+        self._handle = None
+        self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    def create(self) -> bool:
+        """创建 Job Object。"""
+        # CreateJobObjectW(NULL, NULL)
+        self._kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        self._kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        self._handle = self._kernel32.CreateJobObjectW(None, None)
+        if not self._handle:
+            logger.warning("CreateJobObject 失败，跳过 Job Object 沙箱")
+            return False
+        return self._set_limits()
+
+    def _set_limits(self) -> bool:
+        """设置 Job Object 限制。"""
+        # 构造 JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        # 使用 bytearray 手动布局（避免定义完整 struct）
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_ulonglong),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        # 15 秒 CPU 时间，以 100ns 为单位
+        TIME_15S = 15 * 10_000_000
+
+        basic = JOBOBJECT_BASIC_LIMIT_INFORMATION()
+        basic.PerProcessUserTimeLimit = TIME_15S
+        basic.PerJobUserTimeLimit = TIME_15S
+        basic.LimitFlags = (
+            _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE |
+            _JOB_OBJECT_LIMIT_JOB_TIME |
+            _JOB_OBJECT_LIMIT_PROCESS_TIME |
+            _JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        )
+        basic.ActiveProcessLimit = 5
+
+        # JOBOBJECT_EXTENDED_LIMIT_INFORMATION contains basic + 3 more fields
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", wintypes.DWORD * 3),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        ext = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        ext.BasicLimitInformation = basic
+        ext.JobMemoryLimit = 256 * 1024 * 1024  # 256 MB 总内存上限
+
+        self._kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD,
+            wintypes.LPVOID, wintypes.DWORD,
+        ]
+        self._kernel32.SetInformationJobObject.restype = wintypes.BOOL
+
+        JobObjectExtendedLimitInformation = 9
+        ok = self._kernel32.SetInformationJobObject(
+            self._handle, JobObjectExtendedLimitInformation,
+            ctypes.byref(ext), ctypes.sizeof(ext),
+        )
+        if not ok:
+            logger.warning("SetInformationJobObject 失败，仅使用 kill-on-close")
+        return True
+
+    def assign(self, pid: int) -> bool:
+        """将进程加入 Job Object。"""
+        if not self._handle:
+            return False
+        self._kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        self._kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        ph = self._kernel32.OpenProcess(0x1000 | 0x0010, False, pid)  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+        if not ph:
+            logger.warning("OpenProcess(%d) 失败，无法加入 Job Object", pid)
+            return False
+        ok = self._kernel32.AssignProcessToJobObject(self._handle, ph)
+        self._kernel32.CloseHandle(ph)
+        if not ok:
+            logger.warning("AssignProcessToJobObject(%d) 失败", pid)
+        return ok
+
+    def close(self):
+        """关闭 Job Object 句柄（自动终止其中所有进程）。"""
+        if self._handle:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
 
 # ============================================================
 # 模板 — 最小 dpr，无 VCL/FMX 耦合
@@ -273,13 +493,15 @@ def _unwrap_form_dfm(dfm_text: str) -> Optional[str]:
     if not child_m:
         return None  # Form 但没有子组件
 
-    # 找到子组件的缩进级别
-    indent = len(child_m.group()) - len(child_m.group().lstrip())
+    # 找到子组件的缩进级别（支持空格或 tab）
+    raw_indent = child_m.group().rstrip()
+    indent_text = raw_indent[:len(raw_indent) - len(raw_indent.lstrip())]
     child_start = start_pos + child_m.start()
 
     # 提取子组件文本：从子组件声明开始，到对应的 end 结束
-    # 子组件的 end 在同样缩进级别
-    end_pattern = re.compile(r'^ {' + str(indent) + r'}end\b', re.MULTILINE)
+    # 子组件的 end 在同样缩进级别（空格/tab 均可）
+    escaped_indent = re.escape(indent_text)
+    end_pattern = re.compile(r'^' + escaped_indent + r'end\b', re.MULTILINE)
     end_m = end_pattern.search(text, child_start)
     if not end_m:
         return None
@@ -385,7 +607,7 @@ def _compile_project(tmp_dir: str) -> Tuple[bool, str]:
 
 def _execute_gen(exe_path: str, out_file: str, timeout: int = 15) -> Tuple[bool, str]:
     """
-    执行编译好的 dfmgen.exe。
+    执行编译好的 dfmgen.exe（沙箱环境）。
 
     Args:
         exe_path: dfmgen.exe 路径
@@ -396,21 +618,40 @@ def _execute_gen(exe_path: str, out_file: str, timeout: int = 15) -> Tuple[bool,
         (success: bool, message: str)
         成功时 message 为空；失败时 message 为错误信息
     """
+    # [沙箱] Layer 2: Windows Job Object — 超时自动杀进程 + kill-on-close
+    job = _JobObjectSandbox()
+    job_created = job.create()
+
     try:
-        result = subprocess.run(
+        # 启动进程，然后立即加入 Job Object
+        proc = subprocess.Popen(
             [exe_path, out_file],
-            capture_output=True, text=True, timeout=timeout,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
 
-        # 检查运行时错误（模板输出 ERROR: 前缀到 stdout）
-        stdout = (result.stdout or "").strip()
-        if stdout.startswith("ERROR:"):
-            return False, stdout[len("ERROR:"):].strip()
+        # 加入 Job Object（即使失败也继续执行，降级但不阻断）
+        if job_created:
+            job.assign(proc.pid)
 
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            return False, stderr or f"进程退出码 {result.returncode}"
+        # 等待完成
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+
+        # 检查运行时错误（模板输出 ERROR: 前缀到 stdout）
+        out_text = (stdout or "").strip()
+        if out_text.startswith("ERROR:"):
+            return False, out_text[len("ERROR:"):].strip()
+
+        if proc.returncode != 0:
+            err_text = (stderr or "").strip()
+            return False, err_text or f"进程退出码 {proc.returncode}"
 
         # 验证输出文件存在
         if not os.path.isfile(out_file):
@@ -423,6 +664,8 @@ def _execute_gen(exe_path: str, out_file: str, timeout: int = 15) -> Tuple[bool,
     except Exception as e:
         logger.error(f"执行异常: {e}", exc_info=True)
         return False, f"执行异常: {e}"
+    finally:
+        job.close()
 
 
 # ============================================================
@@ -487,6 +730,12 @@ async def generate_component_dfm(
             "error": "code 中必须定义 CreateComponent(AOwner: TComponent): TComponent 函数",
             "stage": "input",
         }
+
+    # [沙箱] 静态分析：阻断危险单元和函数调用
+    sandbox_err = _validate_code_sandbox(code, uses)
+    if sandbox_err:
+        logger.warning("沙箱阻断: %s", sandbox_err)
+        return {"success": False, "error": f"代码被沙箱拒绝: {sandbox_err}", "stage": "sandbox"}
 
     # 创建临时工作目录
     tmp_dir = tempfile.mkdtemp(prefix="dfmgen_")

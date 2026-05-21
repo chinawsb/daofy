@@ -113,6 +113,9 @@ KIND_RESOURCE = 'CR'   # resourcestring
 KIND_UNIT = 'UI'       # unit in uses
 KIND_HELPER = 'TH'     # class helper for / record helper for
 KIND_STRING_LITERAL = 'KS'  # string literal (error messages, UI strings, etc.)
+KIND_OPERATOR = 'OP'   # operator overload (class operator Add, Implicit, etc.)
+KIND_GLOBAL_VAR = 'GV' # global variable (var section, not class field)
+KIND_ATTRIBUTE = 'AB'  # custom attribute [MyAttribute]
 
 
 def _add_func_entity(entities: List[Dict], content: str, match: re.Match, name: str, ret_type: Optional[str]) -> None:
@@ -1236,14 +1239,14 @@ def _extract_types(content: str) -> List[Dict]:
 
 
 class DelphiSourceScanner:
-    def __init__(self, source_dir: str, output_dir: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None, force_rebuild: bool = False):
+    def __init__(self, source_dir: str, output_dir: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None, rebuild: bool = False):
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.index_file = self.output_dir / "index" / "source_index.json"
         self.metadata_file = self.output_dir / "index" / "metadata.json"
         self.file_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.inc'}
         self.progress_callback = progress_callback
-        self.force_rebuild = force_rebuild
+        self.rebuild = rebuild
         self._existing_index: Optional[Dict] = None
 
         # 创建必要的目录
@@ -1318,7 +1321,7 @@ class DelphiSourceScanner:
         changed_files = []
         unchanged_files = {}
         
-        if not self.force_rebuild and self._load_existing_index():
+        if not self.rebuild and self._load_existing_index():
             _log.info("检查文件变更...")
             existing_files = {f['full_path']: f for f in self._existing_index.get('files', [])}
             
@@ -1334,8 +1337,8 @@ class DelphiSourceScanner:
                                 # 文件未变化，直接使用现有数据
                                 unchanged_files[file_path_str] = existing
                                 continue
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("忽略非致命异常: %s", str(e))
                 # 文件已变化或新增
                 changed_files.append((file_path_str, source_dir))
             

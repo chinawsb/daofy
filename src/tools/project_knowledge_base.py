@@ -51,7 +51,7 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
             - project_path: 项目文件路径 (.dproj 或 .dpr) (必需)
             - build_thirdparty: 是否构建三方库知识库 (可选,默认 true)
             - build_project: 是否构建项目源码知识库 (可选,默认 true)
-            - force_rebuild: 是否强制重建 (可选,默认 false)
+            - rebuild: 是否强制重建 (可选,默认 false)
             - show_progress: 是否显示进度 (可选,默认 true)
 
     Returns:
@@ -73,7 +73,7 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
 
     build_thirdparty = arguments.get("build_thirdparty", True)
     build_project = arguments.get("build_project", True)
-    force_rebuild = arguments.get("force_rebuild", False)
+    rebuild = arguments.get("rebuild", False)
     show_progress = arguments.get("show_progress", True)
 
     # 创建进度回调
@@ -98,7 +98,7 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
             output += "请指定 build_thirdparty 或 build_project 参数\n"
         else:
             logger.info("构建项目知识库...")
-            if project_kb.build_project_knowledge_base(force_rebuild=force_rebuild):
+            if project_kb.build_project_knowledge_base(rebuild=rebuild):
                 output += "✓ 项目知识库构建成功\n"
             else:
                 output += "✗ 项目知识库构建失败\n"

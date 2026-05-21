@@ -7,19 +7,22 @@ import sys
 import os
 import json
 import time
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 def main():
     # 解析参数
     project_path = None
-    force_rebuild = False
+    rebuild = False
     progress_file = None
     
     for arg in sys.argv[1:]:
         if arg.startswith('--project-path='):
             project_path = arg.split('=', 1)[1]
         elif arg == '--force-rebuild':
-            force_rebuild = True
+            rebuild = True
         elif arg.startswith('--progress-file='):
             progress_file = arg.split('=', 1)[1]
     
@@ -51,15 +54,15 @@ def main():
                         'percent': percent,
                         'message': str(msg),
                     }))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("进度写入失败: %s", str(e))
     
     from src.services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
     
     t0 = time.time()
     try:
         kb = ProjectKnowledgeBase(project_path, progress_callback=progress_callback)
-        success = kb.build_project_knowledge_base(force_rebuild=force_rebuild)
+        success = kb.build_project_knowledge_base(rebuild=rebuild)
         stats = kb.get_statistics()
         elapsed = time.time() - t0
         
@@ -80,8 +83,8 @@ def main():
                         'message': '完成',
                         'done': True
                     }))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("进度写入失败: %s", str(e))
     except Exception as e:
         import traceback
         result = {

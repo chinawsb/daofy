@@ -65,8 +65,8 @@ def _resolve_safe_dir(dir_path: str) -> str:
     """解析用户传入的目录路径，阻止路径遍历攻击。
 
     规则：
-    - 相对路径基于 _ALLOWED_BASE（当前工作目录）resolve
-    - resolve 后的路径必须在 _ALLOWED_BASE 下
+    - 相对路径基于 _ALLOWED_BASE（当前工作目录）resolve，防止 .. 逃逸
+    - 绝对路径直接使用（不限制到 _ALLOWED_BASE 下）
     - 路径不存在时自动创建（安全）
     - 如果无法判定安全，返回 _ALLOWED_BASE 本身
 
@@ -79,14 +79,25 @@ def _resolve_safe_dir(dir_path: str) -> str:
     if not dir_path:
         return _ALLOWED_BASE
 
+    # 绝对路径：直接使用，不做项目目录限制（但依然防空字节注入）
+    if os.path.isabs(dir_path):
+        resolved = os.path.normpath(dir_path)
+        if '\0' in resolved:
+            logger.warning("空字节注入拦截: %s", dir_path)
+            return _ALLOWED_BASE
+        if not os.path.exists(resolved):
+            try:
+                os.makedirs(resolved, exist_ok=True)
+            except OSError:
+                return _ALLOWED_BASE
+        return resolved
+
+    # 相对路径：基于 _ALLOWED_BASE resolve，阻止 .. 逃逸
     resolved = os.path.abspath(os.path.join(_ALLOWED_BASE, dir_path))
-    # 规范化，防止 ..\\..\\Windows 绕过
     resolved = os.path.normpath(resolved)
     resolved_lower = resolved.lower()
-
     allowed_lower = os.path.normpath(_ALLOWED_BASE).lower()
 
-    # 检查是否在允许基目录下
     if not resolved_lower.startswith(allowed_lower + os.sep) and resolved_lower != allowed_lower:
         logger.warning("路径遍历拦截: %s -> %s (base: %s)", dir_path, resolved, _ALLOWED_BASE)
         return _ALLOWED_BASE

@@ -1552,8 +1552,8 @@ class GenericDocumentScanner:
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
         
         return {
             'database': {'file': 'documents.sqlite'},
@@ -1651,8 +1651,8 @@ class GenericDocumentScanner:
     
     def scan_directory(self, directory: str, extensions: Optional[List[str]] = None,
                       max_workers: Optional[int] = None,
-                      exclude_dirs: Optional[List[str]] = None,
-                      force_rebuild: bool = False) -> Dict:
+                      exclude: Optional[List[str]] = None,
+                      rebuild: bool = False) -> Dict:
         """
         扫描目录中的文档
         
@@ -1660,8 +1660,8 @@ class GenericDocumentScanner:
             directory: 要扫描的目录
             extensions: 要处理的文件扩展名列表
             max_workers: 最大工作进程数
-            exclude_dirs: 要排除的子目录名列表（默认排除多语言帮助子目录）
-            force_rebuild: 是否强制重建（跳过 mtime 对比，重新处理所有文件）
+            exclude: 要排除的子目录名列表（默认排除多语言帮助子目录）
+            rebuild: 是否强制重建（跳过 mtime 对比，重新处理所有文件）
         
         Returns:
             扫描统计信息
@@ -1673,7 +1673,7 @@ class GenericDocumentScanner:
         extensions = extensions or self.config.get('build', {}).get('supported_extensions', self.SUPPORTED_EXTENSIONS)
         extensions = [e.lower() for e in extensions]
         
-        exclude_set = set(exclude_dirs) if exclude_dirs else DEFAULT_EXCLUDE_DIRS
+        exclude_set = set(exclude) if exclude else DEFAULT_EXCLUDE_DIRS
         
         all_files = []
         for ext in extensions:
@@ -1774,7 +1774,7 @@ class GenericDocumentScanner:
         cursor = conn.cursor()
         import time; _build_start = time.time()
         
-        if force_rebuild:
+        if rebuild:
             # 强制重建：truncate 旧数据，跳过 mtime 对比，全部重新处理
             logger.info("强制重建：清空旧数据...")
             cursor.execute("DELETE FROM document_entities")
@@ -1793,8 +1793,8 @@ class GenericDocumentScanner:
                 cursor.execute("SELECT full_path, last_modified FROM documents")
                 for r in cursor.fetchall():
                     existing_mtimes[r[0]] = r[1]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             
             changed = []
             for fx in all_files:
@@ -1818,13 +1818,13 @@ class GenericDocumentScanner:
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                     ('last_build_duration', '0'))
                 conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             conn.close()
             return {'total_files': total_files, 'processed': 0, 'failed': 0,
                     'skipped': skipped, 'warnings': warnings, 'install_hints': install_hints}
         
-        if not force_rebuild:
+        if not rebuild:
             # 增量模式：逐条删除已变更文件的旧记录
             for fx in all_files:
                 try:
@@ -1833,8 +1833,8 @@ class GenericDocumentScanner:
                     cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
                     for doc_id in doc_ids:
                         cursor.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("忽略非致命异常: %s", str(e))
             conn.commit()
         # 强制重建模式：数据已在前面 truncate，此处跳过逐行删除
         
@@ -1951,13 +1951,13 @@ class GenericDocumentScanner:
                 from .schema import set_schema_version_in_db
                 set_schema_version_in_db(cursor)
                 conn.commit()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             # 恢复 synchronous 为非构建模式
             try:
                 conn.execute("PRAGMA synchronous=NORMAL")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             conn.close()
 
         return {
@@ -1971,7 +1971,7 @@ class GenericDocumentScanner:
     
     def scan_directory_async(self, directory: str, extensions: Optional[List[str]] = None,
                             max_workers: Optional[int] = None, callback: Optional[Callable] = None,
-                            exclude_dirs: Optional[List[str]] = None):
+                            exclude: Optional[List[str]] = None):
         """
         异步扫描目录中的文档（立即返回，后台处理）
         
@@ -1991,7 +1991,7 @@ class GenericDocumentScanner:
         def _scan_task():
             try:
                 self._scanning = True
-                result = self.scan_directory(directory, extensions, max_workers, exclude_dirs)
+                result = self.scan_directory(directory, extensions, max_workers, exclude)
                 if callback:
                     callback(result)
                 if self.progress_callback:
@@ -2275,8 +2275,8 @@ class GenericDocumentScanner:
                         for link in new_links:
                             if link not in visited:
                                 queue.append((link, depth + 1))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("忽略非致命异常: %s", str(e))
             else:
                 stats['failed'] += 1
         

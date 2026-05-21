@@ -40,8 +40,8 @@ class ArgsGenerator:
                 expanded = expand_delphi_path_macros(p, version=delphi_version, platform=lib_dir)
                 if ('\\lib\\' in expanded or '/lib/' in expanded) and 'release' in expanded.lower():
                     return expanded
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
         # 回退到硬编码路径
         return f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/{lib_dir}/release"
 
@@ -72,13 +72,13 @@ class ArgsGenerator:
             args.append('-R' + paths)
 
         # 优化选项
-        if options.optimization_enabled:
+        if options.optimize:
             args.append('-$O+')
         else:
             args.append('-$O-')
 
         # 调试信息
-        if options.debug_info_enabled:
+        if options.debug:
             args.append('-$D+')
         else:
             args.append('-$D-')
@@ -156,7 +156,8 @@ class ArgsGenerator:
     def generate_for_file(self, file_path: str, unit_search_paths: List[str] = None,
                          warning_level: int = 2, disabled_warnings: List[str] = None,
                          namespaces: List[str] = None, include_paths: List[str] = None,
-                         output_dir: str = None, delphi_version: str = "22.0") -> List[str]:
+                         output_dir: str = None, delphi_version: str = "22.0",
+                         conditional_defines: List[str] = None) -> List[str]:
         """生成单文件编译参数
 
         Args:
@@ -168,11 +169,17 @@ class ArgsGenerator:
             include_paths: include文件搜索路径列表
             output_dir: 输出目录 (用于存放.dcu文件)
             delphi_version: Delphi版本号 (默认22.0 = Delphi 11 Alexandria)
+            conditional_defines: 条件编译符号列表
         """
         args = []
 
         # 文件路径(不添加引号,asyncio.create_subprocess_exec 会自动处理)
         args.append(file_path)
+
+        # 条件编译符号
+        if conditional_defines:
+            defines = ";".join(conditional_defines)
+            args.append('-D' + defines)
 
         # 命名空间 - 这是关键！用于解析 System.Classes 等单元
         if namespaces:

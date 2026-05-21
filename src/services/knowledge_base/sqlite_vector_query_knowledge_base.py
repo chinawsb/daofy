@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class SQLiteVectorKnowledgeBase:
-    def __init__(self, kb_dir: str, force_rebuild: bool = False, db_file: Optional[str] = None):
+    def __init__(self, kb_dir: str, rebuild: bool = False, db_file: Optional[str] = None):
         self.kb_dir = Path(kb_dir)
         self.index_dir = self.kb_dir / "index"
         # 支持从config指定数据库文件
@@ -37,7 +37,7 @@ class SQLiteVectorKnowledgeBase:
         self.idf_weights = {}  # word -> idf weight
 
         # 加载索引
-        self.load_index(force_rebuild)
+        self.load_index(rebuild)
 
     def _get_connection(self) -> sqlite3.Connection:
         """获取当前线程的数据库连接（自动检测关闭的连接并重建）"""
@@ -68,15 +68,15 @@ class SQLiteVectorKnowledgeBase:
         if hasattr(self._thread_local, 'conn') and self._thread_local.conn is not None:
             try:
                 self._thread_local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             try:
                 self._thread_local.conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
             self._thread_local.conn = None
 
-    def load_index(self, force_rebuild: bool = False):
+    def load_index(self, rebuild: bool = False):
         """加载知识库索引"""
         try:
             conn = self._get_connection()
@@ -361,8 +361,8 @@ class SQLiteVectorKnowledgeBase:
                                             'extension': row['extension'], 'size': row['size'],
                                             'line_count': row['line_count'], 'hash': row['hash'],
                                             'last_modified': row['last_modified'], 'category': row['category']}})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
         
         # 3. 如果结果仍然很少，尝试宽泛的文件名匹配（用于"DateUtils"、"Date"等主题搜索）
         if len(results) < 3:
@@ -390,8 +390,8 @@ class SQLiteVectorKnowledgeBase:
                                             'extension': row['extension'], 'size': row['size'],
                                             'line_count': row['line_count'], 'hash': row['hash'],
                                             'last_modified': row['last_modified'], 'category': row['category']}})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
         
         return results
 

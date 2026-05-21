@@ -21,12 +21,14 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Schema 版本管理
 # ============================================================
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """
 当前知识库 schema 版本号。
 每次修改表结构时递增，用于在加载时检测旧库并执行升级迁移。
 
 版本历史:
+  - 3: vocabularies 新增 AST 增强列（code_block, signature, modifiers, end_line 等）
+       + entity_refs 引用关系表 + audit_results 审计结果表
   - 2: vocabularies 新增 (type, name, file_id) 唯一索引，去重处理。
   - 1: 初始版本。vocabularies 统一 schema + relative_path + name_lower_rev 反转索引 + metadata 版本管理
 """
@@ -42,8 +44,8 @@ def get_schema_version_from_db(cursor) -> int:
         row = cursor.fetchone()
         if row:
             return int(row[0])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("忽略非致命异常: %s", str(e))
     return 0
 
 
@@ -136,6 +138,81 @@ SOURCE_INDEXES_SQL: List[str] = [
 ]
 
 
+# ============================================================
+# AST/语义分析增强表（Schema v3+）
+# ============================================================
+
+# vocabularies 表 AST 增强列（ALTER TABLE ADD COLUMN 迁移）
+# 注意: 注释写在 Python 侧，不要混在 SQL 字符串中（pyright 会误报）
+VOCABULARIES_AST_COLUMNS_SQL: List[str] = [
+    "ALTER TABLE vocabularies ADD COLUMN end_line INTEGER",
+    "ALTER TABLE vocabularies ADD COLUMN end_offset INTEGER",
+    "ALTER TABLE vocabularies ADD COLUMN body_length INTEGER",
+    "ALTER TABLE vocabularies ADD COLUMN code_block TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN signature TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN modifiers TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN visibility TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN type_refs TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN member_count INTEGER",
+    "ALTER TABLE vocabularies ADD COLUMN inheritance_chain TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN generics TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN values TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN params TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN return_type TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN calls TEXT",
+    "ALTER TABLE vocabularies ADD COLUMN ref_count INTEGER DEFAULT 0",
+    "ALTER TABLE vocabularies ADD COLUMN source TEXT DEFAULT 'regex'",
+]
+
+# 实体引用关系表（引用图谱基础）
+ENTITY_REFS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS entity_refs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL,
+    target_name TEXT NOT NULL,
+    target_kind TEXT,
+    target_file_id INTEGER,
+    ref_type TEXT NOT NULL,
+    line INTEGER,
+    code_snippet TEXT,
+    created_at REAL DEFAULT (julianday('now')),
+    FOREIGN KEY (source_id) REFERENCES vocabularies(id) ON DELETE CASCADE
+)
+"""
+
+ENTITY_REFS_INDEXES_SQL: List[str] = [
+    "CREATE INDEX IF NOT EXISTS idx_entity_refs_source ON entity_refs(source_id)",
+    "CREATE INDEX IF NOT EXISTS idx_entity_refs_target ON entity_refs(target_name, target_kind)",
+    "CREATE INDEX IF NOT EXISTS idx_entity_refs_target_file ON entity_refs(target_file_id)",
+    "CREATE INDEX IF NOT EXISTS idx_entity_refs_type ON entity_refs(ref_type)",
+]
+
+# 审计结果缓存表
+AUDIT_RESULTS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS audit_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_path TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    rule_id TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    line INTEGER,
+    code_snippet TEXT,
+    message TEXT,
+    is_ai_confirmed INTEGER DEFAULT 0,
+    fix_suggestion TEXT,
+    scan_timestamp REAL,
+    created_at REAL DEFAULT (julianday('now')),
+    UNIQUE(project_path, file_path, rule_id, line)
+)
+"""
+
+AUDIT_RESULTS_INDEXES_SQL: List[str] = [
+    "CREATE INDEX IF NOT EXISTS idx_audit_project ON audit_results(project_path)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_severity ON audit_results(severity)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_rule ON audit_results(rule_id)",
+]
+
+
 def create_source_tables(cursor):
     """创建源码知识库的所有表 + 索引"""
     cursor.execute(SOURCE_FILES_TABLE_SQL)
@@ -147,9 +224,41 @@ def create_source_tables(cursor):
 
 def drop_source_tables(cursor):
     """删除源码知识库的所有表"""
+    cursor.execute("DROP TABLE IF EXISTS audit_results")
+    cursor.execute("DROP TABLE IF EXISTS entity_refs")
     cursor.execute("DROP TABLE IF EXISTS vocabularies")
     cursor.execute("DROP TABLE IF EXISTS files")
     cursor.execute("DROP TABLE IF EXISTS metadata")
+
+
+def migrate_vocabularies_ast_columns(cursor):
+    """
+    迁移: vocabularies 表增加 AST 增强列（Schema v2 → v3）
+    安全幂等: 每列 ADD COLUMN 后有 IF NOT EXISTS 等效检查。
+    对于已存在的列会抛出 SQL 异常，忽略即可。
+    """
+    for sql in VOCABULARIES_AST_COLUMNS_SQL:
+        try:
+            cursor.execute(sql)
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            pass  # 列已存在，忽略
+    logger.info("vocabularies AST 增强列迁移完成")
+
+
+def create_ast_tables(cursor):
+    """创建 AST/语义分析增强表（entity_refs + audit_results）"""
+    cursor.execute(ENTITY_REFS_TABLE_SQL)
+    for sql in ENTITY_REFS_INDEXES_SQL:
+        cursor.execute(sql)
+    cursor.execute(AUDIT_RESULTS_TABLE_SQL)
+    for sql in AUDIT_RESULTS_INDEXES_SQL:
+        cursor.execute(sql)
+
+
+def drop_ast_tables(cursor):
+    """删除 AST 增强表"""
+    cursor.execute("DROP TABLE IF EXISTS audit_results")
+    cursor.execute("DROP TABLE IF EXISTS entity_refs")
 
 
 # ============================================================
@@ -306,8 +415,16 @@ __all__ = [
     'SOURCE_VOCABULARIES_TABLE_SQL',
     'SOURCE_METADATA_TABLE_SQL',
     'SOURCE_INDEXES_SQL',
+    'VOCABULARIES_AST_COLUMNS_SQL',
+    'ENTITY_REFS_TABLE_SQL',
+    'ENTITY_REFS_INDEXES_SQL',
+    'AUDIT_RESULTS_TABLE_SQL',
+    'AUDIT_RESULTS_INDEXES_SQL',
     'create_source_tables',
     'drop_source_tables',
+    'migrate_vocabularies_ast_columns',
+    'create_ast_tables',
+    'drop_ast_tables',
     'DOCUMENTS_TABLE_SQL',
     'DOCUMENT_ENTITIES_TABLE_SQL',
     'DOCUMENTS_INDEXES_SQL',

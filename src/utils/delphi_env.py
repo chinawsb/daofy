@@ -6,8 +6,11 @@ Delphi 环境工具函数
 
 import os
 import re
+import logging
 import winreg
 from typing import Dict, Optional, List
+
+logger = logging.getLogger(__name__)
 
 
 def get_delphi_version() -> Optional[str]:
@@ -41,8 +44,8 @@ def get_delphi_version() -> Optional[str]:
         # 返回最新的版本
         if versions:
             return sorted(versions, key=lambda x: tuple(int(p) for p in x.split('.')), reverse=True)[0]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("读取Delphi版本失败: %s", str(e))
     
     return None
 
@@ -107,8 +110,8 @@ def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
                 break
         
         winreg.CloseKey(key)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("读取环境变量失败: %s", str(e))
     
     return env_vars
 
@@ -142,8 +145,8 @@ def get_delphi_library_paths(version: Optional[str] = None, platform: str = "Win
         
         if search_path:
             paths = [p.strip() for p in search_path.split(';') if p.strip()]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("读取Search Path失败: %s", str(e))
     
     return paths
 

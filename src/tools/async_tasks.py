@@ -57,10 +57,10 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         def build_kb_task(**kwargs):
             version = kwargs.get("version")
-            force_rebuild = kwargs.get("force_rebuild", False)
+            rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
             service = DelphiKnowledgeBaseService(progress_callback=progress_callback)
-            return service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
+            return service.build_knowledge_base(version=version, rebuild=rebuild)
 
         # 确定显示的版本号
         display_version = params.get("version")
@@ -75,11 +75,11 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         def build_thirdparty_task(**kwargs):
             version = kwargs.get("version")
-            force_rebuild = kwargs.get("force_rebuild", False)
+            rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
 
             service = ThirdPartyKnowledgeBase(progress_callback=progress_callback)
-            return service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
+            return service.build_thirdparty_knowledge_base(version=version, rebuild=rebuild)
 
         task_name = "构建第三方库知识库"
 
@@ -88,14 +88,14 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         def init_project_task(**kwargs):
             project_path = kwargs.get("project_path")
-            force_rebuild = kwargs.get("force_rebuild", False)
+            rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
 
             project_kb = ProjectKnowledgeBase(project_path, progress_callback)
 
             results = {}
             results["project"] = project_kb.build_project_knowledge_base(
-                force_rebuild=force_rebuild)
+                rebuild=rebuild)
 
             stats = project_kb.get_statistics()
             results["statistics"] = stats
@@ -131,8 +131,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             max_depth = kwargs.get("max_depth", 3)
             domain_filter = kwargs.get("domain_filter")
             url_pattern = kwargs.get("url_pattern")
-            exclude_dirs = kwargs.get("exclude_dirs")
-            force_rebuild = kwargs.get("force_rebuild", False)
+            exclude = kwargs.get("exclude")
+            rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
             
             server_root = FilePath(__file__).parent.parent.parent
@@ -166,8 +166,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             
             # 扫描目录
             if directory:
-                scan_result = scanner.scan_directory(directory, extensions=extensions, exclude_dirs=exclude_dirs,
-                                                     force_rebuild=force_rebuild)
+                scan_result = scanner.scan_directory(directory, extensions=extensions, exclude=exclude,
+                                                     rebuild=rebuild)
                 results["scan"] = scan_result
             
             return results

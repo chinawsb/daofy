@@ -46,8 +46,8 @@ class CompileOptions:
     conditional_defines: List[str] = field(default_factory=list)
     unit_search_paths: List[str] = field(default_factory=list)
     resource_search_paths: List[str] = field(default_factory=list)
-    optimization_enabled: bool = True
-    debug_info_enabled: bool = False
+    optimize: bool = True
+    debug: bool = False
     warning_level: int = 2
     disabled_warnings: List[str] = field(default_factory=list)
     output_type: OutputType = OutputType.GUI
@@ -86,6 +86,7 @@ class FileCompileRequest:
     """单文件编译请求"""
     file_path: str
     unit_search_paths: List[str] = field(default_factory=list)
+    conditional_defines: List[str] = field(default_factory=list)
     warning_level: int = 2
     disabled_warnings: List[str] = field(default_factory=list)
     compiler_version: Optional[str] = None

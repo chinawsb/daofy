@@ -28,7 +28,7 @@ async def build_thirdparty_knowledge_base(arguments: Any) -> CallToolResult:
     Args:
         arguments: 包含以下参数:
             - version: Delphi 版本 (可选)
-            - force_rebuild: 是否强制重建 (可选,默认 false)
+            - rebuild: 是否强制重建 (可选,默认 false)
 
     Returns:
         构建结果
@@ -42,7 +42,7 @@ async def build_thirdparty_knowledge_base(arguments: Any) -> CallToolResult:
         )
 
     version = arguments.get("version")
-    force_rebuild = arguments.get("force_rebuild", False)
+    rebuild = arguments.get("rebuild", False)
 
     try:
         # 获取路径列表（不构建，仅显示）
@@ -57,7 +57,7 @@ async def build_thirdparty_knowledge_base(arguments: Any) -> CallToolResult:
         # 构建知识库
         success = thirdparty_kb_service.build_thirdparty_knowledge_base(
             version=version,
-            force_rebuild=force_rebuild
+            rebuild=rebuild
         )
 
         if success:

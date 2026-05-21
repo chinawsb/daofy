@@ -98,6 +98,7 @@ def _get_delphi_default_library_paths(platform: str = "Win32") -> List[str]:
 async def compile_file(
     file_path: str,
     unit_search_paths: Optional[List[str]] = None,
+    conditional_defines: Optional[List[str]] = None,
     warning_level: int = 2,
     disabled_warnings: Optional[List[str]] = None,
     compiler_version: Optional[str] = None
@@ -108,6 +109,7 @@ async def compile_file(
     Args:
         file_path: 单元文件路径(.pas)
         unit_search_paths: 单元搜索路径列表(可选，为空时自动从.dproj或Delphi默认路径获取)
+        conditional_defines: 条件编译符号列表(可选)
         warning_level: 警告级别(0-4)
         disabled_warnings: 禁用的警告列表
         compiler_version: 编译器版本名称（可选，不传时使用最新安装的版本）
@@ -151,6 +153,7 @@ async def compile_file(
         request = FileCompileRequest(
             file_path=file_path,
             unit_search_paths=search_paths,
+            conditional_defines=conditional_defines or [],
             warning_level=warning_level,
             disabled_warnings=disabled_warnings or [],
             compiler_version=compiler_version,

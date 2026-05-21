@@ -18,6 +18,28 @@ logger = get_logger(__name__)
 MAX_BACKUPS = 20
 RETENTION_DAYS = 7
 
+# 大文件拷贝缓冲区大小 (1MB) — shutil.copyfileobj 默认为 16KB
+# 64x 缓冲区 = 同等 I/O 下 64 倍更少的系统调用
+_COPY_BUF_SIZE = 1024 * 1024
+
+
+def _fast_copy(src: str, dst: str) -> None:
+    """
+    使用大缓冲区快速拷贝文件（带元数据保留）。
+
+    shutil.copy2 内部使用 shutil.copyfileobj 的 16KB 默认缓冲区，
+    对于大文件会产生大量系统调用。此函数使用 1MB 缓冲区将
+    系统调用次数降低 64 倍。
+
+    Args:
+        src: 源文件路径
+        dst: 目标文件路径
+    """
+    with open(src, 'rb') as fsrc:
+        with open(dst, 'wb') as fdst:
+            shutil.copyfileobj(fsrc, fdst, _COPY_BUF_SIZE)
+    shutil.copystat(src, dst)
+
 
 def detect_encoding(file_path: str) -> str:
     """
@@ -186,7 +208,7 @@ def create_backup(file_path: str) -> Optional[str]:
                 break
             new_version += 1
 
-        shutil.copy2(file_path, backup_path)
+        _fast_copy(file_path, backup_path)
         logger.info(f"创建备份文件: {backup_path}")
 
         # 清理超出上限的旧备份
@@ -269,7 +291,7 @@ def restore_backup(file_path: str, version: Optional[int] = None) -> Optional[st
         # 恢复前先备份当前文件（安全网）
         create_backup(file_path)
 
-        shutil.copy2(target["path"], file_path)
+        _fast_copy(target["path"], file_path)
         logger.info(f"已从备份恢复: {target['path']} → {file_path}")
         return target["path"]
 

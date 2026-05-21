@@ -94,8 +94,8 @@ def _cleanup_project_dcu(project_dir: Path):
             try:
                 f.unlink()
                 deleted += 1
-            except Exception:
-                pass
+            except OSError as e:
+                logger.debug(f"删除缓存文件失败: {f}: {e}")
     if deleted > 0:
         logger.info(f"已清理 {deleted} 个编译器缓存文件")
 
@@ -181,8 +181,8 @@ def _check_and_clean_stale_resources(project_path: str, build_configuration: Opt
                 try:
                     cached.unlink()
                     logger.info(f"资源变更 → 已删除缓存: {cached}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("忽略非致命异常: %s", str(e))
 
         # 也清理 .dcu 缓存（资源变动可能影响代码路径）
         _cleanup_project_dcu(proj_path.parent)
@@ -208,14 +208,14 @@ async def compile_project(
     conditional_defines: Optional[List[str]] = None,
     unit_search_paths: Optional[List[str]] = None,
     resource_search_paths: Optional[List[str]] = None,
-    optimization_enabled: bool = True,
-    debug_info_enabled: bool = False,
+    optimize: bool = True,
+    debug: bool = False,
     warning_level: int = 2,
     disabled_warnings: Optional[List[str]] = None,
     output_type: str = "gui",
     runtime_library: str = "static",
     build_configuration: Optional[str] = None,
-    install_if_design_package: bool = True,
+    auto_install: bool = True,
     run_after_compile: bool = False
 ) -> CallToolResult:
     """
@@ -230,14 +230,14 @@ async def compile_project(
         conditional_defines: 条件编译符号列表
         unit_search_paths: 单元搜索路径列表
         resource_search_paths: 资源搜索路径列表
-        optimization_enabled: 是否启用优化
-        debug_info_enabled: 是否生成调试信息
+        optimize: 是否启用优化
+        debug: 是否生成调试信息
         warning_level: 警告级别(0-4)
         disabled_warnings: 禁用的警告列表
         output_type: 输出类型(console/gui/dll)
         runtime_library: 运行时库链接方式(static/dynamic)
         build_configuration: 编译配置名称
-        install_if_design_package: 如果是设计期包，是否自动安装（默认 True）
+        auto_install: 如果是设计期包，是否自动安装（默认 True）
         run_after_compile: 编译成功后，以末次运行参数启动程序
 
     Returns:
@@ -270,7 +270,7 @@ async def compile_project(
                 target_platform=target_platform,
                 build_configuration=build_configuration or "Debug",
                 timeout=timeout,
-                install_if_design_package=install_if_design_package
+                auto_install=auto_install
             )
         
         # 自动检测编译器版本(如果未指定)
@@ -294,8 +294,8 @@ async def compile_project(
             conditional_defines=conditional_defines or [],
             unit_search_paths=unit_search_paths or [],
             resource_search_paths=resource_search_paths or [],
-            optimization_enabled=optimization_enabled,
-            debug_info_enabled=debug_info_enabled,
+            optimize=optimize,
+            debug=debug,
             warning_level=warning_level,
             disabled_warnings=disabled_warnings or [],
             output_type=OutputType(output_type),
@@ -383,7 +383,7 @@ async def _compile_dpk_package(
     target_platform: str,
     build_configuration: str,
     timeout: int,
-    install_if_design_package: bool
+    auto_install: bool
 ) -> CallToolResult:
     """
     编译 DPK 包文件
@@ -393,7 +393,7 @@ async def _compile_dpk_package(
         target_platform: 目标平台
         build_configuration: 构建配置
         timeout: 超时时间
-        install_if_design_package: 是否安装设计期包
+        auto_install: 是否安装设计期包
 
     Returns:
         编译结果
@@ -430,7 +430,7 @@ async def _compile_dpk_package(
             target_platform=TargetPlatform(target_platform),
             build_configuration=build_configuration,
             timeout=timeout,
-            debug_info_enabled=True
+            debug=True
         )
         
         request = ProjectCompileRequest(
@@ -448,7 +448,7 @@ async def _compile_dpk_package(
     logger.info(f"包类型: {'设计期包' if is_design_package else '运行期包'}")
     
     # 如果编译成功且是设计期包，自动安装
-    if success and is_design_package and install_if_design_package:
+    if success and is_design_package and auto_install:
         logger.info("编译成功，开始安装设计期包...")
         
         # 使用 install_package 中的注册函数

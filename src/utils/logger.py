@@ -63,8 +63,8 @@ def _load_log_config() -> LogConfig:
             config.log_api_calls = data.get("log_api_calls", config.log_api_calls)
             config.archive_old_logs = data.get("archive_old_logs", config.archive_old_logs)
             config.keep_days = int(data.get("keep_days", config.keep_days))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
     _log_config = config
     return config
 
@@ -164,8 +164,8 @@ def archive_old_logs(log_dir: Optional[str] = None) -> None:
                 # 已存在归档，删掉源文件（可能上次压缩成功但没删掉）
                 try:
                     log_file.unlink()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("忽略非致命异常: %s", str(e))
                 continue
 
             # 用 7z 压缩
@@ -176,14 +176,14 @@ def archive_old_logs(log_dir: Optional[str] = None) -> None:
                 )
                 if result.returncode == 0 and archive_name.exists():
                     log_file.unlink()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
     finally:
         # 释放锁
         try:
             lock_file.unlink()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
 
 
 # ---------------------------------------------------------------------------

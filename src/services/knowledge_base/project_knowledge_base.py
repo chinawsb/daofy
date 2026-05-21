@@ -218,8 +218,8 @@ class ProjectKnowledgeBase:
                         total_size += stat.st_size
                         if stat.st_mtime > latest_mtime:
                             latest_mtime = stat.st_mtime
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("忽略非致命异常: %s", str(e))
 
         return f"{total_files}|{total_size}|{latest_mtime}"
 
@@ -292,12 +292,12 @@ class ProjectKnowledgeBase:
                 return True
         return False
 
-    def build_project_knowledge_base(self, force_rebuild: bool = False) -> bool:
+    def build_project_knowledge_base(self, rebuild: bool = False) -> bool:
         """
         构建项目源码知识库
 
         Args:
-            force_rebuild: 是否强制重建
+            rebuild: 是否强制重建
 
         Returns:
             是否构建成功
@@ -331,10 +331,10 @@ class ProjectKnowledgeBase:
             row = cursor.fetchone()
             if row:
                 cached_hash = row[0]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
 
-        if not force_rebuild and cached_hash == current_hash and db_file.exists():
+        if not rebuild and cached_hash == current_hash and db_file.exists():
             logger.info("项目源码知识库已是最新,跳过构建")
             conn.close()
             return True
@@ -344,7 +344,7 @@ class ProjectKnowledgeBase:
         exclude_prefixes = self._get_shared_exclude_prefixes()
 
         existing_files = {}
-        if force_rebuild:
+        if rebuild:
             cursor.execute("DELETE FROM vocabularies")
             cursor.execute("DELETE FROM files")
             cursor.execute("DELETE FROM metadata")
@@ -413,7 +413,7 @@ class ProjectKnowledgeBase:
                 try:
                     stat = file_path.stat()
                     file_cur_hash = f"{stat.st_mtime}:{stat.st_size}"
-                    if not force_rebuild and full_path in existing_files:
+                    if not rebuild and full_path in existing_files:
                         if existing_files[full_path]['hash'] == file_cur_hash:
                             skipped_files_inc += 1
                             continue
@@ -586,7 +586,7 @@ class ProjectKnowledgeBase:
 
         # 检测已删除的文件（仅在增量模式下）
         deleted_files = 0
-        if not force_rebuild and existing_files:
+        if not rebuild and existing_files:
             for old_path, old_info in existing_files.items():
                 if old_path not in new_file_paths:
                     cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_info['id'],))
@@ -655,8 +655,8 @@ class ProjectKnowledgeBase:
                         cached_hash = row[0]
                 finally:
                     conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
 
         if current_hash != cached_hash:
             logger.info("检测到项目源码变动（搜索将使用旧知识库，请手动触发重建）")
@@ -860,8 +860,8 @@ class ProjectKnowledgeBase:
         finally:
             try:
                 conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
         return stats
 
     def _report_progress(self, percent: float, message: str) -> None:

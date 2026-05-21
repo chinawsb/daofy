@@ -83,6 +83,7 @@ else:
     from src.tools import manage_component as manage_component_mod
     from src.tools import create_component_dfm as create_component_dfm_mod
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
+    from src.tools.audit import run_audit as _run_audit
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
@@ -180,6 +181,15 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         elif action == "stats":
             return ("✨ 提示：如果知识库数据过期，"
                     "可用 delphi_kb(action='build', kb_type='project') 重建")
+
+    elif name == "run_audit":
+        if isinstance(result, CallToolResult):
+            text = result.content[0].text if result.content else ""
+            if "未就绪" in text or "daudit.exe" in text:
+                return ("✨ 提示：将 daudit.exe 放到 tools/daudit/ 目录后重新调用。"
+                        "可先使用 get_coding_rules(section='review') 按审核表手动检查。")
+            return ("✨ 提示：审计完成。可针对每条违规使用 file_tool 读取源码确认，"
+                    "或使用 compile_project 编译验证修复结果。")
 
     elif name == "get_coding_rules":
         # 仅在 section=None（默认模式）时提示
@@ -354,7 +364,7 @@ async def run_server():
                         "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "default": "search", "description": "操作类型: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时需要）"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库类型"},
-                        "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "type", "const", "property", "method", "field", "event", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
+                        "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "set", "helper", "type", "const", "resourcestring", "variable", "property", "method", "field", "event", "operator", "string", "dfm", "attribute", "unit", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
                         "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
                         "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj）"},
                         "version": {"type": "string", "description": "Delphi版本（构建知识库时使用）"},
@@ -617,6 +627,38 @@ async def run_server():
                         "project_path": {"type": "string", "description": "项目路径（可选），用于查找项目自定义的编码规则文件(CODING_RULES.mdc)"},
                         "section": {"type": "string", "description": "章节名称（可选），如 workflow/writing/review/safety/agent_rules/kb_search/format/compile/cleanup/kb_build。不传则返回工作流总览+章节索引"},
                     }
+                }
+            ),
+
+            # ===== 代码审计工具（AST 引擎）⭐⭐ =====
+            Tool(
+                name="run_audit",
+                description="【优先级 ⭐⭐】代码审计 / AST 语法解析 — 使用 AST 引擎执行 Delphi 源码静态分析\n"
+                            "【触发词】审计代码、审查代码、代码审核、review code、audit、安全检查、\n"
+                            "           漏洞扫描、安全隐患、security review、性能分析、\n"
+                            "           语法解析、AST解析、解析源码\n"
+                            "支持两种模式：\n"
+                            '  mode="audit"（默认）— 运行 50+ 条静态分析规则，审计代码质量\n'
+                            '  mode="ast"        — AST 语法解析，输出实体结构信息\n'
+                            "自动检测项目目录下的 daudit.exe。不存在时自动降级为引导提示。\n"
+                            "【协作链】run_audit → AI 解读报告 → 生成修复建议\n"
+                            "【示例】\n"
+                            '   run_audit(source_dir="C:\\\\Project\\\\src")                     # 默认 P0 审计\n'
+                            '   run_audit(source_dir=".", rules="P0,P1")                      # 全部基础规则\n'
+                            '   run_audit(mode="ast", source_dir="src")                        # AST 语法解析（目录）\n'
+                            '   run_audit(mode="ast", file_path="Unit1.pas")                   # AST 语法解析（单文件）\n'
+                            '   run_audit(mode="ast", source_dir="src", output_format="json")  # AST 输出 JSON',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_dir": {"type": "string", "description": "源码目录路径（audit 模式必需；ast 模式可选）"},
+                        "file_path": {"type": "string", "description": "单文件路径（ast 模式可选，优先于 source_dir）"},
+                        "mode": {"type": "string", "enum": ["audit", "ast"], "default": "audit", "description": "运行模式: audit=代码审计（默认）, ast=AST 语法解析"},
+                        "rules": {"type": "string", "default": "P0", "description": "规则集: P0 / P0,P1 / 规则ID列表如 C001,R001（仅 audit 模式）"},
+                        "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"], "default": "suggestion", "description": "最低严重级别（仅 audit 模式）"},
+                        "output_format": {"type": "string", "enum": ["report", "json"], "default": "report", "description": "输出格式: report=Markdown, json=原始JSON"},
+                    },
+                    "required": []
                 }
             ),
 
@@ -883,6 +925,9 @@ async def run_server():
     async def _handle_code_hosting(arguments: dict) -> Any:
         return code_hosting(**arguments)
 
+    async def _handle_run_audit(arguments: dict) -> Any:
+        return await _run_audit(arguments)
+
     _TOOL_HANDLERS = {
         "compile_project": _handle_compile_project,
         "delphi_kb": _handle_delphi_kb,
@@ -893,6 +938,7 @@ async def run_server():
         "install_package": _handle_install_package,
         "list_installed_packages": _handle_list_installed_packages,
         "get_coding_rules": _handle_get_coding_rules,
+        "run_audit": _handle_run_audit,
         "code_hosting": _handle_code_hosting,
     }
 
@@ -919,12 +965,6 @@ async def run_server():
             _call_end = _time.monotonic()
             _call_end_dt = _datetime.now()
             _duration = _call_end - _call_start
-            _timing_footer = (
-                f"\n\n---\n"
-                f"⏱ {_duration:.3f}s | "
-                f"⌛ {_call_start_dt.strftime('%H:%M:%S.%f')[:-3]} → "
-                f"🏁 {_call_end_dt.strftime('%H:%M:%S.%f')[:-3]}"
-            )
 
             # P2: 智能提示
             hint = _get_smart_hint(name, result, arguments)
@@ -940,9 +980,16 @@ async def run_server():
             # P3: API 调用日志
             log_api_call(logger, name, arguments, result)
 
-            # 统一返回格式: dict → CallToolResult
+            # 统一返回格式: 所有返回类型 → CallToolResult + 结构化 timing
+            import json as _json
+            _timing_obj = {
+                'duration': round(_duration * 1000, 1),
+                'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+            }
             if isinstance(result, dict):
-                import json as _json
+                # Dict 返回: 直接注入 timing 字段
+                result['timing'] = _timing_obj
                 is_error = (result.get('status') == 'failed'
                             or result.get('success') is False
                             or (result.get('error') is not None and result.get('error') != ''))
@@ -950,29 +997,40 @@ async def run_server():
                     text = _json.dumps(result, ensure_ascii=False, indent=2, default=str)
                 except (TypeError, ValueError):
                     text = str(result)
-                result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
-
-            # 统一追加 timing footer 到 CallToolResult 文本内容
-            if isinstance(result, CallToolResult):
-                if result.content and len(result.content) > 0:
-                    first = result.content[0]
-                    if hasattr(first, 'text') and first.text:
-                        first.text += _timing_footer
+            else:
+                # 非 dict 返回 (如 string): 包装为结构化 JSON
+                response = {
+                    'success': not isinstance(result, CallToolResult) or not getattr(result, 'isError', False),
+                    'data': str(result) if not isinstance(result, (str, bytes)) else result,
+                    'timing': _timing_obj,
+                }
+                if isinstance(result, CallToolResult):
+                    response['isError'] = getattr(result, 'isError', False)
+                try:
+                    text = _json.dumps(response, ensure_ascii=False, indent=2, default=str)
+                except (TypeError, ValueError):
+                    text = str(response)
+                is_error = response.get('isError', False)
+            result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
             return result
 
         except Exception as e:
             _call_end = _time.monotonic()
             _call_end_dt = _datetime.now()
             _duration = _call_end - _call_start
-            _timing = (
-                f"⏱ {_duration:.3f}s | "
-                f"⌛ {_call_start_dt.strftime('%H:%M:%S.%f')[:-3]} → "
-                f"🏁 {_call_end_dt.strftime('%H:%M:%S.%f')[:-3]}"
-            )
+            error_result = {
+                "error": str(e),
+                "timing": {
+                    'duration': round(_duration * 1000, 1),
+                    'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                    'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                }
+            }
             log_api_call(logger, name, arguments, {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
+            import json as _json
             return CallToolResult(
-                content=[TextContent(type="text", text=f"错误: {str(e)}\n\n{_timing}")],
+                content=[TextContent(type="text", text=_json.dumps(error_result, ensure_ascii=False, indent=2))],
                 isError=True
             )
 

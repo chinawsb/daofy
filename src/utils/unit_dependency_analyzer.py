@@ -120,14 +120,14 @@ class UnitDependencyAnalyzer:
             rel_str = str(rel_path).lower()
             
             # 排除的目录
-            exclude_dirs = {
+            exclude = {
                 '__recovery', '__history', 'backup', '.git', '.svn',
                 'win32', 'win64', 'debug', 'release',  # 输出目录
             }
             
             parts = rel_str.split(os.sep)
             for part in parts[:-1]:  # 不包括文件名
-                if part in exclude_dirs:
+                if part in exclude:
                     return False
             
             return True

@@ -184,7 +184,7 @@ async def _compile_single_package(
         target_platform=TargetPlatform(target_platform),
         build_configuration=build_configuration,
         timeout=timeout,
-        debug_info_enabled=True
+        debug=True
     )
     
     request = ProjectCompileRequest(
@@ -266,12 +266,16 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
     lib_path = Path(delphi_root) / "lib" / platform_dir
     
     project_name = Path(dpk_path).stem.replace('GR32_', 'GR32')
-    bpl_output = str(bpl_dir / f"{project_name}.bpl")
+    bpl_output = str(bpl_dir / "%s.bpl" % project_name)
     
-    batch_content = f'''@echo off
-call "{rsvars_path}"
-dcc32 -b "{dpk_path}" -U"{lib_path}" -LE"{bpl_dir}" -LN"{dcp_dir}"
-'''
+    for _p_name, _p_val in [('rsvars_path', rsvars_path), ('dpk_path', dpk_path),
+                             ('lib_path', lib_path), ('bpl_dir', bpl_dir), ('dcp_dir', dcp_dir)]:
+        if '"' in str(_p_val):
+            return {"success": False, "errors": [{"message": "路径包含非法字符(\"): %s=%s" % (_p_name, _p_val)}],
+                    "output_file": None, "warnings": [], "log": ""}
+    
+    batch_content = '@echo off\ncall "%s"\ndcc32 -b "%s" -U"%s" -LE"%s" -LN"%s"\n' % (
+        rsvars_path, dpk_path, lib_path, bpl_dir, dcp_dir)
     
     with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
         f.write(batch_content)
