@@ -13,7 +13,12 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 from typing import Any, Optional
 from pathlib import Path
 import sqlite3
+import logging
+import locale
 from mcp.types import CallToolResult
+from ..utils.file_backup import detect_encoding
+
+logger = logging.getLogger(__name__)
 
 # 知识库服务实例
 delphi_kb_service = None
@@ -38,8 +43,8 @@ def _get_kb_db_path(kb_service) -> Path:
             with open(config_path, encoding='utf-8') as f:
                 config = json.load(f)
             db_name = config.get('database', {}).get('file', db_name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("读取知识库配置失败: %s", str(e))
     return kb_dir / db_name
 
 
@@ -75,8 +80,8 @@ def _search_project_kb_db(project_path: str, file_path: str) -> Optional[Path]:
             row = c.fetchone()
             if row and row['full_path'] and Path(row['full_path']).exists():
                 return Path(row['full_path'])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("项目KB搜索失败: %s", str(e))
     return None
 
 
@@ -108,8 +113,8 @@ def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = N
         if kb_service.kb_instance is None:
             try:
                 kb_service.load_knowledge_base()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("加载知识库失败: %s", str(e))
         if not kb_service.kb_instance:
             continue
         try:
@@ -151,8 +156,8 @@ def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = N
             
             if row and row['full_path'] and Path(row['full_path']).exists():
                 return Path(row['full_path'])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("全局KB搜索失败: %s", str(e))
     
     # 3. 在项目知识库中查找
     if project_path:
@@ -160,8 +165,8 @@ def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = N
             result = _search_project_kb_db(project_path, file_path)
             if result:
                 return result
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("项目KB搜索失败: %s", str(e))
     
     return None
 
@@ -215,9 +220,33 @@ async def read_source_file(arguments: Any) -> CallToolResult:
                 isError=True
             )
         
-        # 读取文件
-        with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-            all_lines = f.readlines()
+        # 编码检测 + 降级链读取（与 file_tool._read_content 一致）
+        detected = detect_encoding(str(full_path))
+        encodings_to_try = [detected]
+        if detected not in ('utf-8', 'utf-8-sig'):
+            encodings_to_try.append('utf-8')
+        try:
+            ansi = locale.getpreferredencoding()
+            if ansi.lower() not in (e.lower() for e in encodings_to_try):
+                encodings_to_try.append(ansi)
+        except Exception:
+            pass
+
+        encoding_used = 'utf-8'
+        all_lines = None
+        for enc in encodings_to_try:
+            try:
+                with open(full_path, 'r', encoding=enc) as f:
+                    all_lines = f.readlines()
+                encoding_used = enc
+                break
+            except UnicodeDecodeError:
+                continue
+
+        if all_lines is None:
+            # 所有编码尝试失败，保底用 utf-8 并忽略错误字符
+            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                all_lines = f.readlines()
         
         total_lines = len(all_lines)
         
@@ -241,6 +270,7 @@ async def read_source_file(arguments: Any) -> CallToolResult:
         # 构建输出
         output = f"文件: {full_path.name}\n"
         output += f"完整路径: {full_path}\n"
+        output += f"编码: {encoding_used}\n"
         output += f"总行数: {total_lines}\n"
         output += f"显示范围: 第 {start_line} 行 到 第 {end_line} 行"
         
@@ -387,8 +417,8 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
                             row = cur.fetchone()
                             if row:
                                 file_path = row['full_path'] or row['relative_path'] or row['path']
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("搜索文件路径失败: %s", str(e))
         
         if not file_path:
             return CallToolResult(

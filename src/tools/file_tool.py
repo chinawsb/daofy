@@ -111,18 +111,26 @@ async def _read_content(
         last_error = None
         for enc in fallback_encodings:
             try:
-                with open(file_path, 'r', encoding=enc, newline='') as f:
-                    all_lines = f.readlines()
+                # 流式读取：只读取需要的行，避免大文件全量读入内存
+                # 对于读取开头 N 行或指定行范围的场景，线性扫描比 readlines() 更省内存
+                target_start = max(start_line, 1)
+                target_end = end_line if end_line is not None else (target_start + limit - 1)
+                selected = []
+                reached_eof = True  # 跟踪是否读到文件末尾
+                line_no = 0  # 空文件时 for 循环体不会执行，需初始化
+                with open(file_path, 'r', encoding=enc, newline='',
+                          buffering=1048576) as f:
+                    for line_no, line in enumerate(f, 1):
+                        if line_no > target_end:
+                            reached_eof = False
+                            break
+                        if line_no >= target_start:
+                            selected.append(line)
 
-                total_lines = len(all_lines)
-                if start_line < 1:
-                    start_line = 1
-                if end_line is not None:
-                    # clamp end_line 到文件末尾，不超过实际行数
-                    end_line = min(end_line, total_lines)
-                    selected = all_lines[start_line - 1:end_line]
+                if reached_eof:
+                    total_lines = line_no  # 循环正常结束，line_no 即文件实际总行数
                 else:
-                    selected = all_lines[start_line - 1:start_line - 1 + limit]
+                    total_lines = None  # 被 target_end 截断，未知实际总行数
 
                 text = ''.join(selected)
                 if not text.endswith('\n'):
@@ -130,15 +138,32 @@ async def _read_content(
 
                 lines_shown = len(selected)
                 base_name = os.path.basename(file_path)
+                actual_end_line = start_line + lines_shown - 1
+
+                if total_lines is not None:
+                    total_display = str(total_lines)
+                else:
+                    total_display = f"至少 {target_end} 行"
+
                 summary = (
                     f"文件: {base_name}\n"
                     f"完整路径: {os.path.abspath(file_path)}\n"
-                    f"总行数: {total_lines}\n"
-                    f"显示范围: 第 {start_line} 行 到 第 {start_line + lines_shown - 1} 行\n"
+                    f"总行数: {total_display}\n"
+                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行\n"
                     f"编码: {enc}\n"
                     f"============================================================\n\n"
                 )
-                return {"status": "success", "message": summary + text}
+
+                result = summary + text
+
+                # 截断提示（与 read_source_file.py 一致）
+                if not reached_eof:
+                    result += (
+                        f"\n... (已截断，文件至少有 {target_end} 行) ...\n"
+                        f"提示: 使用 start_line={target_end + 1} 继续读取后续内容\n"
+                    )
+
+                return {"status": "success", "message": result}
             except UnicodeDecodeError:
                 last_error = f"编码 {enc} 解码失败"
                 continue
@@ -286,6 +311,11 @@ async def _handle_partial_write(
     start_line/end_line 为 1-indexed 闭区间：
       - 不传 start_line 时从第 1 行开始
       - 不传 end_line 时到文件末尾
+
+    闭区间 [start_line, end_line] 的转换：
+      0-indexed inclusive:  s = start_line - 1
+      0-indexed exclusive:  e = end_line          (因为 end_line 本身就是 exclusive 值)
+      验证：lines[s:e] = lines[start_line-1 : end_line] = 第 start_line 到 end_line 行  ✓
     """
     read_path = file_path
     tmp_cleanup = None
@@ -303,19 +333,24 @@ async def _handle_partial_write(
 
     try:
         enc = original_encoding or "utf-8"
-        with open(read_path, 'r', encoding=enc, newline='') as f:
+        with open(read_path, 'r', encoding=enc, newline='',
+                  buffering=1048576) as f:
             lines = f.readlines()
 
         total = len(lines)
-        s = (start_line - 1) if start_line is not None else 0   # 0-indexed inclusive
-        e = end_line if end_line is not None else total           # 0-indexed exclusive
+
+        # 闭区间 [start_line, end_line] → 0-indexed 切片
+        # s = 0-indexed inclusive start (start_line - 1)
+        # e = 0-indexed exclusive end (end_line 本身就是 exclusive 值)
+        s = (start_line - 1) if start_line is not None else 0
+        e = end_line if end_line is not None else total
 
         if s < 0:
             return _wrap_error(f"start_line ({start_line}) 不能小于 1")
         if e > total:
             return _wrap_error(f"end_line ({end_line}) 超出文件总行数 ({total})")
         if s >= e:
-            return _wrap_error(f"start_line ({start_line}) 必须小于 end_line ({end_line})")
+            return _wrap_error(f"替换范围为空: start_line ({start_line}) >= end_line ({end_line})。需满足 start_line <= end_line")
 
         before = ''.join(lines[:s])
         after = ''.join(lines[e:])
@@ -325,18 +360,20 @@ async def _handle_partial_write(
         if content == '':
             new_text = before + after
         else:
-            # 检测原文件换行符风格，将 content 的换行符统一为与原文件一致
-            # 避免原文件 CRLF + content LF 导致混合换行符
-            # 也避免原文件 LF + content CRLF 导致混合换行符
-            has_crlf_in_original = ('\r\n' in before) or ('\r\n' in after)
+            # 检测原文件换行符风格：遍历 lines 列表而非拼接全文
+            # 避免对大文件做 O(n) 全量字符串拷贝（''.join(lines) 会复制整个文件）
+            has_crlf_in_original = any('\r\n' in line for line in lines)
+
+            # 统一 content 换行符为原文件风格
             if has_crlf_in_original:
                 content = content.replace('\r\n', '\n').replace('\n', '\r\n')
             else:
                 content = content.replace('\r\n', '\n')
 
-            # 确保 content 末尾有换行，避免替换区最后一行与后续行粘连
-            # readlines() 返回的每行都含换行符，替换区也应保持一致
-            if after and not content.endswith('\n') and not content.endswith('\r\n'):
+            # 确保 content 末尾有换行，避免替换区最后一行与后续行粘连。
+            # readlines() 返回的每行都含换行符，替换区也必须保持一致。
+            # 即使 after 为空（替换到 EOF），也应加上结尾换行保持文件规范。
+            if not content.endswith('\n') and not content.endswith('\r\n'):
                 line_ending = '\r\n' if has_crlf_in_original else '\n'
                 content = content + line_ending
 
@@ -349,11 +386,13 @@ async def _handle_partial_write(
 
         # 写出
         try:
-            with open(file_path, 'w', encoding=enc, newline='') as f:
+            with open(file_path, 'w', encoding=enc, newline='',
+                      buffering=1048576) as f:
                 f.write(new_text)
         except UnicodeEncodeError:
             logger.warning(f"编码 {enc} 写出失败，回退到 utf-8")
-            with open(file_path, 'w', encoding="utf-8", newline='') as f:
+            with open(file_path, 'w', encoding="utf-8", newline='',
+                      buffering=1048576) as f:
                 f.write(new_text)
             enc = "utf-8"
 
@@ -412,6 +451,12 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - 自动检测并保持原始编码
       - DFM 文件自动处理：如果原文件是二进制，写出后自动转回二进制
       - 支持 start_line/end_line 部分写入：仅替换指定行范围，其余不变
+
+    行范围参数（1-indexed 闭区间）:
+      start_line=5, end_line=5  → 只替换第 5 行
+      start_line=3, end_line=7  → 替换第 3~7 行
+      start_line=5              → 从第 5 行替换到文件末尾
+      end_line=10               → 从第 1 行替换到第 10 行
     """
     file_path = arguments.get("file_path")
     content = arguments.get("content")
@@ -483,11 +528,13 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         write_encoding = original_encoding or "utf-8"
         encoding_fallback = False
         try:
-            with open(tmp_path, "w", encoding=write_encoding, newline='') as f:
+            with open(tmp_path, "w", encoding=write_encoding, newline='',
+                      buffering=1048576) as f:
                 f.write(content)
         except UnicodeEncodeError:
             logger.warning(f"编码 {write_encoding} 写出失败，回退到 utf-8")
-            with open(tmp_path, "w", encoding="utf-8", newline='') as f:
+            with open(tmp_path, "w", encoding="utf-8", newline='',
+                      buffering=1048576) as f:
                 f.write(content)
             write_encoding = "utf-8"
             encoding_fallback = True
@@ -772,7 +819,8 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     # 读取文件
     original_encoding = detect_encoding(file_path)
-    with open(file_path, 'r', encoding=original_encoding, newline='') as f:
+    with open(file_path, 'r', encoding=original_encoding, newline='',
+              buffering=1048576) as f:
         text = f.read()
 
     # 查找 uses 子句
@@ -853,11 +901,13 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     # 写出
     try:
-        with open(file_path, 'w', encoding=original_encoding, newline='') as f:
+        with open(file_path, 'w', encoding=original_encoding, newline='',
+                  buffering=1048576) as f:
             f.write(new_text)
     except UnicodeEncodeError:
         logger.warning(f"编码 {original_encoding} 写出失败，回退到 utf-8")
-        with open(file_path, 'w', encoding="utf-8", newline='') as f:
+        with open(file_path, 'w', encoding="utf-8", newline='',
+                  buffering=1048576) as f:
             f.write(new_text)
         original_encoding = "utf-8"
 
