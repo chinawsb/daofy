@@ -6,6 +6,5 @@ lxml>=4.9.0
 requests>=2.31.0
 python-docx>=0.8.11
 # 可选依赖: 语义搜索(embedding) —— 安装后显著提升搜索质量
-# pip install sentence-transformers numpy
-# sentence-transformers>=2.2.0
-# numpy>=1.21.0
+# pip install daofy-for-delphi[embedding]
+# 或: pip install sentence-transformers numpy

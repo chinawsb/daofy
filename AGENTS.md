@@ -150,7 +150,9 @@ src/
    └─ Python 项目（当前 MCP Server）→ 按下方 Python 审计要求逐项检查
 ② 确定审计范围（全局/指定文件/新增代码）
 ③ 搜索相关 API 定义，评估用法（Delphi 用 delphi_kb，Python 用 grep/LSP）
-④ 按对应标准的审计类别逐项检查
+④ **优先调用 run_audit**（AST 引擎自动扫描，daudit 不可用时降级为引导）
+   → AI 解读结果，排除误报，生成修复建议
+   → 补充手动检查（run_audit 标记 is_ai_needed=true 的项）
 ⑤ compile_project / pytest 验证（如果涉及代码修改）
 ⑥ 输出审计报告
 ```
@@ -301,6 +303,7 @@ src/
 
 ```
 get_coding_rules(section="review")               → 获取 Delphi 审核标准
+run_audit(source_dir=".", rules="P0")            → AST 引擎自动扫描（优先调用）
 file_tool(action="read", file_path="unit.pas")   → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
 compile_project(project_path="proj.dproj")        → Delphi 审计后验证编译

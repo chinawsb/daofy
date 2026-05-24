@@ -1,10 +1,10 @@
 # Delphi 编码规范
-> 最后更新: 2026-05-14 | 版本: 1.7.0
+> 最后更新: 2026-05-18 | 版本: 1.8.0
 
 ## 工作流总览
 ```
-环境检查 → 查KB确认API → ③备份 → 写代码 → 格式化 → 编译验证 → 代码审核 → 清理
-  ①         ②                          ④        ⑤          ⑥         ⑦        ⑧
+环境检查 → 查KB确认API → 写代码(自动备份) → 格式化 → 编译验证 → 代码审核 → 清理
+  ①          ②               ③               ④         ⑤          ⑥        ⑦
 ```
 
 ---
@@ -69,23 +69,7 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
 
 ---
 
-## ③ 备份（修改前必做）
-
-**修改任何 Delphi 源文件前必须先在 `__history` 创建备份。**
-
-```python
-file_tool(action="backup", file_path="src/Unit1.pas")      # 创建备份
-file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")  # 列出备份
-file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)  # 恢复
-```
-
-- 备份文件命名: `文件名.~版本号~`（与 Delphi IDE 兼容）
-- 调用 `file_tool(action="write", ...)` 时 `backup=True`（默认）会自动备份，不需要手动调用
-- 二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原
-
----
-
-## ④ 写 Delphi 代码
+## ③ 写 Delphi 代码
 
 ### 文件编码检查（修改前必做）
 - **修改任何 Delphi 源文件前，必须先确认文件编码，避免中文乱码。**
@@ -100,6 +84,17 @@ file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", v
 - **写回时必须保持原始编码**，不可将 GBK 文件强行以 UTF-8 写出
 - 使用 `file_tool(action="write")` 默认自动备份并保持原始编码；`file_tool(action="format")` 默认自动备份
 - 如果文件含 BOM（UTF-8 BOM / UTF-16 LE/BE），保留 BOM 不删除
+
+### 自动备份
+- `file_tool(action="write", backup=True)` **默认开启自动备份**，写入前自动在 `__history` 目录创建备份，无需手动调用
+- 备份文件命名: `文件名.~版本号~`（与 Delphi IDE 兼容）
+- 二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原
+- 手动备份/恢复/列表:
+  ```python
+  file_tool(action="backup", file_path="src/Unit1.pas")                           # 手动创建备份
+  file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")     # 列出备份版本
+  file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)  # 恢复
+  ```
 
 ### 命名
 - **类型**：`T`类 `I`接口 `E`异常 `P`指针
@@ -154,13 +149,13 @@ uses System.SysUtils, System.Classes,  // 系统
 
 ---
 
-## ⑤ 格式化
+## ④ 格式化
 ```python
 file_tool(action="format", file_path="src/Unit1.pas")
 # 使用 pasfmt 格式化，自动处理泛型嵌套 `>>` 格式
 ```
 
-## ⑥ 编译
+## ⑤ 编译
 ```python
 compile_project(project_path="Project.dproj")                         # 整体编译
 compile_project(project_path="Unit1.pas")                             # 语法检查
@@ -180,7 +175,7 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 ### 编译事件
 .dproj 中的 PreBuildEvent/PostBuildEvent/PreLinkEvent 自动执行，无需手动处理。
 
-## ⑦ 代码审核
+## ⑥ 代码审核
 
 **编译通过后，按下方审核表逐项审查代码。** 重点覆盖：
 
@@ -195,8 +190,8 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 
 > 审核表的具体检查项见下方「审核」章节。
 
-## ⑧ 清理 & 验证
-- **备份验证**：确认 `__history` 目录中存在本次修改文件的备份（`file_tool(action="backup", backup_action="list", file_path=...)`）
+## ⑦ 清理 & 验证
+- **备份验证**：`file_tool(action="write")` 默认自动备份到 `__history`，修改后可用 `file_tool(action="backup", backup_action="list", file_path=...)` 确认备份存在
 - **整理**：删未用变量/导入/函数/类（直接删，无需人工确认）
 - **已存在的死代码**：标记为废弃（添加注释标注），等待人工确认后清理
 - **编码**：文件保持原始编码；修改后执行 `file_tool(action="format", ...)`

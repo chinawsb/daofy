@@ -1,32 +1,319 @@
-## v2026.05.14 (2026-05-14)
-
-### 新增
-
-- **`get_coding_rules` 支持 section 参数**：按章节获取编码规范（workflow/writing/review/safety 等 20+ 命名章节），默认返回索引，Agent 按需拉取节省 token
-- **CODING_RULES.mdc 补充编码规范**：泛型/运算符重载/异步/代码组织/版本兼容/日志/数据转换/测试命名/规则模板
-- **工作流嵌入审核步骤**：①-⑥ → ①-⑦，编译通过后强制代码审核
-- **pasfmt uses 压缩后处理**：新增 `uses_style` 参数（compact/pasfmt_default），默认合并 uses 为单行
-- **类内 type 段扫描**：识别 `private type` / `public type` 段，捕获 `PItem = ^TItem` 等类型别名并补全 parent 链接
-- **字符串字面量索引**（KS 实体）：搜索错误消息直击代码行
-- **合并三方库 KB + DF 中文搜索**
-
-### 测试
-
-- **新增 3 个测试文件**：`test_coding_rules.py`(20例/90%覆盖)、`test_process_manager.py`(16例/92%覆盖)、`test_environment.py`(12例/95%覆盖)
-- **总测试数 144 → 186**，零弃用警告
-
-### 修复
-
-- `print()` 泄漏修复（install_package/scan_generic_documents/dynamic_worker_optimizer）
-- 静默异常处理改进（except:pass -> logger.warning）
-- 消除 `# type: ignore` 和 `== False` 风格问题
-- 死代码清理（移除未使用的 ProgressCallback 类）
-- 测试弃用警告清理（40 条 PytestReturnNotNoneWarning, 9 处 Element truth）
-- 字符串提取兼容 // 在字符串内和 #
-- 项目 KB 构建改独立子进程
-- 日志标签修正 多线程->多进程
-
-### 重构
-
-- 移除 JSON 元数据，全部集中 SQLite metadata 表
-- 合并三方库 KB 修复多进程哈希误判
+Debug Output: 初始化 行政区划信息 完成...
+Debug Output: 初始化 打印组件检查 完成...
+Debug Output: 初始化 电子面单分享 完成...
+Debug Output: 初始化 系统设置 完成...
+Debug Output: 初始化 店铺列表 完成...
+Debug Output: TradeManager.Button set to 19AC1017980
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72
+Debug Output: 0=>selector(选中),Width=85
+Debug Output: 1=>bookmarks(订单标志),Width=150
+Debug Output: 2=>shopName(店铺名称),Width=150
+Debug Output: 3=>orderStatus(订单状态),Width=120
+Debug Output: 4=>waybillPrintTime(打单时间),Width=150
+Debug Output: 5=>waybillDaySeqNo(打印编号),Width=75
+Debug Output: 6=>cpName(快递公司),Width=75
+Debug Output: 7=>waybillCode(快递单号),Width=180
+Debug Output: 8=>buyerNick(买家账号),Width=120
+Debug Output: 9=>receiver(收件信息),Width=280
+Debug Output: 10=>goodsName(商品标题),Width=300
+Debug Output: 11=>skuCode(SKU编码),Width=120
+Debug Output: 12=>saleAttrs(销售属性),Width=180
+Debug Output: 13=>quantity(商品数量),Width=85
+Debug Output: 14=>shortName(商品简称),Width=120
+Debug Output: 15=>sellerFlag(旗帜),Width=65
+Debug Output: 16=>sellerRemark(卖家备注),Width=150
+Debug Output: 17=>buyerRemark(买家留言),Width=150
+Debug Output: 18=>tid(订单编号),Width=200
+Debug Output: 19=>refundStatus(退款状态),Width=120
+Debug Output: 20=>goodsStatus(商品状态),Width=120
+Debug Output: 21=>recvAmount(商品实付),Width=85
+Debug Output: 22=>totalRecvAmount(订单总实收),Width=85
+Debug Output: 23=>totalPostfee(订单总邮费),Width=85
+Debug Output: 24=>totalWeight(订单总重量),Width=85
+Debug Output: 25=>totalVolume(订单总体积),Width=85
+Debug Output: 26=>createdTime(创建时间),Width=150
+Debug Output: 27=>PayTime(支付时间),Width=150
+Debug Output: 28=>shipTime(发货时间),Width=150
+Debug Output: 29=>sendPrintTime(发货单打印时间),Width=180
+Debug Output: 30=>shipRemainTime(剩余发货时间),Width=100
+Debug Output: 31=>adminMemo(自定义备注),Width=150
+Debug Output: 32=>tags(内部标记),Width=150
+Debug Output: 33=>stockQuantity(库存数量),Width=85
+Debug Output: 34=>buyPrice(商品进价),Width=85
+Debug Output: 35=>supplier(供应商),Width=100
+Debug Output: 36=>supplierAddr(档口号),Width=100
+Debug Output: 37=>location(货位号),Width=100
+Debug Output: 38=>barcode(商品条码),Width=150
+Debug Output: 39=>invoice(发票信息),Width=200
+Debug Output: 40=>checkoutStatus(出库状态),Width=85
+Debug Output: 41=>checkoutTime(出库时间),Width=180
+Debug Output: 42=>checkoutError(出库错误),Width=160
+Debug Output: 43=>checkoutUser(出库人),Width=120
+Debug Output: 44=>waybillPrintShopName(打单店铺名称),Width=150
+Debug Output: 45=>waybillPrintBranch(打单网点),Width=150
+Debug Output: 46=>waybillTemplateName(打单模板名称),Width=100
+Debug Output: 47=>autoSendStatus(预发货状态),Width=240
+Debug Output: 48=>exceptionReason(待审核原因),Width=200
+Debug Output: 49=>oid(子订单号),Width=200
+Debug Output: 50=>lowPriceTemplateName(低价快递模板),Width=140
+Debug Output: 51=>lowPriceWaybillFee(低价快递费用),Width=100
+Debug Output: 52=>waybillPrintTimes(打单次数),Width=85
+Debug Output: 53=>replacedGoods(替换明细),Width=300
+Debug Output: 0=>selector(选中),Width=85
+Debug Output: 1=>bookmarks(订单标志),Width=150
+Debug Output: 2=>shopName(店铺名称),Width=150
+Debug Output: 3=>orderStatus(订单状态),Width=120
+Debug Output: 4=>waybillPrintTime(打单时间),Width=150
+Debug Output: 5=>waybillDaySeqNo(打印编号),Width=75
+Debug Output: 6=>cpName(快递公司),Width=75
+Debug Output: 7=>waybillCode(快递单号),Width=180
+Debug Output: 8=>buyerNick(买家账号),Width=120
+Debug Output: 9=>receiver(收件信息),Width=280
+Debug Output: 10=>goodsName(商品标题),Width=300
+Debug Output: 11=>skuCode(SKU编码),Width=120
+Debug Output: 12=>saleAttrs(销售属性),Width=180
+Debug Output: 13=>quantity(商品数量),Width=85
+Debug Output: 14=>shortName(商品简称),Width=120
+Debug Output: 15=>sellerFlag(旗帜),Width=65
+Debug Output: 16=>sellerRemark(卖家备注),Width=150
+Debug Output: 17=>buyerRemark(买家留言),Width=150
+Debug Output: 18=>tid(订单编号),Width=200
+Debug Output: 19=>refundStatus(退款状态),Width=120
+Debug Output: 20=>goodsStatus(商品状态),Width=120
+Debug Output: 21=>recvAmount(商品实付),Width=85
+Debug Output: 22=>totalRecvAmount(订单总实收),Width=85
+Debug Output: 23=>totalPostfee(订单总邮费),Width=85
+Debug Output: 24=>totalWeight(订单总重量),Width=85
+Debug Output: 25=>totalVolume(订单总体积),Width=85
+Debug Output: 26=>createdTime(创建时间),Width=150
+Debug Output: 27=>PayTime(支付时间),Width=150
+Debug Output: 28=>shipTime(发货时间),Width=150
+Debug Output: 29=>sendPrintTime(发货单打印时间),Width=180
+Debug Output: 30=>shipRemainTime(剩余发货时间),Width=100
+Debug Output: 31=>adminMemo(自定义备注),Width=150
+Debug Output: 32=>tags(内部标记),Width=150
+Debug Output: 33=>stockQuantity(库存数量),Width=85
+Debug Output: 34=>buyPrice(商品进价),Width=85
+Debug Output: 35=>supplier(供应商),Width=100
+Debug Output: 36=>supplierAddr(档口号),Width=100
+Debug Output: 37=>location(货位号),Width=100
+Debug Output: 38=>barcode(商品条码),Width=150
+Debug Output: 39=>invoice(发票信息),Width=200
+Debug Output: 40=>checkoutStatus(出库状态),Width=85
+Debug Output: 41=>checkoutTime(出库时间),Width=180
+Debug Output: 42=>checkoutError(出库错误),Width=160
+Debug Output: 43=>checkoutUser(出库人),Width=120
+Debug Output: 44=>waybillPrintShopName(打单店铺名称),Width=150
+Debug Output: 45=>waybillPrintBranch(打单网点),Width=150
+Debug Output: 46=>waybillTemplateName(打单模板名称),Width=100
+Debug Output: 47=>autoSendStatus(预发货状态),Width=240
+Debug Output: 48=>exceptionReason(待审核原因),Width=200
+Debug Output: 49=>oid(子订单号),Width=200
+Debug Output: 50=>lowPriceTemplateName(低价快递模板),Width=140
+Debug Output: 51=>lowPriceWaybillFee(低价快递费用),Width=100
+Debug Output: 52=>waybillPrintTimes(打单次数),Width=85
+Debug Output: 53=>replacedGoods(替换明细),Width=300
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72
+Debug Output: TradeManager.Button set to 19AC21B0AE0
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72
+Debug Output: 0=>selector(选中),Width=85
+Debug Output: 1=>bookmarks(订单标志),Width=150
+Debug Output: 2=>shopName(店铺名称),Width=150
+Debug Output: 3=>orderStatus(订单状态),Width=120
+Debug Output: 4=>waybillPrintTime(打单时间),Width=150
+Debug Output: 5=>waybillDaySeqNo(打印编号),Width=75
+Debug Output: 6=>cpName(快递公司),Width=75
+Debug Output: 7=>waybillCode(快递单号),Width=180
+Debug Output: 8=>buyerNick(买家账号),Width=120
+Debug Output: 9=>receiver(收件信息),Width=280
+Debug Output: 10=>goodsName(商品标题),Width=300
+Debug Output: 11=>skuCode(SKU编码),Width=120
+Debug Output: 12=>saleAttrs(销售属性),Width=180
+Debug Output: 13=>quantity(商品数量),Width=85
+Debug Output: 14=>shortName(商品简称),Width=120
+Debug Output: 15=>sellerFlag(旗帜),Width=65
+Debug Output: 16=>sellerRemark(卖家备注),Width=150
+Debug Output: 17=>buyerRemark(买家留言),Width=150
+Debug Output: 18=>tid(订单编号),Width=200
+Debug Output: 19=>refundStatus(退款状态),Width=120
+Debug Output: 20=>goodsStatus(商品状态),Width=120
+Debug Output: 21=>recvAmount(商品实付),Width=85
+Debug Output: 22=>totalRecvAmount(订单总实收),Width=85
+Debug Output: 23=>totalPostfee(订单总邮费),Width=85
+Debug Output: 24=>totalWeight(订单总重量),Width=85
+Debug Output: 25=>totalVolume(订单总体积),Width=85
+Debug Output: 26=>createdTime(创建时间),Width=150
+Debug Output: 27=>PayTime(支付时间),Width=150
+Debug Output: 28=>shipTime(发货时间),Width=150
+Debug Output: 29=>sendPrintTime(发货单打印时间),Width=180
+Debug Output: 30=>shipRemainTime(剩余发货时间),Width=100
+Debug Output: 31=>adminMemo(自定义备注),Width=150
+Debug Output: 32=>tags(内部标记),Width=150
+Debug Output: 33=>stockQuantity(库存数量),Width=85
+Debug Output: 34=>buyPrice(商品进价),Width=85
+Debug Output: 35=>supplier(供应商),Width=100
+Debug Output: 36=>supplierAddr(档口号),Width=100
+Debug Output: 37=>location(货位号),Width=100
+Debug Output: 38=>barcode(商品条码),Width=150
+Debug Output: 39=>invoice(发票信息),Width=200
+Debug Output: 40=>checkoutStatus(出库状态),Width=85
+Debug Output: 41=>checkoutTime(出库时间),Width=180
+Debug Output: 42=>checkoutError(出库错误),Width=160
+Debug Output: 43=>checkoutUser(出库人),Width=120
+Debug Output: 44=>waybillPrintShopName(打单店铺名称),Width=150
+Debug Output: 45=>waybillPrintBranch(打单网点),Width=150
+Debug Output: 46=>waybillTemplateName(打单模板名称),Width=100
+Debug Output: 47=>autoSendStatus(预发货状态),Width=240
+Debug Output: 48=>exceptionReason(待审核原因),Width=200
+Debug Output: 49=>oid(子订单号),Width=200
+Debug Output: 50=>lowPriceTemplateName(低价快递模板),Width=140
+Debug Output: 51=>lowPriceWaybillFee(低价快递费用),Width=100
+Debug Output: 52=>waybillPrintTimes(打单次数),Width=85
+Debug Output: 53=>replacedGoods(替换明细),Width=300
+Debug Output: 0=>selector(选中),Width=85
+Debug Output: 1=>bookmarks(订单标志),Width=150
+Debug Output: 2=>shopName(店铺名称),Width=150
+Debug Output: 3=>orderStatus(订单状态),Width=120
+Debug Output: 4=>waybillPrintTime(打单时间),Width=150
+Debug Output: 5=>waybillDaySeqNo(打印编号),Width=75
+Debug Output: 6=>cpName(快递公司),Width=75
+Debug Output: 7=>waybillCode(快递单号),Width=180
+Debug Output: 8=>buyerNick(买家账号),Width=120
+Debug Output: 9=>receiver(收件信息),Width=280
+Debug Output: 10=>goodsName(商品标题),Width=300
+Debug Output: 11=>skuCode(SKU编码),Width=120
+Debug Output: 12=>saleAttrs(销售属性),Width=180
+Debug Output: 13=>quantity(商品数量),Width=85
+Debug Output: 14=>shortName(商品简称),Width=120
+Debug Output: 15=>sellerFlag(旗帜),Width=65
+Debug Output: 16=>sellerRemark(卖家备注),Width=150
+Debug Output: 17=>buyerRemark(买家留言),Width=150
+Debug Output: 18=>tid(订单编号),Width=200
+Debug Output: 19=>refundStatus(退款状态),Width=120
+Debug Output: 20=>goodsStatus(商品状态),Width=120
+Debug Output: 21=>recvAmount(商品实付),Width=85
+Debug Output: 22=>totalRecvAmount(订单总实收),Width=85
+Debug Output: 23=>totalPostfee(订单总邮费),Width=85
+Debug Output: 24=>totalWeight(订单总重量),Width=85
+Debug Output: 25=>totalVolume(订单总体积),Width=85
+Debug Output: 26=>createdTime(创建时间),Width=150
+Debug Output: 27=>PayTime(支付时间),Width=150
+Debug Output: 28=>shipTime(发货时间),Width=150
+Debug Output: 29=>sendPrintTime(发货单打印时间),Width=180
+Debug Output: 30=>shipRemainTime(剩余发货时间),Width=100
+Debug Output: 31=>adminMemo(自定义备注),Width=150
+Debug Output: 32=>tags(内部标记),Width=150
+Debug Output: 33=>stockQuantity(库存数量),Width=85
+Debug Output: 34=>buyPrice(商品进价),Width=85
+Debug Output: 35=>supplier(供应商),Width=100
+Debug Output: 36=>supplierAddr(档口号),Width=100
+Debug Output: 37=>location(货位号),Width=100
+Debug Output: 38=>barcode(商品条码),Width=150
+Debug Output: 39=>invoice(发票信息),Width=200
+Debug Output: 40=>checkoutStatus(出库状态),Width=85
+Debug Output: 41=>checkoutTime(出库时间),Width=180
+Debug Output: 42=>checkoutError(出库错误),Width=160
+Debug Output: 43=>checkoutUser(出库人),Width=120
+Debug Output: 44=>waybillPrintShopName(打单店铺名称),Width=150
+Debug Output: 45=>waybillPrintBranch(打单网点),Width=150
+Debug Output: 46=>waybillTemplateName(打单模板名称),Width=100
+Debug Output: 47=>autoSendStatus(预发货状态),Width=240
+Debug Output: 48=>exceptionReason(待审核原因),Width=200
+Debug Output: 49=>oid(子订单号),Width=200
+Debug Output: 50=>lowPriceTemplateName(低价快递模板),Width=140
+Debug Output: 51=>lowPriceWaybillFee(低价快递费用),Width=100
+Debug Output: 52=>waybillPrintTimes(打单次数),Width=85
+Debug Output: 53=>replacedGoods(替换明细),Width=300
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72
+Debug Output: 0=>selector(选中),Width=85
+Debug Output: 1=>bookmarks(订单标志),Width=150
+Debug Output: 2=>shopName(店铺名称),Width=150
+Debug Output: 3=>orderStatus(订单状态),Width=120
+Debug Output: 4=>waybillPrintTime(打单时间),Width=150
+Debug Output: 5=>waybillDaySeqNo(打印编号),Width=75
+Debug Output: 6=>cpName(快递公司),Width=75
+Debug Output: 7=>waybillCode(快递单号),Width=180
+Debug Output: 8=>buyerNick(买家账号),Width=120
+Debug Output: 9=>receiver(收件信息),Width=280
+Debug Output: 10=>goodsName(商品标题),Width=300
+Debug Output: 11=>skuCode(SKU编码),Width=120
+Debug Output: 12=>saleAttrs(销售属性),Width=180
+Debug Output: 13=>quantity(商品数量),Width=85
+Debug Output: 14=>shortName(商品简称),Width=120
+Debug Output: 15=>sellerFlag(旗帜),Width=65
+Debug Output: 16=>sellerRemark(卖家备注),Width=150
+Debug Output: 17=>buyerRemark(买家留言),Width=150
+Debug Output: 18=>tid(订单编号),Width=200
+Debug Output: 19=>refundStatus(退款状态),Width=120
+Debug Output: 20=>goodsStatus(商品状态),Width=120
+Debug Output: 21=>recvAmount(商品实付),Width=85
+Debug Output: 22=>totalRecvAmount(订单总实收),Width=85
+Debug Output: 23=>totalPostfee(订单总邮费),Width=85
+Debug Output: 24=>totalWeight(订单总重量),Width=85
+Debug Output: 25=>totalVolume(订单总体积),Width=85
+Debug Output: 26=>createdTime(创建时间),Width=150
+Debug Output: 27=>PayTime(支付时间),Width=150
+Debug Output: 28=>shipTime(发货时间),Width=150
+Debug Output: 29=>sendPrintTime(发货单打印时间),Width=180
+Debug Output: 30=>shipRemainTime(剩余发货时间),Width=100
+Debug Output: 31=>adminMemo(自定义备注),Width=150
+Debug Output: 32=>tags(内部标记),Width=150
+Debug Output: 33=>stockQuantity(库存数量),Width=85
+Debug Output: 34=>buyPrice(商品进价),Width=85
+Debug Output: 35=>supplier(供应商),Width=100
+Debug Output: 36=>supplierAddr(档口号),Width=100
+Debug Output: 37=>location(货位号),Width=100
+Debug Output: 38=>barcode(商品条码),Width=150
+Debug Output: 39=>invoice(发票信息),Width=200
+Debug Output: 40=>checkoutStatus(出库状态),Width=85
+Debug Output: 41=>checkoutTime(出库时间),Width=180
+Debug Output: 42=>checkoutError(出库错误),Width=160
+Debug Output: 43=>checkoutUser(出库人),Width=120
+Debug Output: 44=>waybillPrintShopName(打单店铺名称),Width=150
+Debug Output: 45=>waybillPrintBranch(打单网点),Width=150
+Debug Output: 46=>waybillTemplateName(打单模板名称),Width=100
+Debug Output: 47=>autoSendStatus(预发货状态),Width=240
+Debug Output: 48=>exceptionReason(待审核原因),Width=200
+Debug Output: 49=>oid(子订单号),Width=200
+Debug Output: 50=>lowPriceTemplateName(低价快递模板),Width=140
+Debug Output: 51=>lowPriceWaybillFee(低价快递费用),Width=100
+Debug Output: 52=>waybillPrintTimes(打单次数),Width=85
+Debug Output: 53=>replacedGoods(替换明细),Width=300
+Debug Output: 0=>selector(选中),Width=64
+Debug Output: 1=>goodsName(商品标题),Width=186
+Debug Output: 2=>skuCode(SKU编码),Width=127
+Debug Output: 3=>saleAttrs(销售属性),Width=112
+Debug Output: 4=>GoodsOuterId(商家编码),Width=30
+Debug Output: 5=>groups(包裹数),Width=86
+Debug Output: 6=>goods(商品数),Width=72

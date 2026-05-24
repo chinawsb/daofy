@@ -8,7 +8,7 @@ version = "2026.05.13"
 description = "Daofy for Delphi - MCP Server for Delphi project compilation and knowledge base query"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "吉林省左右软件开发有限公司", email = "admin@zuoyousoft.com"},
     {name = "Equilibrium Software Development Co., Ltd, Jilin"}
@@ -16,12 +16,13 @@ authors = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+keywords = ["delphi", "mcp", "compiler", "model-context-protocol", "ai", "embarcadero"]
 dependencies = [
     "mcp>=0.9.0",
     "pydantic>=2.0.0",
@@ -38,6 +39,16 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
 ]
+embedding = [
+    "numpy>=1.21.0",
+    "sentence-transformers>=2.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/chinawsb/daofy"
+Repository = "https://github.com/chinawsb/daofy"
+"Bug Tracker" = "https://github.com/chinawsb/daofy/issues"
+Changelog = "https://github.com/chinawsb/daofy/blob/main/CHANGELOG.md"
 
 [project.scripts]
 daofy = "src.server:main"
