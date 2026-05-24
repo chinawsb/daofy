@@ -28,8 +28,8 @@ def test_args_generator_basic():
     gen = ArgsGenerator()
     options = CompileOptions(
         output_path="C:\\Output",
-        optimization_enabled=True,
-        debug_info_enabled=False,
+        optimize=True,
+        debug=False,
         warning_level=2,
         disabled_warnings=[],
         output_type=OutputType.GUI,
@@ -53,8 +53,8 @@ def test_args_generator_conditional_defines():
     gen = ArgsGenerator()
     options = CompileOptions(
         conditional_defines=["DEBUG", "WIN32", "TEST"],
-        optimization_enabled=False,
-        debug_info_enabled=True,
+        optimize=False,
+        debug=True,
         warning_level=3,
         disabled_warnings=[],
         output_type=OutputType.CONSOLE,
@@ -78,8 +78,8 @@ def test_args_generator_search_paths():
     options = CompileOptions(
         unit_search_paths=["C:\\Lib1", "C:\\Lib2"],
         resource_search_paths=["C:\\Res"],
-        optimization_enabled=True,
-        debug_info_enabled=False,
+        optimize=True,
+        debug=False,
         warning_level=2,
         disabled_warnings=[],
         output_type=OutputType.GUI,
@@ -100,8 +100,8 @@ def test_args_generator_disabled_warnings():
     
     gen = ArgsGenerator()
     options = CompileOptions(
-        optimization_enabled=True,
-        debug_info_enabled=False,
+        optimize=True,
+        debug=False,
         warning_level=2,
         disabled_warnings=["W1001", "W1002"],
         output_type=OutputType.GUI,

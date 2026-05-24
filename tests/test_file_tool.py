@@ -116,7 +116,8 @@ async def test_write_new_file():
         _assert_success(result)
         assert "文件已写入" in result["message"]
         assert os.path.isfile(file_path)
-        with open(file_path, "r") as f:
+        # 新文件默认 UTF-8 BOM，需指明编码读取
+        with open(file_path, "r", encoding="utf-8-sig") as f:
             assert "unit TestUnit" in f.read()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -219,7 +220,7 @@ async def test_write_format_after():
                 "file_path": file_path,
                 "content": "unit TestUnit;\nbegin\nend.\n",
                 "backup": False,
-                "format_after_write": True,
+                "auto_format": True,
             })
             _assert_success(result)
             mock_fmt.assert_called_once()

@@ -309,9 +309,9 @@ class TestFormatFileErrors:
                     mock_result.stderr = "ERROR CHECK: 'test.pas' has incorrect formatting"
                     mock_run.return_value = mock_result
 
-                    result = await format_file(file_path, check_only=True)
+                    result = await format_file(file_path, dry_run=True)
                     assert result["status"] == "success"
-                    assert result["check_only"] is True
+                    assert result["dry_run"] is True
                     assert result["formatted"] is False
         finally:
             import shutil

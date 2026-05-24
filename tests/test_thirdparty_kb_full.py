@@ -34,7 +34,7 @@ def test_build_knowledge_base():
     print("(这可能需要几分钟时间，取决于第三方库的数量和大小)")
     print()
     
-    success = kb.build_thirdparty_knowledge_base(force_rebuild=True)
+    success = kb.build_thirdparty_knowledge_base(rebuild=True)
 
     assert success, "第三方库知识库构建失败"
     print("✓ 知识库构建成功!")

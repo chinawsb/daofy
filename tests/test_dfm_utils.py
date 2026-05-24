@@ -104,8 +104,8 @@ def test_detect_empty_file():
 
 
 def test_detect_nonexistent_file():
-    fmt = _detect_dfm_format(r"C:\nonexistent.dfm")
-    assert fmt == "text", "should default to text on error"
+    with pytest.raises(FileNotFoundError):
+        _detect_dfm_format(r"C:\nonexistent.dfm")
 
 
 def test_detect_dfm_with_leading_spaces():

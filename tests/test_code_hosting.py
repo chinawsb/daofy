@@ -97,9 +97,14 @@ class TestGitRun:
             _git_run(".", "this-command-does-not-exist-in-git")
 
     def test_failure_raises(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with patch("subprocess.run") as mock_run:
+            mock_result = MagicMock()
+            mock_result.returncode = 128
+            mock_result.stdout = ""
+            mock_result.stderr = "fatal: not a git repository"
+            mock_run.return_value = mock_result
             with pytest.raises(RuntimeError, match="git.*失败|not a git repository"):
-                _git_run(tmp, "status")
+                _git_run(".", "status")
 
     def test_creates_dir_if_not_exists(self, tmp_path):
         """_git_run should auto-create work_dir."""
@@ -195,29 +200,29 @@ class TestGitSyncActions:
     @patch("src.tools.code_hosting._git_run")
     def test_git_status(self, mock_git):
         mock_git.return_value = "On branch main\nnothing to commit"
-        r = code_hosting(action="git_status", work_dir=".")
+        r = code_hosting(action="git_status", dir=".")
         assert r["status"] == "ok"
         mock_git.assert_called_once_with(".", "status")
 
     @patch("src.tools.code_hosting._git_run")
     def test_git_add(self, mock_git):
-        r = code_hosting(action="git_add", work_dir=".", files=["a.py", "b.py"])
+        r = code_hosting(action="git_add", dir=".", files=["a.py", "b.py"])
         assert r["status"] == "ok"
         mock_git.assert_called_once_with(".", "add", "a.py", "b.py")
 
     def test_git_add_empty_files(self):
-        r = code_hosting(action="git_add", work_dir=".", files=[])
+        r = code_hosting(action="git_add", dir=".", files=[])
         assert r["status"] == "failed"
         assert "请指定" in r["message"]
 
     def test_git_add_missing_files_param(self):
-        r = code_hosting(action="git_add", work_dir=".")
+        r = code_hosting(action="git_add", dir=".")
         assert r["status"] == "failed"
 
     @patch("src.tools.code_hosting._git_run")
     def test_git_commit(self, mock_git):
         mock_git.side_effect = [None, "abc123def456"]
-        r = code_hosting(action="git_commit", work_dir=".", commit_message="fix: bug")
+        r = code_hosting(action="git_commit", dir=".", message="fix: bug")
         assert r["status"] == "ok"
         assert "abc123def456" in r["message"]
         mock_git.assert_has_calls([
@@ -226,12 +231,12 @@ class TestGitSyncActions:
         ])
 
     def test_git_commit_empty_message(self):
-        r = code_hosting(action="git_commit", work_dir=".", commit_message="")
+        r = code_hosting(action="git_commit", dir=".", message="")
         assert r["status"] == "failed"
         assert "请指定" in r["message"]
 
     def test_git_commit_missing_message(self):
-        r = code_hosting(action="git_commit", work_dir=".")
+        r = code_hosting(action="git_commit", dir=".")
         assert r["status"] == "failed"
 
 
@@ -247,7 +252,7 @@ class TestGitAsyncActions:
         r = code_hosting(
             action="git_clone",
             repo_url="https://github.com/user/repo.git",
-            work_dir="/tmp",
+            dir="/tmp",
         )
         assert r["status"] == "ok"
         assert "任务ID" in r["message"]
@@ -259,7 +264,7 @@ class TestGitAsyncActions:
             action="git_clone",
             repo_url="https://github.com/user/repo.git",
             mirror="https://hub.fastgit.xyz",
-            work_dir="/tmp",
+            dir="/tmp",
         )
         assert r["status"] == "ok"
         assert mock_submit.called
@@ -267,7 +272,7 @@ class TestGitAsyncActions:
     @patch("src.tools.code_hosting._submit_git_task")
     def test_git_push_async(self, mock_submit):
         mock_submit.return_value = ("task_999", {"status": "ok", "message": "🔄 Git 任务已提交\n  任务ID: task_999\n  操作: git_push"})
-        r = code_hosting(action="git_push", work_dir=".", remote_name="origin", branch="main")
+        r = code_hosting(action="git_push", dir=".", remote="origin", branch="main")
         assert r["status"] == "ok"
         assert "任务ID" in r["message"]
 
@@ -276,8 +281,8 @@ class TestGitAsyncActions:
         mock_submit.return_value = ("task_888", {"status": "ok", "message": "🔄 Git 任务已提交\n  任务ID: task_888\n  操作: git_push_retry"})
         r = code_hosting(
             action="git_push_retry",
-            work_dir=".",
-            remote_name="origin",
+            dir=".",
+            remote="origin",
             branch="main",
             retry_interval=60,
         )
@@ -375,7 +380,7 @@ class TestApiActions:
             repo="owner/repo",
             title="Test bug",
             body="Description here",
-            label_names=["类型: 缺陷"],
+            labels=["类型: 缺陷"],
         )
         assert r["status"] == "ok"
         assert "42" in r.get("message", "")
@@ -553,7 +558,7 @@ class TestMirrorSubstitution:
             action="git_clone",
             repo_url="https://github.com/owner/repo.git",
             mirror="https://hub.fastgit.xyz",
-            work_dir="/tmp",
+            dir="/tmp",
         )
         assert r["status"] == "ok"
 
@@ -564,7 +569,7 @@ class TestMirrorSubstitution:
             action="git_clone",
             repo_url="https://gitlab.com/owner/repo.git",
             mirror="https://hub.fastgit.xyz",
-            work_dir="/tmp",
+            dir="/tmp",
         )
         assert r["status"] == "ok"
 
@@ -595,15 +600,15 @@ class TestGitIntegration:
         return str(repo)
 
     def test_git_status_integration(self, temp_repo):
-        r = code_hosting(action="git_status", work_dir=temp_repo)
+        r = code_hosting(action="git_status", dir=temp_repo)
         assert r["status"] == "ok"
         assert "On branch" in r["message"]
 
     def test_git_add_commit_integration(self, temp_repo):
         (Path(temp_repo) / "new_file.txt").write_text("hello")
-        r = code_hosting(action="git_add", work_dir=temp_repo, files=["new_file.txt"])
+        r = code_hosting(action="git_add", dir=temp_repo, files=["new_file.txt"])
         assert r["status"] == "ok"
-        r = code_hosting(action="git_commit", work_dir=temp_repo, commit_message="add new_file.txt")
+        r = code_hosting(action="git_commit", dir=temp_repo, message="add new_file.txt")
         assert r["status"] == "ok"
         assert "提交成功" in r["message"]
 
@@ -628,14 +633,14 @@ class TestGitIntegration:
         r = code_hosting(
             action="git_clone",
             repo_url=str(src),
-            work_dir=str(dst),
+            dir=str(dst),
         )
         assert r["status"] == "ok"
         assert "任务ID" in r["message"]
 
     def test_task_status_reports_progress(self, temp_repo):
         """git_push submits task and returns task_id for async_task to query."""
-        r = code_hosting(action="git_push", work_dir=temp_repo, remote_name="origin", branch="main")
+        r = code_hosting(action="git_push", dir=temp_repo, remote="origin", branch="main")
         assert r["status"] == "ok"
         assert "任务ID" in r["message"]
         assert "async_task" in r["message"]
