@@ -84,6 +84,7 @@ else:
     from src.tools import create_component_dfm as create_component_dfm_mod
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.tools.audit import run_audit as _run_audit
+    from src.tools.dproj_tool import dproj_tool as _dproj_tool
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
@@ -227,6 +228,19 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         if not is_error:
             return ("✨ 提示：安装完成，"
                     "可用 list_installed_packages 验证组件已注册到 IDE")
+
+    elif name == "dproj_tool":
+        action = arguments.get("action", "info")
+        if action == "create":
+            return ("✨ 提示：创建完成。可用 dproj_tool(action='info') 查看项目配置，"
+                    "或 compile_project 编译验证。")
+        elif action == "info":
+            return ("✨ 提示：修改配置可用 dproj_tool(action='set') 调整，"
+                    "添加源文件用 dproj_tool(action='add_source')。")
+        elif action in ("set", "add_config", "remove_config", "add_source", "remove_source"):
+            return ("✨ 提示：修改已自动备份到 __history 目录。"
+                    "可用 compile_project 编译验证修改是否有效。")
+        return None
 
     return None
 
@@ -515,7 +529,7 @@ async def run_server():
                         "compile_timeout": {"type": "integer", "default": 60, "description": "编译超时秒数"},
                         "exec_timeout": {"type": "integer", "default": 15, "description": "执行超时秒数（组件创建代码可能耗时操作）"},
                     },
-                    "required": []
+                    "required": ["action"]
                 }
             ),
 
@@ -658,7 +672,7 @@ async def run_server():
                         "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"], "default": "suggestion", "description": "最低严重级别（仅 audit 模式）"},
                         "output_format": {"type": "string", "enum": ["report", "json"], "default": "report", "description": "输出格式: report=Markdown, json=原始JSON"},
                     },
-                    "required": []
+                    "required": ["source_dir"]
                 }
             ),
 
@@ -718,6 +732,61 @@ async def run_server():
                         "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
                     },
                     "required": ["action"]
+                }
+            ),
+
+            # ===== .dproj 项目管理 ⭐⭐⭐ =====
+            Tool(
+                name="dproj_tool",
+                description="【优先级 ⭐⭐⭐】.dproj 项目文件管理 — 创建/查看/修改工程配置\n"
+                            "【触发词】项目文件、dproj、工程配置、创建项目、添加配置、删除配置、\n"
+                            "           添加源文件、删除源文件、查看项目信息、项目管理\n"
+                            "【action 说明】\n"
+                            '  action="create"       创建新的 .dproj 文件\n'
+                            '  action="info"         读取 .dproj 文件完整信息（配置/源文件/资源/编译事件）\n'
+                            '  action="set"          设置属性值（PropertyGroup 元素），可指定 config/platform\n'
+                            '  action="add_config"   添加一个新的编译配置（如 "Staging"）\n'
+                            '  action="remove_config"删除指定编译配置\n'
+                            '  action="add_source"   向 ItemGroup 添加源文件引用（DCCReference）\n'
+                            '  action="remove_source"从 ItemGroup 删除源文件引用\n'
+                            "【协作链】dproj_tool(action=info)→file_tool→编译→compile_project\n"
+                            "【示例】\n"
+                            '   dproj_tool(action="create", project_path="MyApp.dproj", main_source="MyApp.dpr")  # "创建项目"\n'
+                            '   dproj_tool(action="info", project_path="MyApp.dproj")  # "查看项目配置"\n'
+                            '   dproj_tool(action="set", project_path="MyApp.dproj", property_name="DCC_Define", value="DEBUG;TEST", config="Debug")  # "设置编译符号"\n'
+                            '   dproj_tool(action="add_config", config_name="Staging", base_config="Debug")  # "添加Staging配置"\n'
+                            '   dproj_tool(action="add_source", project_path="MyApp.dproj", source_file="Unit1.pas")  # "添加源文件"\n'
+                            '   dproj_tool(action="remove_source", project_path="MyApp.dproj", source_file="OldUnit.pas")  # "删除源文件"',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["create", "info", "set", "add_config", "remove_config", "add_source", "remove_source"], "default": "info", "description": "操作类型"},
+                        "project_path": {"type": "string", "description": ".dproj 文件路径（create/set/add_config/remove_config/add_source/remove_source 必需）"},
+                        # create 参数
+                        "main_source": {"type": "string", "description": "[create] 主源文件名，如 Project1.dpr"},
+                        "project_guid": {"type": "string", "description": "[create] 项目 GUID（可选，自动生成）"},
+                        "project_version": {"type": "string", "description": "[create] 项目版本号，如 21.0（可选，不填则空）"},
+                        "framework_type": {"type": "string", "default": "VCL", "description": "[create] 框架类型: VCL/FMX"},
+                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "[create] 单元搜索路径列表"},
+                        "namespace": {"type": "string", "description": "[create] 命名空间列表（分号分隔）"},
+                        "configs": {"type": "array", "items": {"type": "string"}, "description": "[create] 编译配置列表，默认 [\"Debug\", \"Release\"]"},
+                        "sources": {"type": "array", "items": {"type": "string"}, "description": "[create] 初始源文件列表（DCCReference）"},
+                        # set 参数
+                        "property_name": {"type": "string", "description": "[set] 属性名，如 DCC_Define、DCC_Optimize"},
+                        "value": {"type": "string", "description": "[set] 属性值"},
+                        "config": {"type": "string", "description": "[set/add_config/remove_config] 编译配置名，如 Debug/Release/Staging"},
+                        "platform": {"type": "string", "description": "[set] 目标平台，如 Win32/Win64/Android"},
+                        # add_config/remove_config 参数
+                        "config_name": {"type": "string", "description": "[add_config/remove_config] 编译配置名（与 config 互为别名）"},
+                        "base_config": {"type": "string", "description": "[add_config] 从哪个现有配置复制属性，如 Debug"},
+                        "defines": {"type": "string", "description": "[add_config] 条件编译符号"},
+                        "optimize": {"type": "boolean", "description": "[add_config] 是否启用优化"},
+                        "debug_info": {"type": "boolean", "description": "[add_config] 是否生成调试信息"},
+                        # add_source/remove_source 参数
+                        "source_file": {"type": "string", "description": "[add_source/remove_source] 源文件名，如 Unit1.pas"},
+                        "main_source_flag": {"type": "boolean", "default": False, "description": "[add_source] true=添加到 DelphiCompile（主源文件），false=添加到 DCCReference"},
+                    },
+                    "required": ["action", "project_path"]
                 }
             ),
         ]
@@ -928,6 +997,31 @@ async def run_server():
     async def _handle_run_audit(arguments: dict) -> Any:
         return await _run_audit(arguments)
 
+    async def _handle_dproj_tool(arguments: dict) -> Any:
+        return await _dproj_tool(
+            action=arguments.get("action", "info"),
+            project_path=arguments.get("project_path"),
+            main_source=arguments.get("main_source"),
+            project_guid=arguments.get("project_guid"),
+            project_version=arguments.get("project_version"),
+            framework_type=arguments.get("framework_type", "VCL"),
+            unit_search_paths=arguments.get("unit_search_paths"),
+            namespace=arguments.get("namespace"),
+            configs=arguments.get("configs"),
+            sources=arguments.get("sources"),
+            property_name=arguments.get("property_name"),
+            value=arguments.get("value"),
+            config=arguments.get("config"),
+            platform=arguments.get("platform"),
+            config_name=arguments.get("config_name"),
+            base_config=arguments.get("base_config"),
+            defines=arguments.get("defines"),
+            optimize=arguments.get("optimize"),
+            debug_info=arguments.get("debug_info"),
+            source_file=arguments.get("source_file"),
+            main_source_flag=arguments.get("main_source_flag", False),
+        )
+
     _TOOL_HANDLERS = {
         "compile_project": _handle_compile_project,
         "delphi_kb": _handle_delphi_kb,
@@ -940,6 +1034,7 @@ async def run_server():
         "get_coding_rules": _handle_get_coding_rules,
         "run_audit": _handle_run_audit,
         "code_hosting": _handle_code_hosting,
+        "dproj_tool": _handle_dproj_tool,
     }
 
     @server.call_tool()

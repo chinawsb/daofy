@@ -40,6 +40,13 @@ from .pasfmt import (
 )
 from .file_tool import handle_file_tool
 from .dfm_utils import convert_dfm, set_compiler_path
+from .audit import run_audit
+from .dproj_tool import dproj_tool
+from .manage_component import manage_component
+from .code_hosting import code_hosting
+from .install_package import install_package, list_installed_packages
+from . import document_kb_tools
+from . import create_component_dfm
 
 __all__ = [
     # 编译工具
@@ -85,4 +92,19 @@ __all__ = [
     # DFM 转换工具
     'convert_dfm',
     'set_compiler_path',
+    # 代码审计
+    'run_audit',
+    # 工程文件管理
+    'dproj_tool',
+    # 组件管理
+    'manage_component',
+    # 代码托管平台
+    'code_hosting',
+    # 组件包管理
+    'install_package',
+    'list_installed_packages',
+    # 文档知识库
+    'document_kb_tools',
+    # 组件 DFM 生成（旧版，已由 manage_component 替代）
+    'create_component_dfm',
 ]

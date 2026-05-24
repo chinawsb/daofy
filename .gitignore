@@ -36,6 +36,9 @@ env/
 logs/
 *.log
 
+# Type checking
+.mypy_cache/
+
 # Output files
 compile_output.txt
 compile_with_all_events.txt
