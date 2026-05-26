@@ -13,6 +13,8 @@ from ..services.compiler_service import CompilerService
 from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import resolve_target_platform_from_dproj
+from ..utils.file_backup import detect_encoding
+import os
 import shlex
 import subprocess as _subprocess
 
@@ -32,6 +34,217 @@ logger = get_logger(__name__)
 
 # 全局编译服务实例
 _compiler_service: Optional[CompilerService] = None
+
+
+def _verify_tools_dir() -> Path:
+    """返回验证工具单元所在目录 (tools/daudit/)"""
+    return Path(__file__).parent.parent.parent / "tools" / "daudit"
+
+
+def _compute_verify_exe_path(dproj_path: str, target_platform: str,
+                             build_configuration: str) -> Path:
+    """计算编译后的 .exe 路径（不依赖 result.output_file）"""
+    proj_dir = Path(dproj_path).parent
+    plat_map = {"win32": "Win32", "win64": "Win64"}
+    lib_dir = plat_map.get(target_platform.lower(), "Win32")
+    cfg = build_configuration or "Debug"
+    exe_name = Path(dproj_path).stem + ".exe"
+    return proj_dir / lib_dir / cfg / exe_name
+
+
+def _verify_backup_paths(dproj: Path) -> dict:
+    """生成 .dproj/.dpr 的备份路径"""
+    stem = dproj.stem
+    return {
+        '.dproj': dproj.with_name(stem + '.dproj.verify_bak'),
+        '.dpr': dproj.with_name(stem + '.dpr.verify_bak'),
+    }
+
+
+def _inject_verify_units(dproj_path: str) -> str:
+    """修改 .dproj + .dpr 注入 StackTrace 验证单元，返回 .dproj 备份路径。
+
+    注入内容 (.dproj):
+       1. DCCReference 添加 StackTrace.pas
+       2. DCC_UnitSearchPath 添加 tools/daudit/ 路径
+       3. DCC_MapFile=3 (detailed) — 生成完整 .map 文件供堆栈解析
+
+    注入内容 (.dpr):
+       1. uses 子句追加 StackTrace
+       2. begin 块后插入 TStackTraceManager 初始化调用
+
+    Args:
+        dproj_path: .dproj 文件路径
+
+    Returns:
+        .dproj 备份文件路径
+    """
+    import shutil
+
+    dproj = Path(dproj_path)
+    backs = _verify_backup_paths(dproj)
+
+    # ── 备份 .dproj ──
+    shutil.copy2(str(dproj), str(backs['.dproj']))
+
+    content = dproj.read_text(encoding="utf-8-sig")
+
+    # ── 1a. 添加 DCCReference for StackTrace.pas ──
+    tools_dir = _verify_tools_dir()
+    rel_stacktrace = os.path.relpath(str(tools_dir / "StackTrace.pas"), str(dproj.parent))
+    inject_refs = (
+        f'    <DCCReference Include="{rel_stacktrace}">\n'
+        f'      <Form>False</Form>\n'
+        f'    </DCCReference>'
+    )
+    ig_start = content.find('<ItemGroup>')
+    ig_end = content.find('</ItemGroup>', ig_start) if ig_start >= 0 else -1
+    if ig_start >= 0 and ig_end > ig_start:
+        content = content[:ig_end] + inject_refs + '\n    ' + content[ig_end:]
+    else:
+        content = content.replace(
+            '</Project>',
+            '  <ItemGroup>\n' + inject_refs + '\n  </ItemGroup>\n</Project>'
+        )
+
+    import re
+
+    # DCC_UnitSearchPath 也加上（兜底）
+    rel_path = os.path.relpath(str(tools_dir), str(dproj.parent))
+    usp_pattern = r'(<DCC_UnitSearchPath>)(.*?)(</DCC_UnitSearchPath>)'
+    if re.search(usp_pattern, content, flags=re.DOTALL):
+        content = re.sub(
+            usp_pattern,
+            lambda m: m.group(1) + m.group(2) + (';' if m.group(2).strip() else '') + rel_path + m.group(3),
+            content, flags=re.DOTALL
+        )
+    else:
+        content = content.replace(
+            '</PropertyGroup>',
+            '  <DCC_UnitSearchPath>' + rel_path + '</DCC_UnitSearchPath>\n</PropertyGroup>',
+            1
+        )
+
+    # ── 1b. DCC_MapFile=3 (detailed map) — 供 StackTrace 解析函数名+行号 ──
+    # 写入 Base PropertyGroup（第一个无条件 PropertyGroup）
+    dcc_map_pattern = r'<DCC_MapFile>\d+</DCC_MapFile>'
+    if not re.search(dcc_map_pattern, content):
+        # 插入到第一个 </PropertyGroup> 之前
+        content = content.replace(
+            '</PropertyGroup>',
+            '  <DCC_MapFile>3</DCC_MapFile>\n</PropertyGroup>',
+            1
+        )
+    else:
+        # 已存在则设为 3
+        content = re.sub(dcc_map_pattern, '<DCC_MapFile>3</DCC_MapFile>', content)
+
+    dproj.write_text(content, encoding="utf-8-sig")
+    logger.info("已注入 StackTrace 单元到 .dproj: %s", dproj_path)
+
+    # ── 2. 备份并修改 .dpr（TStackTraceManager 初始化）──
+    _inject_dpr_stacktrace(dproj, backs)
+
+    return str(backs['.dproj'])
+
+
+def _inject_dpr_stacktrace(dproj: Path, backs: dict):
+    """备份 .dpr；注入 TStackTraceManager 初始化代码
+
+    在 uses 子句添加 StackTrace 单元。
+    在 begin 块后插入 TStackTraceManager 初始化调用。
+    """
+    import shutil
+
+    dpr_path = dproj.with_suffix('.dpr')
+    if not dpr_path.exists():
+        logger.warning("未找到 .dpr，跳过注入: %s", dpr_path)
+        return
+
+    original = dpr_path.read_text(encoding='utf-8-sig')
+    if '{STACKTRACE_INJECT}' in original or 'TStackTraceManager.Enabled' in original:
+        logger.info(".dpr 已注入过 TStackTraceManager，跳过")
+        return
+
+    # 备份 .dpr
+    shutil.copy2(str(dpr_path), str(backs['.dpr']))
+
+    # ── 1. 在 uses 中追加 StackTrace ──
+    uses_pos = original.lower().find('uses\n') if original.lower().find('uses\n') >= 0 else original.lower().find('uses ')
+    if uses_pos >= 0:
+        end_uses = original.find(';', uses_pos + 4)
+        if end_uses > uses_pos:
+            uses_section = original[uses_pos:end_uses]
+            if 'StackTrace' not in uses_section:
+                original = original[:end_uses] + ', StackTrace' + original[end_uses:]
+
+    # ── 2. 在 begin 后添加 TStackTraceManager 初始化 ──
+    lines = original.split('\n')
+    begin_idx = -1
+    for i in range(len(lines)):
+        stripped = lines[i].strip()
+        if stripped == 'begin':
+            begin_idx = i
+            break
+
+    if begin_idx < 0:
+        logger.warning(".dpr 中未找到 main begin，跳过 .dpr 注入")
+        return
+
+    indent = '  '
+    inject_lines = [
+        '{STACKTRACE_INJECT}',
+        '  TStackTraceManager.Enabled := True;',
+        '  TStackTraceManager.Current.EnableDefaultLogger;',
+    ]
+    for j, line in enumerate(inject_lines):
+        lines.insert(begin_idx + 1 + j, line)
+
+    dpr_path.write_text('\n'.join(lines), encoding='utf-8-sig')
+    logger.info("已注入 TStackTraceManager 初始化到 .dpr: %s", dpr_path)
+
+
+def _restore_dproj(dproj_path: str, backup_path: str):
+    """从备份恢复原始 .dproj 和 .dpr 文件"""
+    import shutil
+    dproj = Path(dproj_path)
+    backs = _verify_backup_paths(dproj)
+
+    dproj_bak = Path(backup_path)
+    if dproj_bak.exists():
+        shutil.copy2(str(dproj_bak), str(dproj_path))
+        dproj_bak.unlink()
+        logger.info("已恢复原始 .dproj")
+    else:
+        logger.warning("验证备份文件不存在: %s", backup_path)
+
+    dpr_bak = backs['.dpr']
+    if dpr_bak.exists():
+        shutil.copy2(str(dpr_bak), str(dproj.with_suffix('.dpr')))
+        dpr_bak.unlink()
+        logger.info("已恢复原始 .dpr")
+
+
+def _parse_verify_output(output: str) -> str:
+    """解析验证程序的管道输出，提取异常信息"""
+    if 'EXCEPTION:' not in output:
+        return ""
+    lines = output.strip().split('\n')
+    excerpt = []
+    in_exception = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('EXCEPTION:'):
+            in_exception = True
+            excerpt.append(stripped)
+        elif in_exception and stripped.startswith('STACKTRACE:'):
+            excerpt.append(stripped)
+        elif in_exception and stripped.startswith('END_EXCEPTION'):
+            excerpt.append(stripped)
+            break
+        elif in_exception and stripped != '' and not stripped.startswith('RUNTIME_VERIFY'):
+            excerpt.append('  ' + stripped)
+    return '\n'.join(excerpt)
 
 
 def set_compiler_service(service: CompilerService):
@@ -216,7 +429,8 @@ async def compile_project(
     runtime_library: str = "static",
     build_configuration: Optional[str] = None,
     auto_install: bool = True,
-    run_after_compile: bool = False
+    run_after_compile: bool = False,
+    run_verify: bool = False
 ) -> CallToolResult:
     """
     编译 Delphi 工程
@@ -239,6 +453,7 @@ async def compile_project(
         build_configuration: 编译配置名称
         auto_install: 如果是设计期包，是否自动安装（默认 True）
         run_after_compile: 编译成功后，以末次运行参数启动程序
+        run_verify: 编译成功后，启动程序 3 秒验证是否崩溃（自动结束进程）
 
     Returns:
         编译结果字典
@@ -363,6 +578,87 @@ async def compile_project(
             except Exception as e:
                 logger.warning(f"编译后启动失败: {e}")
                 result_text += f"\n⚠️ 自动启动失败: {e}"
+
+        # 编译成功后，如需运行验证（注入 StackTrace 单元，编译，运行后检查 exception.log）
+        if run_verify and result.status.value == "success":
+            verify_msg = ""
+            backup_path = None
+            try:
+                # 先求 exe 路径
+                exe_path = str(_compute_verify_exe_path(
+                    project_path,
+                    target_platform or "win32",
+                    build_configuration or "Debug"
+                ))
+                if not Path(exe_path).exists():
+                    logger.warning("运行验证: 未找到输出文件 %s", exe_path)
+                    verify_msg = "\n\n⚠️ 运行验证: 未找到输出文件"
+                else:
+                    # 1. 备份并注入 StackTrace 单元到 .dproj
+                    backup_path = _inject_verify_units(project_path)
+
+                    # 2. 重新编译（注入后的 .dproj 会被 msbuild 读取）
+                    verify_result = await _compiler_service.compile_project(request)
+
+                    if verify_result.status.value != "success":
+                        err_detail = verify_result.log or verify_result.error_message or "(无日志)"
+                        logger.warning("注入 StackTrace 后编译失败: %s", err_detail[:500])
+                        verify_msg = "\n\n⚠️ 运行验证: 注入单元后编译失败\n%s" % err_detail[:1000]
+                    else:
+                        # 3. 运行验证 exe（无管道，读 exception.log）
+                        verify_exe = str(_compute_verify_exe_path(
+                            project_path,
+                            target_platform or "win32",
+                            build_configuration or "Debug"
+                        ))
+                        if not Path(verify_exe).exists():
+                            verify_msg = f"\n\n⚠️ 运行验证: 重新编译后未找到输出文件: {verify_exe}"
+                        else:
+                            exe_dir = Path(verify_exe).parent
+                            log_path = exe_dir / 'exception.log'
+
+                            # 清理旧日志（避免前次运行的残留）
+                            if log_path.exists():
+                                try:
+                                    log_path.unlink()
+                                except Exception:
+                                    pass
+
+                            proc = _subprocess.Popen(
+                                [verify_exe],
+                                cwd=exe_dir,
+                            )
+                            try:
+                                proc.wait(timeout=5)
+                            except _subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait()
+
+                            # 4. 检查 exception.log（与 file_tool 同等的编码检测）
+                            if log_path.exists():
+                                try:
+                                    enc = detect_encoding(str(log_path))
+                                    log_content = log_path.read_text(encoding=enc, errors='replace')
+                                    verify_msg = f"\n\n❌ 运行验证失败 - 检测到异常:\n{log_content}"
+                                    logger.warning("运行时异常: %s", log_content[:200])
+                                except Exception as read_err:
+                                    verify_msg = f"\n\n❌ 运行验证失败 - 检测到异常\n日志文件: {log_path}\n(读取日志失败: {read_err})"
+                            else:
+                                verify_msg = f"\n\n✅ 运行验证通过: 启动后无异常"
+                                logger.info("运行验证通过")
+            except Exception as e:
+                logger.warning("运行验证异常: %s", e, exc_info=True)
+                verify_msg = f"\n\n⚠️ 运行验证异常: {e}"
+            finally:
+                # 5. 恢复原始 .dproj
+                if backup_path:
+                    try:
+                        _restore_dproj(project_path, backup_path)
+                    except Exception as e:
+                        logger.error("恢复 .dproj 失败: %s", e)
+                        verify_msg += f"\n\n⚠️ 恢复 .dproj 失败: {e}"
+
+            result_text += verify_msg
 
         return CallToolResult(
             content=[{"type": "text", "text": result_text}],
