@@ -84,6 +84,7 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
 - **写回时必须保持原始编码**，不可将 GBK 文件强行以 UTF-8 写出
 - 使用 `file_tool(action="write")` 默认自动备份并保持原始编码；`file_tool(action="format")` 默认自动备份
 - 如果文件含 BOM（UTF-8 BOM / UTF-16 LE/BE），保留 BOM 不删除
+- **新建 Delphi 文件含中文时推荐用 `utf-8-sig`（UTF-8 with BOM）**：Delphi 编译器将无 BOM 文件中的中文字符串视为 `AnsiString`，触发 `W1057 Implicit string cast from 'AnsiString' to 'string'` 警告。使用 `encoding="utf-8-sig"` 写入 BOM 后，编译器正确识别为 `UnicodeString`，消除该警告。
 
 ### 自动备份
 - `file_tool(action="write", backup=True)` **默认开启自动备份**，写入前自动在 `__history` 目录创建备份，无需手动调用

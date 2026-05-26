@@ -48,6 +48,26 @@ docs/tutorial/
 │       ├── MainApp.dpr
 │       └── MainApp.pas
 │
+├── employee-input/            ← 场景 4.5 FireDAC SQLite 员工信息录入
+│   ├── EmployeeInput.dproj    # FireDAC SQLite 项目
+│   ├── EmployeeInput.dpr      # 程序入口
+│   ├── Form.Main.pas          # 主窗体（DBGrid + DBEdit 详情面板）
+│   └── Form.Main.dfm          # 窗体布局（左右分栏）
+│
+├── test-project/              ← 场景 4.6 单文件语法检查/run_verify 验证
+│   ├── TestProject.dproj      # 简洁 VCL 项目
+│   ├── TestProject.dpr
+│   ├── Unit1.pas
+│   └── Unit1.dfm
+│
+├── test-verify-crash/         ← 场景 run_verify 崩溃检测演示
+│   ├── TestCrash.dproj        # FormCreate 抛出异常
+│   ├── TestCrash.dpr
+│   ├── MainForm.pas
+│   ├── MainForm.crash.dproj.bak
+│   ├── Form.MainForm.pas
+│   └── Form.MainForm.dfm
+│
 └── workflow-demo/             ← 场景 5.4 完整工作流
     ├── config.json            # JSON 示例配置文件
     └── IniConfigManager.pas   # INI 读写单元

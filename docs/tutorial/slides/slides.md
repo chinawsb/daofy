@@ -59,6 +59,8 @@ AI 从"给建议"变成"帮你做"。
 | 📚 知识库 | 30 万函数、16 万页面索引 |
 | 📝 文件操作 | 读/写/格式化/备份 一站集成（含 pasfmt） |
 | 📋 编码规范 | 规范驱动代码生成与审计 |
+| 🛡️ 运行时验证 | 编译后自动运行，检测启动崩溃（`run_verify`）|
+| 🔍 运行时审计 | 扫描 DFM 组件类，检测遗漏 uses 单元 |
 | 📦 组件管理 | 编译安装 .dpk 组件包 |
 
 ---
@@ -355,16 +357,124 @@ AI: 列出所有注册的 BPL 包
 ```
 
 ```
-① get_coding_rules          → 获取规范
-② delphi_kb(TJSON*)         → 搜索 API 确认签名
-③ file_tool(action="write") → 写入代码（默认自动备份到 __history）
-④ file_tool(action="format") → 格式化代码
-⑤ compile_project           → 编译验证
-⑥ get_coding_rules(section="review") → 审计
-⑦ 清理 + 确认备份
+① get_coding_rules                    → 获取规范
+② delphi_kb(TJSON*)                   → 搜索 API 确认签名
+③ file_tool(action="write")           → 写入代码（默认自动备份到 __history）
+④ file_tool(action="format")          → 格式化代码
+⑤ compile_project                     → 编译验证
+⑥ compile_project(run_verify=True)    → 运行验证（捕获 CreateForm 阶段崩溃）
+⑦ get_coding_rules(section="review")  → 审计
+⑧ run_audit(mode="runtime")           → 运行时注册检查（遗漏 uses 检测）
+⑨ 清理 + 确认备份
 ```
 
-> 💡 全程在 AI 对话中完成，你做决策、AI 执行
+> 💡 重建前先检查现有帮助文档目录，避免重复构建
+
+---
+
+## 运行时启动崩溃检测
+
+**CreateForm 阶段的异常，.dpr 的 try/except 抓不到**
+
+```
+Application.CreateForm(TMainForm, MainForm); // ← 异常被 VCL 内部吃掉
+```
+
+**方案：TStackTraceManager**
+
+```
+StackTrace.pas
+├── TStackTraceManager (singleton)
+│   └── 挂钩 RTL Exception.GetExceptionStackInfoProc
+│       → 异常 raise 时刻立即捕获（不依赖 try/except）
+├── TDefaultExceptionLogger
+│   └── 写入 exception.log（UTF-8 BOM）
+└── ParseMapFile
+    └── 解析 .map 文件 → 函数名 + 行号
+```
+
+---
+
+## run_verify 工作流
+
+```
+compile_project(run_verify=True)
+
+① inject_verify_units()
+   ├── 备份 .dproj / .dpr
+   ├── 注入 DCCReference + DCC_UnitSearchPath
+   └── 注入 TStackTraceManager 初始化
+
+② 重新编译（带 StackTrace.pas）
+
+③ 启动 exe 运行 5 秒
+
+④ 检查 exception.log
+   ├── 存在 → detect_encoding 读取 → 嵌入 MCP 响应
+   └── 不存在 → ✅ 验证通过
+
+⑤ 恢复原始 .dproj / .dpr
+```
+
+**示例输出：**
+```
+❌ 运行验证失败 - 检测到异常:
+[2026-05-25 13:02:46] Exception: 测试异常: 模拟启动崩溃
+  Vcl.Forms.TCustomForm.DoCreate+$37 [Vcl.Forms.pas:4160]
+  TestCrash.TestCrash+$55 [TestCrash.dpr:16]
+```
+
+---
+
+## 运行时注册检查
+
+**编译通过 ≠ 运行正常** — 组件运行时注册可能缺失
+
+```
+run_audit(mode="runtime", source_dir=...)
+```
+
+**检查原理：**
+```
+src/rules/runtime_registry.json 规则表
+├── "TFDQuery" → 需要 FireDAC.DApt
+├── "TFDMemTable" → 需要 FireDAC.DApt  
+├── "TChart" → 需要 VCLTee.TeEngine
+└── ...
+```
+
+**扫描流程：**
+```
+① 扫描 .pas/.dfm 中组件类名
+② 匹配规则表
+③ 检查 uses 子句中是否包含必需单元
+④ 报告缺失项
+```
+
+**零配置扩展：** 新增规则只需编辑 JSON 文件，无需改代码
+
+---
+
+## 示例：FireDAC SQLite 员工信息录入
+
+**从头重建的演示项目 `employee-input/`：**
+
+```
+employee-input/
+├── EmployeeInput.dproj   # FireDAC SQLite 项目
+├── Form.Main.pas         # 主窗体 130 行
+├── Form.Main.dfm         # 左右分栏布局
+└── Win32/Debug/          # 编译输出
+    ├── EmployeeInput.exe # 3.8 MB 代码
+    └── employees.db      # 首次运行自动创建
+```
+
+**关键点：**
+- `TFDPhysSQLiteDriverLink` + `TFDConnection` → 自动建表
+- SQLite DB 自动创建在 exe 同级目录
+- DBGrid 列表（只读）+ DBEdit 编辑面板（左右分栏）
+- UTF-8 BOM 编码 — 消除 `W1057` 隐式字符串转换警告
+- `compile_project(run_verify=True)` — 编译 → 运行验证 一键通过
 
 ---
 
@@ -388,11 +498,11 @@ AI: 列出所有注册的 BPL 包
 
 | 能力 | 一句话 |
 |------|--------|
-| 🔧 编译 | 编译 + 诊断 + 批量 |
+| 🔧 编译 | 编译 + 诊断 + 批量 + run_verify |
 | 📚 KB 搜索 | 精确 + 语义 + 引用 |
 | 📝 文件操作 | 读/写/格式化/备份一站集成（含 pasfmt） |
 | 📋 规范 | 驱动生成 + 驱动审计 |
-| 🛡️ 安全 | 写前自动备份 + 恢复 |
+| 🛡️ 运行验证 | 启动崩溃检测 + 运行时注册审计 |
 | 📦 组件 | 编译 + 安装 |
 | 🤖 自动化 | 重构 + 修复 + 工单 |
 

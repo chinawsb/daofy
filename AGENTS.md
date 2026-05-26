@@ -38,7 +38,12 @@ src/
 ⑤ file_tool(action="write", content=...)   → 写代码（默认自动备份到 __history）
 ⑥ file_tool(action="format", file_path=...) → 格式化
 ⑦ compile_project(project_path=...)         → 编译验证
+⑧ compile_project(..., run_verify=True)     → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
+⑨ run_audit(mode="runtime", source_dir=...) → 运行时注册检查（源码级分析，无需 daudit）
 ```
+
+> **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 file_tool 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 file_tool。
+> **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）
 
 ### 知识库搜索（先猜精确名，再模糊搜）
 

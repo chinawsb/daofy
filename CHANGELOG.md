@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.05.25] - 2026-05-25
+
+### Added
+
+- **`run_verify` 异常日志嵌入 MCP 响应**：编译运行验证时检测到 `exception.log`，使用 `detect_encoding`（与 `file_tool` 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 `file_tool`。原方案仅报告路径和大小。
+- **`employee-input` 项目重建**：清理旧文件，重新创建 FireDAC SQLite 员工信息管理演示项目；UTF-8 BOM 编码消除 W1057 警告；左右分栏布局（详情左/列表右）；新增"取消"按钮。
+- **CODING_RULES.mdc 补充文件编码指南**：推荐新建含中文 Delphi 文件使用 `utf-8-sig`（UTF-8 with BOM）避免 `W1057 Implicit string cast` 警告。
+
+### Changed
+
+- **`AGENTS.md` `run_verify` 描述更新**：注明 `detect_encoding` + 嵌入日志内容的工作流程改。
+- **`compile_project.py`**：`run_verify` 中读取 `exception.log` 改用 `detect_encoding`（从 `file_backup` 导入），与 `file_tool` 保持一致的 BOM/编码检测链。
+
 ## [2026.05.14] - 2026-05-14
 
 ### Added
