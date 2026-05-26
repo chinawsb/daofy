@@ -805,11 +805,204 @@ def _add_property_group_hierarchy(
             ET.SubElement(pg_cfg2_props, _ns("DCC_DebugInfoInExe")).text = "false"
 
 
+def _form_class_name(form_name: str) -> str:
+    """根据表单短名生成标准 Form 类名。
+
+    form_units=["Main"] → TMainForm
+    form_units=["Unit1"] → TForm1（兼容 Delphi IDE 惯例）
+    """
+    m = re.match(r'^Unit(\d+)$', form_name, re.IGNORECASE)
+    if m:
+        return f"TForm{m.group(1)}"
+    return f"T{form_name}Form"
+
+
+def _form_var_name(form_name: str) -> str:
+    """根据表单短名生成 Form 全局变量名。
+
+    form_units=["Main"] → MainForm
+    form_units=["Unit1"] → Form1
+    """
+    m = re.match(r'^Unit(\d+)$', form_name, re.IGNORECASE)
+    if m:
+        return f"Form{m.group(1)}"
+    return f"{form_name}Form"
+
+
+# Form 单元文件名前缀（仿 Delphi Vcl.Forms.pas 命名风格）
+# form_units=["Main"] → 文件 Form.Main.pas，单元 Form.Main
+_FORM_UNIT_PREFIX: str = "Form."
+
+
+def _form_file_stem(form_name: str) -> str:
+    """将 form_units 中的短名转为带前缀的文件主干名。
+
+    Example: "Main" → "Form.Main"
+    """
+    return f"{_FORM_UNIT_PREFIX}{form_name}"
+
+
+def _form_var_name(form_name: str) -> str:
+    """根据表单短名生成 Form 全局变量名。
+
+    form_units=["Main"] → MainForm
+    form_units=["Unit1"] → Form1
+    """
+    m = re.match(r'^Unit(\d+)$', form_name, re.IGNORECASE)
+    if m:
+        return f"Form{m.group(1)}"
+    return f"{form_name}Form"
+
+
+def _generate_form_pas(project_dir: str, form_name: str, framework_type: str) -> str:
+    """生成最小 Form 单元 .pas 文件内容。
+
+    文件命名遵循 Form.{Name}.pas 风格，如 Form.Main.pas。
+    form_name 为表单短名（如 "Main"），类名自动为 T{Name}Form。
+
+    Returns: 写入的文件路径
+    """
+    cls_name = _form_class_name(form_name)
+    var_name = _form_var_name(form_name)
+    file_stem = _form_file_stem(form_name)   # 如 Form.Main
+    file_path = Path(project_dir) / f"{file_stem}.pas"
+
+    if file_path.exists():
+        return str(file_path)
+
+    if framework_type == "FMX":
+        uses_list = (
+            "System.SysUtils, System.Types, System.UITypes, System.Classes,\n"
+            "  FMX.Types, FMX.Controls, FMX.Forms, FMX.Dialogs, FMX.StdCtrls"
+        )
+        pas_content = (
+            f"unit {file_stem};\n\n"
+            f"interface\n\n"
+            f"uses\n  {uses_list};\n\n"
+            f"type\n"
+            f"  {cls_name} = class(TForm)\n"
+            f"  private\n"
+            f"    {{ Private declarations }}\n"
+            f"  public\n"
+            f"    {{ Public declarations }}\n"
+            f"  end;\n\n"
+            f"var\n"
+            f"  {var_name}: {cls_name};\n\n"
+            f"implementation\n\n"
+            f"{{$R *.fmx}}\n\n"
+            f"end.\n"
+        )
+    else:
+        uses_list = (
+            "Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,\n"
+            "  System.Classes, Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs"
+        )
+        pas_content = (
+            f"unit {file_stem};\n\n"
+            f"interface\n\n"
+            f"uses\n  {uses_list};\n\n"
+            f"type\n"
+            f"  {cls_name} = class(TForm)\n"
+            f"  private\n"
+            f"    {{ Private declarations }}\n"
+            f"  public\n"
+            f"    {{ Public declarations }}\n"
+            f"  end;\n\n"
+            f"var\n"
+            f"  {var_name}: {cls_name};\n\n"
+            f"implementation\n\n"
+            f"{{$R *.dfm}}\n\n"
+            f"end.\n"
+        )
+
+    file_path.write_text(pas_content, encoding="utf-8-sig")
+    return str(file_path)
+
+
+def _generate_form_dfm(project_dir: str, form_name: str, framework_type: str) -> str:
+    """生成最小 Form 单元 .dfm/.fmx 文件内容（空 Form，不含任何组件）。
+
+    Returns: 写入的文件路径
+    """
+    cls_name = _form_class_name(form_name)
+    var_name = _form_var_name(form_name)
+    file_stem = _form_file_stem(form_name)
+    ext = ".fmx" if framework_type == "FMX" else ".dfm"
+    file_path = Path(project_dir) / f"{file_stem}{ext}"
+
+    if file_path.exists():
+        return str(file_path)
+
+    dfm_content = (
+        f"object {var_name}: {cls_name}\n"
+        f"  Left = 0\n"
+        f"  Top = 0\n"
+        f"  Caption = '{cls_name}'\n"
+        f"  ClientHeight = 300\n"
+        f"  ClientWidth = 400\n"
+        f"  Position = poScreenCenter\n"
+    )
+    if framework_type != "FMX":
+        dfm_content += "  TextHeight = 13\n"
+    dfm_content += "end\n"
+
+    file_path.write_text(dfm_content, encoding="utf-8-sig")
+    return str(file_path)
+
+
+def _generate_dpr(
+    project_dir: str,
+    main_source: str,
+    form_units: List[str],
+    framework_type: str,
+    app_type: str,
+) -> str:
+    """生成最小 .dpr 文件。
+
+    Returns: 写入的文件路径
+    """
+    dpr_path = Path(project_dir) / main_source
+    if dpr_path.exists():
+        return str(dpr_path)
+
+    unit_includes = []
+    create_forms = []
+    for form_name in form_units:
+        cls_name = _form_class_name(form_name)
+        var_name = _form_var_name(form_name)
+        file_stem = _form_file_stem(form_name)
+        unit_includes.append(f"  {file_stem} in '{file_stem}.pas'")
+        create_forms.append(f"  Application.CreateForm({cls_name}, {var_name});")
+
+    uses_includes = ",\n".join(unit_includes)
+    create_forms_str = "\n".join(create_forms)
+
+    is_console = app_type == "Console"
+
+    dpr_content = (
+        f"program {Path(main_source).stem};\n\n"
+        f"uses\n"
+        f"  Vcl.Forms,\n"
+        f"{uses_includes};\n\n"
+        f"{{$R *.res}}\n\n"
+        f"begin\n"
+        f"  Application.Initialize;\n"
+    )
+    if not is_console:
+        dpr_content += "  Application.MainFormOnTaskbar := True;\n"
+    dpr_content += f"{create_forms_str}\n"
+    dpr_content += "  Application.Run;\n"
+    dpr_content += "end.\n"
+
+    dpr_path.write_text(dpr_content, encoding="utf-8-sig")
+    return str(dpr_path)
+
+
 async def _handle_create(
     project_path: str,
     main_source: str,
     project_guid: Optional[str] = None,
-    project_version: str = "18.2",
+    project_version: Optional[str] = None,
     framework_type: str = "VCL",
     app_type: Optional[str] = None,
     unit_search_paths: Optional[List[str]] = None,
@@ -817,8 +1010,15 @@ async def _handle_create(
     configs: Optional[List[str]] = None,
     sources: Optional[List[str]] = None,
     platforms: Optional[List[str]] = None,
+    form_units: Optional[List[str]] = None,
 ) -> CallToolResult:
-    """创建新的 .dproj 文件（IDE 兼容格式）"""
+    """创建新的 .dproj 文件（IDE 兼容格式）。
+
+    若指定 form_units，还会自动生成最小桩代码：
+      - .pas（含 published TForm 子类声明 + 标准 uses）
+      - .dfm/.fmx（空 Form，不含组件，框架由 framework_type 决定）
+      - .dpr（含 uses + CreateForm 调用）
+    """
     if Path(project_path).exists():
         return CallToolResult(
             content=[TextContent(type="text", text=f"文件已存在: {project_path}")],
@@ -834,6 +1034,21 @@ async def _handle_create(
             project_guid = "{" + project_guid
         if not project_guid.endswith("}"):
             project_guid = project_guid + "}"
+
+    # 未指定 project_version 时自动检测当前 Delphi 编译器版本
+    if not project_version:
+        try:
+            from ..services.config_manager import ConfigManager
+            from ..utils.delphi_versions import registry_to_project_version
+            cm = ConfigManager()
+            newest = cm.get_newest_compiler()
+            if newest and newest.registry_version:
+                project_version = registry_to_project_version(newest.registry_version)
+            else:
+                project_version = "22.0"
+        except Exception as exc:
+            logger.warning(f"自动检测编译器版本失败，使用默认值 22.0: {exc}")
+            project_version = "22.0"
 
     if not configs:
         configs = ["Debug", "Release"]
@@ -930,29 +1145,40 @@ async def _handle_create(
         ET.SubElement(bc, _ns("CfgParent")).text = "Base"
 
     # ── ProjectExtensions ──
+    # IDE 需要 Borland.Personality 来识别项目类型，
+    # 否则报 "Generic.Personality is not available"
     pe = ET.SubElement(root, _ns("ProjectExtensions"))
+    bp = ET.SubElement(pe, _ns("Borland.Personality"))
+    bp.text = "Delphi.Personality.12"
+    bproj = ET.SubElement(pe, _ns("BorlandProject"))
+    dp = ET.SubElement(bproj, _ns("Delphi.Personality"))
+    src_elem = ET.SubElement(dp, _ns("Source"))
+    src_item = ET.SubElement(src_elem, _ns("Source"))
+    src_item.set("Name", "MainSource")
+    src_item.text = main_source
 
     if is_pkg:
-        # Package ProjectExtensions（参考 EurekaLogCore, VirtualTreesR）
-        bp = ET.SubElement(pe, _ns("Borland.Personality"))
-        bp.text = "Delphi.Personality.12"
         bpt = ET.SubElement(pe, _ns("Borland.ProjectType"))
         bpt.text = "Package"
-        bproj = ET.SubElement(pe, _ns("BorlandProject"))
-        dp = ET.SubElement(bproj, _ns("Delphi.Personality"))
-        src_elem = ET.SubElement(dp, _ns("Source"))
-        src_item = ET.SubElement(src_elem, _ns("Source"))
-        src_item.set("Name", "MainSource")
-        src_item.text = main_source
-        if not old_format:
-            deployment = ET.SubElement(bproj, _ns("Deployment"))
-            plat_section = ET.SubElement(bproj, _ns("Platforms"))
-            for p in platforms:
-                p_node = ET.SubElement(plat_section, _ns("Platform"))
-                p_node.set("value", p)
-                p_node.text = "True"
-        pe_version = ET.SubElement(pe, _ns("ProjectFileVersion"))
-        pe_version.text = "12"
+    else:
+        bpt = ET.SubElement(pe, _ns("Borland.ProjectType"))
+        if resolved_app_type == "Library":
+            bpt.text = "Library"
+        elif resolved_app_type == "Console":
+            bpt.text = "Application"
+        else:
+            bpt.text = "Application"
+
+    if is_pkg and not old_format:
+        deployment = ET.SubElement(bproj, _ns("Deployment"))
+        plat_section = ET.SubElement(bproj, _ns("Platforms"))
+        for p in platforms:
+            p_node = ET.SubElement(plat_section, _ns("Platform"))
+            p_node.set("value", p)
+            p_node.text = "True"
+
+    pe_version = ET.SubElement(pe, _ns("ProjectFileVersion"))
+    pe_version.text = "12"
 
     # ── Import ──
     imp = ET.SubElement(root, _ns("Import"))
@@ -977,6 +1203,53 @@ async def _handle_create(
     tree = ET.ElementTree(root)
     tree.write(project_path, encoding="utf-8", xml_declaration=True)
 
+    # ── 生成 Form 单元桩代码（仅在用户显式传入 form_units 时） ──
+    project_dir = str(Path(project_path).parent)
+    generated_files: List[str] = []
+
+    if form_units:
+        # 将 form_units 自动加入 sources（如尚未包含）
+        sources = list(sources or [])
+        names_in_sources = {Path(s).name for s in sources}
+        resolved_app_type = _infer_app_type(framework_type, app_type)
+        is_pkg = _is_package(resolved_app_type)
+
+        for form_name in form_units:
+            file_stem = _form_file_stem(form_name)
+            pas_file = f"{file_stem}.pas"
+            if pas_file not in names_in_sources:
+                sources.append(pas_file)
+                # 同时更新已写入的 .dproj
+                ig = root.find(f"{_ns('ItemGroup')}")
+                if ig is not None:
+                    ref = ET.SubElement(ig, _ns("DCCReference"))
+                    ref.set("Include", pas_file)
+
+            # 生成 .pas
+            pas_path = _generate_form_pas(project_dir, form_name, framework_type)
+            generated_files.append(pas_path)
+
+            # 生成 .dfm/.fmx（空 Form，不含组件）
+            dfm_path = _generate_form_dfm(project_dir, form_name, framework_type)
+            generated_files.append(dfm_path)
+
+        # 重写 .dproj（更新 sources 后）
+        tree.write(project_path, encoding="utf-8", xml_declaration=True)
+
+        # 生成 .dpr（仅当不存在时）
+        dpr_path = _generate_dpr(
+            project_dir, main_source, form_units, framework_type, app_type,
+        )
+        if dpr_path not in generated_files:
+            generated_files.append(dpr_path)
+
+    generated_summary = (
+        f"\n生成 {len(generated_files)} 个桩文件:\n"
+        + "\n".join(f"  ⚡ {f}" for f in generated_files)
+        if generated_files
+        else ""
+    )
+
     return CallToolResult(
         content=[
             TextContent(
@@ -987,7 +1260,8 @@ async def _handle_create(
                 f"框架: {framework_type}\n"
                 f"配置: {', '.join(configs)}\n"
                 f"平台: {', '.join(platforms)}\n"
-                f"源文件引用 ({len(sources or [])} 个): {', '.join(sources or [])}",
+                f"源文件引用 ({len(sources or [])} 个): {', '.join(sources or [])}"
+                f"{generated_summary}",
             )
         ],
         isError=False,
@@ -1462,7 +1736,7 @@ async def dproj_tool(
     project_path: Optional[str] = None,
     main_source: Optional[str] = None,
     project_guid: Optional[str] = None,
-    project_version: str = "18.2",
+    project_version: Optional[str] = None,
     framework_type: str = "VCL",
     app_type: Optional[str] = None,
     unit_search_paths: Optional[List[str]] = None,
@@ -1481,6 +1755,7 @@ async def dproj_tool(
     debug_info: Optional[bool] = None,
     source_file: Optional[str] = None,
     main_source_flag: bool = False,
+    form_units: Optional[List[str]] = None,
 ) -> CallToolResult:
     """.dproj 项目文件管理工具入口"""
 
@@ -1508,6 +1783,7 @@ async def dproj_tool(
             configs=configs,
             sources=sources,
             platforms=platforms,
+            form_units=form_units,
         ),
         "info": lambda: _handle_info(project_path=project_path or ""),
         "set": lambda: _handle_set(

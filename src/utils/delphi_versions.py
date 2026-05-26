@@ -153,3 +153,26 @@ def detect_registry_version_from_compiler(compiler_path: str, timeout: int = 10)
         return None
     except (subprocess.TimeoutExpired, OSError):
         return None
+
+
+# 注册表版本(registry_version) → .dproj ProjectVersion 映射
+# 多数版本两者相同，此处仅记录有差异的
+REGISTRY_TO_PROJECT_VERSION: dict[str, str] = {
+    "18.0": "18.2",   # Delphi 10.1 Berlin：注册表 18.0，但 .dproj 格式标记为 18.2
+}
+
+
+def registry_to_project_version(registry_ver: str) -> str:
+    """
+    将 Delphi 注册表版本号映射为 .dproj ProjectVersion。
+
+    Delphi 10.2 及更新版本的 ProjectVersion 与注册表版本号相同。
+    Delphi 10.1 Berlin 是特例：注册表 18.0 → ProjectVersion 18.2。
+
+    Args:
+        registry_ver: 注册表版本号，如 "22.0"
+
+    Returns:
+        .dproj 文件 ProjectVersion 值，如 "22.0"
+    """
+    return REGISTRY_TO_PROJECT_VERSION.get(registry_ver, registry_ver)
