@@ -220,7 +220,7 @@ async def read_source_file(arguments: Any) -> CallToolResult:
                 isError=True
             )
         
-        # 编码检测 + 降级链读取（与 file_tool._read_content 一致）
+        # 编码检测 + 降级链读取（与 delphi_file._read_content 一致）
         detected = detect_encoding(str(full_path))
         encodings_to_try = [detected]
         if detected not in ('utf-8', 'utf-8-sig'):

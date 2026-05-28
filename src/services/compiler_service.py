@@ -711,7 +711,9 @@ class CompilerService:
         # 命名空间搜索路径 - 默认添加 System 命名空间
         default_namespaces = ["System", "Winapi", "System.Win", "Vcl", "Vcl.Imaging",
                               "Vcl.Touch", "Vcl.Samples", "Vcl.Shell", "Data", "Datasnap",
-                              "Web", "Soap", "Xml"]
+                              "Web", "Soap", "Xml",
+                              "Common", "Protocol", "Engine", "Security", "Transport",
+                              "Integration", "Platforms"]
         args.append('-NS' + ";".join(default_namespaces))
 
         # 单元搜索路径 - 如果未提供，则自动获取 Delphi 默认库搜索路径

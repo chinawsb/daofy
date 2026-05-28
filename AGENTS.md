@@ -18,7 +18,7 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 ```
 src/
 ├── server.py              # MCP entry point
-├── tools/                 # MCP tool implementations (file_tool, code_hosting, create_component_dfm, compile_project, delphi_kb, ...)
+├── tools/                 # MCP tool implementations (delphi_file, code_hosting, create_component_dfm, compile_project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
 │   └── knowledge_base/    # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
@@ -34,15 +34,15 @@ src/
 ① check_environment(action="check")       → 确认编译器
 ② get_coding_rules(project_path=...)       → 获取编码规则
 ③ delphi_kb(query=...)                     → 搜索 API 定义（下面详述）
-④ file_tool(action="read", file_path=...)  → 读源码（确认修改点）
-⑤ file_tool(action="write", content=...)   → 写代码（默认自动备份到 __history）
-⑥ file_tool(action="format", file_path=...) → 格式化
+④ delphi_file(action="read", file_path=...)  → 读源码（确认修改点）
+⑤ delphi_file(action="write", content=...)   → 写代码（默认自动备份到 __history）
+⑥ delphi_file(action="format", file_path=...) → 格式化
 ⑦ compile_project(project_path=...)         → 编译验证
 ⑧ compile_project(..., run_verify=True)     → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
 ⑨ run_audit(mode="runtime", source_dir=...) → 运行时注册检查（源码级分析，无需 daudit）
 ```
 
-> **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 file_tool 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 file_tool。
+> **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
 > **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）
 
 ### 知识库搜索（先猜精确名，再模糊搜）
@@ -125,11 +125,11 @@ src/
 - 修改表结构后 `grep` 全项目旧表名/列名的所有 INSERT/DELETE/SELECT/ALTER 引用
 
 ### 文件修改前备份
-- `file_tool(action="write", file_path=..., content=...)` **默认 `backup=True`**，自动备份到 `__history`，无需手动调用
-- 如需单独创建备份：`file_tool(action="backup", file_path="src/Unit1.pas")`
-- 恢复：`file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
-- 列出备份：`file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")`
-- ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 file_tool 进行备份
+- `delphi_file(action="write", file_path=..., content=...)` **默认 `backup=True`**，自动备份到 `__history`，无需手动调用
+- 如需单独创建备份：`delphi_file(action="backup", file_path="src/Unit1.pas")`
+- 恢复：`delphi_file(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
+- 列出备份：`delphi_file(action="backup", backup_action="list", file_path="src/Unit1.pas")`
+- ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 delphi_file 进行备份
 
 ### 编译
 - `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）
@@ -155,7 +155,9 @@ src/
    └─ Python 项目（当前 MCP Server）→ 按下方 Python 审计要求逐项检查
 ② 确定审计范围（全局/指定文件/新增代码）
 ③ 搜索相关 API 定义，评估用法（Delphi 用 delphi_kb，Python 用 grep/LSP）
-④ **优先调用 run_audit**（AST 引擎自动扫描，daudit 不可用时降级为引导）
+④ **优先调用 run_audit**（daudit 不可用时降级为引导）
+   → 使用 `mode="ast"`（⭐ 推荐，daudit --mode skeleton --compact）快速了解代码结构
+   → 需要深度规则检查时使用 `mode="audit"`（运行 50+ 条静态分析规则）
    → AI 解读结果，排除误报，生成修复建议
    → 补充手动检查（run_audit 标记 is_ai_needed=true 的项）
 ⑤ compile_project / pytest 验证（如果涉及代码修改）
@@ -308,8 +310,9 @@ src/
 
 ```
 get_coding_rules(section="review")               → 获取 Delphi 审核标准
-run_audit(source_dir=".", rules="P0")            → AST 引擎自动扫描（优先调用）
-file_tool(action="read", file_path="unit.pas")   → 查看 Delphi 源码
+run_audit(mode="ast", source_dir="src")          → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
+run_audit(source_dir=".", rules="P0")            → 深度静态分析规则检查（可选的）
+delphi_file(action="read", file_path="unit.pas")   → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
 compile_project(project_path="proj.dproj")        → Delphi 审计后验证编译
 --- Python 项目审计用以下工具 ---

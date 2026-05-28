@@ -1,7 +1,8 @@
 """
-file_tool — 统一 Delphi 文件操作工具
+delphi_file — Delphi 文件专用操作工具（MCP 注册名 delphi_file，原 file_tool）
 
-整合读取/写入/格式化/备份管理，覆盖文件操作完整生命周期。
+整合读取/写入/格式化/备份管理，覆盖 Delphi 文件操作完整生命周期。
+MCP 客户端以 delphi_file 名注册，旧名 file_tool 仍作为别名兼容。
 
 Action 模式:
   read    读取文件内容（继承 read_source_file，支持按路径/类名/函数名搜索）

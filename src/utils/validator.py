@@ -95,6 +95,9 @@ class Validator:
         if not path:
             return False, "编译器路径不能为空"
 
+        # 去除尾部空白（注册表读取的路径可能带多余空格）
+        path = path.strip()
+
         # 使用 Path.parts 检测路径遍历
         if ".." in Path(path).parts:
             return False, "编译器路径不能包含 '..'"
@@ -107,9 +110,9 @@ class Validator:
         if not os.path.isfile(path):
             return False, f"编译器路径不是文件: {path}"
 
-        # 检查是否为可执行文件
-        if not (path.endswith('.exe') or path.endswith('.bat') or path.endswith('.cmd')):
-            return False, f"编译器必须是可执行文件(.exe, .bat, .cmd)"
+        # 检查是否为可执行文件（不区分大小写，Windows 上 .EXE 同样有效）
+        if not (path.lower().endswith('.exe') or path.lower().endswith('.bat') or path.lower().endswith('.cmd')):
+            return False, f"编译器必须是可执行文件(.exe, .bat, .cmd), 当前路径: {path}"
 
         logger.debug(f"编译器路径验证通过: {path}")
         return True, ""

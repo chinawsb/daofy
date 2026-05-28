@@ -86,7 +86,7 @@ delphi_kb(
 | `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 |
 | `get_coding_rules` | 获取 Delphi 编码规范，支持按章节分段获取 |
 | `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 |
-| `file_tool` | 统一文件操作：读/写/格式化/备份管理 |
+| `delphi_file` | Delphi 文件专用操作：读/写/格式化/备份管理（编码检测+自动备份+DFM转换） |
 | `manage_component` | DFM 组件增/删/改/生成 + PAS 自动同步 |
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
@@ -365,7 +365,7 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 ### v2026.05.14 (最新)
 
 - 新增 `manage_component` 工具：DFM 组件增/删/改/生成 + PAS 自动同步（替代原 `generate_component_dfm`）
-- `file_tool` 增强：DFM 二进制自动转换、备份管理、搜索定位
+- `delphi_file` 重命名+增强：DFM 二进制自动转换、备份管理、搜索定位（原名 `file_tool`，旧名仍兼容）
 - `get_coding_rules` 增强：支持按章节分段获取，节省 token
 - 新增 `code_hosting` 工具：统一 Gitea/GitHub/GitLab 操作
 - 工作流从 6 步扩展为 7 步（①环境检查→②查KB→③写代码→④格式化→⑤编译→⑥审计→⑦清理）

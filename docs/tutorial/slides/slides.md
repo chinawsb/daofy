@@ -177,7 +177,7 @@ TDictionary<TCustomKey, string>  // 编译错误！
 
 ## 统一文件操作 + 自动备份
 
-**一体化的文件接口 `file_tool`：**
+**一体化的文件接口 `delphi_file`（原名 `file_tool`，旧名仍兼容）：**
 
 ```
 file_tool(action="read")              — 读文件（DFM 二进制→文本自动转换）
@@ -219,7 +219,7 @@ DataProcessor.pas  →  DataProcessor.pas.~1~
 编辑后保存 → 格式搞错 → 编译器报错
 ```
 
-**`file_tool` 透明处理：**
+**`delphi_file` 透明处理：**
 
 ```
 file_tool(action="read",  file_path="Form1.dfm")

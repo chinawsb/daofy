@@ -1151,6 +1151,10 @@ class SmartCacheKnowledgeBase:
         conn.close()
         return results
     
+    def close(self):
+        """关闭知识库（清理资源）"""
+        pass
+
     def get_statistics(self) -> Dict:
         """获取统计信息"""
         conn = self._get_connection()

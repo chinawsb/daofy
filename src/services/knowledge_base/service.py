@@ -370,5 +370,8 @@ class DelphiKnowledgeBaseService:
     def close(self):
         """关闭知识库连接"""
         if self.kb_instance:
-            self.kb_instance.close()
+            try:
+                self.kb_instance.close()
+            except AttributeError:
+                logger.debug("kb_instance 无 close() 方法")
             self.kb_instance = None

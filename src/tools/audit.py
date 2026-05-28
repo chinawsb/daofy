@@ -98,26 +98,28 @@ def _run_audit(paths: List[str], recursive: bool = False) -> Optional[Dict]:
     return None
 
 
-def _run_ast(source_dir: str, file_path: Optional[str] = None) -> Optional[Dict]:
-    """运行 daudit --mode kb 进行 AST 实体提取
+def _run_skeleton(source_dir: str, file_path: Optional[str] = None,
+                   detail: str = "compact") -> Optional[List[Dict]]:
+    """运行 daudit --mode skeleton 提取代码骨架摘要
 
-    CLI: daudit --mode kb --format json <file(s)>
+    CLI: daudit --mode skeleton --skeleton-detail compact --format json <file(s)>
 
-    kb 模式输出实体骨架信息（不含 code_block 等大字段），
-    使用临时文件接收 stdout 避免管道缓冲区限制。
+    skeleton 模式专为 AI Agent 设计，输出预格式化的文本摘要：
+      单元名、uses、类/记录/接口、函数/过程、常量/变量
+    --skeleton-detail compact: 无调用链信息，最省 token
 
     Args:
         source_dir: 源码目录（用于查找 .pas 文件）
         file_path: 单文件路径（优先于 source_dir）
+        detail: skeleton 详细度: compact（推荐）/ normal / full
 
     Returns:
-        data 段 dict ({files: [...]})，或 None
+        list of {"file": path, "data": text}，或 None
     """
     daudit = _find_daudit()
     if not daudit:
         return None
 
-    # 收集待解析文件
     pas_files: List[str] = []
     if file_path:
         pas_files.append(file_path)
@@ -131,10 +133,10 @@ def _run_ast(source_dir: str, file_path: Optional[str] = None) -> Optional[Dict]
     if not pas_files:
         return None
 
-    cmd = [daudit, "--mode", "kb", "--format", "json"]
+    cmd = [daudit, "--mode", "skeleton", "--skeleton-detail", detail,
+           "--format", "json"]
     cmd.extend(pas_files)
 
-    # 使用临时文件接收 stdout（避免 pipe 缓冲区限制）
     tmp_path: Optional[str] = None
     try:
         with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
@@ -151,16 +153,21 @@ def _run_ast(source_dir: str, file_path: Optional[str] = None) -> Optional[Dict]
             with open(tmp_path, 'r', encoding='utf-8') as f:
                 payload = json.load(f)
             if isinstance(payload, dict):
-                # 信封格式: {"mode":"kb","status":"ok","data":{...},"summary":{...}}
-                data = payload.get("data") if "data" in payload else payload
-                logger.info("KB 解析完成: %d 个文件", len(pas_files))
-                return data
+                files_data = payload.get("data", payload)
+                if isinstance(files_data, dict):
+                    files_list = files_data.get("files", [])
+                elif isinstance(files_data, list):
+                    files_list = files_data
+                else:
+                    files_list = []
+                logger.info("Skeleton 解析完成: %d 个文件", len(files_list))
+                return files_list
 
         stderr = result.stderr.strip()[:200] if result.stderr else ""
-        logger.warning("KB 解析异常 (exit=%d): %s", result.returncode, stderr)
+        logger.warning("Skeleton 解析异常 (exit=%d): %s", result.returncode, stderr)
 
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-        logger.error("KB 解析调用失败: %s", e)
+        logger.error("Skeleton 解析调用失败: %s", e)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -222,61 +229,6 @@ def _call_daudit(paths: List[str], recursive: bool = False) -> Optional[Dict]:
         logger.warning("daudit 审计异常 (exit=%d): %s", result.returncode, result.stderr[:200])
     except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
         logger.error("daudit 审计调用失败: %s", e)
-
-    return None
-
-
-def _call_ast(source_dir: str, file_path: Optional[str] = None) -> Optional[Dict]:
-    """调用 daudit.exe --mode ast 进行 AST 语法解析
-
-    实际 CLI: daudit --mode ast --format json <file(s)>
-    注意 --mode ast 不支持 --recursive，需显式传文件列表。
-
-    Args:
-        source_dir: 源码目录（用于查找 .pas 文件）
-        file_path: 单文件路径（优先于 source_dir）
-
-    Returns:
-        AST 解析结果 dict ({files: [...]})，或 None
-    """
-    daudit = _find_daudit()
-    if not daudit:
-        return None
-
-    # 收集待解析文件
-    pas_files: List[str] = []
-    if file_path:
-        pas_files.append(file_path)
-    elif source_dir:
-        src = Path(source_dir)
-        if src.is_file():
-            pas_files.append(str(src.resolve()))
-        elif src.is_dir():
-            # 手动收集 .pas 文件（ast 模式不支持 --recursive）
-            pas_files.extend(str(p.resolve()) for p in src.rglob("*.pas"))
-
-    if not pas_files:
-        return None
-
-    cmd = [daudit, "--mode", "ast", "--format", "json"] + pas_files
-
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            stdout = result.stdout.strip()
-            # --format agent 对 AST 模式输出纯 JSON，尝试直接解析
-            try:
-                return json.loads(stdout)
-            except json.JSONDecodeError:
-                json_str = _extract_json(stdout)
-                if json_str:
-                    return json.loads(json_str)
-        logger.warning("AST 解析异常 (exit=%d): %s", result.returncode, result.stderr[:200])
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-        logger.error("AST 解析调用失败: %s", e)
 
     return None
 
@@ -369,186 +321,23 @@ def _format_report(data: Dict, min_severity: str = "suggestion") -> str:
     return "\n".join(lines)
 
 
-def _format_ast_report(data: Dict) -> str:
-    """将 AST data 段格式化为 Markdown 报告
-
-    data 格式:
-    {"files": [{"file": "...", "unit_name": "...",
-                "uses": {"interface":[...], "implementation":[...]},
-                "entities": [
-                    {"kind":"TC", "name":"TMyClass", ...},
-                    {"kind":"FP", "name":"Run", "signature":"procedure Run()", ...},
-                    ...
-                ],
-                "errors":[...]}]}
-    """
-    files_data: List[Dict] = data.get("files", [])
-    if not files_data:
-        return "# AST 语法解析报告\n\n*无解析结果*"
-
-    lines: List[str] = []
-    lines.append("# AST 语法解析报告")
-    lines.append("")
-
-    for file_idx, file_info in enumerate(files_data):
-        file_name = file_info.get("file", "?")
-        status = file_info.get("status", "ok")
-        unit_name = file_info.get("unit_name", "")
-        parse_time = file_info.get("parse_time_ms", 0)
-        errors = file_info.get("errors", [])
-        uses = file_info.get("uses", {})
-        entities: List[Dict] = file_info.get("entities", [])
-
-        if file_idx > 0:
-            lines.append("---")
-            lines.append("")
-
-        lines.append(f"## 文件: `{file_name}`")
-        lines.append("")
-
-        if status != "ok":
-            err_msg = file_info.get("error_msg", "未知错误")
-            lines.append(f"**解析失败**: {err_msg}")
-            lines.append("")
-            continue
-
-        # 文件元信息
-        meta_parts = [f"**单元**: {unit_name}"] if unit_name else []
-        if parse_time:
-            meta_parts.append(f"**解析耗时**: {parse_time}ms")
-        if meta_parts:
-            lines.append(" | ".join(meta_parts))
-            lines.append("")
-
-        # Uses 引用
-        if uses.get("interface") or uses.get("implementation"):
-            lines.append("### Uses 引用")
-            if uses.get("interface"):
-                lines.append(f"- **interface**: {', '.join(uses['interface'])}")
-            if uses.get("implementation"):
-                lines.append(f"- **implementation**: {', '.join(uses['implementation'])}")
-            lines.append("")
-
-        if not entities:
-            lines.append("*无实体*")
-            lines.append("")
-            continue
-
-        # ── 实体概览：按 kind 分组统计 ──
-        kind_count: Dict[str, int] = {}
-        kind_labels = {
-            "TC": "Class", "TR": "Record", "TI": "Interface", "TH": "Helper",
-            "TE": "Enum", "TS": "Set", "TY": "Type Alias",
-            "FF": "Function", "FP": "Procedure", "OP": "Operator",
-            "CC": "Const", "CR": "ResourceString", "GV": "Global Variable",
-            "MF": "Field", "MP": "Property",
-        }
-        for ent in entities:
-            kind = ent.get("kind", "?")
-            kind_count[kind] = kind_count.get(kind, 0) + 1
-
-        lines.append(f"### 实体概览（共 {len(entities)} 个）")
-        for kind in sorted(kind_count):
-            label = kind_labels.get(kind, kind)
-            lines.append(f"- **{label}** ({kind}): {kind_count[kind]}")
-        lines.append("")
-
-        # ── 类/接口/记录（TC / TI / TR）──
-        type_entities = [e for e in entities if e.get("kind") in ("TC", "TI", "TR")]
-        if type_entities:
-            lines.append("### 类型定义")
-            for ent in type_entities:
-                kind = ent.get("kind", "")
-                kind_label = kind_labels.get(kind, kind)
-                name = ent.get("name", "(anonymous)")
-                sig = ent.get("signature", "")
-
-                # 类/接口/记录有 name 时用 name，否则从成员方法名推断或 fallback
-                if name:
-                    display = f"`{name}`"
-                elif sig and sig.strip() not in ('= class', ''):
-                    display = f"`{sig}`"
-                else:
-                    display = f"`{kind_label}`"
-                lines.append(f"- **{kind_label}**: {display}")
-                if ent.get("inherits_from"):
-                    lines.append(f"  - 继承: {ent['inherits_from']}")
-                if ent.get("inheritance_chain"):
-                    chain = " → ".join(ent["inheritance_chain"])
-                    lines.append(f"  - 继承链: {chain}")
-                members = ent.get("members", [])
-                if members:
-                    for m in members[:15]:
-                        mk = m.get("kind", "")
-                        mn = m.get("name", "")
-                        ml = m.get("line", "")
-                        loc = f" (行 {ml})" if ml else ""
-                        lines.append(f"  - `{mk}` {mn}{loc}")
-                    if len(members) > 15:
-                        lines.append(f"  - ... 还有 {len(members) - 15} 个成员")
-            lines.append("")
-
-        # ── 函数/过程（FF / FP / OP）──
-        func_entities = [e for e in entities if e.get("kind") in ("FF", "FP", "OP")]
-        if func_entities:
-            lines.append("### 函数/过程")
-            for ent in func_entities:
-                kind = ent.get("kind", "")
-                kind_label = kind_labels.get(kind, kind)
-                sig = ent.get("signature", ent.get("name", "?"))
-                scope = ent.get("parent_scope", "")
-                line_no = ent.get("start_line", "")
-                loc = f" (行 {line_no})" if line_no else ""
-                scope_str = f" ← {scope}" if scope else ""
-                lines.append(f"- `{sig}`{scope_str}{loc}")
-            lines.append("")
-
-        # ── 常量/枚举/变量（CC / CR / TE / TS / GV / TY）──
-        other_entities = [
-            e for e in entities
-            if e.get("kind") in ("CC", "CR", "TE", "TS", "GV", "TY")
-        ]
-        if other_entities:
-            lines.append("### 常量/枚举/变量")
-            for ent in other_entities:
-                kind = ent.get("kind", "")
-                kind_label = kind_labels.get(kind, kind)
-                name = ent.get("name", "?")
-                extra = ""
-                if ent.get("value") is not None:
-                    extra = f" = {ent['value']}"
-                elif ent.get("definition"):
-                    extra = f" = {ent['definition']}"
-                lines.append(f"- **{kind_label}**: `{name}`{extra}")
-            lines.append("")
-
-        # 解析错误/警告
-        if errors:
-            lines.append("### 解析警告/错误")
-            for err in errors:
-                line_no = err.get("line", "?")
-                msg = err.get("message", "")
-                sev = err.get("severity", "warning")
-                lines.append(f"- [{sev}] 第 {line_no} 行: {msg}")
-            lines.append("")
-
-    return "\n".join(lines)
-
 
 def _build_guide() -> str:
     """daudit.exe 不存在时的引导提示"""
     return (
-        "# 代码审计工具未就绪\n\n"
-        "AST 审计引擎 (daudit.exe) 尚未安装。安装后可自动运行 50+ 条静态分析规则。\n\n"
-        "## 当前可用的替代审计方式\n\n"
-        "1. **get_coding_rules(section=\"review\")** — 获取审核清单，AI 按清单逐项检查\n"
+        "# 代码分析工具未就绪\n\n"
+        "AST 分析引擎 (daudit.exe) 尚未安装。安装后可提供 Delphi 源码结构化解析能力。\n\n"
+        "## 当前可用的替代方式\n\n"
+        "1. **delphi_file(action=\"read\", ...)** — 读源码自行分析结构\n"
         "2. **delphi_kb(query=..., search_type=\"reference\")** — 查 API 用法\n"
-        "3. **file_tool(action=\"read\", ...)** — 读源码做人工审查\n\n"
-        "## 两种模式\n\n"
-        "- **audit**（默认）: `daudit --mode audit` — 静态分析，输出违规报告\n"
-        "- **ast**: `daudit --mode ast` — AST 语法解析，输出实体结构\n\n"
+        "3. **get_coding_rules(section=\"review\")** — 获取审核清单\n\n"
+        "## 两种模式（AI 常用程度排序）\n\n"
+        "1. **ast**（⭐ 推荐，AI Agent 摘要）: `daudit --mode skeleton --compact` — 代码骨架提取。\n"
+            "   输出预格式化文本（单元名、uses、类/函数/常量），无需 AI 二次解析，最省 token。\n"
+        "2. **audit**: `daudit --mode audit` — 运行 50+ 条静态分析规则审计代码质量。\n"
+        "   适用于审查特定违规模式\n\n"
         "## 预计目录结构\n\n"
-        "```\ntools/daudit/\n└── daudit.exe    ← AST 审计引擎\n```\n\n"
+        "```\ntools/daudit/\n└── daudit.exe    ← AST 分析引擎\n```\n\n"
         "放置 daudit.exe 后，重新调用本工具即可使用。"
     )
 
@@ -799,10 +588,11 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
         )
         return CallToolResult(content=[TextContent(type="text", text=guide)])
 
-    # ── AST 语法解析模式 ──
+    # ── AST 语法解析模式（实际调用 daudit --mode skeleton）──
     if mode == "ast":
-        data = _run_ast(source_dir, file_path)
-        if not data:
+        detail = "compact"  # compact / normal / full
+        files_list = _run_skeleton(source_dir, file_path, detail=detail)
+        if not files_list:
             return CallToolResult(
                 content=[TextContent(
                     type="text",
@@ -818,9 +608,26 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
             )
 
         if output_format == "json":
-            text = json.dumps(data, indent=2, ensure_ascii=False)
+            text = json.dumps(files_list, indent=2, ensure_ascii=False)
         else:
-            text = _format_ast_report(data)
+            # skeleton 模式返回的 data 已是预格式化文本，直接拼接输出
+            parts = []
+            for fi in files_list:
+                fname = fi.get("file", "?")
+                fdata = fi.get("data", "")
+                header = f"## {fname}\n"
+                parts.append(header + fdata)
+            text = "# 代码结构摘要（Skeleton）\n\n" + "\n---\n\n".join(parts)
+
+            # 提示 AI Agent: normal/full 额外提供什么信息
+            text += (
+                "\n\n---\n"
+                "> 💡 当前 skeleton-detail=compact（最省 token）。若需要更多上下文，"
+                "可指定 `skeleton_detail=\"normal\"` 或 `skeleton_detail=\"full\"` 再调 run_audit：\n"
+                "> - **normal** — 同 compact，无额外信息（compact/normal 输出量相同）\n"
+                "> - **full** — 在每个函数/过程后追加 `// calls=[被调函数列表] | reads=[读取的全局变量列表]`，\n"
+                ">   用于分析调用链和变量依赖，token 约增加一倍\n"
+            )
 
         return CallToolResult(content=[TextContent(type="text", text=text)])
 

@@ -1,703 +1,703 @@
 {
   "entries": [
     {
-      "timestamp": "2026-05-24T17:23:55.595025",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit_mmcore.dpr",
-      "status": "failed",
-      "duration": 259,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-24T17:23:27.201336",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit_mmcore.dpr",
-      "status": "failed",
-      "duration": 304,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-24T00:42:21.283378",
+      "timestamp": "2026-05-28T11:02:29.496722",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 1346,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:39:48.658336",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "failed",
-      "duration": 1028,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-24T00:35:15.181059",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 2619,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:25:42.343972",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
       "status": "success",
       "duration": 1190,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-24T00:24:58.055632",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1224,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:20:11.443260",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1229,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:18:56.503473",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1195,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:16:14.386383",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1233,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:10:47.245725",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1249,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:08:10.262450",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1298,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:05:55.642658",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 6211,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-24T00:00:16.313668",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 5620,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:57:47.519678",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1901,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:47:56.547956",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1355,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:42:38.742836",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1409,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:41:46.045953",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1723,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:30:28.504643",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 5573,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:29:40.352225",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 703,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T23:29:11.231978",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 738,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T23:27:58.703211",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 900,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T23:27:44.314274",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1226,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:18:29.614819",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1075,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:15:45.619888",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1034,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:11:04.524779",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1013,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:10:06.965818",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1036,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T23:03:04.215005",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1075,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:57:26.448643",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1050,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:55:58.310683",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1065,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:53:32.723132",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1056,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:46:18.425500",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1033,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:44:08.627319",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1020,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:41:51.330104",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 996,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:40:00.840692",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1027,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:37:44.524779",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 996,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:37:15.582545",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1028,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:35:32.847613",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1020,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:34:00.275500",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1042,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:31:27.047342",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1011,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:21:37.891161",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1005,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:20:04.653467",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1036,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:16:40.999763",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 992,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:16:07.889333",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 751,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T22:15:49.945537",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 754,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T22:15:29.997148",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 743,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T22:08:52.367350",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1062,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:08:22.430529",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 751,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T22:06:11.275710",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1030,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T22:01:39.594788",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 976,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:59:34.717312",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1008,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:57:09.008820",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1018,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:55:23.871536",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 992,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:53:50.158866",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 993,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:53:33.260268",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
+      "timestamp": "2026-05-28T10:56:15.793053",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
       "duration": 1141,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T21:40:20.316104",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
+      "timestamp": "2026-05-28T10:41:14.393208",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1013,
+      "duration": 2046,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T21:40:02.952432",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 854,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T21:28:24.535681",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1101,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:26:16.763123",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1010,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:24:29.248956",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1137,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:22:50.031402",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1035,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:20:04.361707",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1153,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:18:04.930044",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1164,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:15:55.393902",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 982,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:14:41.348755",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 995,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:13:37.605527",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1069,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:12:58.282785",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1057,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:08:29.764265",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1038,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:06:01.193889",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1057,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T21:00:14.942395",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1004,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:59:42.801366",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1055,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:49:47.236320",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1045,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:49:40.301061",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1050,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:49:04.327293",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1043,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:48:47.646103",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1058,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:48:25.226769",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "failed",
-      "duration": 857,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-05-23T20:38:23.295715",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1029,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:34:54.880825",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1154,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:33:51.862850",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1017,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:33:02.609071",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1024,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:31:17.789679",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1030,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:27:12.163174",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1054,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:25:23.805361",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1068,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:18:33.522672",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1061,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:16:52.165863",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
+      "timestamp": "2026-05-28T10:33:43.304824",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
       "duration": 1040,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T20:13:50.096955",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
+      "timestamp": "2026-05-28T10:30:18.503067",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1037,
+      "duration": 1047,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T20:09:58.366513",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
-      "status": "success",
-      "duration": 1163,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T20:09:29.743485",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dpr",
+      "timestamp": "2026-05-28T10:29:43.703949",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "failed",
-      "duration": 769,
+      "duration": 817,
       "error_message": "无错误"
     },
     {
-      "timestamp": "2026-05-23T19:40:45.369456",
+      "timestamp": "2026-05-28T10:25:51.933211",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1193,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T10:11:22.456077",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1034,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T10:00:41.564654",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1067,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:57:22.875745",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1061,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:50:54.609267",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1043,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:44:24.129108",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1097,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:44:05.604346",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 835,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T09:37:53.461235",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1061,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:35:40.624408",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1080,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T09:28:34.665727",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
       "duration": 1063,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T19:37:24.490152",
+      "timestamp": "2026-05-28T09:27:12.025443",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1058,
+      "duration": 1068,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T19:33:01.126146",
+      "timestamp": "2026-05-28T09:18:23.483725",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1079,
+      "duration": 1478,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T19:21:48.001871",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 1101,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T19:11:15.409579",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 1083,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T19:03:19.395430",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 1107,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T17:28:47.358824",
-      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
-      "status": "success",
-      "duration": 1019,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-05-23T17:28:21.555578",
+      "timestamp": "2026-05-28T09:18:18.238052",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "failed",
-      "duration": 731,
+      "duration": 889,
       "error_message": "无错误"
     },
     {
-      "timestamp": "2026-05-23T17:22:11.085744",
+      "timestamp": "2026-05-28T09:11:26.591745",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1024,
+      "duration": 1270,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T17:18:54.409991",
+      "timestamp": "2026-05-28T08:59:02.759857",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1090,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T08:58:32.072044",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1087,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T08:56:46.154587",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1085,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T08:50:11.461984",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1881,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T08:49:57.811730",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 1034,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T08:40:55.852248",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1251,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T08:05:46.479866",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1102,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T07:53:42.957023",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1253,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T07:25:04.921792",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1108,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-28T07:20:29.563276",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 750,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:18:30.198491",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 765,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:15:19.450405",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 795,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:13:19.105280",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 782,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:11:39.768414",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 773,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:10:38.728305",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 781,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:08:41.956753",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 802,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:07:37.734740",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 790,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:07:03.493451",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 1112,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-28T07:06:56.625417",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 1631,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T23:11:59.885017",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1171,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T23:04:57.303280",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1104,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T23:03:16.226777",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1039,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:59:15.363344",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1043,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:57:31.765968",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1074,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:57:10.602811",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 804,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:56:27.842941",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
       "duration": 1026,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T17:16:17.664824",
+      "timestamp": "2026-05-27T22:56:15.654360",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 768,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:55:27.420222",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 756,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:35:26.467346",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1104,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:35:01.405473",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 772,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:34:24.670508",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 880,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:17:19.318306",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1061,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:17:07.452038",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1040,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T22:16:35.234609",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 715,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:15:58.426397",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 729,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:15:32.521768",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 710,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:14:55.089504",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 728,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:14:40.277735",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 729,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T22:00:29.562917",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1039,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T21:49:39.839523",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1046,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T21:46:30.228722",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1071,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T21:46:08.374152",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 773,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:45:43.802932",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 758,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:25:00.289726",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1029,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T21:24:46.402457",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 829,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:22:31.019921",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 829,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:18:53.729082",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 768,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:17:49.967581",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 767,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:14:34.279512",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 760,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:12:55.748008",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 773,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:11:48.259607",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 748,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:10:24.570755",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 748,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T21:01:16.555540",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
       "duration": 1117,
       "error_message": null
     },
     {
-      "timestamp": "2026-05-23T16:51:15.202455",
+      "timestamp": "2026-05-27T20:57:33.854012",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 757,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T20:56:18.436629",
       "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
       "status": "success",
-      "duration": 1093,
+      "duration": 1081,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T20:55:43.337828",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1131,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T20:55:27.058319",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 758,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T20:54:43.118557",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 764,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T20:52:37.946681",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 796,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T20:23:06.409533",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1075,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T20:21:18.042840",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1132,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T20:19:46.368572",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 770,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T20:04:43.854315",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1060,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T20:04:24.289817",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1036,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:54:13.247246",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1091,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:50:02.589310",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1119,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:48:11.056916",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1121,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:44:04.849288",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1144,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:39:42.862284",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1139,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:38:34.689919",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1124,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:37:43.222069",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 754,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T19:36:09.653156",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1104,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:35:11.632376",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1106,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:30:06.626721",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1129,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:27:24.090909",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1142,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:26:00.644781",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1129,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:20:40.722857",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1139,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:19:55.801117",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1152,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-05-27T19:19:09.583306",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "failed",
+      "duration": 850,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-05-27T19:05:50.437252",
+      "project_path": "c:\\User\\daofy-agent\\DelphiAudit\\daudit.dproj",
+      "status": "success",
+      "duration": 1182,
       "error_message": null
     }
   ],

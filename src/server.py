@@ -168,7 +168,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                     "  check_environment(action='check') — 检查编译环境\n"
                     "  compile_project(..., dry_run=True) — 预览编译参数")
         elif not is_pas and not arguments.get("dry_run"):
-            return ("✨ 提示：建议用 file_tool(action='format', file_path=...) "
+            return ("✨ 提示：建议用 delphi_file(action='format', file_path=...) "
                     "统一格式化代码风格")
 
     elif name == "delphi_kb":
@@ -178,7 +178,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                 results = result.get('results') or result.get('data') or []
                 if isinstance(results, list) and len(results) > 0:
                     return ("✨ 提示：找到目标后，可用 "
-                            'file_tool(action="read", file_path="...") 读取完整源码定义')
+                            'delphi_file(action="read", file_path="...") 读取完整源码定义')
         elif action == "stats":
             return ("✨ 提示：如果知识库数据过期，"
                     "可用 delphi_kb(action='build', kb_type='project') 重建")
@@ -189,7 +189,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if "未就绪" in text or "daudit.exe" in text:
                 return ("✨ 提示：将 daudit.exe 放到 tools/daudit/ 目录后重新调用。"
                         "可先使用 get_coding_rules(section='review') 按审核表手动检查。")
-            return ("✨ 提示：审计完成。可针对每条违规使用 file_tool 读取源码确认，"
+            return ("✨ 提示：审计完成。可针对每条违规使用 delphi_file 读取源码确认，"
                     "或使用 compile_project 编译验证修复结果。")
 
     elif name == "get_coding_rules":
@@ -320,7 +320,7 @@ async def run_server():
                             "【Delphi 文件触发】看到 .dproj/.dpr/.dpk/.pas 文件时优先编译\n"
                             "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
                             "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
-                            "【协作链】get_coding_rules→file_tool→compile→失败→check_environment\n"
+                            "【协作链】get_coding_rules→delphi_file→compile→失败→check_environment\n"
                             "【降级】MSBuild 不可用→dcc32；dry_run 预览参数\n"
                             "【示例】\n"
                             '   compile_project(build_configuration="Release")  # "编译Release版本"\n'
@@ -359,7 +359,7 @@ async def run_server():
                 description="【优先级 ⭐⭐⭐】知识库搜索/管理 — 查 Delphi API、项目代码、文档\n"
                             "【触发词】搜索类、搜索函数、查API、查定义、知识库、构建知识库、KB、语义搜索\n"
                             "【Delphi 文件触发】写 .pas 代码前应先搜索 KB 查 API 定义(TODO先调用 delphi_kb 搜索类/函数)\n"
-                            "【协作链】写代码前→delphi_kb查API→file_tool(read)看定义→写代码→compile\n"
+                            "【协作链】写代码前→delphi_kb查API→delphi_file(read)看定义→写代码→compile\n"
                             "【action 说明】\n"
                             '  action="search"    默认 — 搜索类/函数/文档, kb_type=all/delphi/project/thirdparty/document\n'
                             '                    search_type=function/procedure/class/record/semantic/reference\n'
@@ -407,36 +407,34 @@ async def run_server():
                 }
             ),
 
-            # ===== 文件操作 — 读/写/格式化/备份管理 ⭐⭐⭐ =====
+            # ===== Delphi 文件专用操作 — 读/写/格式化/备份管理 ⭐⭐⭐ =====
             Tool(
-                name="file_tool",
-                description="【优先级 ⭐⭐⭐】读写文件 / 格式化 / 备份管理 — .pas/.dfm/.dproj 等 Delphi 文件\n"
-                            "【触发词】修改代码、编辑文件、写入代码、新建文件、改代码、替换内容、覆盖文件、\n"
-                            "           读文件、查看源码、打开文件、cat文件、格式化代码、整理代码、排版、\n"
-                            "           代码风格、自动格式化、恢复备份、备份文件、历史版本、\n"
-                            "           查看备份、还原文件、回退修改、修改前备份、差异对比、diff\n"
+                name="delphi_file",
+                description="⚠️ Delphi 文件(.pas/.dfm/.dproj)必须使用本工具，禁止用原生 read/write/edit！\n"
+                            "✅ 自动编码检测(UTF-8/GBK/UTF-16)、自动备份(__history)、DFM二进制↔文本透明转换\n"
+                            "✅ 按类名/函数名搜索定位代码、部分写入、格式化、uses子句增删\n"
+                            "【触发词】读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码、\n"
+                            "           新建文件、格式化、整理代码、恢复备份、回退修改、diff、差异对比、\n"
+                            "           查看备份、还原文件、增删uses、添加单元、删除单元\n"
                             "【Delphi 文件触发】操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此\n"
-                            "【严禁】使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份机制）\n"
+                            "【❌ 严禁】使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份+编码检测）\n"
                             "【action 说明】\n"
-                            '  action="read"    读文件/查源码。可选 start_line/limit/end_line 分段读取。\n'
-                            "                  可选 search_type+type_name/function_name 定位查找。\n"
-                            '  action="write"   写文件/替换内容。不传 start_line/end_line 时替换全文。\n'
-                            "                  传 start_line/end_line 时仅替换指定行范围（部分写入）。\n"
-                            '  action="format"  使用 pasfmt 格式化代码。可选 dry_run 仅检查不修改。\n'
-                            '  action="backup"  备份管理。可选 backup_action=list/restore。\n'
-                            '  action="uses"    增删 uses 子句。需指定 uses_action+unit_name。\n'
-                            "【协作链】get_coding_rules→file_tool(read)→file_tool(write)→file_tool(format)→compile_project\n"
+                            '  action="read"    读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位\n'
+                            '  action="write"   写文件（自动备份到 __history），支持全文替换或部分写入(start_line/end_line)\n'
+                            '  action="format"  使用 pasfmt 格式化代码\n'
+                            '  action="backup"  备份管理（创建/列表/恢复）\n'
+                            '  action="uses"    增删 uses 子句中的单元\n'
+                            "【协作链】get_coding_rules→delphi_file(read)→delphi_file(write)→delphi_file(format)→compile_project\n"
                             "【示例】\n"
-                            '  file_tool(action="read", file_path="Unit1.pas")  # 读文件\n'
-                            '  file_tool(action="read", search_type="class", type_name="TForm1")  # 搜索类定义\n'
-                            '  file_tool(action="write", file_path="src/Unit1.pas", content="完整内容")  # 全文写入\n'
-                            '  file_tool(action="write", file_path="src/Unit1.pas", content="替换行", start_line=5, end_line=10)  # 部分写入\n'
-                            '  file_tool(action="format", file_path="src/Unit1.pas")  # 格式化代码\n'
-                            '  file_tool(action="format", file_path="Unit1.pas", dry_run=True)  # 仅检查格式\n'
-                            '  file_tool(action="backup", file_path="Unit1.pas")  # 手动创建备份\n'
-                            '  file_tool(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出备份\n'
-                            '  file_tool(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)  # 恢复\n'
-                            '  file_tool(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  # 增uses',
+                            '  delphi_file(action="read", file_path="Unit1.pas")                    # 读文件\n'
+                            '  delphi_file(action="read", search_type="class", type_name="TForm1")  # 搜索类定义\n'
+                            '  delphi_file(action="write", file_path="src/Unit1.pas", content="...") # 写入文件\n'
+                            '  delphi_file(action="write", file_path="src/Unit1.pas", content="替换", start_line=5, end_line=10)  # 部分写入\n'
+                            '  delphi_file(action="format", file_path="src/Unit1.pas")              # 格式化\n'
+                            '  delphi_file(action="backup", file_path="Unit1.pas")                  # 创建备份\n'
+                            '  delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出备份\n'
+                            '  delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)  # 恢复\n'
+                            '  delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  # 增uses',
                 inputSchema={
                     "type": "object",
                     "required": ["action"],
@@ -648,21 +646,22 @@ async def run_server():
             # ===== 代码审计工具（AST 引擎）⭐⭐ =====
             Tool(
                 name="run_audit",
-                description="【优先级 ⭐⭐】代码审计 / AST 语法解析 / Runtime 注册检查 — 使用 AST 引擎执行 Delphi 源码静态分析\n"
-                            "【触发词】审计代码、审查代码、代码审核、review code、audit、安全检查、\n"
+                description="【优先级 ⭐⭐】Delphi 源码结构解析 / 代码审计 / Runtime 注册检查\n"
+                            "【触发词】语法解析、AST解析、解析源码、查类结构、查函数定义、\n"
+                            "           审计代码、审查代码、review code、audit、安全检查、\n"
                             "           漏洞扫描、安全隐患、security review、性能分析、\n"
-                            "           语法解析、AST解析、解析源码、运行时检查、运行时注册\n"
+                            "           运行时检查、运行时注册\n"
                             "支持三种模式：\n"
-                            '  mode="audit"（默认）— 运行 50+ 条静态分析规则，审计代码质量\n'
-                            '  mode="ast"        — AST 语法解析，输出实体结构信息\n'
-                            '  mode="runtime"    — 运行时注册检查，检测 uses 中是否遗漏必需单元（如 FireDAC.DApt）\n'
+                            '  mode="ast"（⭐ 推荐，AI Agent 摘要模式） — 代码骨架提取（daudit --mode skeleton --compact）\n'
+                            "  输出预格式化文本: 单元名、uses、类/记录/接口、函数/过程、常量。专为 AI 设计，最省 token\n"
+                            '  mode="audit" — 运行 50+ 条静态分析规则，审计代码质量\n'
+                            '  mode="runtime" — 运行时注册检查，检测 uses 中是否遗漏必需单元（如 FireDAC.DApt）\n'
                             "audit/ast 模式自动检测项目目录下的 daudit.exe；runtime 模式无需 daudit。\n"
-                            "【协作链】run_audit → AI 解读报告 → 生成修复建议\n"
+                            "【协作链】run_audit(mode='ast') → AI 分析结构 → delphi_file 精准修改 → compile_project 验证\n"
                             "【示例】\n"
-                            '   run_audit(source_dir="C:\\\\Project\\\\src")                     # 默认 P0 审计\n'
-                            '   run_audit(source_dir=".", rules="P0,P1")                      # 全部基础规则\n'
-                            '   run_audit(mode="ast", source_dir="src")                        # AST 语法解析（目录）\n'
-                            '   run_audit(mode="ast", file_path="Unit1.pas")                   # AST 语法解析（单文件）\n'
+                            '   run_audit(mode="ast", source_dir="src")                        # ⭐ 骨架摘要\n'
+                            '   run_audit(mode="ast", file_path="Unit1.pas")                   # 单文件骨架\n'
+                            '   run_audit(source_dir="C:\\\\Project\\\\src")                     # 代码审计（默认）\n'
                             '   run_audit(mode="runtime", source_dir="src")                    # 运行时注册检查',
                 inputSchema={
                     "type": "object",
@@ -751,7 +750,7 @@ async def run_server():
                             '  action="remove_config"删除指定编译配置\n'
                             '  action="add_source"   向 ItemGroup 添加源文件引用（DCCReference）\n'
                             '  action="remove_source"从 ItemGroup 删除源文件引用\n'
-                            "【协作链】dproj_tool(action=info)→file_tool→编译→compile_project\n"
+                            "【协作链】dproj_tool(action=info)→delphi_file→编译→compile_project\n"
                             "【示例】\n"
                             '   dproj_tool(action="create", project_path="MyApp.dproj", main_source="MyApp.dpr")  # "创建项目"\n'
                             '   dproj_tool(action="info", project_path="MyApp.dproj")  # "查看项目配置"\n'
@@ -1030,7 +1029,8 @@ async def run_server():
     _TOOL_HANDLERS = {
         "compile_project": _handle_compile_project,
         "delphi_kb": _handle_delphi_kb,
-        "file_tool": _handle_file_tool,
+        "delphi_file": _handle_file_tool,
+        "file_tool": _handle_file_tool,  # 旧名兼容别名
         "manage_component": _handle_manage_component,
         "check_environment": _handle_check_environment,
         "async_task": _handle_async_task,

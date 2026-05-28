@@ -10,7 +10,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 from mcp.types import CallToolResult
 
 logger = logging.getLogger(__name__)
@@ -162,11 +162,122 @@ def _cleanup_pkb_cache():
     _pkb_cache.clear()
 
 
+def _search_document_kb(query: str, top_k: int = 20) -> Optional[List[dict]]:
+    """搜索文档知识库（全文搜索），返回文档结果列表。
+
+    文档 KB 使用全文搜索（FTS），对多关键词查询效果远好于符号名称匹配。
+    如果文档知识库不存在或搜索失败，返回 None。
+    """
+    try:
+        from ..services.knowledge_base.scan_generic_documents import (
+            GenericDocumentScanner,
+        )
+        server_root = Path(__file__).parent.parent.parent
+        kb_dir = str(server_root / "data" / "document-knowledge-base")
+        kb_path = Path(kb_dir)
+        if not kb_path.exists():
+            return None
+        scanner = GenericDocumentScanner(kb_dir)
+        results = scanner.search(query, top_k=top_k)
+        return results if results else None
+    except Exception as e:
+        logger.debug("文档知识库搜索失败: %s", str(e))
+        return None
+
+
+# AI Agent 经常将多关键字拼为一个长查询，以下集合过滤无意义的噪声词。
+# 设计为两层：
+#   _MKW_HARD_STOP — 极通用词，无论如何都应过滤
+#   _MKW_DELPHI_KEYWORDS — Delphi 关键字，第一步过滤，但如果所有词都被过滤掉则保留
+_MKW_HARD_STOP: frozenset = frozenset({
+    'a', 'an', 'the', 'in', 'of', 'for', 'to', 'with', 'on', 'at', 'by', 'is', 'it',
+    'delphi', 'pascal', 'syntax', 'declaration', 'declare', 'definition', 'define',
+    'example', 'examples', 'usage', 'use', 'using', 'keyword', 'keywords',
+    'statement', 'statements', 'reference', 'attribute', 'attributes',
+    'directive', 'directives', 'section', 'clause', 'demo', 'sample', 'howto',
+})
+
+_MKW_DELPHI_KEYWORDS: frozenset = frozenset({
+    'class', 'type', 'types', 'private', 'public', 'protected', 'published', 'strict',
+    'nested', 'field', 'fields', 'var', 'vars', 'const', 'consts', 'procedure',
+    'function', 'constructor', 'destructor', 'property', 'read', 'write', 'default',
+    'override', 'virtual', 'dynamic', 'abstract', 'static', 'inline', 'deprecated',
+})
+
+
+def _split_multikeywords(query: str) -> List[str]:
+    """将 AI 拼凑的多关键字长查询拆分为独立搜索词。
+
+    AI Agent 经常把多个关键字拼到一个 query 里，例如：
+      "Delphi class field declaration syntax private type nested ..."
+    此函数识别这种情况，提取有意义的搜索词逐一搜索后聚合结果。
+
+    设计：第一层过滤硬停用词（_MKW_HARD_STOP），第二层过滤 Delphi 关键字（_MKW_DELPHI_KEYWORDS）。
+    如果所有词都是关键字（无硬停用词以外的词），则退而使用关键字本身作为搜索词。
+
+    Returns:
+        有效搜索词列表。若无需拆分则返回 [原始query]。
+    """
+    tokens = query.split()
+    if len(tokens) <= 3:
+        return [query]
+
+    # 第一层：过滤硬停用词（a, the, delphi, syntax, etc.）
+    hard_filtered = [
+        t for t in tokens
+        if t.lower() not in _MKW_HARD_STOP
+        and len(t) > 1
+    ]
+    if hard_filtered:
+        # 第二层：进一步过滤 Delphi 关键字
+        meaningful = [
+            t for t in hard_filtered
+            if t.lower() not in _MKW_DELPHI_KEYWORDS
+        ]
+        if not meaningful:
+            # 剩余全是 Delphi 关键字（如 class, type, field），仍然比原始 query 更有用
+            meaningful = hard_filtered
+    else:
+        # 全是硬停用词，退化为原始查询
+        return [query]
+
+    # 去重（保留顺序）、截最长 8 个关键词
+    seen: set = set()
+    deduped: List[str] = []
+    for w in meaningful:
+        lw = w.lower()
+        if lw not in seen:
+            seen.add(lw)
+            deduped.append(w)
+        if len(deduped) >= 8:
+            break
+    return deduped
+
+
+def _normalize_query(query: str) -> str:
+    """规范化搜索关键词，处理 AI Agent 常见的查询模式。
+
+    当前处理：
+    - Delphi 编译指令 {$WARN} → WARN（去掉 {$ 和 } 前缀后缀）
+      知识库中编译指令存储为名称本身（如 'WARN'），而非 {$WARN} 格式。
+    """
+    q = query.strip()
+    # {$WARN} / {$WARN ON} / {$IFDEF DEBUG} 等编译指令
+    if q.startswith('{$') and q.endswith('}'):
+        inner = q[2:-1].strip()
+        if inner:
+            return inner
+    # 仅 $ 前缀：$WARN → WARN
+    if q.startswith('$') and len(q) > 1:
+        return q[1:]
+    return q
+
+
 async def search_knowledge(arguments: Any) -> CallToolResult:
     """统一搜索知识库"""
     kb_type = arguments.get("kb_type", "all")
     search_type = arguments.get("search_type", "all")
-    query = arguments.get("query", "")
+    query = _normalize_query(arguments.get("query", ""))
     top_k = min(arguments.get("top_k", 200), 500)
     
     if not query:
@@ -407,9 +518,144 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
         except Exception as e:
             results[f"{kb}_error"] = str(e)
-    
-    output = f"搜索 '{query}' (类型: {search_type}, 知识库: {kb_type}):\n\n"
+
+    # ── 文档知识库搜索（kb_type="all" 时也搜索文档 KB）──
+    _is_multiword = bool(_split_multikeywords(query) and len(_split_multikeywords(query)) > 1)
+    if kb_type == "all":
+        try:
+            doc_results = _search_document_kb(query, top_k)
+            if doc_results:
+                results["document"] = doc_results
+                results["document_is_multiword"] = _is_multiword
+        except Exception as e:
+            logger.debug("文档知识库搜索失败: %s", str(e))
+
+    # ── Multi-keyword fallback ──
+    # 如果原始查询未命中，且 query 有明显多关键词特征，则自动拆分并逐一搜索后聚合。
+    # AI Agent 经常把多个关键词拼为一个长 query（如 "Delphi class field ..."）。
+    keywords = [query]
+    _initial_has_data = any(
+        v for k, v in results.items()
+        if not k.endswith('_error') and not k.endswith('_warning') and not k == 'project_async_task_id'
+    )
+    if not _initial_has_data:
+        _kw_split = _split_multikeywords(query)
+        if len(_kw_split) > 1:
+            keywords = _kw_split
+            seen_dedup: set = set()
+            for kw in keywords:
+                for kb in kb_types:
+                    try:
+                        if search_type == "reference":
+                            if kb == "delphi" and _delphi_kb_service:
+                                refs = _delphi_kb_service.search_by_name(kw)
+                                for r in refs:
+                                    dk = (r.get('name', ''), r.get('line', 0),
+                                          r.get('file', {}).get('full_path', ''))
+                                    if dk not in seen_dedup:
+                                        seen_dedup.add(dk)
+                                        results.setdefault(f"{kb}_symbols", []).append(r)
+                            elif kb == "project":
+                                pp = _resolve_project_path(arguments.get("project_path"))
+                                if pp:
+                                    try:
+                                        pkb = _get_or_create_pkb(pp)
+                                        pkb.load_knowledge_bases()
+                                        if pkb.project_kb:
+                                            refs = pkb.project_kb.search_usages(kw)
+                                            for r in refs:
+                                                dk = (r.get('file', {}).get('full_path', ''),
+                                                      str(r.get('imported_by', [])))
+                                                if dk not in seen_dedup:
+                                                    seen_dedup.add(dk)
+                                                    results.setdefault("project_references", []).append(r)
+                                    except Exception:
+                                        pass
+                            elif kb == "thirdparty" and _thirdparty_kb_service:
+                                if _thirdparty_kb_service.kb_instance is None:
+                                    _thirdparty_kb_service.load_knowledge_base()
+                                if _thirdparty_kb_service.kb_instance:
+                                    refs = _thirdparty_kb_service.kb_instance.search_usages(kw)
+                                    for r in refs:
+                                        dk = (r.get('file', {}).get('full_path', ''),
+                                              str(r.get('imported_by', [])))
+                                        if dk not in seen_dedup:
+                                            seen_dedup.add(dk)
+                                            results.setdefault("thirdparty_references", []).append(r)
+                        else:
+                            if kb == "delphi" and _delphi_kb_service:
+                                refs = _delphi_kb_service.search_by_name(kw)
+                                filtered = _filter_by_search_type(refs, search_type)
+                                for r in filtered:
+                                    dk = (r.get('name', ''), r.get('line', 0),
+                                          r.get('file', {}).get('full_path', ''))
+                                    if dk not in seen_dedup:
+                                        seen_dedup.add(dk)
+                                        results.setdefault(f"{kb}_symbols", []).append(r)
+                            elif kb == "project":
+                                pp = _resolve_project_path(arguments.get("project_path"))
+                                if pp:
+                                    try:
+                                        pkb = _get_or_create_pkb(pp)
+                                        pkb.load_knowledge_bases()
+                                        if pkb.project_kb:
+                                            refs = pkb.project_kb.search_by_name(kw)
+                                            filtered = _filter_by_search_type(refs, search_type)
+                                            for r in filtered:
+                                                dk = (r.get('name', ''), r.get('line', 0),
+                                                      r.get('file', {}).get('full_path', ''))
+                                                if dk not in seen_dedup:
+                                                    seen_dedup.add(dk)
+                                                    results.setdefault(f"{kb}_symbols", []).append(r)
+                                    except Exception:
+                                        pass
+                            elif kb == "thirdparty" and _thirdparty_kb_service:
+                                if _thirdparty_kb_service.kb_instance is None:
+                                    _thirdparty_kb_service.load_knowledge_base()
+                                if _thirdparty_kb_service.kb_instance:
+                                    refs = _thirdparty_kb_service.kb_instance.search_by_name(kw)
+                                    filtered = _filter_by_search_type(refs, search_type)
+                                    for r in filtered:
+                                        dk = (r.get('name', ''), r.get('line', 0),
+                                              r.get('file', {}).get('full_path', ''))
+                                        if dk not in seen_dedup:
+                                            seen_dedup.add(dk)
+                                            results.setdefault(f"{kb}_symbols", []).append(r)
+                    except Exception:
+                        continue
+                # 对每个拆分关键词也搜索文档知识库（全文搜索比符号匹配更相关）
+                try:
+                    kw_doc_results = _search_document_kb(kw, top_k // len(keywords) + 1)
+                    if kw_doc_results:
+                        seen_urls: set = set()
+                        for d in kw_doc_results:
+                            du = d.get('url') or d.get('path', '')
+                            if du and du not in seen_urls:
+                                seen_urls.add(du)
+                                results.setdefault("document", []).append(d)
+                except Exception:
+                    continue
+
+    has_multikeyword_results = any(
+        v for k, v in results.items()
+        if not k.endswith('_error') and not k.endswith('_warning') and not k == 'project_async_task_id'
+    )
+    output = (
+        f"搜索 '{query}'"
+        f" ({'自动拆分关键词' if keywords and len(keywords) > 1 else '类型: ' + search_type}"
+        f", 知识库: {kb_type}):\n\n"
+    )
+    if keywords and len(keywords) > 1 and has_multikeyword_results:
+        output += "> 原始查询未命中，已自动拆分为以下关键词逐一搜索后聚合:\n"
+        output += f"> {', '.join(keywords)}\n\n"
+    _is_document_first = results.get("document_is_multiword", False) or (keywords and len(keywords) > 1)
     has_results = False
+    # 多词查询：文档知识库优先展示（全文搜索更相关）
+    if "document" in results and _is_document_first:
+        doc_fmt = _format_document_results(results["document"])
+        if doc_fmt:
+            output += doc_fmt
+            has_results = True
     
     _KIND_DESC = {
         'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
@@ -427,6 +673,37 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         if total > top_k:
             return f"  (提示: 共 {total} 条结果，top_k={top_k}，{total - top_k} 条未显示，可增大 top_k 获取全部)\n"
         return ''
+
+    def _format_document_results(doc_list: list, limit: int = top_k) -> str:
+        """格式化文档知识库搜索结果"""
+        if not doc_list:
+            return ''
+        out = f"文档知识库 ({len(doc_list)}):\n"
+        for i, doc in enumerate(doc_list[:limit], 1):
+            doc_id = doc.get('id', '?')
+            title = doc.get('title', 'N/A')
+            out += f"  {i}. [ID:{doc_id}] {title}\n"
+            ct = doc.get('content_type', '')
+            if ct:
+                out += f"     类型: {ct}\n"
+            url = doc.get('url')
+            path = doc.get('path', '')
+            if url:
+                out += f"     URL: {url}\n"
+            elif path:
+                out += f"     路径: {path}\n"
+            sz = doc.get('size', 0)
+            if sz:
+                out += f"     大小: {sz} 字节\n"
+            content = doc.get('content', '')
+            if content:
+                preview = content[:150].replace('\n', ' ')
+                out += f"     预览: {preview}...\n"
+        hint = _trunc_hint(doc_list)
+        if hint:
+            out += hint
+        out += "\n"
+        return out
 
     def _format_symbol(r):
         # 类型描述：兼容 SQLiteVector 格式（kind_code）和 SmartCache 格式（type_name）
@@ -576,6 +853,13 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             output += f"【提示】{results[warn_key]}\n\n"
             has_results = True
 
+    # 单词查询：文档知识库结果靠后展示
+    if "document" in results and not _is_document_first:
+        doc_fmt = _format_document_results(results["document"])
+        if doc_fmt:
+            output += doc_fmt
+            has_results = True
+
     # 显示错误信息（如果有）
     for err_key in ["project_error", "thirdparty_error", "delphi_error"]:
         if err_key in results and results[err_key]:
@@ -585,7 +869,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     if not has_results:
         output += "未找到相关内容\n"
-    
+
     return CallToolResult(content=[{"type": "text", "text": output}])
 
 

@@ -634,7 +634,7 @@ async def compile_project(
                                 proc.kill()
                                 proc.wait()
 
-                            # 4. 检查 exception.log（与 file_tool 同等的编码检测）
+                            # 4. 检查 exception.log（与 delphi_file 同等的编码检测）
                             if log_path.exists():
                                 try:
                                     enc = detect_encoding(str(log_path))
