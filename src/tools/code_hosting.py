@@ -543,20 +543,34 @@ def _act_list_issues(platform, **kw):
 def _git_run(work_dir, *args, timeout=300):
     """在指定目录执行 git 命令，返回输出。
 
+    Windows 上使用 utf-8 编码解码输出，避免 gbk 解码报错。
+
     Args:
         work_dir: 工作目录（自动 resolve 防路径遍历）
         timeout: 超时秒数，默认 300（5 分钟，适合大项目克隆）
     """
     safe_dir = _resolve_safe_dir(work_dir) if work_dir else None
-    # 确保 work_dir 在命令执行前是存在的目录
     cwd = safe_dir if (safe_dir and os.path.isdir(safe_dir)) else None
     cmd = ["git"] + list(args)
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout)
+        
+        # 指定 utf-8 解码，避免 Windows gbk 编码问题
+        def _decode(data):
+            for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
+                try:
+                    return data.decode(enc)
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            return data.decode("utf-8", errors="replace")
+        
+        stdout = _decode(r.stdout)
+        stderr = _decode(r.stderr)
+        
         if r.returncode != 0:
-            stderr = r.stderr.strip()[:500]
-            raise RuntimeError(f"git {' '.join(args)} 失败:\n{stderr}")
-        return r.stdout.strip()
+            err_text = stderr.strip()[:500]
+            raise RuntimeError(f"git {' '.join(args)} 失败:\n{err_text}")
+        return stdout.strip()
     except FileNotFoundError:
         raise RuntimeError("git 命令未找到，请确保已安装 Git")
     except subprocess.TimeoutExpired:
