@@ -449,9 +449,9 @@ async def run_server():
                         "class_name": {"type": "string", "description": "[仅 action=read, search_type=class] 类名（与type_name二选一，兼容旧版）"},
                         "record_name": {"type": "string", "description": "[仅 action=read, search_type=record] Record 类型名"},
                         "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
-                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
+                        "start_line": {"type": "integer", "default": 0, "description": "起始行号（从0开始，左闭右开区间）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
                         "limit": {"type": "integer", "default": 2000, "description": "[仅 action=read] 最大返回行数。当文件超长时分段读取"},
-                        "end_line": {"type": "integer", "description": "结束行号（含），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
+                        "end_line": {"type": "integer", "description": "结束行号（不包含该行，左闭右开区间），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
                         "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
 

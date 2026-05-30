@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2026.05.25] - 2026-05-25
+## [2026.05.30] - 2026-05-30
+
+### Changed
+
+- **`delphi_file` read/write 行号改为 0-indexed 左闭右开**：`start_line`/`end_line` 改为 0-indexed 左闭右开区间 `[start, end)`，与 Python `list[start:end]` 切片语义一致。`start_line` 默认值从 `1` 改为 `0`，`end_line` 改为不包含该行。
+- **新增 17 个 file_tool 边界测试**：覆盖空区间、负值 clamp、超 EOF、单行替换、删除行、无效范围等场景。全部 60 项 file_tool 测试通过。
 
 ### Added
 

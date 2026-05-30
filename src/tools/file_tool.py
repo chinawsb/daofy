@@ -79,7 +79,7 @@ def _wrap_error(msg: str) -> Dict[str, Any]:
 
 async def _read_content(
     file_path: str,
-    start_line: int = 1,
+    start_line: int = 0,
     limit: int = 500,
     search_in: str = "all",
     project_path: Optional[str] = None,
@@ -90,6 +90,10 @@ async def _read_content(
 
     如果文件在本地直接存在，检测编码后直接读取（支持 UTF-8/GBK/UTF-16 等）。
     否则委托给 read_source_file 走知识库搜索路径。
+
+    start_line/end_line 为 0-indexed 左闭右开区间：
+      - start_line=0 表示从文件第 1 行开始
+      - end_line 不传时等价于「读到 limit 行为止」
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
@@ -114,8 +118,9 @@ async def _read_content(
             try:
                 # 流式读取：只读取需要的行，避免大文件全量读入内存
                 # 对于读取开头 N 行或指定行范围的场景，线性扫描比 readlines() 更省内存
-                target_start = max(start_line, 1)
-                target_end = end_line if end_line is not None else (target_start + limit - 1)
+                # target_start/target_end 是内部 1-indexed inclusive 表示
+                target_start = max(start_line, 0) + 1
+                target_end = end_line if end_line is not None else (start_line + limit)
                 selected = []
                 reached_eof = True  # 跟踪是否读到文件末尾
                 line_no = 0  # 空文件时 for 循环体不会执行，需初始化
@@ -139,7 +144,7 @@ async def _read_content(
 
                 lines_shown = len(selected)
                 base_name = os.path.basename(file_path)
-                actual_end_line = start_line + lines_shown - 1
+                actual_end_line = start_line + lines_shown  # 0-indexed exclusive end
 
                 if total_lines is not None:
                     total_display = str(total_lines)
@@ -150,7 +155,7 @@ async def _read_content(
                     f"文件: {base_name}\n"
                     f"完整路径: {os.path.abspath(file_path)}\n"
                     f"总行数: {total_display}\n"
-                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行\n"
+                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行 (0-indexed, [start, end))\n"
                     f"编码: {enc}\n"
                     f"============================================================\n\n"
                 )
@@ -161,7 +166,7 @@ async def _read_content(
                 if not reached_eof:
                     result += (
                         f"\n... (已截断，文件至少有 {target_end} 行) ...\n"
-                        f"提示: 使用 start_line={target_end + 1} 继续读取后续内容\n"
+                        f"提示: 使用 start_line={target_end} 继续读取后续内容 (0-indexed)\n"
                     )
 
                 return {"status": "success", "message": result}
@@ -198,7 +203,7 @@ async def _search_and_read(
     record_name: Optional[str] = None,
     function_name: Optional[str] = None,
     search_in: str = "all",
-    start_line: int = 1,
+    start_line: int = 0,
     limit: int = 100,
 ) -> Dict[str, Any]:
     """按类名/函数名搜索并读取文件"""
@@ -228,10 +233,10 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_path = arguments.get("file_path")
     search_type = arguments.get("search_type", "path")
-    start_line = arguments.get("start_line", 1)
+    start_line = arguments.get("start_line", 0)
     end_line = arguments.get("end_line")
     if end_line is not None:
-        limit = min(end_line - start_line + 1, 1000)
+        limit = min(end_line - start_line, 1000)
     else:
         limit = min(arguments.get("limit", 500), 1000)
     search_in = arguments.get("search_in", "all")
@@ -309,14 +314,14 @@ async def _handle_partial_write(
     """
     部分写入：仅替换指定行范围的内容，其余部分保持不变。
 
-    start_line/end_line 为 1-indexed 闭区间：
-      - 不传 start_line 时从第 1 行开始
+    start_line/end_line 为 0-indexed 左闭右开区间：
+      - 不传 start_line 时从第 0 行开始 (=文件第1行)
       - 不传 end_line 时到文件末尾
 
-    闭区间 [start_line, end_line] 的转换：
-      0-indexed inclusive:  s = start_line - 1
-      0-indexed exclusive:  e = end_line          (因为 end_line 本身就是 exclusive 值)
-      验证：lines[s:e] = lines[start_line-1 : end_line] = 第 start_line 到 end_line 行  ✓
+    左闭右开 [start_line, end_line) 的转换：
+      Python 切片:  s = start_line (0-indexed inclusive start)
+                    e = end_line   (0-indexed exclusive end)
+      验证：lines[s:e] = lines[start_line : end_line] = 第 (start_line+1) 到 end_line 行  ✓
     """
     read_path = file_path
     tmp_cleanup = None
@@ -344,18 +349,18 @@ async def _handle_partial_write(
 
         total = len(lines)
 
-        # 闭区间 [start_line, end_line] → 0-indexed 切片
-        # s = 0-indexed inclusive start (start_line - 1)
-        # e = 0-indexed exclusive end (end_line 本身就是 exclusive 值)
-        s = (start_line - 1) if start_line is not None else 0
+        # 左闭右开 [start_line, end_line) → Python 切片
+        # s = 0-indexed inclusive start = start_line
+        # e = 0-indexed exclusive end = end_line
+        s = start_line if start_line is not None else 0
         e = end_line if end_line is not None else total
 
         if s < 0:
-            return _wrap_error(f"start_line ({start_line}) 不能小于 1")
+            return _wrap_error(f"start_line ({start_line}) 不能小于 0")
         if e > total:
             return _wrap_error(f"end_line ({end_line}) 超出文件总行数 ({total})")
         if s >= e:
-            return _wrap_error(f"替换范围为空: start_line ({start_line}) >= end_line ({end_line})。需满足 start_line <= end_line")
+            return _wrap_error(f"替换范围为空: start_line ({start_line}) >= end_line ({end_line})。需满足 start_line < end_line")
 
         before = ''.join(lines[:s])
         after = ''.join(lines[e:])

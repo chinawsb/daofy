@@ -423,46 +423,48 @@ async def test_main_entry_default_action_is_read():
 
 @pytest.mark.asyncio
 async def test_read_with_end_line():
-    """end_line 参数应限制读取行数"""
+    """end_line（0-indexed exclusive）应限制读取行数"""
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "multi_line.pas")
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("unit Test;\n// line 2\n// line 3\n// line 4\n// line 5\nend.\n")
     try:
+        # 0-indexed: [0, 3) → indices 0,1,2 → lines 1,2,3
         result = await handle_read({
             "file_path": file_path,
             "end_line": 3,
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 1 行 到 第 3 行" in msg, f"unexpected range in: {msg}"
+        assert "显示范围: 第 0 行 到 第 3 行" in msg, f"unexpected range in: {msg}"
         assert "// line 3" in msg
-        assert "// line 5" not in msg  # 不应出现在 3 行以后
+        assert "// line 5" not in msg  # index 4, outside [0,3)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
 async def test_read_with_start_line_and_end_line():
-    """start_line + end_line 组合应精确截取中间段落"""
+    """start_line + end_line（0-indexed [start, end)）应精确截取中间段落"""
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "range_test.pas")
     lines = [f"// line {i}" for i in range(1, 21)]
     with open(file_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     try:
+        # 0-indexed: [4, 10) → indices 4..9 → lines 5..10
         result = await handle_read({
             "file_path": file_path,
-            "start_line": 5,
+            "start_line": 4,
             "end_line": 10,
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 5 行 到 第 10 行" in msg
-        assert "// line 5" in msg
-        assert "// line 10" in msg
-        assert "// line 4" not in msg
-        assert "// line 11" not in msg
+        assert "显示范围: 第 4 行 到 第 10 行" in msg
+        assert "// line 5" in msg    # index 4 → line 5
+        assert "// line 10" in msg   # index 9 → line 10
+        assert "// line 4" not in msg   # index 3, outside [4,10)
+        assert "// line 11" not in msg  # index 10, outside [4,10)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -760,5 +762,328 @@ async def test_write_max_lines_cap():
         msg = result.get("message", "")
         # 验证截断标记
         assert isinstance(msg, str)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# 0-indexed 边界测试（读）
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_read_0indexed_default_start():
+    """默认 start_line=0 从文件开头读取"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "default_start.pas")
+    content = "line1\nline2\nline3\nline4\nline5\n"
+    _make_file(file_path, content)
+    try:
+        result = await handle_read({"file_path": file_path, "end_line": 2})
+        _assert_success(result)
+        msg = result["message"]
+        assert "显示范围: 第 0 行 到 第 2 行" in msg
+        assert "line1" in msg and "line2" in msg
+        assert "line3" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_empty_range():
+    """start_line == end_line 时区间为空，应返回 0 行"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "empty_range.pas")
+    _make_file(file_path, "a\nb\nc\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 2,
+            "end_line": 2,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        # [2,2) → 空区间，实际行数应为 0
+        assert "显示范围: 第 2 行 到 第 2 行" in msg
+        # 内容区域只有空行 + 截断提示，不应出现文件正文行
+        # 分离 header 后的内容
+        sep = "===="
+        idx = msg.rfind(sep)
+        body = msg[idx + len(sep):] if idx >= 0 else msg
+        assert "a\n" not in body
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_single_line():
+    """start_line=2, end_line=3 → 仅返回索引 2（文件第 3 行）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "single_line.pas")
+    content = "alpha\nbeta\ngamma\ndelta\n"
+    _make_file(file_path, content)
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 2,
+            "end_line": 3,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "显示范围: 第 2 行 到 第 3 行" in msg
+        assert "gamma" in msg
+        assert "alpha" not in msg and "beta" not in msg and "delta" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_truncation_hint():
+    """截断提示应推荐 0-indexed start_line"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "trunc_hint.pas")
+    lines = "\n".join(f"L{i}" for i in range(100))
+    _make_file(file_path, lines + "\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 5,
+            "limit": 3,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "使用 start_line=8" in msg, f"应该推荐 0-indexed 续读行号: {msg}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_negative_start_clamped():
+    """负 start_line 应 clamp 到 0"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "neg_start.pas")
+    _make_file(file_path, "only\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": -5,
+            "end_line": 1,
+        })
+        _assert_success(result)
+        assert "only" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_beyond_eof():
+    """end_line 超出文件末尾 → 应返回已有行数"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "beyond_eof.pas")
+    _make_file(file_path, "x\ny\nz\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 0,
+            "end_line": 999,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "x" in msg and "y" in msg and "z" in msg
+        # 总行数应显示实际行数（3），因为 end_line 超过 EOF 时 reached_eof=True
+        assert "显示范围: 第 0 行 到 第 3 行" in msg
+        assert "已被截断" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# 0-indexed 边界测试（写 - 部分写入）
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_write_partial_replace_middle():
+    """部分写入替换中间行 [2,4) → 替换索引 2,3（第 3,4 行）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_mid.pas")
+    _make_file(file_path, "a\nb\nc\nd\ne\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\nY\n",
+            "start_line": 2,
+            "end_line": 4,
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "r") as f:
+            assert f.read() == "a\nb\nX\nY\ne\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_replace_from_start():
+    """部分写入从开头替换 [0,2) → 替换前 2 行"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_start.pas")
+    _make_file(file_path, "a\nb\nc\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\n",
+            "start_line": 0,
+            "end_line": 2,
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "r") as f:
+            assert f.read() == "X\nc\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_replace_to_end():
+    """部分写入替换到末尾 [1, ...) → 从索引 1 起全替换"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_end.pas")
+    _make_file(file_path, "a\nb\nc\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\nY\n",
+            "start_line": 1,
+            # 不传 end_line → 到文件末尾
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "r") as f:
+            assert f.read() == "a\nX\nY\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_delete_lines():
+    """空 content 替换 [1,3) → 删除索引 1,2（第 2,3 行）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_delete.pas")
+    _make_file(file_path, "a\nb\nc\nd\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "",
+            "start_line": 1,
+            "end_line": 3,
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "r") as f:
+            assert f.read() == "a\nd\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_single_line():
+    """替换单行 [2,3) → 仅替换索引 2（第 3 行）"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_single.pas")
+    _make_file(file_path, "a\nb\nc\nd\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\n",
+            "start_line": 2,
+            "end_line": 3,
+            "backup": False,
+        })
+        _assert_success(result)
+        with open(file_path, "r") as f:
+            assert f.read() == "a\nb\nX\nd\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_negative_start():
+    """start_line < 0 应报错"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "neg_start.pas")
+    _make_file(file_path, "a\nb\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "x\n",
+            "start_line": -1,
+            "backup": False,
+        })
+        _assert_error(result)
+        assert "不能小于 0" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_start_eq_end():
+    """start_line == end_line 空区间应报错"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "empty_range.pas")
+    _make_file(file_path, "a\nb\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "x\n",
+            "start_line": 1,
+            "end_line": 1,
+            "backup": False,
+        })
+        _assert_error(result)
+        assert "替换范围为空" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_end_exceeds_total():
+    """end_line > total 应报错"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "out_of_bounds.pas")
+    _make_file(file_path, "a\nb\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "x\n",
+            "start_line": 0,
+            "end_line": 999,
+            "backup": False,
+        })
+        _assert_error(result)
+        assert "超出文件总行数" in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_0indexed_limit_after_truncation():
+    """limit 读取后截断，实际行数应 = limit"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "trunc_limit.pas")
+    lines = "\n".join(f"R{i}" for i in range(500))
+    _make_file(file_path, lines + "\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 10,
+            "limit": 7,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "显示范围: 第 10 行 到 第 17 行" in msg, f"范围异常: {msg}"
+        # 应包含 [10,17) → 7 行
+        assert "R10" in msg
+        assert "R16" in msg
+        assert "R17" not in msg
+        assert "已截断" in msg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
