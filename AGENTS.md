@@ -39,7 +39,7 @@ src/
 ⑥ delphi_file(action="format", file_path=...) → 格式化
 ⑦ compile_project(project_path=...)         → 编译验证
 ⑧ compile_project(..., run_verify=True)     → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
-⑨ run_audit(mode="runtime", source_dir=...) → 运行时注册检查（源码级分析，无需 daudit）
+⑨ run_audit(mode="runtime", base_dir=...)  → 运行时注册检查（源码级分析，无需 daudit）
 ```
 
 > **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
@@ -310,8 +310,8 @@ src/
 
 ```
 get_coding_rules(section="review")               → 获取 Delphi 审核标准
-run_audit(mode="ast", source_dir="src")          → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
-run_audit(source_dir=".", rules="P0")            → 深度静态分析规则检查（可选的）
+run_audit(mode="ast", base_dir="src")           → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
+run_audit(base_dir=".", rules="P0")             → 深度静态分析规则检查（可选的）
 delphi_file(action="read", file_path="unit.pas")   → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
 compile_project(project_path="proj.dproj")        → Delphi 审计后验证编译

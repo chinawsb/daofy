@@ -38,6 +38,7 @@ GitHub / Gitee 国内访问:
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from typing import Optional
@@ -540,7 +541,57 @@ def _act_list_issues(platform, **kw):
 # ============================================================
 
 
-def _git_run(work_dir, *args, timeout=300):
+def _git_human_error(err_text: str, cmd_str: str) -> str:
+    """将 Git 原始错误信息转换为用户友好的中文提示。"""
+    err_lower = err_text.lower()
+
+    # ── 认证相关 ──
+    if re.search(r"could not read (username|password)", err_lower):
+        return (
+            "需要 Git 认证，但 MCP 环境不支持交互式输入。\n"
+            "  解决方式（任选其一）:\n"
+            "    1. 配置凭据管理器: git config --global credential.helper manager\n"
+            "    2. 使用 SSH 密钥: git remote set-url origin git@github.com:owner/repo.git\n"
+            "    3. 在 .netrc 文件中写入凭据\n"
+            f"  原始错误: {err_text[:200]}"
+        )
+    if re.search(r"authentication failed|access denied|invalid username or password|auth fail", err_lower):
+        return f"认证失败，请检查用户名/密码或 Token 是否正确:\n  {err_text[:200]}"
+    if "permission denied (publickey)" in err_lower:
+        return (
+            "SSH 认证失败，请检查 SSH 密钥配置:\n"
+            "    1. 确认公钥已添加到 Git 平台\n"
+            "    2. 确认私钥在本地可用: ssh -T git@github.com\n"
+            f"  原始错误: {err_text[:200]}"
+        )
+
+    # ── 网络相关 ──
+    if re.search(r"could not resolve host|couldn'?t resolve host|name or service not known", err_lower):
+        return f"无法解析主机地址，请检查网络连接或代理配置:\n  {err_text[:200]}"
+    if re.search(r"connection refused|could not connect to|connect.*timed out|connection timed out", err_lower):
+        return f"连接被拒绝或超时，请检查网络/代理/防火墙设置:\n  {err_text[:200]}"
+
+    # ── 仓库问题 ──
+    if "repository not found" in err_lower:
+        return f"仓库不存在或无权限访问，请检查 repo 地址是否正确:\n  {err_text[:200]}"
+    if "not a git repository" in err_lower:
+        return f"当前目录不是 Git 仓库（或父目录缺少 .git），请确认 dir 参数指向正确的仓库:\n  {err_text[:200]}"
+    if re.search(r"pathspec.*did not match any", err_lower):
+        return f"指定的文件路径在仓库中不存在:\n  {err_text[:200]}"
+    if re.search(r"unknown switch|unrecognized argument|error: unknown option", err_lower):
+        return f"Git 命令参数有误，请检查参数拼写:\n  {err_text[:200]}"
+
+    # ── 大文件/磁盘 ──
+    if re.search(r"file too large|large file detected|exceeds github|file size", err_lower):
+        return f"文件大小超过限制，请使用 Git LFS 管理大文件:\n  {err_text[:200]}"
+    if re.search(r"disk quota|no space left|insufficient disk", err_lower):
+        return f"磁盘空间不足:\n  {err_text[:200]}"
+
+    # ── 默认：返回原始错误的前 500 字符
+    return err_text[:500]
+
+
+def _git_run(work_dir, *args, timeout=300, env=None):
     """在指定目录执行 git 命令，返回输出。
 
     Windows 上使用 utf-8 编码解码输出，避免 gbk 解码报错。
@@ -548,12 +599,28 @@ def _git_run(work_dir, *args, timeout=300):
     Args:
         work_dir: 工作目录（自动 resolve 防路径遍历）
         timeout: 超时秒数，默认 300（5 分钟，适合大项目克隆）
+        env: 额外环境变量字典（可选），会合并到子进程环境
     """
     safe_dir = _resolve_safe_dir(work_dir) if work_dir else None
     cwd = safe_dir if (safe_dir and os.path.isdir(safe_dir)) else None
     cmd = ["git"] + list(args)
+
+    # 构建子进程环境：继承当前环境 + 强制非交互
+    proc_env = os.environ.copy()
+    proc_env["GIT_TERMINAL_PROMPT"] = "0"  # 禁止 git 弹出凭证提示
+    proc_env["GIT_PAGER"] = ""              # 禁止分页器（如 less）
+    proc_env["PAGER"] = ""                  # 全局分页器也禁掉
+    proc_env["GIT_EDITOR"] = ":"            # 禁止打开编辑器
+    if env:
+        proc_env.update(env)
+
     try:
-        r = subprocess.run(cmd, capture_output=True, cwd=cwd, timeout=timeout)
+        r = subprocess.run(
+            cmd, capture_output=True, cwd=cwd,
+            stdin=subprocess.DEVNULL,        # 防止 git 读 MCP 的 JSON-RPC 管道导致死锁
+            timeout=timeout,
+            env=proc_env,
+        )
         
         # 指定 utf-8 解码，避免 Windows gbk 编码问题
         def _decode(data):
@@ -569,7 +636,8 @@ def _git_run(work_dir, *args, timeout=300):
         
         if r.returncode != 0:
             err_text = stderr.strip()[:500]
-            raise RuntimeError(f"git {' '.join(args)} 失败:\n{err_text}")
+            cmd_str = ' '.join(args)
+            raise RuntimeError(f"git {cmd_str} 失败:\n{_git_human_error(err_text, cmd_str)}")
         return stdout.strip()
     except FileNotFoundError:
         raise RuntimeError("git 命令未找到，请确保已安装 Git")
@@ -613,7 +681,7 @@ def _submit_git_task(name: str, fn, **kw) -> tuple:
 def _act_git_status(platform=None, **kw):
     """查看仓库状态（同步，瞬间完成）。"""
     work_dir = kw.get("dir", ".")
-    out = _git_run(work_dir, "status")
+    out = _git_run(work_dir, "status", timeout=30)
     return _ok(f"📋 Git 状态:\n{out}")
 
 
@@ -624,7 +692,7 @@ def _act_git_add(platform=None, **kw):
     files = kw.get("files", [])
     if not files:
         return _err("请指定要暂存的文件列表 (files 参数)")
-    _git_run(work_dir, "add", *files)
+    _git_run(work_dir, "add", *files, timeout=30)
     return _ok(f"✅ 已暂存: {', '.join(files)}")
 
 
@@ -635,9 +703,9 @@ def _act_git_commit(platform=None, **kw):
     msg = kw.get("message", "")
     if not msg:
         return _err("请指定提交信息 (message 参数)")
-    _git_run(work_dir, "commit", "-m", msg)
+    _git_run(work_dir, "commit", "-m", msg, timeout=30)
     try:
-        h = _git_run(work_dir, "rev-parse", "HEAD")
+        h = _git_run(work_dir, "rev-parse", "HEAD", timeout=10)
         return _ok(f"✅ 提交成功\n  Hash: {h[:12]}\n  信息: {msg}")
     except RuntimeError:
         return _ok(f"✅ 提交成功\n  信息: {msg}")

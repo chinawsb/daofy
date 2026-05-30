@@ -659,21 +659,20 @@ async def run_server():
                             "audit/ast 模式自动检测项目目录下的 daudit.exe；runtime 模式无需 daudit。\n"
                             "【协作链】run_audit(mode='ast') → AI 分析结构 → delphi_file 精准修改 → compile_project 验证\n"
                             "【示例】\n"
-                            '   run_audit(mode="ast", source_dir="src")                        # ⭐ 骨架摘要\n'
+                            '   run_audit(mode="ast", base_dir="src")                         # ⭐ 骨架摘要\n'
                             '   run_audit(mode="ast", file_path="Unit1.pas")                   # 单文件骨架\n'
-                            '   run_audit(source_dir="C:\\\\Project\\\\src")                     # 代码审计（默认）\n'
-                            '   run_audit(mode="runtime", source_dir="src")                    # 运行时注册检查',
+                            '   run_audit(base_dir="C:\\\\Project\\\\src")                      # 代码审计（默认）\n'
+                            '   run_audit(mode="runtime", base_dir="src")                     # 运行时注册检查',
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "source_dir": {"type": "string", "description": "源码目录路径（audit 模式必需；ast 模式可选）"},
-                        "file_path": {"type": "string", "description": "单文件路径（ast 模式可选，优先于 source_dir）"},
+                        "base_dir": {"type": "string", "description": "审计基准目录 — 作为审计/AST解析/runtime检查时查找关联项目及源码的根路径"},
+                        "file_path": {"type": "string", "description": "单文件路径（ast 模式可选，优先于 base_dir）"},
                         "mode": {"type": "string", "enum": ["audit", "ast", "runtime"], "default": "audit", "description": "运行模式: audit=代码审计（默认）, ast=AST 语法解析, runtime=运行时注册检查"},
                         "rules": {"type": "string", "default": "P0", "description": "规则集: P0 / P0,P1 / 规则ID列表如 C001,R001（仅 audit 模式）"},
                         "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"], "default": "suggestion", "description": "最低严重级别（仅 audit 模式）"},
                         "output_format": {"type": "string", "enum": ["report", "json"], "default": "report", "description": "输出格式: report=Markdown, json=原始JSON"},
-                    },
-                    "required": ["source_dir"]
+                    }
                 }
             ),
 
@@ -789,7 +788,7 @@ async def run_server():
                         "source_file": {"type": "string", "description": "[add_source/remove_source] 源文件名，如 Unit1.pas"},
                         "main_source_flag": {"type": "boolean", "default": False, "description": "[add_source] true=添加到 DelphiCompile（主源文件），false=添加到 DCCReference"},
                     },
-                    "required": ["action", "project_path"]
+                    "required": ["project_path"]
                 }
             ),
         ]

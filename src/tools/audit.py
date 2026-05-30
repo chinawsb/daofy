@@ -98,7 +98,7 @@ def _run_audit(paths: List[str], recursive: bool = False) -> Optional[Dict]:
     return None
 
 
-def _run_skeleton(source_dir: str, file_path: Optional[str] = None,
+def _run_skeleton(base_dir: str, file_path: Optional[str] = None,
                    detail: str = "compact") -> Optional[List[Dict]]:
     """运行 daudit --mode skeleton 提取代码骨架摘要
 
@@ -109,8 +109,8 @@ def _run_skeleton(source_dir: str, file_path: Optional[str] = None,
     --skeleton-detail compact: 无调用链信息，最省 token
 
     Args:
-        source_dir: 源码目录（用于查找 .pas 文件）
-        file_path: 单文件路径（优先于 source_dir）
+        base_dir: 审计基准目录（用于查找 .pas 文件）
+        file_path: 单文件路径（优先于 base_dir）
         detail: skeleton 详细度: compact（推荐）/ normal / full
 
     Returns:
@@ -123,8 +123,8 @@ def _run_skeleton(source_dir: str, file_path: Optional[str] = None,
     pas_files: List[str] = []
     if file_path:
         pas_files.append(file_path)
-    elif source_dir:
-        src = Path(source_dir)
+    elif base_dir:
+        src = Path(base_dir)
         if src.is_file():
             pas_files.append(str(src.resolve()))
         elif src.is_dir():
@@ -362,9 +362,9 @@ def _load_runtime_rules() -> List[Dict]:
         return []
 
 
-def _find_pas_dfm_files(source_dir: str) -> tuple:
+def _find_pas_dfm_files(base_dir: str) -> tuple:
     """扫描目录下的 .pas 和 .dfm 文件"""
-    src = Path(source_dir)
+    src = Path(base_dir)
     pas_files = list(src.rglob("*.pas"))
     dfm_files = list(src.rglob("*.dfm"))
     return pas_files, dfm_files
@@ -407,7 +407,7 @@ def _extract_uses_set(filepath: Path) -> set:
     return units
 
 
-def _check_runtime_rules(source_dir: str) -> List[Dict]:
+def _check_runtime_rules(base_dir: str) -> List[Dict]:
     """执行运行时注册规则检查"""
     rules = _load_runtime_rules()
     if not rules:
@@ -417,12 +417,12 @@ def _check_runtime_rules(source_dir: str) -> List[Dict]:
             "message": "未找到运行时规则文件或规则为空",
         }]
 
-    pas_files, dfm_files = _find_pas_dfm_files(source_dir)
+    pas_files, dfm_files = _find_pas_dfm_files(base_dir)
     if not pas_files and not dfm_files:
         return [{
             "id": "N/A",
             "severity": "info",
-            "message": f"在 {source_dir} 中未找到 .pas 或 .dfm 文件",
+            "message": f"在 {base_dir} 中未找到 .pas 或 .dfm 文件",
         }]
 
     # 收集项目中全部类名（从 DFM 最可靠）
@@ -514,8 +514,8 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
     """执行 Delphi 代码审计 / AST 语法解析 / Runtime 注册检查
 
     参数:
-        source_dir:   源码目录路径（审计/ast/runtime 模式必需之一）
-        file_path:    单文件路径（ast 模式可选，优先于 source_dir）
+        base_dir:   审计基准目录 — 审计/AST解析/runtime检查时查找项目及源码的根路径
+        file_path:    单文件路径（ast 模式可选，优先于 base_dir）
         mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）、"runtime"（运行时注册检查）
         severity:     最低严重级别，默认 "suggestion"（仅 audit 模式）
         output_format: 输出格式，默认 "report"。可选 "json"
@@ -523,31 +523,31 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
     返回:
         结构化 CallToolResult
     """
-    source_dir = arguments.get("source_dir", "").strip()
+    base_dir = arguments.get("base_dir", "").strip()
     file_path = arguments.get("file_path", "").strip() or None
     mode = arguments.get("mode", "audit")
     severity = arguments.get("severity", "suggestion")
     output_format = arguments.get("output_format", "report")
 
     # 校验参数
-    if not source_dir and not file_path:
+    if not base_dir and not file_path:
         return CallToolResult(
             content=[TextContent(
                 type="text",
-                text="# 参数错误\n\n请提供 `source_dir`（目录）或 `file_path`（文件）参数。\n\n"
-                     '示例: `run_audit(source_dir="C:\\\\Project\\\\src")`\n'
+                text="# 参数错误\n\n请提供 `base_dir`（审计基准目录）或 `file_path`（文件）参数。\n\n"
+                     '示例: `run_audit(base_dir="C:\\\\Project\\\\src")`\n'
                      '      `run_audit(mode="ast", file_path="Unit1.pas")`'
             )],
             isError=True,
         )
 
-    if source_dir:
-        src_path = Path(source_dir)
+    if base_dir:
+        src_path = Path(base_dir)
         if not src_path.exists():
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"# 路径不存在\n\n`{source_dir}` 不存在，请检查路径。"
+                    text=f"# 路径不存在\n\n`{base_dir}` 不存在，请检查路径。"
                 )],
                 isError=True,
             )
@@ -565,16 +565,16 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
 
     # ── Runtime 注册检查模式（不需要 daudit）──
     if mode == "runtime":
-        if not source_dir:
+        if not base_dir:
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text="# 参数错误\n\nruntime 模式需要 `source_dir` 参数。\n\n"
-                         '示例: `run_audit(mode="runtime", source_dir="C:\\\\Project\\\\src")`'
+                    text="# 参数错误\n\nruntime 模式需要 `base_dir` 参数。\n\n"
+                         '示例: `run_audit(mode="runtime", base_dir="C:\\\\Project\\\\src")`'
                 )],
                 isError=True,
             )
-        findings = _check_runtime_rules(source_dir)
+        findings = _check_runtime_rules(base_dir)
         text = _format_runtime_report(findings)
         return CallToolResult(content=[TextContent(type="text", text=text)])
 
@@ -582,7 +582,7 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
     if not _find_daudit():
         guide = _build_guide()
         guide += (
-            f"\n---\n**请求参数**: mode=`{mode}`, source_dir=`{source_dir}`, "
+            f"\n---\n**请求参数**: mode=`{mode}`, base_dir=`{base_dir}`, "
             f"file_path=`{file_path or ''}`\n\n"
             f"daudit.exe 就绪后，直接重新调用即可。"
         )
@@ -591,7 +591,7 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
     # ── AST 语法解析模式（实际调用 daudit --mode skeleton）──
     if mode == "ast":
         detail = "compact"  # compact / normal / full
-        files_list = _run_skeleton(source_dir, file_path, detail=detail)
+        files_list = _run_skeleton(base_dir, file_path, detail=detail)
         if not files_list:
             return CallToolResult(
                 content=[TextContent(
@@ -601,7 +601,7 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
                          "1. daudit.exe 是否可执行\n"
                          "2. 目录/文件是否包含 .pas 文件\n"
                          "3. 是否有足够内存/磁盘空间\n\n"
-                         f"**目录**: {source_dir}\n"
+                         f"**目录**: {base_dir}\n"
                          f"**文件**: {file_path or '（全部）'}"
                 )],
                 isError=True,
@@ -632,18 +632,18 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
         return CallToolResult(content=[TextContent(type="text", text=text)])
 
     # ── 代码审计模式（默认）──
-    # audit 模式需要 source_dir
-    if not source_dir:
+    # audit 模式需要 base_dir
+    if not base_dir:
         return CallToolResult(
             content=[TextContent(
                 type="text",
-                text="# 参数错误\n\n审计模式需要 `source_dir` 参数。\n\n"
-                     '示例: `run_audit(source_dir="C:\\\\Project\\\\src")`'
+                text="# 参数错误\n\n审计模式需要 `base_dir` 参数。\n\n"
+                     '示例: `run_audit(base_dir="C:\\\\Project\\\\src")`'
             )],
             isError=True,
         )
 
-    data = _run_audit([source_dir], recursive=True)
+    data = _run_audit([base_dir], recursive=True)
     if not data:
         return CallToolResult(
             content=[TextContent(
@@ -653,7 +653,7 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
                      "1. daudit.exe 是否可执行\n"
                      "2. 源码目录是否包含 .pas 文件\n"
                      "3. 是否有足够内存/磁盘空间\n\n"
-                     f"**目录**: {source_dir}"
+                     f"**目录**: {base_dir}"
             )],
             isError=True,
         )
