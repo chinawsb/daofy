@@ -764,20 +764,24 @@ def _act_git_clone(platform=None, **kw):
 
 @_reg("git_push")
 def _act_git_push(platform=None, **kw):
-    """推送到远程（异步，网络不稳定可能耗时较长）。
+    """推送到远程（异步，单次尝试，超时 120 秒）。
 
     推送方式取决于用户的 Git 配置（SSH/HTTPS代理/VPN），工具不做假设。
     返回 task_id，通过 async_task 查询进度。
+    如果推送失败，建议使用 git_push_retry 后台自动重试。
     """
     work_dir = kw.get("dir", ".")
     remote = kw.get("remote", "origin")
     branch = kw.get("branch", "")
 
     def _do_push(**kw2):
+        cancel_check = kw2.get('_cancellation_check')
+        if cancel_check:
+            cancel_check()
         args = ["push", remote]
         if branch:
             args.append(branch)
-        _git_run(work_dir, *args)
+        _git_run(work_dir, *args, timeout=120)
         return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}")
 
     tid, resp = _submit_git_task("git_push", _do_push)
@@ -786,32 +790,81 @@ def _act_git_push(platform=None, **kw):
 
 @_reg("git_push_retry")
 def _act_git_push_retry(platform=None, **kw):
-    """异步后台推送，每隔 N 秒重试一次直到成功（解决 GitHub 不稳定）。
+    """后台自动重试推送，直到成功或达到最大次数。
 
-    GitHub 在国内访问不稳定时，此工具在后台自动重试，不阻塞对话。
-    返回 task_id，通过 async_task 查询进度。
+    每 N 秒重试一次（默认 300 秒=5分钟），最多 M 次（默认 12 次=1小时）。
+    不阻塞对话，通过 async_task 查询进度和结果。
+    建议至少 30 分钟后查询状态，给重试留出时间窗口。
     """
     work_dir = kw.get("dir", ".")
     remote = kw.get("remote", "origin")
     branch = kw.get("branch", "")
-    interval = int(kw.get("retry_interval", 300))  # 默认 5 分钟
-    max_retries = int(kw.get("max_retries", 12))  # 默认最多 12 次（1 小时内）
+    # 默认 5 分钟间隔，12 次 ≈ 1 小时
+    interval = int(kw.get("retry_interval", 300))
+    max_retries = int(kw.get("max_retries", 12))
 
     def _do_retry_push(**kw2):
+        progress_cb = kw2.get('_progress_callback')
+        cancel_check = kw2.get('_cancellation_check')
+
         last_error = None
         for attempt in range(1, max_retries + 1):
+            if cancel_check:
+                cancel_check()
+
             try:
                 args = ["push", remote]
                 if branch:
                     args.append(branch)
-                _git_run(work_dir, *args)
-                return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}（第{attempt}次成功）")
+                _git_run(work_dir, *args, timeout=120)
+
+                if progress_cb:
+                    progress_cb(
+                        100,
+                        f"✅ 第{attempt}次重试成功，已推送到 {remote}"
+                        f"{'/' + branch if branch else ''}"
+                    )
+                return _ok(
+                    f"✅ 已推送到 {remote}{'/' + branch if branch else ''}"
+                    f"（第{attempt}次重试成功）"
+                )
+
             except RuntimeError as e:
                 last_error = e
                 logger.warning("推送失败(第%s/%s次): %s", attempt, max_retries, e)
+
+                if progress_cb:
+                    pct = (attempt / max_retries) * 100
+                    if attempt < max_retries:
+                        # 时间信息：下次重试时间 + 估计总耗时
+                        eta_total = (interval * max_retries) // 60
+                        progress_cb(
+                            pct,
+                            f"⏳ 第{attempt}次重试失败: {str(e)[:100]} | "
+                            f"等待{interval}秒后第{attempt+1}次重试 "
+                            f"（总约{eta_total}分钟）"
+                        )
+                    else:
+                        progress_cb(pct, f"❌ 已达最大重试次数（{max_retries}次），推送最终失败")
+
                 if attempt < max_retries:
                     time.sleep(interval)
-        raise RuntimeError(f"推送失败，已重试 {max_retries} 次: {last_error}")
+
+        eta_total = (interval * max_retries) // 60
+        raise RuntimeError(
+            f"推送失败，已重试 {max_retries} 次（约 {eta_total} 分钟）: {last_error}"
+        )
 
     tid, resp = _submit_git_task("git_push_retry", _do_retry_push)
-    return resp
+
+    eta_total = (interval * max_retries) // 60
+    resp_message = (
+        f"🔄 后台自动重试已启动\n"
+        f"  任务ID: {tid}\n"
+        f"  重试间隔: {interval}秒 | 最大次数: {max_retries}次\n"
+        f"  预计总耗时: 约 {eta_total} 分钟\n\n"
+        f"💡 建议 {eta_total // 3} 分钟后再查询状态:\n"
+        f"  async_task(action='status', task_id='{tid}')   — 查看进度\n"
+        f"  async_task(action='result', task_id='{tid}')   — 获取结果"
+    )
+    return _ok(resp_message)
