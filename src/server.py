@@ -85,6 +85,9 @@ else:
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.tools.audit import run_audit as _run_audit
     from src.tools.dproj_tool import dproj_tool as _dproj_tool
+    from src.tools.tool_help import get_tool_help
+    from src.tools.experience import experience as _experience
+    from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
@@ -314,19 +317,7 @@ async def run_server():
             # ===== 编译/检查 — 构建 Delphi ⭐⭐⭐ =====
             Tool(
                 name="compile_project",
-                description="【优先级 ⭐⭐⭐】编译/检查 — 构建 Delphi\n"
-                            "【触发词】编译、构建、生成exe、语法检查、编译报错、build、compile、msbuild、dcc32、\n"
-                            "           检查语法、编译验证、编译项目、dproj编译\n"
-                            "【Delphi 文件触发】看到 .dproj/.dpr/.dpk/.pas 文件时优先编译\n"
-                            "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
-                            "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
-                            "【协作链】get_coding_rules→delphi_file→compile→失败→check_environment\n"
-                            "【降级】MSBuild 不可用→dcc32；dry_run 预览参数\n"
-                            "【示例】\n"
-                            '   compile_project(build_configuration="Release")  # "编译Release版本"\n'
-                            '   compile_project(target_platform="win64")        # "生成64位exe"\n'
-                            '   compile_project(project_path="unit.pas")        # "检查语法"\n'
-                            '   compile_project(dry_run=True)             # "只看参数不执行"',
+                description=TOOL_SHORT_DESC["compile_project"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -356,23 +347,7 @@ async def run_server():
             # ===== 知识库搜索/管理 ⭐⭐⭐ =====
             Tool(
                 name="delphi_kb",
-                description="【优先级 ⭐⭐⭐】知识库搜索/管理 — 查 Delphi API、项目代码、文档\n"
-                            "【触发词】搜索类、搜索函数、查API、查定义、知识库、构建知识库、KB、语义搜索\n"
-                            "【Delphi 文件触发】写 .pas 代码前应先搜索 KB 查 API 定义(TODO先调用 delphi_kb 搜索类/函数)\n"
-                            "【协作链】写代码前→delphi_kb查API→delphi_file(read)看定义→写代码→compile\n"
-                            "【action 说明】\n"
-                            '  action="search"    默认 — 搜索类/函数/文档, kb_type=all/delphi/project/thirdparty/document\n'
-                            '                    search_type=function/procedure/class/record/semantic/reference\n'
-                            '  action="stats"     查看知识库统计(文件数、类数、函数数、末次构建时间)\n'
-                            '  action="build"     构建/更新知识库（支持异步 async_mode=true）\n'
-                            '  action="scan"      扫描目录添加文档(kb_type=document)\n'
-                            '  action="web"       添加网页文档(kb_type=document)\n'
-                            '  action="read"      读取文档内容(url/doc_id)或源码文件(file_path)\n'
-                            "【示例】\n"
-                            '   delphi_kb(query="TStringList")           — 搜索类\n'
-                            '   delphi_kb(query="Create", search_type="function") — 搜索函数\n'
-                            '   delphi_kb(action="stats")                — 查看统计\n'
-                            '   delphi_kb(action="build", kb_type="project") — 构建项目知识库',
+                description=TOOL_SHORT_DESC["delphi_kb"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -410,31 +385,7 @@ async def run_server():
             # ===== Delphi 文件专用操作 — 读/写/格式化/备份管理 ⭐⭐⭐ =====
             Tool(
                 name="delphi_file",
-                description="⚠️ Delphi 文件(.pas/.dfm/.dproj)必须使用本工具，禁止用原生 read/write/edit！\n"
-                            "✅ 自动编码检测(UTF-8/GBK/UTF-16)、自动备份(__history)、DFM二进制↔文本透明转换\n"
-                            "✅ 按类名/函数名搜索定位代码、部分写入、格式化、uses子句增删\n"
-                            "【触发词】读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码、\n"
-                            "           新建文件、格式化、整理代码、恢复备份、回退修改、diff、差异对比、\n"
-                            "           查看备份、还原文件、增删uses、添加单元、删除单元\n"
-                            "【Delphi 文件触发】操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此\n"
-                            "【❌ 严禁】使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份+编码检测）\n"
-                            "【action 说明】\n"
-                            '  action="read"    读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位\n'
-                            '  action="write"   写文件（自动备份到 __history），支持全文替换或部分写入(start_line/end_line)\n'
-                            '  action="format"  使用 pasfmt 格式化代码\n'
-                            '  action="backup"  备份管理（创建/列表/恢复）\n'
-                            '  action="uses"    增删 uses 子句中的单元\n'
-                            "【协作链】get_coding_rules→delphi_file(read)→delphi_file(write)→delphi_file(format)→compile_project\n"
-                            "【示例】\n"
-                            '  delphi_file(action="read", file_path="Unit1.pas")                    # 读文件\n'
-                            '  delphi_file(action="read", search_type="class", type_name="TForm1")  # 搜索类定义\n'
-                            '  delphi_file(action="write", file_path="src/Unit1.pas", content="...") # 写入文件\n'
-                            '  delphi_file(action="write", file_path="src/Unit1.pas", content="替换", start_line=5, end_line=10)  # 部分写入\n'
-                            '  delphi_file(action="format", file_path="src/Unit1.pas")              # 格式化\n'
-                            '  delphi_file(action="backup", file_path="Unit1.pas")                  # 创建备份\n'
-                            '  delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出备份\n'
-                            '  delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)  # 恢复\n'
-                            '  delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  # 增uses',
+                description=TOOL_SHORT_DESC["delphi_file"],
                 inputSchema={
                     "type": "object",
                     "required": ["action"],
@@ -483,30 +434,7 @@ async def run_server():
             # ===== 组件管理 ⭐⭐ =====
             Tool(
                 name="manage_component",
-                description="【优先级 ⭐⭐】组件管理 — DFM 组件增/删/改/生成 + PAS 自动同步\n"
-                            "【触发词】添加组件、删除组件、修改组件、生成DFM、组件同步、manage component\n"
-                            "【action 说明】\n"
-                            '  action="create"  生成组件 DFM（编译+运行序列化，原 generate_component_dfm 功能）\n'
-                            '  action="add"     向现有 DFM 添加子组件，自动同步 PAS 字段+事件+uses\n'
-                            '  action="remove"  从 DFM 删除组件（含子树），自动同步删除 PAS 字段+事件方法\n'
-                            '  action="modify"  修改 DFM 中组件属性，事件变更时自动同步 PAS 声明\n'
-                            "【DFM↔PAS 同步规则】\n"
-                            "  add:    新字段声明 + 事件方法桩 + uses 单元\n"
-                            "  remove: 字段声明 + 事件方法(声明+实现) + 空引用的 uses\n"
-                            "  modify: 事件属性变更 → 增/删/改事件方法声明\n"
-                            "【create 示例】\n"
-                            '  code="function CreateComponent(AOwner: TComponent): TComponent; ...",\n'
-                            '  uses=["Vcl.Forms","Vcl.StdCtrls"]\n'
-                            "【add 示例】\n"
-                            '  action="add", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
-                            '  new_component_class="TButton", new_component_name="BtnOK",\n'
-                            '  properties={"Caption": "OK", "OnClick": "BtnOKClick"}\n'
-                            "【remove 示例】\n"
-                            '  action="remove", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
-                            '  component_name="BtnCancel"\n'
-                            "【modify 示例】\n"
-                            '  action="modify", target_dfm="Unit1.dfm", target_pas="Unit1.pas",\n'
-                            '  component_name="BtnOK", properties={"Caption": "确认", "OnClick": "BtnConfirmClick"}',
+                description=TOOL_SHORT_DESC["manage_component"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -535,17 +463,7 @@ async def run_server():
             # ===== 环境检查 ⭐⭐⭐ =====
             Tool(
                 name="check_environment",
-                description="【优先级 ⭐⭐⭐】环境检查 — 诊断 Delphi 编译环境、检测编译器、安装 pasfmt\n"
-                            "【触发词】检查环境、检测编译器、诊断、环境状态、环境就绪、编译器找不到\n"
-                            "【action 说明】\n"
-                            '  action="check"         默认 — 检查当前编译环境状态（有多少编译器可用）\n'
-                            '  action="detect"        重新从注册表/指定路径检测 Delphi 编译器\n'
-                            '  action="install"       下载并安装 pasfmt 格式化工具\n'
-                            '  action="format_install"安装 pasfmt RAD Studio 插件\n'
-                            "【协作链】首次使用→check_environment(action=check)→compile→失败→check_environment(action=detect)\n"
-                            "【示例】\n"
-                            '   check_environment(action="check")   # "检查环境"\n'
-                            '   check_environment(action="detect", search_path="D:\\Delphi")  # "指定路径检测"',
+                description=TOOL_SHORT_DESC["check_environment"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -560,21 +478,7 @@ async def run_server():
             # ===== 异步任务管理 ⭐ =====
             Tool(
                 name="async_task",
-                description="【优先级 ⭐】异步任务管理 — 管理后台构建知识库等耗时任务\n"
-                            "【触发词】任务状态、查看进度、后台任务、构建进度、取消任务\n"
-                            "【action 说明】\n"
-                            '  action="start"  启动异步任务（通常 delphi_kb(action=build) 已自动启动，无需手动调用）\n'
-                            '  action="status" 查询任务状态（返回进度百分比和状态）\n'
-                            '  action="result" 获取任务结果\n'
-                            '  action="list"   列出所有任务\n'
-                            '  action="cancel" 取消运行中的任务\n'
-                            "【MCP 推送通知】\n"
-                            "  code_hosting git 任务（git_clone/git_push/git_push_retry）\n"
-                            "  完成时自动推送 TaskStatusNotification 到 MCP 客户端\n"
-                            "  （AI Agent 仍需通过 async_task 工具查询结果）\n"
-                            "【示例】\n"
-                            '   async_task(action="status", task_id="...")  # "查看任务进度"\n'
-                            '   async_task(action="list")                   # "列出所有任务"',
+                description=TOOL_SHORT_DESC["async_task"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -590,13 +494,7 @@ async def run_server():
             # ===== 组件包安装 ⭐⭐ =====
             Tool(
                 name="install_package",
-                description="【优先级 ⭐⭐】编译并安装 Delphi 组件包到 IDE\n"
-                            "【触发词】安装组件、安装包、编译包、dpk安装、注册组件、install package\n"
-                            "自动将设计期包注册到 IDE，运行期包仅编译\n"
-                            "支持 .dproj / .dpk / .groupproj 三种格式\n"
-                            "【协作链】install_package→list_installed_packages 验证安装\n"
-                            "【示例】\n"
-                            '   install_package(package_path="MyPackage.dpk")  # "安装组件包"',
+                description=TOOL_SHORT_DESC["install_package"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -613,9 +511,7 @@ async def run_server():
             # ===== 列出已安装的组件包 =====
             Tool(
                 name="list_installed_packages",
-                description="【优先级 ⭐】列出已安装到 IDE 的 Delphi 组件包\n"
-                            "【触发词】已安装的包、列出组件、查看已安装、验证安装\n"
-                            "【协作链】install_package 后调用此工具验证组件已成功注册",
+                description=TOOL_SHORT_DESC["list_installed_packages"],
                 inputSchema={
                     "type": "object",
                     "properties": {}
@@ -625,19 +521,7 @@ async def run_server():
             # ===== 编码规则（AI 必读）⭐⭐⭐ =====
             Tool(
                 name="get_coding_rules",
-                description="【优先级 ⭐⭐⭐】获取 Delphi 编码规则 — AI 写/改 Delphi 代码前必须先调用\n"
-                            "【触发词】编码规则、编码规范、代码风格、命名规范、规则、coding rules\n"
-                            "【Delphi 文件触发】\n"
-                            "  ⚠️ 看到 .pas .dfm .dproj .dpk .dpr .inc .res 等 Delphi 文件时，必须先调用此工具\n"
-                            "  ⚠️ 在写/修改任何 Delphi 代码前，必须先 get_coding_rules 了解编码规范\n"
-                            "【section 参数】按需获取各章节（节省 token）：\n"
-                            '  section="workflow"    — 工作流总览（先看这个了解整体流程）\n'
-                            '  section="writing"     — 写 Delphi 代码时的命名/格式/泛型规则\n'
-                            '  section="review"      — 编译后审查代码（含完整审核表）\n'
-                            '  section="safety"      — 安全敏感操作规则\n'
-                            '  section="agent_rules" — Agent 操作硬规则\n'
-                            "不传 section=返回工作流总览+章节索引（推荐首次调用）\n"
-                            "【协作链】任何 .pas/.dproj 操作前→get_coding_rules(section='workflow') 了解流程",
+                description=TOOL_SHORT_DESC["get_coding_rules"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -650,23 +534,7 @@ async def run_server():
             # ===== 代码审计工具（AST 引擎）⭐⭐ =====
             Tool(
                 name="run_audit",
-                description="【优先级 ⭐⭐】Delphi 源码结构解析 / 代码审计 / Runtime 注册检查\n"
-                            "【触发词】语法解析、AST解析、解析源码、查类结构、查函数定义、\n"
-                            "           审计代码、审查代码、review code、audit、安全检查、\n"
-                            "           漏洞扫描、安全隐患、security review、性能分析、\n"
-                            "           运行时检查、运行时注册\n"
-                            "支持三种模式：\n"
-                            '  mode="ast"（⭐ 推荐，AI Agent 摘要模式） — 代码骨架提取（daudit --mode skeleton --compact）\n'
-                            "  输出预格式化文本: 单元名、uses、类/记录/接口、函数/过程、常量。专为 AI 设计，最省 token\n"
-                            '  mode="audit" — 运行 50+ 条静态分析规则，审计代码质量\n'
-                            '  mode="runtime" — 运行时注册检查，检测 uses 中是否遗漏必需单元（如 FireDAC.DApt）\n'
-                            "audit/ast 模式自动检测项目目录下的 daudit.exe；runtime 模式无需 daudit。\n"
-                            "【协作链】run_audit(mode='ast') → AI 分析结构 → delphi_file 精准修改 → compile_project 验证\n"
-                            "【示例】\n"
-                            '   run_audit(mode="ast", base_dir="src")                         # ⭐ 骨架摘要\n'
-                            '   run_audit(mode="ast", file_path="Unit1.pas")                   # 单文件骨架\n'
-                            '   run_audit(base_dir="C:\\\\Project\\\\src")                      # 代码审计（默认）\n'
-                            '   run_audit(mode="runtime", base_dir="src")                     # 运行时注册检查',
+                description=TOOL_SHORT_DESC["run_audit"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -683,30 +551,7 @@ async def run_server():
             # ===== 代码托管平台统一工具 =====
             Tool(
                 name="code_hosting",
-                description="【优先级 ⭐⭐】代码托管平台 — 统一操作 Gitea / GitHub / GitLab + Git 本地操作\n"
-                            "通过 platform 切换后端(gitea/github/gitlab/gitee/gitcode)，action 选择操作。\n"
-                            "\n"
-                            "▶ 平台 API 操作:\n"
-                            '  code_hosting(platform="gitea", action="create_issue", ...)\n'
-                            '  code_hosting(platform="github", action="create_issue", ...)\n'
-                            "\n"
-                            "▶ Git 本地操作（无需 platform）:\n"
-                            '  code_hosting(action="git_clone", repo_url="...", mirror="镜像源")\n'
-                            '  code_hosting(action="git_commit", dir=".", message="...")\n'
-                            "\n"
-                            "▶ GitHub 国内访问:\n"
-                            "  拉取: git_clone 支持 mirror 参数指定镜像源\n"
-                            "  推送: 依赖用户自身的 SSH/HTTPS 代理配置，工具不做假设\n"
-                            "\n"
-                            "▶ action 列表:\n"
-                            "  create_token | init_labels | create_issue | close_issue\n"
-                            "  add_comment | list_issues\n"
-                            "  --- 同步操作 ---\n"
-                            "  git_status | git_add | git_commit\n"
-                            "  --- 异步操作（后台执行，自动推送通知） ---\n"
-                            "  git_clone | git_push | git_push_retry\n"
-"  完成时自动推送 TaskStatusNotification 到 MCP 客户端\n"
-                              "  （AI Agent 需通过 async_task 工具查询结果）",
+                description=TOOL_SHORT_DESC["code_hosting"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -742,26 +587,7 @@ async def run_server():
             # ===== .dproj 项目管理 ⭐⭐⭐ =====
             Tool(
                 name="dproj_tool",
-                description="【优先级 ⭐⭐⭐】.dproj 项目文件管理 — 创建/查看/修改工程配置\n"
-                            "【触发词】项目文件、dproj、工程配置、创建项目、添加配置、删除配置、\n"
-                            "           添加源文件、删除源文件、查看项目信息、项目管理\n"
-                            "【action 说明】\n"
-                            '  action="create"       创建新的 .dproj 文件\n'
-                            '  action="info"         读取 .dproj 文件完整信息（配置/源文件/资源/编译事件）\n'
-                            '  action="set"          设置属性值（PropertyGroup 元素），可指定 config/platform\n'
-                            '  action="add_config"   添加一个新的编译配置（如 "Staging"）\n'
-                            '  action="remove_config"删除指定编译配置\n'
-                            '  action="add_source"   向 ItemGroup 添加源文件引用（DCCReference）\n'
-                            '  action="remove_source"从 ItemGroup 删除源文件引用\n'
-                            "【协作链】dproj_tool(action=info)→delphi_file→编译→compile_project\n"
-                            "【示例】\n"
-                            '   dproj_tool(action="create", project_path="MyApp.dproj", main_source="MyApp.dpr")  # "创建项目"\n'
-                            '   dproj_tool(action="info", project_path="MyApp.dproj")  # "查看项目配置"\n'
-                            '   dproj_tool(action="set", project_path="MyApp.dproj", property_name="DCC_Define", value="DEBUG;TEST", config="Debug")  # "设置编译符号"\n'
-                            '   dproj_tool(action="add_config", config_name="Staging", base_config="Debug")  # "添加Staging配置"\n'
-                             '   dproj_tool(action="add_source", project_path="MyApp.dproj", source_file="Unit1.pas")  # "添加源文件"\n'
-                             '   dproj_tool(action="create", project_path="App.dproj", main_source="App.dpr", form_units=["Unit1","Unit2"])  # "创建项目+Form桩代码"\n'
-                             '   dproj_tool(action="create", project_path="App.dproj", main_source="App.dpr", sources=["DataModule.pas"], form_units=["Unit1"])  # "创建项目+指定sources+Form桩代码"',
+                description=TOOL_SHORT_DESC["dproj_tool"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -793,6 +619,50 @@ async def run_server():
                         "main_source_flag": {"type": "boolean", "default": False, "description": "[add_source] true=添加到 DelphiCompile（主源文件），false=添加到 DCCReference"},
                     },
                     "required": ["project_path"]
+                }
+            ),
+
+            # ===== 工具帮助（按需获取详细文档）=====
+            Tool(
+                name="tool_help",
+                description=TOOL_SHORT_DESC["tool_help"],
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tool_name": {
+                            "type": "string",
+                            "enum": TOOL_NAMES,
+                            "description": "工具名",
+                        },
+                    },
+                    "required": ["tool_name"],
+                }
+            ),
+
+            # ===== 经验记忆管理 =====
+            Tool(
+                name="experience",
+                description=TOOL_SHORT_DESC["experience"],
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["save", "search", "get", "list", "update", "delete"],
+                            "description": "操作类型: save=保存经验, search=语义搜索, get=查看详情, list=浏览列表, update=更新, delete=删除",
+                        },
+                        "problem": {"type": "string", "description": "[save] 问题描述"},
+                        "solution": {"type": "string", "description": "[save] 解决步骤"},
+                        "tools_used": {"type": "array", "items": {"type": "string"}, "description": "[save] 用到的工具列表"},
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "[save/search/list] 标签过滤"},
+                        "context": {"type": "object", "description": "[save] 上下文信息"},
+                        "query": {"type": "string", "description": "[search] 搜索关键词"},
+                        "top_k": {"type": "integer", "default": 5, "description": "[search] 返回条数"},
+                        "id": {"type": "string", "description": "[get/update/delete] 经验ID"},
+                        "sort_by": {"type": "string", "default": "updated_at", "enum": ["updated_at", "created_at", "hit_count", "score"], "description": "[list] 排序字段"},
+                        "limit": {"type": "integer", "default": 20, "description": "[list] 返回条数"},
+                    },
+                    "required": ["action"],
                 }
             ),
         ]
@@ -1010,6 +880,12 @@ async def run_server():
     async def _handle_run_audit(arguments: dict) -> Any:
         return await _run_audit(arguments)
 
+    async def _handle_tool_help(arguments: dict) -> Any:
+        return get_tool_help(tool_name=arguments.get("tool_name", ""))
+
+    async def _handle_experience(arguments: dict) -> dict:
+        return _experience(**arguments)
+
     async def _handle_dproj_tool(arguments: dict) -> Any:
         return await _dproj_tool(
             action=arguments.get("action", "info"),
@@ -1050,6 +926,8 @@ async def run_server():
         "run_audit": _handle_run_audit,
         "code_hosting": _handle_code_hosting,
         "dproj_tool": _handle_dproj_tool,
+        "tool_help": _handle_tool_help,
+        "experience": _handle_experience,
     }
 
     @server.call_tool()
@@ -1259,6 +1137,11 @@ def _cleanup_resources():
         _cleanup_dfm_temp_dirs()
     except Exception:
         logger.warning("清理 DFM 临时文件时发生异常", exc_info=True)
+    try:
+        from src.services.experience_service import cleanup as _cleanup_exp
+        _cleanup_exp()
+    except Exception:
+        logger.warning("清理经验库时发生异常", exc_info=True)
     logger.info("资源清理完成")
 
 
