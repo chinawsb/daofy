@@ -529,8 +529,8 @@ async def run_server():
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["save", "search", "get", "list", "update", "delete"],
-                            "description": "操作类型: save=保存经验, search=语义搜索, get=查看详情, list=浏览列表, update=更新, delete=删除",
+                            "enum": ["save", "search", "get", "list", "update", "merge", "prune", "delete"],
+                            "description": "操作类型: save=保存经验(自动去重), search=语义搜索, get=查看详情, list=浏览列表, update=更新, merge=合并多条, prune=列出低价值待清理条目, delete=删除",
                         },
                         "problem": {"type": "string", "description": "[save] 问题描述"},
                         "solution": {"type": "string", "description": "[save] 解决步骤"},
@@ -540,8 +540,10 @@ async def run_server():
                         "query": {"type": "string", "description": "[search] 搜索关键词"},
                         "top_k": {"type": "integer", "default": 5, "description": "[search] 返回条数"},
                         "id": {"type": "string", "description": "[get/update/delete] 经验ID"},
+                        "ids": {"type": "array", "items": {"type": "string"}, "description": "[merge] 待合并的经验ID列表（至少2个）"},
+                        "keep": {"type": "string", "description": "[merge] 保留的目标ID（可选，不传则创建新记录）"},
                         "sort_by": {"type": "string", "default": "updated_at", "enum": ["updated_at", "created_at", "hit_count", "score"], "description": "[list] 排序字段"},
-                        "limit": {"type": "integer", "default": 20, "description": "[list] 返回条数"},
+                        "limit": {"type": "integer", "default": 20, "description": "[list/prune] 返回条数"},
                     },
                     "required": ["action"],
                 }

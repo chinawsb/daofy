@@ -403,16 +403,18 @@ TOOL_HELP_DOCS: dict = {
         ],
     },
     "experience": {
-        "summary": "经验记忆管理：保存/搜索 AI 成功解决问题的做法，下次遇到类似问题自动复用。",
-        "description": "经验记忆管理 — 保存/搜索/管理 AI 成功解决问题的经验",
+        "summary": "经验记忆管理：保存/搜索 AI 成功解决问题的做法，下次遇到类似问题自动复用。save 自动去重。",
+        "description": "经验记忆管理 — 保存/搜索/管理 AI 成功解决问题的经验，save 时自动去重合并",
         "triggers": ["经验、记忆、保存经验、搜索经验、之前怎么解决的、我记得"],
-        "workflow": "任务成功 → experience(action=save, problem=..., solution=...) → 下次 experience(action=search, query=...) 自动命中",
+        "workflow": "任务成功 → experience(action=save, ...) → 自动去重(>0.85 合并非新增) → 定期 experience(action=prune) 清理低价值条目",
         "actions": {
-            "save": "保存经验。problem=问题描述, solution=解决步骤, tools_used=用到的工具列表, tags=标签",
+            "save": "保存经验（自动去重：embedding 相似度 >0.85 时合并非新增）。problem=问题描述, solution=解决步骤, tools_used=用到的工具列表, tags=标签",
             "search": "语义搜索经验。query=搜索关键词, top_k=返回条数, tags=按标签过滤",
             "get": "查看经验详情。id=经验ID",
             "list": "浏览经验列表。tags=过滤标签, sort_by=排序字段, limit=条数",
             "update": "更新经验。id=经验ID, solution/tags/problem 等",
+            "merge": "合并多条经验为一条。ids=[id1,id2,...] 至少2个, keep=保留的ID(可选)",
+            "prune": "列出低价值经验（按价值升序），供 AI 检查后删除。limit=返回条数",
             "delete": "删除经验。id=经验ID",
         },
     },
@@ -474,6 +476,7 @@ TOOL_SHORT_DESC: dict = {
     ),
     "experience": (
         "经验记忆管理: 保存/搜索 AI 成功解决问题的做法(语义搜索)。"
-        " 任务成功后调用 save 保存经验，下次遇到类似问题前调用 search 查找可复用的解法。"
+        " save 自动去重(>0.85 合并到旧记录)。"
+        " 支持 merge(合并多条为一条) / prune(列出低价值条目) 等维护操作。"
     ),
 }

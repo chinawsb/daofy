@@ -31,6 +31,13 @@ src/
 ### Git 操作必须使用 code_hosting
 所有 Git 操作（status/add/commit/push/clone/push_retry）必须通过 `code_hosting` 工具，禁止直接使用 bash 运行 git 命令。`code_hosting` 会统一格式化输出、自动处理异步推送重试，比原始 bash git 更省 token。
 
+### 经验库维护规则
+`experience` 工具会自动去重（embedding 相似度 >0.85 时合并到旧记录而非新增），但 AI 仍需主动维护经验质量：
+
+1. **任务完成后**：如果刚解决的问题与已有经验高度相关，但解决方式不同，用 `action=merge` 手动合并两条经验
+2. **定期清理**：用 `action=prune` 列出低价值（低 hit_count、长期未更新）的经验，检查后 `action=delete` 删除
+3. **抽象合并**：发现多条经验描述的是同一类问题（如不同工具的「消息精简」），手动合并为一条抽象经验，`tags` 要覆盖各类场景
+
 ## Agent 编码工作流（优先级顺序）
 
 ### 编辑 Delphi 文件前

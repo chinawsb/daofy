@@ -37,10 +37,14 @@ def experience(**kwargs) -> dict:
             return _act_list(svc, **kwargs)
         elif action == "update":
             return _act_update(svc, **kwargs)
+        elif action == "merge":
+            return _act_merge(svc, **kwargs)
+        elif action == "prune":
+            return _act_prune(svc, **kwargs)
         elif action == "delete":
             return _act_delete(svc, **kwargs)
         else:
-            return _err(f"未知 action: {action}，可用: save/search/get/list/update/delete")
+            return _err(f"未知 action: {action}，可用: save/search/get/list/update/merge/prune/delete")
     except Exception as e:
         logger.exception("experience 执行失败")
         return _err(str(e))
@@ -175,6 +179,33 @@ def _act_update(svc, **kw):
         return _err(f"经验不存在: {exp_id}")
 
     return _ok(f"updated: {exp_id}", data=result)
+
+
+def _act_merge(svc, **kw):
+    ids = kw.get("ids")
+    if not ids or not isinstance(ids, list) or len(ids) < 2:
+        return _err("缺少必需参数: ids(至少2个经验ID列表，如 ids=['a','b'])")
+    ids = [i.strip() for i in ids if i.strip()]
+    keep = kw.get("keep")
+    result = svc.merge(ids, keep=keep)
+    if result is None:
+        return _err("合并失败，请检查 IDs 是否有效")
+    return _ok(f"merged {len(ids)} records into {result['id']}", data=result)
+
+
+def _act_prune(svc, **kw):
+    limit = int(kw.get("limit", 20))
+    results = svc.prune_list(limit=limit)
+    if not results:
+        return _ok("no stale records found", data=[])
+    lines = [f"{len(results)} low-value records (ascending value):"]
+    for r in results:
+        tags_str = f" [{', '.join(r.get('tags', []))}]" if r.get("tags") else ""
+        lines.append(
+            f"  value={r['value']:.3f}  hits={r['hit_count']}  "
+            f"{r['problem'][:60]}{tags_str}"
+        )
+    return _ok("\n".join(lines), data=results)
 
 
 def _act_delete(svc, **kw):

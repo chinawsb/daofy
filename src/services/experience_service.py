@@ -192,7 +192,7 @@ class ExperienceMemoryService:
         context: Optional[dict] = None,
         tags: Optional[list] = None,
     ) -> dict:
-        """保存经验。
+        """保存经验（自动去重合并：embedding 相似度 >0.85 则更新旧记录而非新增）。
 
         Args:
             problem: 问题描述
@@ -202,10 +202,52 @@ class ExperienceMemoryService:
             tags: 标签列表
 
         Returns:
-            创建的经验记录 dict
+            创建/更新的经验记录 dict，附带 _merged 标记
         """
-        exp_id = _uuid()
         now = _now()
+
+        # ── 去重：搜索语义相似的已有经验 ──
+        merged = self._search_embedding(problem, top_k=1, tags=None)
+        if merged:
+            best = merged[0]
+            sim = best.get("similarity", 0)
+            if sim > 0.85:
+                # 合并不创建新记录
+                best_id = best["id"]
+                merged_solution = best["solution"] + "\n" + solution
+                merged_tags = list(set(best.get("tags", []) + (tags or [])))
+                merged_tools = list(set(best.get("tools_used", []) + (tools_used or [])))
+
+                conn = self._get_conn()
+                conn.execute(
+                    """UPDATE experiences SET solution = ?, tags = ?, tools_used = ?,
+                       updated_at = ?, score = MIN(1.0, score + 0.05),
+                       embedding = COALESCE(?, embedding)
+                       WHERE id = ?""",
+                    (
+                        merged_solution,
+                        json.dumps(merged_tags, ensure_ascii=False),
+                        json.dumps(merged_tools, ensure_ascii=False),
+                        now,
+                        self._maybe_encode(problem, prefix="passage"),
+                        best_id,
+                    ),
+                )
+                conn.commit()
+                result = best.copy()
+                result.update({
+                    "solution": merged_solution,
+                    "tags": merged_tags,
+                    "tools_used": merged_tools,
+                    "updated_at": now,
+                    "_merged": True,
+                    "_merged_from": best_id,
+                })
+                logger.info("经验已合并到 %s — %s", best_id, problem[:80])
+                return result
+
+        # ── 无相似记录，新建 ──
+        exp_id = _uuid()
         embedding_blob = self._maybe_encode(problem, prefix="passage")
 
         conn = self._get_conn()
@@ -239,6 +281,7 @@ class ExperienceMemoryService:
             "score": 1.0,
             "created_at": now,
             "updated_at": now,
+            "_merged": False,
         }
         logger.info("经验已保存: %s — %s", exp_id, problem[:80])
         return result
@@ -489,6 +532,133 @@ class ExperienceMemoryService:
         )
         row = cursor.fetchone()
         return self._row_to_dict(row) if row else None
+
+    def merge(self, ids: list, keep: Optional[str] = None) -> Optional[dict]:
+        """合并多条经验为一条，删除其余。
+
+        Args:
+            ids: 待合并的经验 ID 列表
+            keep: 保留的 ID（其余删除），None 则创建新条目
+
+        Returns:
+            合并后的经验 dict，失败返回 None
+        """
+        records = []
+        for eid in ids:
+            r = self.get(eid)
+            if r:
+                records.append(r)
+
+        if len(records) < 2:
+            logger.warning("merge 需要至少 2 条有效记录")
+            return None
+
+        # 合并字段
+        problems = "\n".join(r["problem"] for r in records)
+        solutions = "\n".join(r["solution"] for r in records)
+        all_tags = list(set(t for r in records for t in r.get("tags", [])))
+        all_tools = list(set(t for r in records for t in r.get("tools_used", [])))
+        hit_total = sum(r.get("hit_count", 1) for r in records)
+        now = _now()
+
+        if keep and keep in [r["id"] for r in records]:
+            # 更新到 keep 的记录
+            target_id = keep
+            conn = self._get_conn()
+            conn.execute(
+                """UPDATE experiences SET problem = ?, solution = ?, tags = ?,
+                   tools_used = ?, hit_count = ?, score = 1.0,
+                   embedding = COALESCE(?, embedding), updated_at = ?
+                   WHERE id = ?""",
+                (
+                    problems,
+                    solutions,
+                    json.dumps(all_tags, ensure_ascii=False),
+                    json.dumps(all_tools, ensure_ascii=False),
+                    hit_total,
+                    self._maybe_encode(problems, prefix="passage"),
+                    now,
+                    target_id,
+                ),
+            )
+            conn.commit()
+        else:
+            # 创建新条目
+            target_id = _uuid()
+            conn = self._get_conn()
+            conn.execute(
+                """INSERT INTO experiences
+                   (id, problem, solution, tags, tools_used,
+                    hit_count, score, embedding, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1.0, ?, ?, ?)""",
+                (
+                    target_id,
+                    problems,
+                    solutions,
+                    json.dumps(all_tags, ensure_ascii=False),
+                    json.dumps(all_tools, ensure_ascii=False),
+                    hit_total,
+                    self._maybe_encode(problems, prefix="passage"),
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+
+        # 删除其他记录
+        delete_ids = [r["id"] for r in records if r["id"] != target_id]
+        for did in delete_ids:
+            self.delete(did)
+
+        # 重新读取
+        return self.get(target_id)
+
+    def _compute_experience_value(self, row) -> float:
+        """计算经验价值分数（用于 prune 排序）
+
+        考虑因素：
+        - hit_count: 复用次数越多越有价值
+        - score: 分数越高越有价值
+        - recency: 越新越有价值（30 天内无使用则衰减）
+        """
+        hit = row.get("hit_count", 1)
+        score = row.get("score", 1.0)
+        recency = row.get("updated_at", "")
+        value = hit * score
+        # 时间衰减：超过 30 天未更新，价值减半
+        if recency:
+            try:
+                updated = datetime.fromisoformat(recency)
+                days_since = (datetime.now(timezone.utc) - updated).days
+                if days_since > 30:
+                    value *= 0.5 ** (days_since / 30)
+            except Exception:
+                pass
+        return round(value, 4)
+
+    def prune_list(self, limit: int = 20) -> list:
+        """列出低价值经验，按价值分升序排列。
+
+        Args:
+            limit: 返回条数
+
+        Returns:
+            [{id, problem, tags, hit_count, value, ...}, ...]
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, problem, tags, hit_count, score, created_at, updated_at "
+            "FROM experiences"
+        )
+        rows = cursor.fetchall()
+        scored = []
+        for row in rows:
+            d = self._row_to_dict(row)
+            d["value"] = self._compute_experience_value(d)
+            scored.append(d)
+        scored.sort(key=lambda x: x["value"])
+        return scored[:limit]
 
     def delete(self, exp_id: str) -> bool:
         """删除经验。
