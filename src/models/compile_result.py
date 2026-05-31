@@ -42,8 +42,13 @@ class CompileResult:
     duration: int = 0  # 毫秒
     log: str = ""  # 完整编译日志
 
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+    def to_dict(self, strip_log: bool = True) -> Dict[str, Any]:
+        """转换为字典
+
+        Args:
+            strip_log: 是否去除编译器版权横幅（Embarcadero / Copyright 行）
+        """
+        log = self._strip_compiler_header(self.log) if strip_log else self.log
         result = {
             "status": self.status.value,
             "error_code": self.error_code,
@@ -52,9 +57,43 @@ class CompileResult:
             "warnings": [w.to_dict() for w in self.warnings],
             "errors": [e.to_dict() for e in self.errors],
             "duration": self.duration,
-            "log": self.log
+            "log": log,
         }
         return result
+
+    @staticmethod
+    def _strip_compiler_header(log: str) -> str:
+        """移除编译器输出中每次重复的版权/版本横幅行
+        
+        MSBuild 输出：
+          Microsoft(R) 生成引擎版本 4.8.9221.0
+          [Microsoft .NET Framework 版本 4.0.30319.42000]
+          版权所有 (C) Microsoft Corporation。保留所有权利。
+        dcc32 输出：
+          Embarcadero Delphi for Win32 compiler version 37.0
+          Copyright (c) 1983,2026 Embarcadero Technologies, Inc.
+        保留有用行：
+          256 lines, 0.14 seconds, 1000288 bytes code, 44080 bytes data.
+        """
+        if not log:
+            return log
+        lines = log.splitlines(keepends=True)
+        keep = []
+        for l in lines:
+            s = l.strip()
+            if not s:
+                continue
+            # MSBuild 版本横幅
+            if s.startswith('Microsoft(') or s.startswith('[Microsoft .NET Framework'):
+                continue
+            # MSBuild 中文版权
+            if s.startswith('版权所有'):
+                continue
+            # Delphi 编译器版本 + 版权
+            if s.startswith('Embarcadero Delphi') or s.startswith('Copyright (c)'):
+                continue
+            keep.append(l)
+        return ''.join(keep)
 
     def has_errors(self) -> bool:
         """是否有错误"""

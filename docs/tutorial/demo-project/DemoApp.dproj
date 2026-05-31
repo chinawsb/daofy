@@ -10,7 +10,7 @@
     <DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
     <DCC_Namespace>System;System.Win;Winapi;System.Win;Vcl;Vcl.Imaging;Vcl.Controls;Vcl.Forms;Data;Datasnap;Xml;Soap;Web;System.Generics;System.Net;System.Json</DCC_Namespace>
     <DCC_BuildAllUnits>true</DCC_BuildAllUnits>
-    <DCC_UnitSearchPath>C:\User\delphi-complier-mcp-server\docs\tutorial\demo-project</DCC_UnitSearchPath>
+    <DCC_UnitSearchPath>C:\user\daofy-agent\daofy\docs\tutorial\demo-project</DCC_UnitSearchPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Config)'=='Debug'">
     <DCC_Optimize>false</DCC_Optimize>
