@@ -18,7 +18,7 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 ```
 src/
 ├── server.py              # MCP entry point
-├── tools/                 # MCP tool implementations (delphi_file, code_hosting, create_component_dfm, compile_project, delphi_kb, ...)
+├── tools/                 # MCP tool implementations (delphi_file, code_hosting, project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
 │   └── knowledge_base/    # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
@@ -37,9 +37,9 @@ src/
 ④ delphi_file(action="read", file_path=...)  → 读源码（确认修改点）
 ⑤ delphi_file(action="write", content=...)   → 写代码（默认自动备份到 __history）
 ⑥ delphi_file(action="format", file_path=...) → 格式化
-⑦ compile_project(project_path=...)         → 编译验证
-⑧ compile_project(..., run_verify=True)     → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
-⑨ run_audit(mode="runtime", base_dir=...)  → 运行时注册检查（源码级分析，无需 daudit）
+⑦ project(action="compile", project_path=...)         → 编译验证
+⑧ project(action="compile", ..., run_verify=True)      → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
+⑨ project(action="runtime", base_dir=...)              → 运行时注册检查（源码级分析，无需 daudit）
 ```
 
 > **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
@@ -65,7 +65,7 @@ src/
 需要写代码
   → 引用已有类型/函数? → 猜类名/函数名 → delphi_kb 精确搜索 → 看定义/继承链 → 生成代码
   → 否则 → 直接生成代码
-  → compile_project 验证
+  → project(action="compile") 验证
 ```
 
 ### 知识库范围
@@ -155,12 +155,12 @@ src/
    └─ Python 项目（当前 MCP Server）→ 按下方 Python 审计要求逐项检查
 ② 确定审计范围（全局/指定文件/新增代码）
 ③ 搜索相关 API 定义，评估用法（Delphi 用 delphi_kb，Python 用 grep/LSP）
-④ **优先调用 run_audit**（daudit 不可用时降级为引导）
+④ **优先调用 project(audit/ast)**（daudit 不可用时降级为引导）
    → 使用 `mode="ast"`（⭐ 推荐，daudit --mode skeleton --compact）快速了解代码结构
    → 需要深度规则检查时使用 `mode="audit"`（运行 50+ 条静态分析规则）
    → AI 解读结果，排除误报，生成修复建议
-   → 补充手动检查（run_audit 标记 is_ai_needed=true 的项）
-⑤ compile_project / pytest 验证（如果涉及代码修改）
+   → 补充手动检查（project(action="audit") 标记 is_ai_needed=true 的项）
+⑤ project(action="compile") / pytest 验证（如果涉及代码修改）
 ⑥ 输出审计报告
 ```
 
@@ -310,11 +310,11 @@ src/
 
 ```
 get_coding_rules(section="review")               → 获取 Delphi 审核标准
-run_audit(mode="ast", base_dir="src")           → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
-run_audit(base_dir=".", rules="P0")             → 深度静态分析规则检查（可选的）
+project(action="ast", base_dir="src")           → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
+project(action="audit", base_dir=".", rules="P0") → 深度静态分析规则检查（可选的）
 delphi_file(action="read", file_path="unit.pas")   → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
-compile_project(project_path="proj.dproj")        → Delphi 审计后验证编译
+project(action="compile", project_path="proj.dproj") → Delphi 审计后验证编译
 --- Python 项目审计用以下工具 ---
 grep / ast_grep_search                      → 搜索 Python 代码中的模式
 lsp_diagnostics / lsp_symbols               → 类型检查和符号分析

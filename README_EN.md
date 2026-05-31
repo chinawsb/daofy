@@ -275,16 +275,17 @@ The following configs apply to users who installed via git clone. Replace the pa
 
 | Tool Name | Description |
 |-----------|-------------|
-| `compile_project` | Compile Delphi project or check .pas file syntax |
+| `project` | Project lifecycle: compile/configure(info/set/create)/audit(audit/ast/runtime) |
 | `check_environment` | Diagnose environment, detect compilers, install pasfmt |
-| `install_package` | Compile and install Delphi package to IDE |
-| `list_installed_packages` | List packages installed to IDE |
+| `package` | Package management: install(action=install) / list installed(action=list) |
 | `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval |
 | `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base |
 | `delphi_file` | Delphi file operations: read/write/format/backup (encoding detection + auto-backup + DFM conversion) |
 | `manage_component` | Manage DFM components: add/remove/modify/create + PAS auto-sync |
 | `code_hosting` | Unified operations for Gitea/GitHub/GitLab/Gitee/GitCode + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
+| `tool_help` | Get full documentation for any tool (on-demand: params/examples/workflows) |
+| `experience` | Memory management: save/search AI problem-solving experience (semantic search) |
 
 ## Knowledge Base
 

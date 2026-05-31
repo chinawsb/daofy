@@ -80,16 +80,17 @@ delphi_kb(
 
 | 工具名称 | 功能描述 |
 |----------|----------|
-| `compile_project` | 编译 Delphi 项目或检查 .pas 文件语法 |
+| `project` | 项目全生命周期管理：编译(compile)/配置(info/set/create)/审计(audit/ast/runtime) |
 | `check_environment` | 诊断编译环境、检测编译器、安装 pasfmt |
-| `install_package` | 编译并安装 Delphi 组件包到 IDE |
-| `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 |
+| `package` | 组件包管理：安装(action=install) / 列出已安装(action=list) |
 | `get_coding_rules` | 获取 Delphi 编码规范，支持按章节分段获取 |
 | `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 |
 | `delphi_file` | Delphi 文件专用操作：读/写/格式化/备份管理（编码检测+自动备份+DFM转换） |
 | `manage_component` | DFM 组件增/删/改/生成 + PAS 自动同步 |
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
+| `tool_help` | 获取任意工具的完整帮助文档（按需，含参数说明/示例/触发词） |
+| `experience` | 经验记忆管理：保存/搜索 AI 成功解决问题的做法（语义搜索） |
 
 ## 系统要求
 

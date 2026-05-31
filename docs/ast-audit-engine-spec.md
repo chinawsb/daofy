@@ -678,26 +678,27 @@ def _format_audit_report(result: Dict, min_severity: str) -> str:
 ```python
 from src.tools.audit import run_audit
 
-# 在 list_tools() 中追加:
+# 在 list_tools() 中以 project 工具注册（2026.05 合并）:
 tools.append(Tool(
-    name="run_audit",
-    description="运行 Delphi 代码审计（基于 AST 引擎）",
+    name="project",
+    description="项目全生命周期管理: 编译/配置/审计",
     inputSchema={
         "type": "object",
         "properties": {
-            "source_dir": {"type": "string", "description": "源码目录"},
-            "rules": {"type": "string", "description": "规则集 P0|P1|P2 或规则ID列表"},
-            "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"]},
-            "output_format": {"type": "string", "enum": ["report", "json"]},
+            "action": {"type": "string", "enum": ["compile", "audit", "ast", "runtime", ...]},
+            "project_path": {"type": "string", "description": "项目文件路径"},
         },
-        "required": ["source_dir"],
+        "additionalProperties": True,
+        "required": ["action"],
     },
 ))
 
-# 在 call_tool() 中追加:
-if name == "run_audit":
-    return await run_audit(arguments)
+# 在 call_tool() 中分发:
+# project(action="audit", ...) 路由到 run_audit(arguments)
 ```
+
+> **注意**: 2026.05 重构后，`run_audit`、`compile_project`、`dproj_tool` 已合并为 `project` 工具，
+> 通过 action 参数切换功能。详见 `tool_help("project")`。
 
 ---
 
