@@ -78,6 +78,33 @@ def get_tool_help(tool_name: str) -> dict:
                     lines.append(f"  {key} — {val}")
         lines.append("")
 
+    if docs.get("action_params"):
+        lines.append("各 action 参数说明（先 tool_help 再调用）：")
+        lines.append("")
+        for act_name, act_info in docs["action_params"].items():
+            desc = act_info.get("description", "")
+            lines.append(f"  ▶ {act_name}: {desc}")
+            req = act_info.get("required", [])
+            if req:
+                lines.append(f"    必需参数: {', '.join(req)}")
+            opt = act_info.get("optional", {})
+            if opt:
+                lines.append("    可选参数:")
+                for pname, pdesc in opt.items():
+                    lines.append(f"      {pname}: {pdesc}")
+            ex = act_info.get("examples", [])
+            if ex:
+                lines.append("    示例:")
+                for e in ex:
+                    lines.append(f"      {e}")
+            lines.append("")
+
+    if docs.get("workflow_hints"):
+        lines.append("常用工作流:")
+        for name, flow in docs["workflow_hints"].items():
+            lines.append(f"  {name}: {flow}")
+        lines.append("")
+
     if docs.get("modes"):
         lines.append("运行模式:")
         for mode_name, mode_desc in docs["modes"].items():

@@ -57,9 +57,7 @@ else:
     from src.services.compiler_service import CompilerService
     from src.services.knowledge_base import DelphiKnowledgeBaseService
     from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
-    from src.tools.compile_project import set_compiler_service as sp1, compile_project
-    from src.tools.compile_file import set_compiler_service as sp2, compile_file
-    from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
+    from src.tools.project import handle_project as _handle_project, set_compiler_service as _set_compile_svc
     from src.tools.config import set_config_manager, search_compilers
     from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
     from src.tools.knowledge_base import (
@@ -75,7 +73,7 @@ else:
     from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
     from src.tools import async_tasks as async_tools
     from src.tools import pasfmt
-    from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
+    from src.tools.install_package import handle_package, set_compiler_service as sip
     from src.tools import document_kb_tools as doc_tools
     from src.tools.code_hosting import code_hosting
     from src.tools import file_tool
@@ -83,8 +81,6 @@ else:
     from src.tools import manage_component as manage_component_mod
     from src.tools import create_component_dfm as create_component_dfm_mod
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
-    from src.tools.audit import run_audit as _run_audit
-    from src.tools.dproj_tool import dproj_tool as _dproj_tool
     from src.tools.tool_help import get_tool_help
     from src.tools.experience import experience as _experience
     from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
@@ -148,31 +144,8 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         建议文本，无建议时返回 None
     """
     if name == "compile_project":
-        proj_path = arguments.get("project_path", "")
-        is_pas = proj_path.lower().endswith('.pas')
-        if isinstance(result, CallToolResult):
-            is_error = result.isError
-        elif isinstance(result, dict):
-            is_error = (
-                result.get('status') == 'failed'
-                or result.get('success') is False
-                or (result.get('error') is not None and result.get('error') != '')
-            )
-        else:
-            is_error = False
-
-        if is_error:
-            if is_pas:
-                return ("✨ 提示：编译失败。试试：\n"
-                        "  check_environment(action='detect') — 重新检测编译器\n"
-                        "  compile_project(..., dry_run=True) — 预览编译参数")
-            return ("✨ 提示：编译失败。试试：\n"
-                    "  check_environment(action='detect') — 重新检测编译器\n"
-                    "  check_environment(action='check') — 检查编译环境\n"
-                    "  compile_project(..., dry_run=True) — 预览编译参数")
-        elif not is_pas and not arguments.get("dry_run"):
-            return ("✨ 提示：建议用 delphi_file(action='format', file_path=...) "
-                    "统一格式化代码风格")
+        return ("✨ 提示：compile_project 已合并到 project 工具。"
+                "请改用 project(action='compile', ...)")
 
     elif name == "delphi_kb":
         action = arguments.get("action", "search")
@@ -192,8 +165,8 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if "未就绪" in text or "daudit.exe" in text:
                 return ("✨ 提示：将 daudit.exe 放到 tools/daudit/ 目录后重新调用。"
                         "可先使用 get_coding_rules(section='review') 按审核表手动检查。")
-            return ("✨ 提示：审计完成。可针对每条违规使用 delphi_file 读取源码确认，"
-                    "或使用 compile_project 编译验证修复结果。")
+            return ("✨ 提示：审计完成。run_audit 已合并到 project 工具。"
+                    "请改用 project(action='audit', ...) 或 project(action='ast', ...)")
 
     elif name == "get_coding_rules":
         # 仅在 section=None（默认模式）时提示
@@ -211,39 +184,32 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                 compilers = result.get('compilers') or result.get('data')
                 if compilers and len(compilers) > 0:
                     return ("✨ 提示：环境已就绪，"
-                            "可用 compile_project 开始编译验证")
+                            "可用 project(action='compile') 开始编译验证")
                 else:
                     return ("✨ 提示：未检测到编译器，"
                             "请检查 Delphi 是否已安装，"
                             "或用 check_environment(action='detect', search_path=...) 指定自定义路径")
 
-    elif name == "install_package":
-        if isinstance(result, CallToolResult):
-            is_error = result.isError
-        elif isinstance(result, dict):
-            is_error = (
-                result.get('status') == 'failed'
-                or result.get('success') is False
-                or (result.get('error') is not None and result.get('error') != '')
-            )
-        else:
-            is_error = False
-        if not is_error:
-            return ("✨ 提示：安装完成，"
-                    "可用 list_installed_packages 验证组件已注册到 IDE")
+    elif name == "package":
+        action = arguments.get("action", "")
+        if action == "install":
+            if isinstance(result, CallToolResult):
+                is_error = result.isError
+            elif isinstance(result, dict):
+                is_error = (
+                    result.get('status') == 'failed'
+                    or result.get('success') is False
+                    or (result.get('error') is not None and result.get('error') != '')
+                )
+            else:
+                is_error = False
+            if not is_error:
+                return ("✨ 提示：安装完成，"
+                        "可用 package(action='list') 验证组件已注册到 IDE")
 
     elif name == "dproj_tool":
-        action = arguments.get("action", "info")
-        if action == "create":
-            return ("✨ 提示：创建完成。可用 dproj_tool(action='info') 查看项目配置，"
-                    "或 compile_project 编译验证。")
-        elif action == "info":
-            return ("✨ 提示：修改配置可用 dproj_tool(action='set') 调整，"
-                    "添加源文件用 dproj_tool(action='add_source')。")
-        elif action in ("set", "add_config", "remove_config", "add_source", "remove_source"):
-            return ("✨ 提示：修改已自动备份到 __history 目录。"
-                    "可用 compile_project 编译验证修改是否有效。")
-        return None
+        return ("✨ 提示：dproj_tool 已合并到 project 工具。"
+                "请改用 project(action='info'/'create'/'set'/...)")
 
     return None
 
@@ -314,33 +280,25 @@ async def run_server():
     async def list_tools():
         """列出所有可用工具"""
         return [
-            # ===== 编译/检查 — 构建 Delphi ⭐⭐⭐ =====
+            # ===== 项目全生命周期管理 ⭐⭐⭐ =====
             Tool(
-                name="compile_project",
-                description=TOOL_SHORT_DESC["compile_project"],
+                name="project",
+                description=TOOL_SHORT_DESC["project"],
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "[必需] 项目文件(.dproj/.dpr/.dpk)或 .pas 文件路径"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64", "osx64", "osxarm64", "iosdevice64", "iosdevice", "iossimulator", "android", "android64", "linux64"], "default": "win32", "description": "目标平台: win32/win64/osx64/android 等"},
-                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置: Debug（调试）或 Release（发布）"},
-                        "output_path": {"type": "string", "description": "编译输出目录（可选，默认是项目目录）"},
-                        "compiler_version": {"type": "string", "description": "编译器版本（可选，不传时自动检测最新安装的版本）"},
-                        "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译符号列表，如 [\"DEBUG\", \"USE_MYLIB\"]"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "额外单元搜索路径列表，系统会自动从.dproj和Delphi默认路径获取"},
-                        "resource_search_paths": {"type": "array", "items": {"type": "string"}, "description": "资源搜索路径列表"},
-                        "optimize": {"type": "boolean", "default": True, "description": "是否启用编译器优化"},
-                        "debug": {"type": "boolean", "default": True, "description": "是否生成调试信息（含行号信息）"},
-                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，越高越严格"},
-                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "要禁用的编译器警告编号列表，如 [\"W1000\"]"},
-                        "output_type": {"type": "string", "default": "gui", "enum": ["console", "gui", "dll"], "description": "输出类型: console=控制台程序, gui=窗口程序, dll=动态库"},
-                        "runtime_library": {"type": "string", "default": "static", "enum": ["static", "dynamic"], "description": "运行时库链接方式: static=静态链接, dynamic=动态链接"},
-                        "timeout": {"type": "integer", "default": 600, "description": "编译超时秒数（默认600秒，即10分钟）"},
-                        "auto_install": {"type": "boolean", "default": True, "description": "设计期包是否自动安装到IDE（仅.dpk有效）"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译（预览模式）"},
-                        "run_verify": {"type": "boolean", "default": False, "description": "编译后启动 3 秒验证程序是否崩溃（自动结束进程）"}
+                        "action": {
+                            "type": "string",
+                            "enum": ["compile", "compile_file", "dry_run", "info", "create",
+                                     "set", "add_config", "remove_config", "add_source",
+                                     "remove_source", "audit", "ast", "runtime"],
+                            "description": "操作类型。先 tool_help('project') 查看各 action 的参数说明。"
+                        },
+                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk/.pas)"},
+                        "dry_run": {"type": "boolean", "default": False, "description": "仅预览编译参数不实际执行"},
                     },
-                    "required": ["project_path"]
+                    "additionalProperties": True,
+                    "required": ["action"]
                 }
             ),
 
@@ -491,30 +449,21 @@ async def run_server():
                 }
             ),
 
-            # ===== 组件包安装 ⭐⭐ =====
+            # ===== 组件包管理 ⭐⭐ =====
             Tool(
-                name="install_package",
-                description=TOOL_SHORT_DESC["install_package"],
+                name="package",
+                description=TOOL_SHORT_DESC["package"],
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "package_path": {"type": "string", "description": "包文件路径(.dproj/.dpk/.groupproj) [必需]"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
-                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
-                        "timeout": {"type": "integer", "default": 300, "description": "超时时间(秒)"},
-                        "install": {"type": "boolean", "default": True, "description": "是否自动安装到 IDE"},
+                        "action": {"type": "string", "enum": ["install", "list"], "default": "install", "description": "操作类型: install=编译安装组件包, list=列出已安装的组件包"},
+                        "package_path": {"type": "string", "description": "[install] 包文件路径(.dproj/.dpk/.groupproj)"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "[install] 目标平台"},
+                        "build_configuration": {"type": "string", "default": "Debug", "description": "[install] 构建配置(Debug/Release)"},
+                        "timeout": {"type": "integer", "default": 300, "description": "[install] 超时时间(秒)"},
+                        "install": {"type": "boolean", "default": True, "description": "[install] 是否自动安装到 IDE"},
                     },
-                    "required": ["package_path"]
-                }
-            ),
-
-            # ===== 列出已安装的组件包 =====
-            Tool(
-                name="list_installed_packages",
-                description=TOOL_SHORT_DESC["list_installed_packages"],
-                inputSchema={
-                    "type": "object",
-                    "properties": {}
+                    "required": ["action"]
                 }
             ),
 
@@ -581,44 +530,6 @@ async def run_server():
                         "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
                     },
                     "required": ["action"]
-                }
-            ),
-
-            # ===== .dproj 项目管理 ⭐⭐⭐ =====
-            Tool(
-                name="dproj_tool",
-                description=TOOL_SHORT_DESC["dproj_tool"],
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["create", "info", "set", "add_config", "remove_config", "add_source", "remove_source"], "default": "info", "description": "操作类型"},
-                        "project_path": {"type": "string", "description": ".dproj 文件路径（create/set/add_config/remove_config/add_source/remove_source 必需）"},
-                        # create 参数
-                        "main_source": {"type": "string", "description": "[create] 主源文件名，如 Project1.dpr"},
-                        "project_guid": {"type": "string", "description": "[create] 项目 GUID（可选，自动生成）"},
-                        "project_version": {"type": "string", "description": "[create] 项目版本号，如 21.0（可选，不填则空）"},
-                        "framework_type": {"type": "string", "default": "VCL", "description": "[create] 框架类型: VCL/FMX"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "[create] 单元搜索路径列表"},
-                        "namespace": {"type": "string", "description": "[create] 命名空间列表（分号分隔）"},
-                        "configs": {"type": "array", "items": {"type": "string"}, "description": "[create] 编译配置列表，默认 [\"Debug\", \"Release\"]"},
-                        "sources": {"type": "array", "items": {"type": "string"}, "description": "[create] 初始源文件列表（DCCReference）"},
-                        "form_units": {"type": "array", "items": {"type": "string"}, "description": "[create] 同时生成 Form 单元桩代码（.pas + 空 Form，VCL→.dfm，FMX→.fmx），框架由 framework_type 决定，例如 [\"Unit1\", \"Main\"] → Form.Unit1.pas + Form.Main.pas，类 TForm1 + TMainForm，变量 Form1 + MainForm"},
-                        # set 参数
-                        "property_name": {"type": "string", "description": "[set] 属性名，如 DCC_Define、DCC_Optimize"},
-                        "value": {"type": "string", "description": "[set] 属性值"},
-                        "config": {"type": "string", "description": "[set/add_config/remove_config] 编译配置名，如 Debug/Release/Staging"},
-                        "platform": {"type": "string", "description": "[set] 目标平台，如 Win32/Win64/Android"},
-                        # add_config/remove_config 参数
-                        "config_name": {"type": "string", "description": "[add_config/remove_config] 编译配置名（与 config 互为别名）"},
-                        "base_config": {"type": "string", "description": "[add_config] 从哪个现有配置复制属性，如 Debug"},
-                        "defines": {"type": "string", "description": "[add_config] 条件编译符号"},
-                        "optimize": {"type": "boolean", "description": "[add_config] 是否启用优化"},
-                        "debug_info": {"type": "boolean", "description": "[add_config] 是否生成调试信息"},
-                        # add_source/remove_source 参数
-                        "source_file": {"type": "string", "description": "[add_source/remove_source] 源文件名，如 Unit1.pas"},
-                        "main_source_flag": {"type": "boolean", "default": False, "description": "[add_source] true=添加到 DelphiCompile（主源文件），false=添加到 DCCReference"},
-                    },
-                    "required": ["project_path"]
                 }
             ),
 
@@ -716,41 +627,8 @@ async def run_server():
 
     # ============================================================
     # 工具分发 — 将工具名映射到对应的 handler 函数
-    # ============================================================
-    async def _handle_compile_project(arguments: dict) -> Any:
-        proj_path = arguments.get("project_path", "")
-        # 类型安全：确保核心参数类型正确
-        dry_run = _coerce_bool(arguments.get("dry_run"), False)
-        warning_level = _coerce_int(arguments.get("warning_level"), 2, 0, 4)
-        if proj_path.lower().endswith('.pas'):
-            return await compile_file(
-                file_path=proj_path,
-                unit_search_paths=arguments.get('unit_search_paths'),
-                conditional_defines=arguments.get('conditional_defines'),
-                warning_level=warning_level,
-                disabled_warnings=arguments.get('disabled_warnings'),
-                compiler_version=arguments.get('compiler_version'),
-            )
-        elif dry_run:
-            _ACCEPTED_GET_ARGS_KEYS = {
-                "project_path", "target_platform", "output_path", "compiler_version",
-                "conditional_defines", "unit_search_paths", "resource_search_paths",
-                "optimize", "debug", "warning_level",
-                "disabled_warnings", "output_type", "runtime_library", "build_configuration",
-            }
-            filtered = {k: v for k, v in arguments.items() if k in _ACCEPTED_GET_ARGS_KEYS}
-            return await get_compiler_args(**filtered)
-        else:
-            # 过滤 handler 专用参数，不传递给 compile_project
-            _SKIP_KEYS = {"dry_run"}
-            compile_args = {k: v for k, v in arguments.items() if k not in _SKIP_KEYS}
-            # 类型安全：将字符串布尔值转换为正确类型
-            for bool_key in ('optimize', 'debug', 'auto_install'):
-                if bool_key in compile_args:
-                    compile_args[bool_key] = _coerce_bool(compile_args[bool_key])
-            if 'warning_level' in compile_args:
-                compile_args['warning_level'] = _coerce_int(compile_args['warning_level'], 2, 0, 4)
-            return await compile_project(**compile_args)
+    async def _handle_project_tool(arguments: dict) -> Any:
+        return await _handle_project(**arguments)
 
     async def _handle_delphi_kb(arguments: dict) -> Any:
         action = arguments.get("action", "search")
@@ -855,14 +733,8 @@ async def run_server():
             return await handler(arguments)
         return {"error": f"未知action: {action}"}
 
-    async def _handle_install_package(arguments: dict) -> Any:
-        return await install_package(package_path=arguments.get("package_path", ""),
-                                      target_platform=arguments.get("target_platform", "win32"),
-                                      build_configuration=arguments.get("build_configuration", "Debug"),
-                                      timeout=arguments.get("timeout", 300), install=arguments.get("install", True))
-
-    async def _handle_list_installed_packages(arguments: dict) -> Any:
-        return await list_installed_packages()
+    async def _handle_package(arguments: dict) -> Any:
+        return await handle_package(**arguments)
 
     async def _handle_get_coding_rules(arguments: dict) -> Any:
         return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"))
@@ -877,55 +749,23 @@ async def run_server():
             logger.error(f"code_hosting 执行失败: {e}", exc_info=True)
             return {"status": "failed", "message": f"❌ code_hosting 执行失败: {e}"}
 
-    async def _handle_run_audit(arguments: dict) -> Any:
-        return await _run_audit(arguments)
-
     async def _handle_tool_help(arguments: dict) -> Any:
         return get_tool_help(tool_name=arguments.get("tool_name", ""))
 
     async def _handle_experience(arguments: dict) -> dict:
         return _experience(**arguments)
 
-    async def _handle_dproj_tool(arguments: dict) -> Any:
-        return await _dproj_tool(
-            action=arguments.get("action", "info"),
-            project_path=arguments.get("project_path"),
-            main_source=arguments.get("main_source"),
-            project_guid=arguments.get("project_guid"),
-            project_version=arguments.get("project_version"),  # None → _handle_create 自动检测
-            framework_type=arguments.get("framework_type", "VCL"),
-            unit_search_paths=arguments.get("unit_search_paths"),
-            namespace=arguments.get("namespace"),
-            configs=arguments.get("configs"),
-            sources=arguments.get("sources"),
-            property_name=arguments.get("property_name"),
-            value=arguments.get("value"),
-            config=arguments.get("config"),
-            platform=arguments.get("platform"),
-            config_name=arguments.get("config_name"),
-            base_config=arguments.get("base_config"),
-            defines=arguments.get("defines"),
-            optimize=arguments.get("optimize"),
-            debug_info=arguments.get("debug_info"),
-            source_file=arguments.get("source_file"),
-            main_source_flag=arguments.get("main_source_flag", False),
-            form_units=arguments.get("form_units"),
-        )
-
     _TOOL_HANDLERS = {
-        "compile_project": _handle_compile_project,
+        "project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
         "delphi_file": _handle_file_tool,
         "file_tool": _handle_file_tool,  # 旧名兼容别名
         "manage_component": _handle_manage_component,
         "check_environment": _handle_check_environment,
         "async_task": _handle_async_task,
-        "install_package": _handle_install_package,
-        "list_installed_packages": _handle_list_installed_packages,
+        "package": _handle_package,
         "get_coding_rules": _handle_get_coding_rules,
-        "run_audit": _handle_run_audit,
         "code_hosting": _handle_code_hosting,
-        "dproj_tool": _handle_dproj_tool,
         "tool_help": _handle_tool_help,
         "experience": _handle_experience,
     }
