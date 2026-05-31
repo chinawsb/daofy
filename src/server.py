@@ -147,11 +147,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
     Returns:
         建议文本，无建议时返回 None
     """
-    if name == "compile_project":
-        return ("✨ 提示：compile_project 已合并到 project 工具。"
-                "请改用 project(action='compile', ...)")
-
-    elif name == "delphi_kb":
+    if name == "delphi_kb":
         action = arguments.get("action", "search")
         if action == "search":
             if isinstance(result, dict):
@@ -162,15 +158,6 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         elif action == "stats":
             return ("✨ 提示：如果知识库数据过期，"
                     "可用 delphi_kb(action='build', kb_type='project') 重建")
-
-    elif name == "run_audit":
-        if isinstance(result, CallToolResult):
-            text = result.content[0].text if result.content else ""
-            if "未就绪" in text or "daudit.exe" in text:
-                return ("✨ 提示：将 daudit.exe 放到 tools/daudit/ 目录后重新调用。"
-                        "可先使用 get_coding_rules(section='review') 按审核表手动检查。")
-            return ("✨ 提示：审计完成。run_audit 已合并到 project 工具。"
-                    "请改用 project(action='audit', ...) 或 project(action='ast', ...)")
 
     elif name == "get_coding_rules":
         # 仅在 section=None（默认模式）时提示
@@ -210,10 +197,6 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if not is_error:
                 return ("✨ 提示：安装完成，"
                         "可用 package(action='list') 验证组件已注册到 IDE")
-
-    elif name == "dproj_tool":
-        return ("✨ 提示：dproj_tool 已合并到 project 工具。"
-                "请改用 project(action='info'/'create'/'set'/...)")
 
     return None
 
