@@ -359,9 +359,9 @@ TOOL_HELP_DOCS: dict = {
         "default_section": "不传 section=返回工作流总览+章节索引（推荐首次调用）",
     },
     "code_hosting": {
-        "summary": "代码托管平台操作 + Git 本地操作。Gitea/GitHub/GitLab/Gitee/GitCode。",
-        "description": "统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作",
-        "triggers": [],
+        "summary": "Git 本地操作 + 代码托管平台。必须使用此工具进行所有 Git 操作，禁止用 bash 直接执行 git。",
+        "description": "所有 Git 操作(status/add/commit/push/clone/push_retry)都必须通过此工具，不要用 bash 直接执行 git 命令。code_hosting 自动格式化输出、处理异步推送重试，比原始 bash git 更省 token。同时支持 Gitea/GitHub/GitLab/Gitee/GitCode 平台 API 操作。",
+        "triggers": ["git", "status", "add", "commit", "push", "clone", "pull", "提交", "推送", "暂存", "仓库"],
         "platforms": {
             "gitea": "自托管 Gitea",
             "github": "GitHub (github.com)",
@@ -465,7 +465,8 @@ TOOL_SHORT_DESC: dict = {
         "获取 Delphi 编码规则。修改 .pas 代码前必须先调用此工具。"
     ),
     "code_hosting": (
-        "代码托管平台操作(Gitea/GitHub/GitLab/Gitee/GitCode) + Git 本地操作(git_status/add/commit/push/clone)。"
+        "Git 本地操作(status/add/commit/push/clone) + 代码托管平台(Gitea/GitHub/GitLab/Gitee/GitCode)。"
+        " 所有 Git 操作必须使用此工具，禁止用 bash 直接执行 git 命令（更省 token）。"
     ),
     "tool_help": (
         "获取任意工具的完整帮助文档(参数说明/示例/触发词/协作链)。"

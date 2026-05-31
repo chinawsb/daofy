@@ -26,6 +26,11 @@ src/
 └── utils/                 # Utilities (delphi_env, dproj_parser, validator, logger)
 ```
 
+## 工具使用规则
+
+### Git 操作必须使用 code_hosting
+所有 Git 操作（status/add/commit/push/clone/push_retry）必须通过 `code_hosting` 工具，禁止直接使用 bash 运行 git 命令。`code_hosting` 会统一格式化输出、自动处理异步推送重试，比原始 bash git 更省 token。
+
 ## Agent 编码工作流（优先级顺序）
 
 ### 编辑 Delphi 文件前

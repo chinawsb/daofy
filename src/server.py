@@ -475,7 +475,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "platform": {"type": "string", "enum": ["gitea", "github", "gitlab", "gitee", "gitcode"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
-                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "close_issue", "add_comment", "list_issues", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status"], "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_push_retry, git_status"},
+                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "close_issue", "add_comment", "list_issues", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status"], "description": "操作类型: git_* 为 Git 本地操作（必须使用此工具，禁止用 bash 执行 git）；create_token/init_labels/create_issue 等为平台 API 操作"},
                         "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
                         "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
                         "repo": {"type": "string", "description": "仓库名，格式 owner/repo (API 操作需要)"},
