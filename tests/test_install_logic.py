@@ -286,13 +286,18 @@ class TestInstallBatVersionURLs(unittest.TestCase):
 class TestUninstallScript(unittest.TestCase):
     """验证 uninstall.bat 存在性"""
 
+    _project_root = Path(__file__).resolve().parent.parent
+
+    def _uninstall_path(self):
+        return self._project_root / "uninstall.bat"
+
     def test_uninstall_bat_exists(self):
         """测试 uninstall.bat 文件存在"""
-        self.assertTrue(os.path.exists("uninstall.bat"))
+        self.assertTrue(self._uninstall_path().exists())
 
     def test_uninstall_bat_not_empty(self):
         """测试 uninstall.bat 非空"""
-        size = os.path.getsize("uninstall.bat")
+        size = self._uninstall_path().stat().st_size
         self.assertGreater(size, 100, "uninstall.bat is too small or empty")
 
 

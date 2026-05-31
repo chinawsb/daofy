@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
 import pytest
 
+pytestmark = pytest.mark.skip(reason="集成测试，需要 Delphi 环境 + 预构建知识库，默认跳过。用 --run-3rdparty 运行。")
+
 @pytest.fixture(scope="module")
 def kb():
     """共享的知识库 fixture"""

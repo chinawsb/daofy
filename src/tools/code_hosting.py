@@ -624,6 +624,8 @@ def _git_run(work_dir, *args, timeout=300, env=None):
         
         # 指定 utf-8 解码，避免 Windows gbk 编码问题
         def _decode(data):
+            if isinstance(data, str):
+                return data  # 测试 mock 可能传 str，无需解码
             for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
                 try:
                     return data.decode(enc)

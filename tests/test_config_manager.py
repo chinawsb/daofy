@@ -194,9 +194,8 @@ def test_project_version_unknown_prefix_falls_back():
     try:
         config_path = os.path.join(tmpdir, "compilers.json")
         cm = ConfigManager(config_path, os.path.join(tmpdir, "history.json"))
-        # 先清空自动检测的编译器，添加两个测试用编译器
-        for c in cm.get_all_compilers():
-            cm.config.remove_compiler(c.name)
+        # 重置为干净的编译器列表（删除自动检测的）
+        cm.config.compilers.clear()
         old_compiler = CompilerConfig(
             name="OldC", path=r"C:\dcc32_old.exe", version="Any",
             registry_version="5.0",
@@ -207,6 +206,9 @@ def test_project_version_unknown_prefix_falls_back():
         )
         cm.add_compiler(old_compiler)
         cm.add_compiler(new_compiler)
+        # 确认只有两个测试编译器
+        assert len(cm.get_all_compilers()) == 2, \
+            f"期望2个编译器, 实际={[(c.name, c.registry_version) for c in cm.get_all_compilers()]}"
         # 未知版本前缀应回退到最新版本
         compiler = cm.get_compiler_for_project("99.0")
         assert compiler is not None

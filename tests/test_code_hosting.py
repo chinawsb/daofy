@@ -202,13 +202,13 @@ class TestGitSyncActions:
         mock_git.return_value = "On branch main\nnothing to commit"
         r = code_hosting(action="git_status", dir=".")
         assert r["status"] == "ok"
-        mock_git.assert_called_once_with(".", "status")
+        mock_git.assert_called_once_with(".", "status", timeout=30)
 
     @patch("src.tools.code_hosting._git_run")
     def test_git_add(self, mock_git):
         r = code_hosting(action="git_add", dir=".", files=["a.py", "b.py"])
         assert r["status"] == "ok"
-        mock_git.assert_called_once_with(".", "add", "a.py", "b.py")
+        mock_git.assert_called_once_with(".", "add", "a.py", "b.py", timeout=30)
 
     def test_git_add_empty_files(self):
         r = code_hosting(action="git_add", dir=".", files=[])
@@ -226,8 +226,8 @@ class TestGitSyncActions:
         assert r["status"] == "ok"
         assert "abc123def456" in r["message"]
         mock_git.assert_has_calls([
-            call(".", "commit", "-m", "fix: bug"),
-            call(".", "rev-parse", "HEAD"),
+            call(".", "commit", "-m", "fix: bug", timeout=30),
+            call(".", "rev-parse", "HEAD", timeout=10),
         ])
 
     def test_git_commit_empty_message(self):
