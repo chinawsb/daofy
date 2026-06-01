@@ -321,7 +321,14 @@ async def _handle_partial_write(
     左闭右开 [start_line, end_line) 的转换：
       Python 切片:  s = start_line (0-indexed inclusive start)
                     e = end_line   (0-indexed exclusive end)
-      验证：lines[s:e] = lines[start_line : end_line] = 第 (start_line+1) 到 end_line 行  ✓
+       验证：lines[s:e] = lines[start_line : end_line] = 第 (start_line+1) 到 end_line 行  ✓
+
+    ⚠️ 连续编辑的行号偏移：
+      每次部分写入后文件行号会变化（增删行），输出中会包含偏移量信息：
+        偏移量: +3（删5行, 插8行）
+        后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + 3；行号 < {s} 的不变
+      AI Agent 应根据每次 write 返回的偏移量累加计算后续行号，
+      而非直接使用上次 read 输出的原始行号。
     """
     read_path = file_path
     tmp_cleanup = None
@@ -453,12 +460,33 @@ async def _handle_partial_write(
             except Exception as ex:
                 logger.warning(f"写入后自动格式化失败: {ex}")
 
-        range_desc = f"第 {s + 1}~{e} 行"
+        # 计算偏移量：插入行数 - 删除行数，供 Agent 累加后续行号
+        removed = e - s
+        inserted = content.count('\n') if content else 0
+        offset = inserted - removed
+        offset_note = (
+            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行）"
+            if offset != 0
+            else f"偏移量: 0（行数未变）"
+        )
+
+        range_desc = f"第 {s + 1}~{e} 行 (0-indexed [{s}, {e}), {e - s} 行)"
         result_lines = [
             f"文件已更新: {file_path}",
             f"替换范围: {range_desc}",
+            f"{offset_note}",
             f"编码: {enc}",
         ]
+        # 后续编辑行号调整公式:
+        #   新行号 = 原行号 + 本偏移量   (当原行号 >= e 时)
+        #   新行号 = 原行号               (当原行号 < s 时)
+        #   原行号在 [s, e) 范围内 ⇒ 已被替换，不能再用
+        hint = (
+            f"后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + {offset}；"
+            f"行号 < {s} 的不变"
+        )
+        if offset != 0:
+            result_lines.append(hint)
         if backup:
             result_lines.append(f"备份已创建: {bak_path}")
         if is_dfm_binary:
@@ -483,11 +511,17 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - DFM 文件自动处理：如果原文件是二进制，写出后自动转回二进制
       - 支持 start_line/end_line 部分写入：仅替换指定行范围，其余不变
 
-    行范围参数（1-indexed 闭区间）:
-      start_line=5, end_line=5  → 只替换第 5 行
-      start_line=3, end_line=7  → 替换第 3~7 行
-      start_line=5              → 从第 5 行替换到文件末尾
-      end_line=10               → 从第 1 行替换到第 10 行
+     行范围参数（0-indexed 左闭右开区间）:
+       start_line=4, end_line=5  → 只替换第 5 行（0-indexed [4,5)）
+       start_line=2, end_line=7  → 替换第 3~7 行（0-indexed [2,7)）
+       start_line=4              → 从第 5 行替换到文件末尾
+       end_line=10               → 从第 1 行替换到第 10 行（0-indexed [0,10)）
+       
+     ⚠️ 连续编辑注意事项:
+       每次部分写入后文件行号会变化（增删行），输出中会返回偏移量：
+         「后续编辑: 行号 ≥ X 的新行号 = 原行号 + N；行号 < X 的不变」
+       发下一次 write 时，根据上次返回的偏移量累加计算新行号即可，
+        不需要每次都 re-read。但如果偏移量累加后不确定，建议重新读取确认。
     """
     file_path = arguments.get("file_path")
     content = arguments.get("content")
@@ -952,13 +986,30 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as ex:
             logger.warning(f"uses 操作后格式化失败: {ex}")
 
+    # 计算偏移量（uses 修改也会影响行号）
+    s = text[:uses_start].count('\n')           # 0-indexed: uses 关键字所在行
+    uses_old_text = text[uses_start:uses_end]
+    removed = uses_old_text.count('\n')          # 旧 uses 子句占用的行数
+    inserted = new_uses_clause.count('\n')       # 新 uses 子句占用的行数
+    offset = inserted - removed
+    # 计算 exclusive end: uses_end 所在行的下一行
+    e = text[:uses_end].count('\n') + 1
+
     action_desc = "添加" if uses_action == "add" else "删除"
     result_lines = [
         f"已{action_desc}单元: {unit_name_stripped}",
         f"区域: {uses_section}",
         f"当前 uses: {', '.join(new_units)}",
-        f"编码: {original_encoding}",
+        f"替换范围: 第 {s + 1}~{e} 行 (0-indexed [{s}, {e}), {removed} 行)",
     ]
+    if offset != 0:
+        result_lines.append(
+            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行）"
+        )
+        result_lines.append(
+            f"后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + {offset}；行号 < {s} 的不变"
+        )
+    result_lines.append(f"编码: {original_encoding}")
     if backup_path:
         result_lines.append(f"备份: {backup_path}")
     if fmt_msg:

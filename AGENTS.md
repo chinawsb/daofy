@@ -143,6 +143,57 @@ src/
 - 列出备份：`delphi_file(action="backup", backup_action="list", file_path="src/Unit1.pas")`
 - ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 delphi_file 进行备份
 
+### 部分写入规则（start_line/end_line）
+
+**`delphi_file` 的 `start_line`/`end_line` 是 0-indexed 左闭右开区间，不是 1-indexed。**
+
+| 参数 | 说明 |
+|------|------|
+| `start_line=0` | 从文件第 1 行开始（第 0 行不存在，0 = 第 1 行） |
+| `start_line=5, end_line=10` | 替换第 6~10 行（0-indexed `[5,10)`） |
+| `start_line=4, end_line=5` | 只替换第 5 行（0-indexed `[4,5)`） |
+
+> **为什么不是 1-indexed？** 代码内部直接用 `lines[s:e]` Python 切片处理，Python 切片是 0-indexed。读取输出的行号标注为 `(0-indexed, [start, end))`。
+
+**连续编辑的行号偏移算法（绝不用重读）：**
+
+每次 `write` 会返回偏移量信息：
+```
+替换范围: 第 6~10 行 (0-indexed [5,10), 5 行)
+偏移量: +3（删5行, 插8行）
+后续编辑: 行号 ≥ 10 的新行号 = 原行号 + 3；行号 < 5 的不变
+```
+
+Agent 根据以下规则计算后续行号，**不需要重新读取文件**：
+
+```
+设某次 write 返回: s=start_line, e=end_line, offset=净偏移
+则后续用原行号 L 计算新行号:
+  L < s  → 新行号 = L        (在编辑区域前，不变)
+  L ≥ e  → 新行号 = L + offset  (在编辑区域后，累加偏移)
+  s ≤ L < e → 该行已被替换/删除，不能再用作后续编辑目标
+```
+
+有多次 write 时，每次独立计算、**依次累加**：
+```
+① write(s=5, e=10, offset=+3)  → 后续编辑原行号 20 → 20+3=23
+② write(s=8, e=12, offset=-2)  → 上步 23 经过这步: 23≥12 → 23+(-2)=21
+```
+
+如果累计偏移后不确定，或修改范围交叠，才需要 `delphi_file(action="read")` 重新读取。
+
+**两大致命错误（绝不能犯）：**
+1. ❌ 写操作传 `start_line=5` 以为是从第 5 行开始（实际是第 6 行）→ 偏移 1 行
+2. ❌ 不累加偏移量，直接用上次 read 的原始行号发第二次 write → 替换到错误位置
+
+**注意：`uses` action 也会偏移行号。**
+`delphi_file(action="uses", ...)` 返回的偏移量格式与 write 一致，Agent 同样需要累加计算。
+
+**推荐替代方案：**
+- 如果一次改动涉及多个不连续的位置，优先用 `content` 传完整文件内容（全文替换），而非多次部分写入
+- 增加 uses 单元 → 用 `delphi_file(action="uses", uses_action="add", ...)`，不要手动算行号
+- 修改已有代码 → 一次 write 尽量覆盖完整方法/过程，避免拆成多个部分写入
+
 ### 编译
 - `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）
 - 长轮询 ≤30 秒（MCP 请求通道约 60s 超时），超时后切换短轮询

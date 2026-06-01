@@ -248,8 +248,8 @@ TOOL_HELP_DOCS: dict = {
         ],
         "workflow": "get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(format) → compile_project",
         "actions": {
-            "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位",
-            "write": "写文件（自动备份到 __history），支持全文替换或部分写入(start_line/end_line)",
+            "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位。start_line 为 0-indexed（第 1 行=0）",
+            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整",
             "format": "使用 pasfmt 格式化代码",
             "backup": "备份管理（创建/列表/恢复）",
             "uses": "增删 uses 子句中的单元",
@@ -309,9 +309,9 @@ TOOL_HELP_DOCS: dict = {
         "description": "异步任务管理 — 管理后台构建知识库等耗时任务",
         "triggers": ["任务状态、查看进度、后台任务、构建进度、取消任务"],
         "push_notification": (
-            "code_hosting git 任务（git_clone/git_push/git_push_retry）"
-            " 完成时自动推送 TaskStatusNotification 到 MCP 客户端。"
-            " AI Agent 仍需通过 async_task 查询结果。"
+            "所有异步任务（知识库构建、文档扫描、embedding 等）"
+            " 完成/失败/取消时自动推送 TaskStatusNotification 到 MCP 客户端，无需轮询。"
+            " AI Agent 可通过 async_task 查询任务结果。"
         ),
         "actions": {
             "start": "启动异步任务（通常 delphi_kb(action=build) 已自动启动，无需手动调用）",
