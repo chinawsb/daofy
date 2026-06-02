@@ -55,10 +55,7 @@ class CompileResult:
             "status": self.status.value,
             "duration": self.duration,
         }
-        # 成功时总返回 output_file，失败/超时时有则返回
-        if self.output_file:
-            result["output_file"] = self.output_file
-        # 输出产物列表（对 AI Agent 后续操作至关重要）
+        # 输出产物列表（首项即主目标文件 exe/dll/bpl）
         if self.output_files:
             result["output_files"] = self.output_files
         if self.status != CompileStatus.SUCCESS:
