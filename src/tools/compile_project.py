@@ -539,8 +539,15 @@ async def compile_project(
             else:
                 logger.warning("清理 .dcu 后编译仍然失败")
 
-        # 返回结果
-        result_text = str(result.to_dict())
+        # 返回结果 - 对 AI Agent 友好：结构化的产物路径列表
+        result_dict = result.to_dict()
+        if result.status.value == "success" and result.output_files:
+            # 在文本中显式罗列所有输出产物，便于 AI Agent 直接提取使用
+            output_files_info = "\n\n[Output Files]\n"
+            for f in result.output_files:
+                output_files_info += f"  {f}\n"
+            result_dict["_output_files_details"] = output_files_info.strip()
+        result_text = str(result_dict)
 
         # 编译成功后，如需启动程序
         if run_after_compile and result.status.value == "success":
@@ -755,9 +762,20 @@ async def _compile_dpk_package(
         else:
             install_result = f"请手动安装: {output_file}"
         
+        # 扫描所有输出产物
+        try:
+            of = CompilerService._collect_output_files(
+                project_path, target_platform, build_configuration,
+            )
+        except Exception:
+            of = []
         output_text = f"编译成功: {output_file}\n"
         output_text += f"包类型: 设计期包\n"
-        output_text += f"安装结果: {install_result}"
+        if of:
+            output_text += "\n[Output Files]\n"
+            for f in of:
+                output_text += f"  {f}\n"
+        output_text += f"\n安装结果: {install_result}"
         
         return CallToolResult(
             content=[{"type": "text", "text": output_text}],
@@ -765,24 +783,40 @@ async def _compile_dpk_package(
         )
     
     # 返回编译结果
-    output_text = f"编译{'成功' if success else '失败'}\n"
-    output_text += f"输出文件: {output_file}\n"
-    output_text += f"包类型: {'设计期包' if is_design_package else '运行期包'}\n"
-    
-    if errors:
-        output_text += f"\n错误:\n"
-        for err in errors:
-            output_text += f"  {err}\n"
-    
-    if warnings:
-        output_text += f"\n警告:\n"
-        for warn in warnings:
-            output_text += f"  {warn}\n"
-    
-    return CallToolResult(
-        content=[{"type": "text", "text": output_text}],
-        isError=not success
-    )
+        output_text = f"编译{'成功' if success else '失败'}\n"
+        output_text += f"输出文件: {output_file}\n"
+        output_text += f"包类型: {'设计期包' if is_design_package else '运行期包'}\n"
+
+        # 显示所有输出产物路径（对 AI Agent 后续操作至关重要）
+        if success:
+            # 尝试扫描输出产物
+            try:
+                of = CompilerService._collect_output_files(
+                    project_path,
+                    target_platform,
+                    build_configuration,
+                )
+                if of:
+                    output_text += "\n[Output Files]\n"
+                    for f in of:
+                        output_text += f"  {f}\n"
+            except Exception:
+                pass
+        
+        if errors:
+            output_text += f"\n错误:\n"
+            for err in errors:
+                output_text += f"  {err}\n"
+        
+        if warnings:
+            output_text += f"\n警告:\n"
+            for warn in warnings:
+                output_text += f"  {warn}\n"
+        
+        return CallToolResult(
+            content=[{"type": "text", "text": output_text}],
+            isError=not success
+        )
 
 
 def _is_design_package_simple(package_path: str) -> bool:

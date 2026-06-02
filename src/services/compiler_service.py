@@ -636,9 +636,16 @@ class CompilerService:
                 output_file = str(Path(output_base) / f"{project_name}.exe")
 
                 if return_code == 0:
+                    output_files = self._collect_output_files(
+                        request.project_path,
+                        request.options.target_platform.value,
+                        request.options.build_configuration or "Debug",
+                        output_base,
+                    )
                     result = CompileResult(
                         status=CompileStatus.SUCCESS,
                         output_file=output_file,
+                        output_files=output_files,
                         warnings=warnings,
                         errors=errors,
                         duration=duration,
@@ -1077,9 +1084,20 @@ class CompilerService:
                             if not success:
                                 logger.warning(f"PostBuildEvent 失败,但编译已成功: {error_msg}")
                     
+                    output_file = self._extract_output_file(stdout, request.options.output_path)
+                    output_files = self._collect_output_files(
+                        dproj_path,
+                        request.options.target_platform.value,
+                        config,
+                        output_file if (output_file and Path(output_file).parent.exists()) else None,
+                    )
+                    # 若 _extract_output_file 没找到（MSBuild 输出无 Output: 行），从 output_files 回填
+                    if not output_file and output_files:
+                        output_file = output_files[0]
                     result = CompileResult(
                         status=CompileStatus.SUCCESS,
-                        output_file=self._extract_output_file(stdout, request.options.output_path),
+                        output_file=output_file,
+                        output_files=output_files,
                         warnings=warnings,
                         errors=errors,
                         duration=duration,
@@ -1416,6 +1434,90 @@ class CompilerService:
             full_command=full_command,
             warnings=warnings
         )
+
+    @staticmethod
+    def _collect_output_files(
+        project_path: str,
+        target_platform: str = "win32",
+        build_configuration: str = "Debug",
+        output_path_override: Optional[str] = None,
+    ) -> List[str]:
+        """扫描编译产物目录，收集所有生成的文件路径（exe/dll/bpl/bpi/dcp 等）
+
+        Args:
+            project_path: .dproj/.dpr/.dpk 文件路径
+            target_platform: 目标平台（win32/win64 等）
+            build_configuration: 编译配置（Debug/Release）
+            output_path_override: 显式指定的输出路径（若提供则优先使用）
+
+        Returns:
+            所有存在的输出文件路径列表
+        """
+        proj = Path(project_path)
+        project_name = proj.stem
+        project_dir = proj.parent
+
+        # 确定候选输出目录
+        plat_map = {"win32": "Win32", "win64": "Win64"}
+        plat_dir = plat_map.get(target_platform.lower(), "Win32")
+        cfg = build_configuration or "Debug"
+
+        dproj_path = proj.with_suffix('.dproj') if proj.suffix.lower() != '.dproj' else proj
+        dproj_output = None
+        if dproj_path.exists():
+            try:
+                from ..utils.dproj_parser import DprojParser
+                parser = DprojParser(str(dproj_path))
+                if parser.parse():
+                    dproj_output = parser.get_output_path(config=cfg, platform=plat_dir)
+            except Exception:
+                pass
+
+        # 收集所有可能输出目录（去重、按可信度排序）
+        candidate_dirs: List[Path] = []
+        if output_path_override:
+            candidate_dirs.append(Path(output_path_override))
+        if dproj_output:
+            candidate_dirs.append(Path(dproj_output))
+        candidate_dirs.append(project_dir / plat_dir / cfg)  # Win32/Debug
+        candidate_dirs.append(project_dir)                    # 项目根目录（MSBuild 缺省输出）
+
+        # 输出产物列表（daudit 需要 .map 做堆栈解析，.drc 不需要）
+        extensions = ['.exe', '.dll', '.bpl', '.bpi', '.dcp', '.map']
+        found: List[str] = []
+
+        for output_dir in candidate_dirs:
+            if not output_dir.exists():
+                continue
+            for ext in extensions:
+                candidate = output_dir / f"{project_name}{ext}"
+                if candidate.exists() and str(candidate.resolve()) not in found:
+                    found.append(str(candidate.resolve()))
+            # 也通配查找以项目名开头的 .bpl/.bpi/.dcp（平台后缀变体）
+            if not any(f.endswith(('.bpl', '.bpi', '.dcp')) for f in found):
+                for ext in ('.bpl', '.bpi', '.dcp'):
+                    for p in output_dir.glob(f"{project_name}*{ext}"):
+                        if p.exists() and str(p.resolve()) not in found:
+                            found.append(str(p.resolve()))
+
+        # 对于 .dpk 包编译，bpl 可能输出到全局 Bpl 目录
+        if proj.suffix.lower() == '.dpk' or dproj_path.suffix.lower() == '.dpk':
+            bpl_search_dirs = [
+                Path.home() / "Documents" / "Embarcadero" / "Studio",
+                Path(r"C:\Users\Public\Documents\Embarcadero\Studio"),
+            ]
+            for bpl_base in bpl_search_dirs:
+                if bpl_base.exists():
+                    for ver_dir in sorted(bpl_base.iterdir(), reverse=True):
+                        bpl_dir = ver_dir / "Bpl"
+                        if bpl_dir.exists():
+                            for ext in ('.bpl', '.bpi', '.dcp'):
+                                for p in bpl_dir.glob(f"{project_name}*{ext}"):
+                                    if p.exists() and str(p.resolve()) not in found:
+                                        found.append(str(p.resolve()))
+                            break  # 只检查最新版本
+
+        return found
 
     def _extract_output_file(self, output: str, output_path: Optional[str]) -> Optional[str]:
         """从输出中提取输出文件路径"""

@@ -7,6 +7,7 @@
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 from enum import Enum
+from pathlib import Path
 
 
 class CompileStatus(Enum):
@@ -37,6 +38,7 @@ class CompileResult:
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     output_file: Optional[str] = None
+    output_files: List[str] = field(default_factory=list)  # 所有输出产物路径（exe/dll/bpl/bpi/dcp等）
     warnings: List[CompileMessage] = field(default_factory=list)
     errors: List[CompileMessage] = field(default_factory=list)
     duration: int = 0  # 毫秒
@@ -53,14 +55,17 @@ class CompileResult:
             "status": self.status.value,
             "duration": self.duration,
         }
-        # 失败/超时时包含错误信息，成功时过滤掉毫无意义的 None/[]
+        # 成功时总返回 output_file，失败/超时时有则返回
+        if self.output_file:
+            result["output_file"] = self.output_file
+        # 输出产物列表（对 AI Agent 后续操作至关重要）
+        if self.output_files:
+            result["output_files"] = self.output_files
         if self.status != CompileStatus.SUCCESS:
             if self.error_code:
                 result["error_code"] = self.error_code
             if self.error_message:
                 result["error_message"] = self.error_message
-            if self.output_file:
-                result["output_file"] = self.output_file
         if self.errors:
             result["errors"] = [e.to_dict() for e in self.errors]
         if self.warnings:
