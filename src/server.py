@@ -836,60 +836,53 @@ async def run_server():
 
             import json as _json
             _show_timing = config_manager.get_show_timing()
+            # 统一提取 data：dict→直接使用，CallToolResult→提取 TextContent 文本
             if isinstance(result, dict):
-                if _show_timing:
-                    result['timing'] = {
-                        'duration': round(_duration * 1000, 1),
-                        'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-                        'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-                    }
+                data = result
                 is_error = (result.get('status') == 'failed'
                             or result.get('success') is False
                             or (result.get('error') is not None and result.get('error') != ''))
-                try:
-                    text = _json.dumps(result, ensure_ascii=False, indent=2, default=str)
-                except (TypeError, ValueError):
-                    text = str(result)
-            else:
-                # 非 dict 返回 (如 CallToolResult): 提取 TextContent 文本
-                if isinstance(result, CallToolResult):
-                    extracted = None
-                    if result.content and len(result.content) > 0:
-                        ct = result.content[0]
-                        if hasattr(ct, 'text'):
-                            extracted = ct.text
-                    if extracted is not None:
-                        try:
-                            data = _json.loads(extracted)
-                            # 递归过滤 value 为 None 的键
-                            if isinstance(data, dict):
-                                data = {k: v for k, v in data.items() if v is not None}
-                        except (_json.JSONDecodeError, TypeError):
+            elif isinstance(result, CallToolResult):
+                extracted = None
+                if result.content and len(result.content) > 0:
+                    ct = result.content[0]
+                    if hasattr(ct, 'text'):
+                        extracted = ct.text
+                if extracted is not None:
+                    try:
+                        parsed = _json.loads(extracted)
+                        if isinstance(parsed, dict):
+                            data = {k: v for k, v in parsed.items() if v is not None}
+                        else:
                             data = extracted
-                    else:
-                        data = str(result)
-                elif isinstance(result, (str, bytes)):
-                    data = result
+                    except (_json.JSONDecodeError, TypeError):
+                        data = extracted
                 else:
                     data = str(result)
+                is_error = getattr(result, 'isError', False)
+            elif isinstance(result, (str, bytes)):
+                data = result
+                is_error = False
+            else:
+                data = str(result)
+                is_error = False
 
-                response = {
-                    'success': not isinstance(result, CallToolResult) or not getattr(result, 'isError', False),
-                    'data': data,
+            response = {'success': not is_error, 'data': data}
+            if isinstance(result, CallToolResult):
+                response['isError'] = is_error
+            if _show_timing and isinstance(data, dict):
+                response['timing'] = {
+                    'duration': round(_duration * 1000, 1),
+                    'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                    'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
                 }
-                if _show_timing:
-                    response['timing'] = {
-                        'duration': round(_duration * 1000, 1),
-                        'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-                        'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-                    }
-                if isinstance(result, CallToolResult):
-                    response['isError'] = getattr(result, 'isError', False)
+            if isinstance(response, (dict, list)):
                 try:
                     text = _json.dumps(response, ensure_ascii=False, indent=2, default=str)
                 except (TypeError, ValueError):
                     text = str(response)
-                is_error = response.get('isError', False)
+            else:
+                text = str(response)
             result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
             return result
 
