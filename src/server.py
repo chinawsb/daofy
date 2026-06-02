@@ -851,7 +851,7 @@ async def run_server():
                 except (TypeError, ValueError):
                     text = str(result)
             else:
-                # 非 dict 返回 (如 CallToolResult): 提取 TextContent 文本而非 str(整个对象)
+                # 非 dict 返回 (如 CallToolResult): 提取 TextContent 文本
                 if isinstance(result, CallToolResult):
                     extracted = None
                     if result.content and len(result.content) > 0:
@@ -861,6 +861,9 @@ async def run_server():
                     if extracted is not None:
                         try:
                             data = _json.loads(extracted)
+                            # 递归过滤 value 为 None 的键
+                            if isinstance(data, dict):
+                                data = {k: v for k, v in data.items() if v is not None}
                         except (_json.JSONDecodeError, TypeError):
                             data = extracted
                     else:

@@ -542,13 +542,6 @@ async def compile_project(
 
         # 返回结果 - 对 AI Agent 友好：结构化的产物路径列表
         result_dict = result.to_dict()
-        if result.status.value == "success" and result.output_files:
-            # 在文本中显式罗列所有输出产物，便于 AI Agent 直接提取使用
-            output_files_info = "\n\n[Output Files]\n"
-            for f in result.output_files:
-                output_files_info += f"  {f}\n"
-            result_dict["_output_files_details"] = output_files_info.strip()
-        result_text = json.dumps(result_dict, ensure_ascii=False, default=str)
 
         # 编译成功后，如需启动程序
         if run_after_compile and result.status.value == "success":
@@ -563,7 +556,6 @@ async def compile_project(
                         cfg = build_configuration or "Debug"
                         run_params = parser.get_debugger_run_params(config=cfg, platform=plat)
 
-                    # 拆分参数（空格分隔，支持引号分组）
                     cmd = [exe_path]
                     if run_params:
                         try:
@@ -576,20 +568,19 @@ async def compile_project(
                         cwd=Path(exe_path).parent,
                         creationflags=getattr(_subprocess, 'CREATE_NEW_CONSOLE', 0),
                     )
-                    launch_msg = f"\n\nlaunched: {Path(exe_path).name} (PID: {proc.pid})"
-                    if run_params:
-                        launch_msg += f"\n参数: {run_params}"
-                    result_text += launch_msg
+                    result_dict["_launch"] = {
+                        "pid": proc.pid,
+                        "params": run_params,
+                    }
                     logger.info(f"编译后启动程序: {exe_path} PID={proc.pid} args={run_params}")
                 else:
                     logger.warning(f"编译后启动: 未找到输出文件 {exe_path}")
             except Exception as e:
                 logger.warning(f"编译后启动失败: {e}")
-                result_text += f"\nauto-launch failed: {e}"
 
-        # 编译成功后，如需运行验证（注入 StackTrace 单元，编译，运行后检查 exception.log）
+        # ── 运行验证（注入 StackTrace 单元，编译，运行后检查 exception.log）──
         if run_verify and result.status.value == "success":
-            verify_msg = ""
+            verify_info = {}
             backup_path = None
             try:
                 # 先求 exe 路径
@@ -600,7 +591,7 @@ async def compile_project(
                 ))
                 if not Path(exe_path).exists():
                     logger.warning("运行验证: 未找到输出文件 %s", exe_path)
-                    verify_msg = "\n\nverify: output file not found"
+                    verify_info = {"error": "output file not found"}
                 else:
                     # 1. 备份并注入 StackTrace 单元到 .dproj
                     backup_path = _inject_verify_units(project_path)
@@ -611,7 +602,7 @@ async def compile_project(
                     if verify_result.status.value != "success":
                         err_detail = verify_result.log or verify_result.error_message or "(no log)"
                         logger.warning("注入 StackTrace 后编译失败: %s", err_detail[:500])
-                        verify_msg = "\n\nverify: injected compile failed\n%s" % err_detail[:1000]
+                        verify_info = {"error": "injected compile failed", "log": err_detail[:1000]}
                     else:
                         # 3. 运行验证 exe（无管道，读 exception.log）
                         verify_exe = str(_compute_verify_exe_path(
@@ -620,59 +611,52 @@ async def compile_project(
                             build_configuration or "Debug"
                         ))
                         if not Path(verify_exe).exists():
-                            verify_msg = f"\n\nverify: output not found after recompile: {verify_exe}"
+                            verify_info = {"error": f"output not found after recompile: {verify_exe}"}
                         else:
                             exe_dir = Path(verify_exe).parent
                             log_path = exe_dir / 'exception.log'
-
-                            # 清理旧日志（避免前次运行的残留）
                             if log_path.exists():
                                 try:
                                     log_path.unlink()
                                 except Exception:
                                     pass
 
-                            proc = _subprocess.Popen(
-                                [verify_exe],
-                                cwd=exe_dir,
-                            )
+                            proc = _subprocess.Popen([verify_exe], cwd=exe_dir)
                             try:
                                 proc.wait(timeout=5)
                             except _subprocess.TimeoutExpired:
                                 proc.kill()
                                 proc.wait()
 
-                            # 4. 检查 exception.log（与 delphi_file 同等的编码检测）
                             if log_path.exists():
                                 try:
                                     enc = detect_encoding(str(log_path))
                                     log_content = log_path.read_text(encoding=enc, errors='replace')
-                                    verify_msg = f"\n\nverify failed - exception detected:\n{log_content}"
+                                    verify_info = {"error": "runtime exception", "log": log_content}
                                     logger.warning("运行时异常: %s", log_content[:200])
                                 except Exception as read_err:
-                                    verify_msg = f"\n\nverify failed - exception detected\nlog: {log_path}\n(read error: {read_err})"
+                                    verify_info = {"error": "runtime exception", "read_error": str(read_err)}
                             else:
-                                verify_msg = f"\n\nverify passed: no crash on launch"
+                                verify_info = {"passed": True}
                                 logger.info("运行验证通过")
             except Exception as e:
                 logger.warning("运行验证异常: %s", e, exc_info=True)
-                verify_msg = f"\n\nverify exception: {e}"
+                verify_info = {"error": str(e)}
             finally:
-                # 5. 恢复原始 .dproj
                 if backup_path:
                     try:
                         _restore_dproj(project_path, backup_path)
                     except Exception as e:
                         logger.error("恢复 .dproj 失败: %s", e)
-                        verify_msg += f"\n\nrestore .dproj failed: {e}"
+                        verify_info.setdefault("errors", []).append(f"restore dproj failed: {e}")
 
-            result_text += verify_msg
+            result_dict["_verify"] = verify_info
 
+        result_text = json.dumps(result_dict, ensure_ascii=False, default=str)
         return CallToolResult(
             content=[{"type": "text", "text": result_text}],
             isError=result.status.value != "success"
         )
-
     except Exception as e:
         error_msg = f"编译过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
