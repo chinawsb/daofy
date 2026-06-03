@@ -1064,6 +1064,183 @@ async def test_write_partial_end_exceeds_total():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+# ============================================================
+# 行号偏移量测试（Bug1: offset 正确性）
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_write_partial_offset_in_response():
+    """部分写入返回值应包含偏移量信息"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "offset_check.pas")
+    _make_file(file_path, "a\nb\nc\nd\ne\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\nY\nZ\n",
+            "start_line": 1,
+            "end_line": 3,
+            "backup": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "偏移量" in msg, f"返回值应包含偏移量信息: {msg}"
+        # 替换 [1,3) = 2行, 插入 3行, offset = +1
+        assert "替换范围" in msg
+        assert "后续编辑" in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_offset_delete():
+    """删除行时偏移量应为负数"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "offset_delete.pas")
+    _make_file(file_path, "a\nb\nc\nd\ne\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "",
+            "start_line": 1,
+            "end_line": 4,
+            "backup": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "偏移量: -3" in msg, f"删除3行偏移应为-3: {msg}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_offset_no_change():
+    """行数不变时偏移量应为0"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "offset_zero.pas")
+    _make_file(file_path, "a\nb\nc\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\n",
+            "start_line": 1,
+            "end_line": 2,
+            "backup": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "偏移量: 0" in msg, f"行数不变时偏移应为0: {msg}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# show_line_numbers 测试（Bug4）
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_read_show_line_numbers_default_false():
+    """默认 show_line_numbers=False 时不应有行号前缀"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "no_linenum.pas")
+    _make_file(file_path, "line1\nline2\nline3\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "show_line_numbers": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        # 内容不应有行号前缀
+        content_start = msg.rfind("====") + 4
+        content = msg[content_start:].strip()
+        assert content.startswith("line1"), f"不应有行号前缀: {content[:20]}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_show_line_numbers_true():
+    """show_line_numbers=True 时应显示行号前缀"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "with_linenum.pas")
+    _make_file(file_path, "alpha\nbeta\ngamma\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "show_line_numbers": True,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        # 应包含行号前缀
+        assert "1: alpha" in msg, f"第1行应有行号前缀: {msg}"
+        assert "2: beta" in msg, f"第2行应有行号前缀: {msg}"
+        assert "3: gamma" in msg, f"第3行应有行号前缀: {msg}"
+        # 摘要应显示"带行号"标记
+        assert "带行号" in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_show_line_numbers_with_offset():
+    """show_line_numbers=True + start_line 偏移应显示正确的绝对行号"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "linenum_offset.pas")
+    lines = "\n".join(f"L{i}" for i in range(1, 21))
+    _make_file(file_path, lines + "\n")
+    try:
+        # 从第 5 行开始读 3 行
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 5,
+            "end_line": 8,
+            "show_line_numbers": True,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        # 绝对行号应为 6, 7, 8（1-based）
+        assert "6: L6" in msg
+        assert "7: L7" in msg
+        assert "8: L8" in msg
+        assert "5: L5" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# format 偏移量测试（Bug2）
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_format_offset_in_response():
+    """format action 返回值应包含格式化后的偏移量"""
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "fmt_offset.pas")
+    # 用稍微不规范的代码触发 pasfmt 格式化
+    _make_file(file_path, "unit  TestUnit ;\ninterface\nimplementation\nend.\n")
+    try:
+        from src.tools import pasfmt as _pasfmt
+        import asyncio
+        # 模拟 format_file 返回格式化成功
+        with patch("src.tools.file_tool.pasfmt.format_file",
+                   new_callable=AsyncMock) as mock_fmt:
+            mock_fmt.return_value = {
+                "status": "success", "formatted": True,
+                "message": "代码格式化成功",
+            }
+            result = await handle_format({
+                "file_path": file_path,
+                "mode": "file",
+                "backup": False,
+            })
+            _assert_success(result)
+            # format_file 被调用了一次
+            mock_fmt.assert_called_once()
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @pytest.mark.asyncio
 async def test_read_0indexed_limit_after_truncation():
     """limit 读取后截断，实际行数应 = limit"""

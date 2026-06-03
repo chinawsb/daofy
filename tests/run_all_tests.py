@@ -20,6 +20,8 @@ BASIC_TESTS = [
     ("test_mcp_tools.py", "MCP工具参数验证测试"),
     ("test_kb_service_extended.py", "知识库服务扩展测试"),
     ("test_edge_cases.py", "边界条件测试"),
+    ("test_audit_integration.py", "audit 集成测试"),
+    ("test_mcp_e2e.py", "MCP 端到端协议测试"),
     ("test_config_usage.py", "配置使用测试"),
     ("test_file_tool.py", "文件操作工具测试"),
     ("test_file_backup.py", "文件备份编码检测测试"),
@@ -29,6 +31,7 @@ BASIC_TESTS = [
     ("test_code_hosting.py", "代码托管平台工具测试"),
     ("test_pasfmt.py", "pasfmt 格式化工具测试"),
     ("test_install_logic.py", "安装脚本逻辑验证测试"),
+    ("test_mapdata_integration.py", "MAPDATA 集成测试"),
 ]
 
 # 扩展测试（需要 Delphi 编译器或特定依赖）

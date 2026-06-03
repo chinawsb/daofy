@@ -165,6 +165,9 @@ async def _action_add(
     parent.children.append(new_comp)
 
     new_dfm_text = serialize_component(root)
+    dfm_before = existing_dfm.count('\n')
+    dfm_after = new_dfm_text.count('\n')
+
     pas_result = None
     if target_pas:
         pas_result = await _sync_pas_for_add(target_pas, new_comp, root)
@@ -180,6 +183,7 @@ async def _action_add(
         "parent_name": parent.name,
         "dfm_text": new_dfm_text,
         "pas_sync": pas_result,
+        "dfm_offset": dfm_after - dfm_before,
     }
 
 
@@ -215,6 +219,9 @@ async def _action_remove(
         return {"status": "failed", "message": f"删除组件失败: {component_name}"}
 
     new_dfm_text = serialize_component(root)
+    dfm_before = existing_dfm.count('\n')
+    dfm_after = new_dfm_text.count('\n')
+
     pas_result = None
     if target_pas:
         pas_result = _sync_pas_for_remove(target_pas, component_name, removed_events)
@@ -231,6 +238,7 @@ async def _action_remove(
         "removed_events": [(comp, evt, handler) for comp, evt, handler in removed_events],
         "dfm_text": new_dfm_text,
         "pas_sync": pas_result,
+        "dfm_offset": dfm_after - dfm_before,
     }
 
 
@@ -283,6 +291,9 @@ async def _action_modify(
     new_events = {p.name: p.value for p in target.get_events()}
 
     new_dfm_text = serialize_component(root)
+    dfm_before = existing_dfm.count('\n')
+    dfm_after = new_dfm_text.count('\n')
+
     pas_result = None
     if target_pas:
         pas_result = _sync_pas_for_modify(target_pas, old_events, new_events, component_name, target.class_name)
@@ -297,6 +308,7 @@ async def _action_modify(
         "modified_properties": modified_props,
         "dfm_text": new_dfm_text,
         "pas_sync": pas_result,
+        "dfm_offset": dfm_after - dfm_before,
     }
 
 
@@ -339,12 +351,27 @@ async def _sync_pas_for_add(
         add_methods=add_methods,
     )
 
+    # 写入前行数，用于计算偏移量
+    pas_before = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_before = sum(1 for _ in f)
+    except OSError:
+        pass
+
     try:
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
     except OSError as e:
         logger.warning("写入 PAS 文件失败: %s", e)
         return {"status": "failed", "message": str(e)}
+
+    pas_after = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_after = sum(1 for _ in f)
+    except OSError:
+        pass
 
     add_uses = collect_all_units(new_comp)
     added_units = []
@@ -362,12 +389,21 @@ async def _sync_pas_for_add(
         except Exception as e:
             logger.warning("添加单元 %s 失败: %s", unit, e)
 
+    # 重新计算 uses 添加后的行数（handle_uses 也会改变行数）
+    pas_final = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_final = sum(1 for _ in f)
+    except OSError:
+        pass
+
     return {
         "status": "success",
         "message": "PAS 同步完成",
         "added_fields": [f.name for f in add_fields],
         "added_methods": [m.name for m in add_methods],
         "added_uses": added_units,
+        "offset": pas_final - pas_before,
     }
 
 
@@ -392,6 +428,13 @@ def _sync_pas_for_remove(
         remove_methods=remove_methods if remove_methods else None,
     )
 
+    pas_before = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_before = sum(1 for _ in f)
+    except OSError:
+        pass
+
     try:
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
@@ -399,11 +442,19 @@ def _sync_pas_for_remove(
         logger.warning("写入 PAS 文件失败: %s", e)
         return {"status": "failed", "message": str(e)}
 
+    pas_after = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_after = sum(1 for _ in f)
+    except OSError:
+        pass
+
     return {
         "status": "success",
         "message": "PAS 同步完成",
         "removed_fields": remove_fields,
         "removed_methods": remove_methods,
+        "offset": pas_after - pas_before,
     }
 
 
@@ -448,6 +499,13 @@ def _sync_pas_for_modify(
         remove_methods=remove_methods if remove_methods else None,
     )
 
+    pas_before = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_before = sum(1 for _ in f)
+    except OSError:
+        pass
+
     try:
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
@@ -455,11 +513,19 @@ def _sync_pas_for_modify(
         logger.warning("写入 PAS 文件失败: %s", e)
         return {"status": "failed", "message": str(e)}
 
+    pas_after = 0
+    try:
+        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+            pas_after = sum(1 for _ in f)
+    except OSError:
+        pass
+
     return {
         "status": "success",
         "message": "PAS 同步完成",
         "added_methods": [m.name for m in add_methods],
         "removed_methods": remove_methods,
+        "offset": pas_after - pas_before,
     }
 
 

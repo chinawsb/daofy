@@ -17,6 +17,7 @@ Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path

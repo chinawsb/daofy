@@ -90,6 +90,11 @@ else:
     from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
+    from src.utils import updater
+
+    # 后台版本检查结果缓存（由 startup 异步任务填充）
+    _update_check_result: Optional[dict] = None
+    _update_check_done: bool = False
 
     # 初始化日志
     logger = init_default_logger()
@@ -197,6 +202,16 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if not is_error:
                 return ("hint: install done, "
                         "use package(action='list') to verify IDE registration")
+
+    # P4: 版本更新提示（检查完成且有新版本时通知 AI）
+    if _update_check_done and _update_check_result and _update_check_result.get("update_available"):
+        return (
+            f"📦 发现新版本 Daofy: v{_update_check_result['current']} → "
+            f"v{_update_check_result['latest']}！\n"
+            f"请使用 `daofy_update(action=\"check\")` 查看详情，"
+            f"或 `daofy_update(action=\"update\")` 通过 git pull 更新。\n"
+            f"发布说明: {_update_check_result['release_url']}"
+        )
 
     return None
 
@@ -521,6 +536,24 @@ async def run_server():
                 }
             ),
 
+            # ===== Daofy 自身更新管理 =====
+            Tool(
+                name="daofy_update",
+                description="检查 Daofy 版本更新、执行 git pull 更新。发现新版本时智能提示中会自动通知。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["check", "update", "version"],
+                            "default": "check",
+                            "description": "check=检查新版, update=执行 git pull 更新, version=显示当前版本",
+                        },
+                    },
+                    "required": ["action"],
+                }
+            ),
+
             # ===== 经验记忆管理 =====
             Tool(
                 name="experience",
@@ -732,6 +765,67 @@ async def run_server():
     async def _handle_experience(arguments: dict) -> dict:
         return _experience(**arguments)
 
+    async def _handle_daofy_update(arguments: dict) -> dict:
+        """处理 daofy_update 工具调用。"""
+        action = arguments.get("action", "check")
+
+        if action == "version":
+            install_type = "git" if updater.is_git_installation() else "pip"
+            return {
+                "version": updater.get_current_version(),
+                "install_type": install_type,
+                "python": sys.version,
+            }
+
+        if action == "check":
+            result = await asyncio.get_running_loop().run_in_executor(
+                None, updater.check_for_update
+            )
+            if result is None:
+                return {
+                    "error": "无法检查更新（网络不可达或 GitHub API 异常）",
+                    "hint": "请检查网络连接后重试",
+                }
+            install_type = "git" if updater.is_git_installation() else "pip"
+            result["install_type"] = install_type
+            if result["update_available"]:
+                if install_type == "git":
+                    result["message"] = (
+                        f"发现新版本 v{result['latest']}！"
+                        f" 当前版本 v{result['current']}。"
+                        f" 使用 daofy_update(action='update') 执行 git pull 更新。"
+                    )
+                else:
+                    result["message"] = (
+                        f"发现新版本 v{result['latest']}！"
+                        f" 当前版本 v{result['current']}。"
+                        f" 请运行: pip install --upgrade daofy-for-delphi"
+                    )
+            else:
+                result["message"] = f"当前已是最新版本: v{result['current']}"
+            return result
+
+        if action == "update":
+            if not updater.is_git_installation():
+                info = updater.check_for_update()
+                latest = info["latest"] if info else "unknown"
+                return {
+                    "success": False,
+                    "message": (
+                        "当前为 pip 安装模式，不支持 git pull 更新。\n"
+                        f"请手动运行: pip install --upgrade daofy-for-delphi"
+                        f"{f' (最新版: v{latest})' if latest != 'unknown' else ''}"
+                    ),
+                }
+            result = await updater.git_pull_update()
+            if result["success"] and result["updated"]:
+                # 更新全局缓存
+                global _update_check_result
+                _update_check_result = None
+            return result
+
+        return {"error": f"未知 action: {action}"}
+
     _TOOL_HANDLERS = {
         "project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
@@ -745,6 +839,7 @@ async def run_server():
         "code_hosting": _handle_code_hosting,
         "tool_help": _handle_tool_help,
         "experience": _handle_experience,
+        "daofy_update": _handle_daofy_update,
     }
 
     @server.call_tool()
@@ -948,6 +1043,36 @@ async def run_server():
                 )]
             )
         raise ValueError(f"未知资源: {uri}")
+
+    # ============================================================
+    # 后台版本检查 — 启动时异步检测 GitHub 有无新版本
+    # ============================================================
+
+    async def _background_version_check():
+        """后台检查 Daofy 版本更新，结果存入全局变量。"""
+        global _update_check_result, _update_check_done
+        try:
+            logger.info("正在后台检查 Daofy 版本更新...")
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(None, updater.check_for_update)
+            if result:
+                _update_check_result = result
+                if result.get("update_available"):
+                    logger.warning(
+                        "发现新版本！当前: %s, 最新: %s → %s",
+                        result["current"], result["latest"], result["release_url"],
+                    )
+                else:
+                    logger.info("当前已是最新版本: %s", result["current"])
+            else:
+                logger.debug("版本检查未返回结果（可能网络不可达）")
+        except Exception as e:
+            logger.debug(f"版本检查失败（不影响正常运行）: {e}")
+        finally:
+            _update_check_done = True
+
+    # 启动后台版本检查（不阻塞启动）
+    asyncio.create_task(_background_version_check())
 
     # 启动服务器
     logger.info("MCP Server 启动完成,准备接收请求...")

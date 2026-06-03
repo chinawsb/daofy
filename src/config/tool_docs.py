@@ -418,6 +418,28 @@ TOOL_HELP_DOCS: dict = {
             "delete": "删除经验。id=经验ID",
         },
     },
+    "daofy_update": {
+        "summary": "检查 Daofy 版本更新、执行 git pull 更新。",
+        "description": "Daofy 自身更新管理 — 版本检查 / git pull 更新",
+        "triggers": ["更新、升级、新版本、检查更新、daofy 版本、update、upgrade"],
+        "workflow": "启动时后台自动检查 → 智能提示通知 AI → AI 询问用户 → daofy_update(action='update') → 通知重启",
+        "actions": {
+            "check": "检查 GitHub 最新 Release，返回当前版本/最新版本/是否有更新",
+            "update": "执行 git pull 更新代码（仅 git 安装模式有效；pip 安装会提示使用 pip install --upgrade）",
+            "version": "显示当前版本号和安装方式（git/pip）",
+        },
+        "notes": (
+            "启动时服务器会自动在后台检查更新，有新版本时会通过工具响应智能提示通知 AI。\n"
+            "AI 看到提示后应主动询问用户是否需要更新。\n"
+            "更新完成后需要重启 Daofy 或 AI Agent 使新版本生效。\n"
+            "pip 安装用户使用: pip install --upgrade daofy-for-delphi"
+        ),
+        "examples": [
+            'daofy_update(action="check")      检查是否有新版本',
+            'daofy_update(action="update")     执行 git pull 更新',
+            'daofy_update(action="version")    显示当前版本',
+        ],
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -433,6 +455,7 @@ TOOL_NAMES: list = [
     "code_hosting",
     "tool_help",
     "experience",
+    "daofy_update",
 ]
 
 # 精简版 descriptions（用于 list_tools 的 description 字段）
@@ -478,5 +501,9 @@ TOOL_SHORT_DESC: dict = {
         "经验记忆管理: 保存/搜索 AI 成功解决问题的做法(语义搜索)。"
         " save 自动去重(>0.85 合并到旧记录)。"
         " 支持 merge(合并多条为一条) / prune(列出低价值条目) 等维护操作。"
+    ),
+    "daofy_update": (
+        "检查 Daofy 版本更新、执行 git pull 更新。"
+        " action=check 检查新版, action=update 执行更新, action=version 显示当前版本。"
     ),
 }

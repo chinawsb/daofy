@@ -529,164 +529,52 @@ class SmartCacheKnowledgeBase:
     
     @staticmethod
     def _parse_with_daudit(file_path_str: str) -> Optional[Tuple[str, List[Dict], int, List[str]]]:
-        """使用 daudit --mode kb 解析 Delphi 源文件
+        """使用 daudit --mode kb (batch-output-dir 模式) 解析单个 Delphi 源文件
+        
+        委托给 _parse_daudit_batch 以统一使用 batch-output-dir 输出格式。
         
         Returns:
             (file_path_str, items, line_count, uses_list) 或 None（失败时）
         """
-        daudit = SmartCacheKnowledgeBase._find_daudit()
-        if not daudit:
-            return None
-        
-        cmd = [daudit, '--mode', 'kb', '--format', 'json', file_path_str]
-        
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
-                tmp_path = tmp.name
-            
-            with open(tmp_path, 'wb') as f:
-                result = subprocess.run(
-                    cmd, stdout=f, stderr=subprocess.PIPE, timeout=120,
-                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                )
-            
-            if result.returncode != 0 or not os.path.getsize(tmp_path):
-                return None
-            
-            with open(tmp_path, 'r', encoding='utf-8') as f:
-                payload = json.load(f)
-            
-            finfo = payload.get('data', {}).get('files', [{}])[0]
-            
-            # daudit 自身解析失败 -> fallback
-            if finfo.get('status') != 'ok' or finfo.get('errors'):
-                return None
-            
-            entities = finfo.get('entities', [])
-            uses_data = finfo.get('uses', {})
-            uses_list = []
-            uses_list.extend(uses_data.get('interface', []))
-            uses_list.extend(uses_data.get('implementation', []))
-            
-            # 行数：从文件统计
-            try:
-                with open(file_path_str, 'r', encoding='utf-8', errors='ignore') as f:
-                    line_count = f.read().count('\n') + 1
-            except Exception:
-                line_count = 0
-            
-            items = []
-            for ent in entities:
-                kind = ent.get('kind', '')
-                name = ent.get('name', '')
-                start_line = ent.get('start_line', 0)
-                parent = ent.get('inherits_from') or ent.get('parent_scope')
-                
-                # 构建 description（与正则版本格式保持一致）
-                desc = ''
-                if kind == 'TC':
-                    p = ent.get('inherits_from')
-                    desc = 'Class %s inherits from %s' % (name, p) if p else 'Class %s' % name
-                elif kind == 'TR':
-                    desc = 'Record %s' % name
-                elif kind == 'TI':
-                    p = ent.get('inherits_from')
-                    desc = 'Interface %s extends %s' % (name, p) if p else 'Interface %s' % name
-                elif kind == 'TH':
-                    p = ent.get('parent_scope')
-                    desc = 'Helper %s for %s' % (name, p) if p else 'Helper %s' % name
-                elif kind == 'TE':
-                    desc = 'Enum %s' % name
-                elif kind == 'TS':
-                    desc = 'Set %s' % name
-                elif kind in ('FF', 'FP'):
-                    sig = ent.get('signature', '')
-                    desc = sig if sig else ('Function %s' % name if kind == 'FF' else 'Procedure %s' % name)
-                elif kind == 'CC':
-                    val = ent.get('value')
-                    desc = 'Const %s = %s' % (name, val) if val is not None else 'Const %s' % name
-                elif kind == 'CR':
-                    val = ent.get('value', '')
-                    desc = 'ResourceString %s = %s' % (name, val) if val else 'ResourceString %s' % name
-                elif kind == 'TY':
-                    desc = 'Type %s' % name
-                elif kind == 'MF':
-                    desc = 'Field %s' % name
-                elif kind == 'MP':
-                    desc = 'Property %s' % name
-                elif kind == 'GV':
-                    desc = 'Var %s' % name
-                elif kind == 'AT':
-                    desc = 'Array %s' % name
-                elif kind == 'PT':
-                    desc = 'Pointer %s' % name
-                elif kind == 'MM':
-                    desc = 'Method Pointer %s' % name
-                else:
-                    desc = '%s %s' % (kind, name)
-                
-                items.append({
-                    'type': kind,
-                    'name': name,
-                    'line': start_line,
-                    'base_class': parent,
-                    'description': desc,
-                })
-            
-            return (file_path_str, items, line_count, uses_list)
-        
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-            logger.debug("daudit 调用失败 %s: %s", file_path_str, e)
-            return None
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+        results = SmartCacheKnowledgeBase._parse_daudit_batch([file_path_str])
+        if results:
+            return results[0]
+        return None
     
     @staticmethod
-    def _parse_daudit_batch(file_paths: List[str]) -> Optional[List[Tuple[str, List[Dict], int, List[str]]]]:
-        """使用 daudit --mode kb --batch-output-dir 批量解析
+    @staticmethod
+    def _parse_daudit_single_batch(
+        batch_files: List[str],
+    ) -> Optional[List[Tuple[str, List[Dict], int, List[str]]]]:
+        """调用 daudit 处理一批文件（不分批时直接走此函数）。
         
-        daudit 内部多线程处理全部文件，输出每个文件的独立 JSON。
-        对解析失败的文件使用 regex fallback。
-        
-        Returns:
-            [(file_path, items, line_count, uses_list), ...] 或 None（daudit 不可用）
+        返回 [(file_path, items, line_count, uses_list), ...] 或 None。
         """
         daudit = SmartCacheKnowledgeBase._find_daudit()
         if not daudit:
             return None
-        
-        if not file_paths:
+        if not batch_files:
             return []
         
-        # 1. 写 batch-input JSON
+        # 写 batch-input JSON
         batch_fd, batch_path = tempfile.mkstemp(suffix='_daofy_batch.json', prefix='daudit_')
         os.close(batch_fd)
         try:
             with open(batch_path, 'w', encoding='utf-8') as f:
-                json.dump({'files': file_paths, 'options': {}}, f)
+                json.dump({'files': batch_files}, f)
             
-            # 2. 创建输出目录
             out_dir = tempfile.mkdtemp(prefix='daudit_out_')
-            
-            # 3. 调用 daudit
-            cmd = [daudit, '--mode', 'kb', '--batch-input', batch_path,
+            daudit_cache_dir = os.path.join(os.path.dirname(daudit), 'cache')
+            cmd = [daudit, '--mode', 'kb', '--cache-dir', daudit_cache_dir,
+                   '--batch-input', batch_path,
                    '--batch-output-dir', out_dir]
-            logger.info("  daudit batch: %d 个文件, 输出目录: %s" % (len(file_paths), out_dir))
             
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=600,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
             
-            if result.returncode not in (0, 1, 2):
-                logger.warning("daudit batch 退出码 %d: %s", result.returncode, result.stderr[:200])
-            
-            # 4. 读 _summary.json
+            # 读 _summary.json（不存在时手动收集）
             summary_path = os.path.join(out_dir, '_summary.json')
             mapping = []
             if os.path.isfile(summary_path):
@@ -694,7 +582,6 @@ class SmartCacheKnowledgeBase:
                     summary = json.load(f)
                 mapping = summary.get('mapping', [])
             else:
-                # _summary.json 不存在（daudit 可能 OOM），手动收集
                 for fname in sorted(os.listdir(out_dir)):
                     if fname.endswith('.json') and fname != '_summary.json':
                         fpath = os.path.join(out_dir, fname)
@@ -707,27 +594,13 @@ class SmartCacheKnowledgeBase:
                         except Exception:
                             pass
             
-            # 5. 处理每个结果文件
-            src_to_path = {}  # source_path -> output_json_path
-            for entry in mapping:
-                src_path = entry['src']
-                if os.path.isabs(src_path) or src_path.startswith(('C:\\', 'D:\\')):
-                    # 是完整路径
-                    pass
-                # 匹配 file_paths 中的完整路径
-                for fp in file_paths:
-                    if fp.endswith(src_path) or fp == src_path:
-                        src_to_path[fp] = os.path.join(out_dir, entry['out'])
-                        break
-                else:
-                    src_to_path[src_path] = os.path.join(out_dir, entry['out'])
-            
-            # 6. 逐文件解析
+            # 处理每个结果文件
             results = []
             failed = []
-            for fp in file_paths:
-                out_json = src_to_path.get(fp)
-                if not out_json or not os.path.isfile(out_json):
+            for entry in mapping:
+                fp = entry['src']
+                out_json = os.path.join(out_dir, entry['out'])
+                if not os.path.isfile(out_json):
                     failed.append(fp)
                     continue
                 
@@ -748,7 +621,6 @@ class SmartCacheKnowledgeBase:
                 uses_list.extend(uses_data.get('interface', []))
                 uses_list.extend(uses_data.get('implementation', []))
                 
-                # 行数
                 line_count = 0
                 try:
                     with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
@@ -763,7 +635,6 @@ class SmartCacheKnowledgeBase:
                     start_line = ent.get('start_line', 0)
                     parent = ent.get('inherits_from') or ent.get('parent_scope')
                     
-                    # 构建 description
                     desc = ''
                     if kind == 'TC':
                         p = ent.get('inherits_from')
@@ -816,7 +687,7 @@ class SmartCacheKnowledgeBase:
                 
                 results.append((fp, items, line_count, uses_list))
             
-            # 7. 失败文件用 regex fallback
+            # 失败文件用 regex fallback
             if failed:
                 logger.info("  daudit %d 个文件失败，正则补扫..." % len(failed))
                 for fp in failed:
@@ -826,14 +697,13 @@ class SmartCacheKnowledgeBase:
                     except Exception:
                         results.append((fp, [], 0, []))
             
-            logger.info("  daudit batch 完成: %d 成功, %d 失败" % (len(results) - len(failed), len(failed)))
+            logger.info("  daudit batch 完成: %d 成功, %d 失败" % (len(results), len(failed)))
             return results
         
         except (subprocess.TimeoutExpired, OSError) as e:
             logger.error("daudit batch 调用失败: %s", e)
             return None
         finally:
-            # 清理临时文件
             try:
                 os.unlink(batch_path)
             except OSError:
@@ -843,6 +713,46 @@ class SmartCacheKnowledgeBase:
                 shutil.rmtree(out_dir, ignore_errors=True)
             except Exception:
                 pass
+
+    @staticmethod
+    def _parse_daudit_batch(file_paths: List[str]) -> Optional[List[Tuple[str, List[Dict], int, List[str]]]]:
+        """使用 daudit --mode kb --batch-output-dir 批量解析（分批）。
+        
+        daudit FastMM 不会释放内存到 OS，~1600 文件后 32位 内存已达 GB 级易崩溃。
+        64位 daudit 地址空间远大于 32位，可安全使用 BATCH_SIZE=5000。
+        每批结束后 daudit 退出、完全释放内存。
+        
+        Returns:
+            [(file_path, items, line_count, uses_list), ...] 或 None
+        """
+        BATCH_SIZE = 5000
+        
+        if not file_paths:
+            return []
+        
+        all_results = []
+        total = len(file_paths)
+        
+        for batch_start in range(0, total, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, total)
+            batch_files = file_paths[batch_start:batch_end]
+            
+            logger.info("  daudit 分批 %d/%d: %d 个文件" % (batch_start // BATCH_SIZE + 1, (total + BATCH_SIZE - 1) // BATCH_SIZE, len(batch_files)))
+            
+            batch_result = SmartCacheKnowledgeBase._parse_daudit_single_batch(batch_files)
+            if batch_result is not None:
+                all_results.extend(batch_result)
+            else:
+                # daudit 不可用，后续批次也放弃
+                for fp in batch_files:
+                    try:
+                        fr = SmartCacheKnowledgeBase._regex_fallback(fp)
+                        all_results.append(fr)
+                    except Exception:
+                        all_results.append((fp, [], 0, []))
+        
+        logger.info("  daudit 全部完成: %d 文件" % len(all_results))
+        return all_results
     
     def _rebuild_init(self, source_paths: List[Path], incremental: bool = False, build_start_time: float = None):
         """重建初始化阶段

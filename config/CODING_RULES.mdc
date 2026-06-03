@@ -1,10 +1,19 @@
 # Delphi 编码规范
-> 最后更新: 2026-05-18 | 版本: 1.8.0
+> 最后更新: 2026-06-03 | 版本: 1.10.0
 
 ## 工作流总览
 ```
 环境检查 → 查KB确认API → 写代码(自动备份) → 格式化 → 编译验证 → 代码审核 → 清理
   ①          ②               ③               ④         ⑤          ⑥        ⑦
+
+    调用工具      →  (MCP 工具名)
+  ① 环境检查     →  check_environment / get_coding_rules
+  ② 查KB确认API  →  delphi_kb / delphi_file
+  ③ 写代码       →  delphi_file(action="write")
+  ④ 格式化       →  delphi_file(action="format")
+  ⑤ 编译验证     →  project(action="compile")
+  ⑥ 代码审核     →  get_coding_rules(section="review")
+  ⑦ 清理         →  delphi_file
 ```
 
 ---
@@ -53,10 +62,10 @@ delphi_kb(query="TfrmMain", kb_type="project", project_path="C:/MyProject/Projec
 
 ### 读源码
 ```python
-read_source_file(search_type="class", type_name="TButton")              # Delphi 官方源码
-read_source_file(search_type="function", function_name="Create")         # Delphi 官方
-read_source_file(search_type="class", type_name="TfrmMain", search_in="project", project_path="...")  # 项目源码
-delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路径读
+delphi_file(action="read", search_type="class", type_name="TButton")              # Delphi 官方源码
+delphi_file(action="read", search_type="function", function_name="Create")         # Delphi 官方
+delphi_file(action="read", search_type="class", type_name="TfrmMain", search_in="project", project_path="...")  # 项目源码
+delphi_file(action="read", file_path="...", start_line=100, limit=200)             # 按路径读
 ```
 
 ### KB 搜不到的排查
@@ -82,19 +91,19 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
       encoding = 'gbk'  # 中文 Windows 上常见
   ```
 - **写回时必须保持原始编码**，不可将 GBK 文件强行以 UTF-8 写出
-- 使用 `file_tool(action="write")` 默认自动备份并保持原始编码；`file_tool(action="format")` 默认自动备份
+- 使用 `delphi_file(action="write")` 默认自动备份并保持原始编码；`delphi_file(action="format")` 默认自动备份
 - 如果文件含 BOM（UTF-8 BOM / UTF-16 LE/BE），保留 BOM 不删除
 - **新建 Delphi 文件含中文时推荐用 `utf-8-sig`（UTF-8 with BOM）**：Delphi 编译器将无 BOM 文件中的中文字符串视为 `AnsiString`，触发 `W1057 Implicit string cast from 'AnsiString' to 'string'` 警告。使用 `encoding="utf-8-sig"` 写入 BOM 后，编译器正确识别为 `UnicodeString`，消除该警告。
 
 ### 自动备份
-- `file_tool(action="write", backup=True)` **默认开启自动备份**，写入前自动在 `__history` 目录创建备份，无需手动调用
+- `delphi_file(action="write", backup=True)` **默认开启自动备份**，写入前自动在 `__history` 目录创建备份，无需手动调用
 - 备份文件命名: `文件名.~版本号~`（与 Delphi IDE 兼容）
 - 二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原
 - 手动备份/恢复/列表:
   ```python
-  file_tool(action="backup", file_path="src/Unit1.pas")                           # 手动创建备份
-  file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")     # 列出备份版本
-  file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)  # 恢复
+  delphi_file(action="backup", file_path="src/Unit1.pas")                           # 手动创建备份
+  delphi_file(action="backup", backup_action="list", file_path="src/Unit1.pas")     # 列出备份版本
+  delphi_file(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)  # 恢复
   ```
 
 ### 命名
@@ -152,22 +161,24 @@ uses System.SysUtils, System.Classes,  // 系统
 
 ## ④ 格式化
 ```python
-file_tool(action="format", file_path="src/Unit1.pas")
+delphi_file(action="format", file_path="src/Unit1.pas")
 # 使用 pasfmt 格式化，自动处理泛型嵌套 `>>` 格式
 ```
 
 ## ⑤ 编译
 ```python
-compile_project(project_path="Project.dproj")                         # 整体编译
-compile_project(project_path="Unit1.pas")                             # 语法检查
-compile_project(project_path="Project.dproj", build_configuration="Release", target_platform="win64")
+project(action="compile", project_path="Project.dproj")                         # 整体编译
+project(action="compile", project_path="Unit1.pas")                             # 语法检查
+project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 # 可选参数：conditional_defines=["DEBUG"], unit_search_paths=["..."], output_path="..."
 ```
+
+> **⚠️ 强制规则**：`project_compile` 已合并到 `project(action="compile")`，不存在独立的 `project_compile` 工具。所有编译操作必须通过 `project` 工具进行，禁止用 bash 直接执行 dcc32/msbuild。
 
 ### 编译失败处理
 ```
 失败 → check_environment(action="check") 确认编译器状态
-    → 检查是否缺少搜索路径（analyze_project_dependencies 分析依赖）
+    → 检查是否缺少搜索路径（dpk 或 dproj 中 DCC_UnitSearchPath 配置）
     → dproj 中 DCC_UnitSearchPath 是否包含需要的三方库路径
     → 确认目标平台（win32/win64）编译器可用
     → 条件编译符号是否匹配（DEBUG/RELEASE）
@@ -192,10 +203,10 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 > 审核表的具体检查项见下方「审核」章节。
 
 ## ⑦ 清理 & 验证
-- **备份验证**：`file_tool(action="write")` 默认自动备份到 `__history`，修改后可用 `file_tool(action="backup", backup_action="list", file_path=...)` 确认备份存在
+- **备份验证**：`delphi_file(action="write")` 默认自动备份到 `__history`，修改后可用 `delphi_file(action="backup", backup_action="list", file_path=...)` 确认备份存在
 - **整理**：删未用变量/导入/函数/类（直接删，无需人工确认）
 - **已存在的死代码**：标记为废弃（添加注释标注），等待人工确认后清理
-- **编码**：文件保持原始编码；修改后执行 `file_tool(action="format", ...)`
+- **编码**：文件保持原始编码；修改后执行 `delphi_file(action="format", ...)`
 
 ---
 
@@ -346,6 +357,362 @@ async_task(action="status", task_id="task_xxx")
 - **不要在函数内局部 `import`**：函数内任何地方出现 `from X import Y` 会使 `Y` 在整个函数作用域成为局部变量。放在头部的引用也会 `UnboundLocalError`。始终写在模块顶部。
 - **`if x:` vs `if x is not None:`**：0、`""`、`[]` 都是 False。数字可选参数用 `Optional[int]` 并用 `is not None` 判断。
 - **`$()` 宏展开**：注册表变量键名（`SKIADIR`）不含 `$()` 前缀，加入 `macros` 字典时必须 `macros[f'$({k})'] = v`。用 `update(dict)` 会导致 `str.replace('SKIADIR', ...)` 错误匹配 `$(SKIADIR)` → 路径残缺。
+
+---
+
+## ⑧ 人机协同 — 异常诊断与人工介入
+
+### 概述
+
+AI Agent 不是万能的。当遇到无法独立解决的问题时，及时、高质量地申请人工介入，
+比死磕更高效。本节定义异常的诊断流程、人工介入的触发条件和交接标准。
+
+### 8.1 人工介入触发条件
+
+满足以下任一条件时，AI Agent **必须主动停止尝试并申请人工介入**：
+
+| 优先级 | 触发条件 | 示例 |
+|--------|---------|------|
+| 🔴 P0 | 连续 3+ 次修复尝试均失败（AI 应在 3 次失败后停止并申请介入） | 编译报错 3 次未解决 |
+| 🔴 P0 | 报错原因指向 AI 无法访问的封闭代码/环境 | 第三方闭源 DLL 崩溃、硬件驱动问题 |
+| 🔴 P1 | 问题涉及需要人工确认的设计决策 | 架构变更、API 兼容性取舍 |
+| 🟡 P2 | 错误信息不完整，无法确定根因 | 内存损坏（Access Violation 无调用栈） |
+| 🟡 P2 | 需要访问外部受限资源 | 企业内部 Git、VPN 环境、License 服务器 |
+| 🟢 P3 | 问题本身很简单但 AI 验证环境不匹配 | 用户本机特有的注册表状态、DLL 版本差异 |
+
+> **例外**：如果失败原因是 AI 编码错误（如明显逻辑 bug、缺少引用单元），
+> 不属于人工介入范畴，应继续修复。
+
+### 8.2 异常诊断标准流程
+
+遇到异常时，按以下步骤收集信息，**每一步完成后才进入下一步**：
+
+```
+步骤 1: 捕获现场快照
+        ├─ 完整的异常类型和异常消息
+        ├─ 完整调用栈（逐帧记录，不截断）
+        ├─ 异常发生时关键变量的值
+        └─ 操作系统/编译器版本等环境信息
+
+步骤 2: 分析根因
+        ├─ 定位异常发生的源码行
+        ├─ 检查该行涉及的所有变量/参数状态
+        ├─ 追溯异常的上游调用链
+        └─ 判断是代码缺陷还是环境问题
+
+步骤 3: 制定修复方案
+        ├─ 明确修复方案（修改哪些文件、改什么）
+        ├─ 评估影响范围
+        └─ 如果是环境问题 → 跳转 8.1 申请人工介入
+
+步骤 4: 执行修复 + 验证
+        └─ 修复后必须通过编译 + 验证，确认异常消除
+```
+
+### 8.3 异常的完整信息采集
+
+当异常发生时，按以下模板记录：
+
+```python
+# Python 异常采集模板
+import traceback, sys
+
+def capture_exception_context(exc: Exception, locals_dict: dict = None) -> dict:
+    """采集异常现场信息"""
+    exc_type, exc_value, exc_tb = sys.exc_info()
+    return {
+        "exc_type": type(exc).__name__,
+        "exc_message": str(exc),
+        "traceback": traceback.format_exc(),           # 完整调用栈
+        "frames": [
+            {
+                "file": frame.f_code.co_filename,
+                "line": frame.f_lineno,
+                "function": frame.f_code.co_name,
+                "code": frame.f_code.co_code,
+                "locals": {k: repr(v) for k, v in frame.f_locals.items()}
+            }
+            for frame in traceback.extract_tb(exc_tb)
+        ],
+        "exception_args": getattr(exc, "args", []),
+    }
+```
+
+Delphi 异常采集比 Python 复杂得多——运行时无法直接获取符号化调用栈。
+因此推荐以下两种实用方案（**二选一即可，不需要在代码中手动采集**）：
+
+---
+
+**方案 A：AI 引导用户在 IDE 中重现（推荐，零依赖）**
+
+AI 无法直接接触 Delphi IDE 调试器，但可以引导用户操作：
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ AI → 用户引导清单                                              │
+│                                                                │
+│ ① 准备工作                                                   │
+│    "在 Delphi IDE 中打开项目文件 {项目名}.dproj"               │
+│    "确认当前配置为 Debug（Project → Build Configuration → Debug）"│
+│    "Release 模式下无调试符号，无法设断点和查看变量"             │
+│    "在 Project Manager 中找到 {文件名}.pas，双击打开"          │
+│                                                                │
+│ ② 定位问题点                                                  │
+│    "在 {函数名} 的第一行左侧点击设断点（或 F5）"              │
+│    "在 {可疑变量名} 上右键 → Add Watch"                        │
+│                                                                │
+│ ③ 触发异常                                                   │
+│    "按 F9 运行程序，复现 {操作步骤}"                            │
+│    "等断点命中后，单步跟踪（F7/F8）直到 {关键行}"              │
+│                                                                │
+│ ④ 收集信息报给 AI                                            │
+│    用户报告以下内容即可：                                      │
+│    - **出错文件**：{单元名}.pas，第 XXX 行                     │
+│    - **异常消息**：IDE 弹出的异常对话框内容                    │
+│    - **调用栈**：IDE 的 Call Stack 窗口（Ctrl+Alt+S），全选后 Ctrl+C 复制粘贴给 AI │
+│    - **关键变量**：Watch 窗口中显示的变量值                    │
+│                                                                │
+│ ⑤ 修复验证                                                   │
+│    AI 根据信息给出修复代码，用户应用后重新编译运行             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+> **适用场景**：偶发异常、逻辑错误、需要在调试器中观察变量状态的场景。
+> **成本**：需要用户手动操作，但信息最准确。
+> **注意**：必须使用 **Debug 配置**编译（生成完整调试符号），Release 配置下无法设断点、调用栈不完整、变量值为空。
+
+---
+
+**方案 B：接入异常跟踪工具（适合生产环境）**
+
+| 工具 | 来源 | 特点 |
+|------|------|------|
+| **StackTrace.pas** | **项目公共库** (`../common/`) | 自研方案：VEH 异常钩子 + MAPDATA 符号解析 + 局部变量值快照 + 日志输出 |
+| **madExcept** | 第三方商业 | 黄金标准，捕获完整调用栈+源码行号，自动写日志/发邮件 |
+| **JclDebug** (JEDI) | 第三方开源 | JCL 一部分，编译时嵌入 map 文件符号 |
+| **EurekaLog** | 第三方商业 | 功能强大，支持远程上报 |
+
+**推荐优先使用 StackTrace.pas（项目公共库自带）**：
+
+```delphi
+// 在项目引入 StackTrace.pas（位于 ../common/ 目录）
+// 只需在工程入口处调用 EnableDefaultLogger
+uses
+  StackTrace;
+
+initialization
+  // 一行启用：挂载 VEH 异常钩子 + 从资源加载 MAPDATA 符号表
+  TStackTraceManager.Current.EnableDefaultLogger;
+  TStackTraceManager.Current.CaptureVariables := True;  // 同时捕获局部变量值
+end.
+```
+
+启用后效果：
+- 程序异常时自动生成日志文件（含完整符号化调用栈 + 源码行号 + 局部变量值）
+- AI 直接读取日志文件即可分析根因，无需用户手动操作
+ - MAPDATA 通过 `.map` 文件嵌入到 EXE 资源中，无外部依赖
+ - **局部变量捕获需额外运行 `daudit --embed`** 命令，将符号表 + 局部变量元数据嵌入 EXE 资源后才能生效
+
+```delphi
+// 如需在 except 块中手动触发：
+uses
+  StackTrace;
+
+var
+  Context: TExceptionContext;
+begin
+  try
+    // 可能出错的代码
+  except
+    on E: Exception do
+    begin
+      Context := TStackTraceManager.BuildExceptionContext(E, nil);
+      // 写入日志文件供 AI 分析
+      WriteExceptionLog(Context);
+    end;
+  end;
+end;
+```
+
+> **适用场景**：生产环境部署、需要自动抓取 Crashes、无法复现的偶发异常。
+> **注意事项**：编译时需生成 `.map` 文件（`Project → Options → Linking → Map file = Detailed`），
+> 首次运行会自动将 map 符号嵌入 EXE 资源。madExcept 和 EurekaLog 需单独安装。
+
+### 8.4 人工介入交接清单
+
+申请人工介入时，必须提供以下信息（**缺一不可**）：
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                   人工介入申请书                             │
+├────────────────────────────────────────────────────────────┤
+│ [一] 问题摘要                                               │
+│   一句话描述问题                                           │
+│                                                             │
+│ [二] 已尝试的方案（逐条列出）                                │
+│   ① 尝试了什么 → 结果如何 → 为什么失败                      │
+│   ② ...                                                     │
+│   ③ ...                                                     │
+│                                                             │
+│ [三] 异常现场（见 8.3 模板）                                 │
+│   ├─ 完整异常消息 + 调用栈                                  │
+│   ├─ 关键变量的值                                          │
+│   └─ 复现步骤（从启动到异常的最简路径）                     │
+│                                                             │
+│ [四] 环境信息                                               │
+│   ├─ Daofy 版本、Python 版本、操作系统版本                  │
+│   ├─ Delphi 编译器版本                                      │
+│   ├─ 项目类型（VCL/FMX/Console）和关键配置                  │
+│   └─ 最近变更（与问题相关的代码/配置改动）                  │
+│                                                             │
+│ [五] 预期结果                                                │
+│   你希望人工帮你做什么                                      │
+│   例如: "请确认这个 DLL 导出函数签名是否正确"               │
+│         "请提供 XXX 组件的授权文件"                         │
+│                                                             │
+│ [六] 最小复现示例（MRE）                                     │
+│   如果能剥离出最小独立复现用例，附上代码                    │
+└────────────────────────────────────────────────────────────┘
+```
+
+### 8.5 协同工作流
+
+```
+  AI Agent                        人工（开发者）
+     │                                 │
+     │─── 独立尝试解决问题 ──────────→  │  （P0/P1 问题自动触发）
+     │    3次失败后                    │
+     │                                 │
+     │─── 提交介入申请书 ────────────→  │
+     │    (按 8.4 清单)                │
+     │                                 │
+     │←── 人工响应 ──────────────────── │
+     │    (定位根因 / 提供信息 /       │
+     │     授权访问 / 修正设计)         │
+     │                                 │
+     │─── 根据人工反馈继续修复 ──────→  │
+     │    完成后验证                   │
+     │                                 │
+     │←── 验收确认 ──────────────────── │
+     │    (通过/需要调整)              │
+     │                                 │
+```
+
+**关键规则**：
+
+1. **AI 必须主动申请介入** — 不要死磕，3 次失败后立即触发。浪费时间比"显得无能"更糟糕。
+2. **介入申请必须完整** — 缺少 8.4 清单中任何一项，人工可以要求补充后再处理。
+3. **人工响应后 AI 继续跟进** — 人工提供了信息/方案后，AI 负责继续执行修复并验证。
+4. **经验沉淀** — 问题解决后，使用 `experience(action="save")` 将解决过程保存为经验，
+   下次同类问题 AI 可自行解决，无需再申请人工介入。
+5. **介入后更新规则** — 如果人工介入揭示了编码规范/流程中的盲区，更新
+   CODING_RULES.mdc，避免同类问题重复介入。
+
+### 8.6 MCP 工具的异常处理约定
+
+| 层级 | 异常处理方式 |
+|------|-------------|
+| `tools/*.py` handler | 捕获具体异常，返回 `{"error": "..."}` + 附带 `exc_info=True` 日志；不抛出 |
+| `server.py call_tool` | 顶层兜底捕获所有异常，格式化为 `CallToolResult(isError=True)` 返回；禁止裸抛 |
+| `services/*.py` | 业务异常使用自定义异常类，保留完整调用链；记录日志但**不吞异常** |
+| `utils/*.py` | 工具函数内部通常不捕获，让上层统一处理 |
+
+> AI 多次失败后应停止尝试并按 8.1 申请人工介入，不可继续死磕。
+
+---
+
+## ⑨ 经验保存 — 将知识沉淀到经验知识库
+
+### 概述
+
+`experience` 工具将 AI Agent 解决问题的有效方法持久化到 Daofy 的经验知识库中，
+下次遇到同类问题时 AI 可直接复用，无需重新探索或请求人工介入。
+
+经验库基于语义向量检索，支持自动去重（相似度 > 0.85 时合并到旧记录）。
+
+### 9.1 哪些场景必须保存经验
+
+| 场景 | 说明 | 优先级 |
+|------|------|--------|
+| 人工介入解决后 | 见 8.5 关键规则④，问题解决后立即保存 | 🔴 必须 |
+| 非显而易见的 Bug 修复 | 根因不直观、排查过程曲折的修复 | 🔴 必须 |
+| 编译器/工具链兼容问题 | 特定 Delphi 版本、第三方库的特殊处理 | 🟡 推荐 |
+| 不常见的 API 用法 | 官方文档未覆盖的边缘用法、参数组合 | 🟡 推荐 |
+| 新的编码规则触发 | 导致新增规则的问题，同时保存经验和规则 | 🟡 推荐 |
+
+### 9.2 保存流程（搜索 → 泛化 → 保存）
+
+```
+步骤 ① 搜索是否已有同类经验
+        └─ experience(action="search", query="...", tags=...)
+        结果: 已有 → 跳到步骤 ③ 合并/更新
+              无   → 跳到步骤 ②
+
+步骤 ② 泛化问题描述
+        └─ 抽象出通用场景，而非具体文件名/变量名
+        正例: "MSBuild 编译时 UI 项目报 EAccessViolation，因 dproj 中 CFG 条件为空"
+        反例: "Project1.dproj 编译报错，第 42 行"
+
+步骤 ③ 保存/合并
+        └─ 无重复 → experience(action="save", problem=..., solution=..., tags=...)
+        已有重复 → experience(action="update", id=..., ...)
+        多条相关 → experience(action="merge", ids=[...], ...)
+
+步骤 ④ 验证
+        └─ experience(action="search", query="...") 确认能语义召回
+```
+
+### 9.3 保存示例
+
+```python
+# 保存经验
+experience(
+    action="save",
+    problem="MSBuild 编译 UI 项目中途失败，退出码非零，因 dproj 配置条件为空字符串导致 DCC_Define 无效",
+    solution="""1. 检查 dproj 中 <PropertyGroup Condition="'$(CFG)'!=''"> 是否匹配实际配置名称
+2. 确保条件字符串非空，如 Condition="'$(CFG)'=='Debug|Win32'"
+3. 清理 .dcu 缓存后重编译""",
+    tags=["编译", "MSBuild", "dproj", "CFG条件"],
+)
+
+# 搜索已有经验
+experience(
+    action="search",
+    query="MSBuild 编译失败 DCC_Define 条件",
+    tags=["编译"],
+)
+
+# 合并多条同类经验为一条抽象经验
+experience(
+    action="merge",
+    ids=["exp_id_1", "exp_id_2"],
+)
+
+# 清理低价值经验
+experience(
+    action="prune",
+    limit=20,  # 列出 20 条最低价值经验
+)
+```
+
+### 9.4 经验质量规范
+
+| 维度 | 要求 | 反例 |
+|------|------|------|
+| **problem** | 概括通用场景，含关键触发条件 | `Form1 报错`（过于具体） |
+| **solution** | 步骤化，可复现，含命令/代码 | `改一下配置就行`（模糊） |
+| **tags** | 3~5 个标签，覆盖不同搜索角度 | `["bug"]`（太宽泛） |
+| **泛化** | 剥离项目/文件级具体名称 | 用 `{项目名}` 替代 `Project1.dproj` |
+
+### 9.5 定期维护
+
+- **prune**：每月用 `experience(action="prune")` 列出低价值条目（低 hit_count、长期未更新），检查后删除
+- **merge**：发现多条经验描述同一类问题时，手动合并为一条抽象经验，`tags` 覆盖各类场景
+- **规则联动**：经验被反复 hit 3 次以上的问题，应考虑升级为 CODING_RULES 中的正式规则
+
+> 经验库会自动去重（相似度 >0.85 合并到旧记录），定期用 `prune` 清理低价值条目。
+
+---
 
 ## 规则维护
 修复 bug 后总结为规则加到项目规则文件。添加前检查是否已有相同规则。修改后更新顶部日期版本号。

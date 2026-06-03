@@ -84,6 +84,7 @@ async def _read_content(
     search_in: str = "all",
     project_path: Optional[str] = None,
     end_line: Optional[int] = None,
+    show_line_numbers: bool = False,
 ) -> Dict[str, Any]:
     """
     读取文件内容的内部实现。
@@ -94,6 +95,9 @@ async def _read_content(
     start_line/end_line 为 0-indexed 左闭右开区间：
       - start_line=0 表示从文件第 1 行开始
       - end_line 不传时等价于「读到 limit 行为止」
+
+    show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     1: unit Unit1;"），
+                       行号为 1-based 绝对行号。
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
@@ -139,6 +143,16 @@ async def _read_content(
                     total_lines = None  # 被 target_end 截断，未知实际总行数
 
                 text = ''.join(selected)
+
+                # show_line_numbers: 为每行添加 1-based 绝对行号前缀
+                if show_line_numbers and selected:
+                    line_offset = max(start_line, 0)  # 0-indexed start
+                    numbered_lines = []
+                    for i, line in enumerate(selected):
+                        abs_lineno = line_offset + i + 1  # 1-based 绝对行号
+                        numbered_lines.append(f"{abs_lineno:>6}: {line}")
+                    text = ''.join(numbered_lines)
+
                 if not text.endswith('\n'):
                     text += '\n'
 
@@ -151,11 +165,12 @@ async def _read_content(
                 else:
                     total_display = f"至少 {target_end} 行"
 
+                range_suffix = "（带行号）" if show_line_numbers else ""
                 summary = (
                     f"文件: {base_name}\n"
                     f"完整路径: {os.path.abspath(file_path)}\n"
                     f"总行数: {total_display}\n"
-                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行 (0-indexed, [start, end))\n"
+                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行 (0-indexed, [start, end)){range_suffix}\n"
                     f"编码: {enc}\n"
                     f"============================================================\n\n"
                 )
@@ -241,6 +256,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
         limit = min(arguments.get("limit", 500), 1000)
     search_in = arguments.get("search_in", "all")
     project_path = arguments.get("project_path")
+    show_line_numbers = arguments.get("show_line_numbers", False)
 
     # --- 搜索模式 ---
     if search_type != "path":
@@ -294,6 +310,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             search_in=search_in,
             project_path=project_path,
             end_line=end_line,
+            show_line_numbers=show_line_numbers,
         )
     finally:
         if tmp_cleanup:
@@ -355,6 +372,7 @@ async def _handle_partial_write(
             lines = f.readlines()
 
         total = len(lines)
+        original_total = total  # 保存写入前的行数，用于 auto_format 后重新校正偏移量
 
         # 左闭右开 [start_line, end_line) → Python 切片
         # s = 0-indexed inclusive start = start_line
@@ -464,8 +482,25 @@ async def _handle_partial_write(
         removed = e - s
         inserted = content.count('\n') if content else 0
         offset = inserted - removed
+
+        # auto_format 可能额外改变行数（展开 uses、调整空行等），重新读取文件计算真实偏移
+        fmt_adjustment = ""
+        if auto_format and os.path.isfile(file_path):
+            try:
+                with open(file_path, 'r', encoding=enc, newline='',
+                          buffering=1048576) as f:
+                    new_total = sum(1 for _ in f)
+                if new_total != original_total:
+                    real_offset = new_total - original_total
+                    fmt_change = real_offset - offset
+                    offset = real_offset
+                    inserted += fmt_change
+                    fmt_adjustment = f"（含格式化调整{fmt_change:+d}行）"
+            except Exception as ex:
+                logger.debug(f"auto_format 后重读行数失败: {ex}")
+
         offset_note = (
-            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行）"
+            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行{fmt_adjustment}）"
             if offset != 0
             else f"偏移量: 0（行数未变）"
         )
@@ -701,6 +736,16 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 dry_run=True,
             )
         else:
+            # 记录格式化前行数，用于计算偏移量
+            before_lines = 0
+            if os.path.isfile(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8', newline='',
+                              buffering=1048576) as f:
+                        before_lines = sum(1 for _ in f)
+                except OSError:
+                    pass
+
             result = await pasfmt.format_file(
                 file_path=file_path,
                 config_path=arguments.get("config_path"),
@@ -708,6 +753,23 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 in_place=True,
                 uses_style=uses_style,
             )
+
+            # 格式化成功且文件存在时，计算行数变化并附加到返回消息
+            if result.get("status") == "success" and result.get("formatted") and os.path.isfile(file_path):
+                try:
+                    with open(file_path, 'r', encoding='utf-8', newline='',
+                              buffering=1048576) as f:
+                        after_lines = sum(1 for _ in f)
+                    offset = after_lines - before_lines
+                    if offset != 0:
+                        offset_info = (
+                            f"\n偏移量: {offset:+d}（格式化后行数变化）\n"
+                            f"后续编辑: 行号 ≥ 0 的新行号 = 原行号 + {offset}"
+                        )
+                        if isinstance(result.get("message"), str):
+                            result["message"] += offset_info
+                except OSError:
+                    pass
 
     # pasfmt.format_file / format_code 结果已统一为 dict
     return result

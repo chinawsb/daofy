@@ -186,6 +186,9 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             isError=True
         )
 
+    # 取出 MCP 推送回调（由 server.py 注入）
+    on_complete = arguments.pop('_on_complete', None)
+
     try:
         # 创建进度回调
         def progress_callback(progress, message):
@@ -220,6 +223,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             func=task_func,
             progress_callback=progress_callback if show_progress else None,
             dedup_key=dedup_key,
+            on_complete=on_complete,
             **params
         )
 

@@ -43,56 +43,28 @@ src/
 
 ### 编辑 Delphi 文件前
 
-```
-① check_environment(action="check")       → 确认编译器
-② get_coding_rules(project_path=...)       → 获取编码规则
-③ delphi_kb(query=...)                     → 搜索 API 定义（下面详述）
-④ delphi_file(action="read", file_path=...)  → 读源码（确认修改点）
-⑤ delphi_file(action="write", content=...)   → 写代码（默认自动备份到 __history）
-⑥ delphi_file(action="format", file_path=...) → 格式化
-⑦ project(action="compile", project_path=...)         → 编译验证
-⑧ project(action="compile", ..., run_verify=True)      → 运行验证 3 秒（GUI 程序，捕获运行时崩溃如 FireDAC.DApt 缺失）
-⑨ project(action="runtime", base_dir=...)              → 运行时注册检查（源码级分析，无需 daudit）
-```
+> ⚠️ **工具调用规则**：以下每一步都使用对应的 **MCP 工具名** 调用。每个工具名即是你在 `list_tools()` 中看到的工具名称。如果工具未出现在列表，刷新 MCP 连接。
 
-> **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
-> **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）
+| 步骤 | 调用的 MCP 工具 | 说明 |
+|------|----------------|------|
+| ① 环境检查 | `check_environment(action="check")` | 确认编译器可用 |
+| ② 编码规则 | `get_coding_rules(project_path=...)` | 获取项目编码规范 |
+| ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `config/CODING_RULES.mdc` ② 节） |
+| ④ 读源码 | `delphi_file(action="read", file_path=...)` | 读取文件确认修改点 |
+| ⑤ 写代码 | `delphi_file(action="write", content=...)` | 写入代码（自动备份到 __history） |
+| ⑥ 格式化 | `delphi_file(action="format", file_path=...)` | pasfmt 格式化代码 |
+| **⑦ 编译验证** | **`project(action="compile", project_path=...)`** | **编译 `.dproj`/`.dpr`/`.dpk` 项目** |
+| **⑧ 运行验证** | **`project(action="compile", ..., run_verify=True)`** | **编译后启动 exe 运行 3 秒，检测运行时崩溃** |
+| **⑨ 运行时检查** | **`project(action="runtime", base_dir=...)`** | **扫描组件类名，检测遗漏 uses 单元** |
 
-### 知识库搜索（先猜精确名，再模糊搜）
+> **⚠️ 强制规则**：步骤 ⑦⑧⑨ **必须**使用 `project` 工具。`project_compile` 已合并到 `project(action="compile")`，不存在独立的 `project_compile` 工具。禁止用 bash 直接执行 dcc32/msbuild。
 
-| 优先级 | 方式 | 示例 |
-|--------|------|------|
-| 1 | 猜精确类名 → `search_by_name` | `TStringList` |
-| 2 | 猜函数名 → `search_type="function"` | `Create` |
-| 3 | 多关键字尝试 | `TJSONObject`→`TJsonSerializer` |
-| 4 | `search_type="reference"` 查引用 | 评估修改影响 |
-| 5 | `search_type="semantic"` 兜底 | 中文需求 |
+各步骤补充说明：
 
-**`project_path` 规则**：`kb_type="project"` 时必须传；`kb_type="all"` 时可选（不传则只搜 delphi+thirdparty）；`delphi`/`thirdparty`/`document` 不需要。
+- **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
+- **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）。独立于编译步骤，纯源码级分析。
 
-**典型错误**：`delphi_kb(query="帮我找分割函数", search_type="semantic")` → 应改为 `delphi_kb(query="Split", search_type="function")`。
-
-**搜索**：单元名（如 `System.DateUtils`）自动回退到文件路径匹配；`search_type="function"` 同时匹配 FF+FP。
-
-```
-需要写代码
-  → 引用已有类型/函数? → 猜类名/函数名 → delphi_kb 精确搜索 → 看定义/继承链 → 生成代码
-  → 否则 → 直接生成代码
-  → project(action="compile") 验证
-```
-
-### 知识库范围
-
-| kb_type | 目标 | project_path |
-|---------|------|-------------|
-| `project` | 项目自有代码 | **必须传** |
-| `delphi` | VCL/FMX/RTL 官方 | 不需要 |
-| `thirdparty` | 三方组件 | 不需要 |
-| `document` | Delphi 帮助文档 | 不需要 |
-
-### Entity Kind Codes
-
-`TC`=class `TR`=record `TI`=interface `TE`=enum `TS`=set `TY`=type alias `FF`=function `FP`=procedure `CC`=const `CR`=resourcestring `KS`=string literal `TH`=helper
+> 详细 KB 搜索策略、优先级规则、kb_type 范围、Entity Kind Codes 见 `config/CODING_RULES.mdc` ② 节。
 
 ## Code Style (Python)
 
@@ -105,18 +77,7 @@ src/
 
 ## Agent 操作硬规则
 
-### 脚本执行
-- ❌ 绝不用 `python -c "..."`（PowerShell 引号转义必炸）
-- ✅ 始终用 `write` 创建 `.py` 文件 → `bash` 执行 `python script.py` → `Remove-Item script.py` 清理
-
-### 字符串格式化
-- ❌ f-string 内嵌字典 `f'{d["key"]}'`（引号冲突）
-- ✅ 用 `.format()` 或 `%`
-
-### Python 陷阱
-- **不要在函数内局部 `import`**：函数内任何地方出现 `from X import Y` 会使 `Y` 在整个函数作用域成为局部变量。放在头部的引用也会 `UnboundLocalError`。始终写在模块顶部。
-- **`if x:` vs `if x is not None:`**：0、`""`、`[]` 都是 False。数字可选参数用 `Optional[int]` 并用 `is not None` 判断。
-- **`$()` 宏展开**：注册表变量键名（`SKIADIR`）不含 `$()` 前缀，加入 `macros` 字典时必须 `macros[f'$({k})'] = v`。用 `update(dict)` 会导致 `str.replace('SKIADIR', ...)` 错误匹配 `$(SKIADIR)` → 路径残缺。
+> 脚本执行、字符串格式化、Python 陷阱等通用规则见 `config/CODING_RULES.mdc`「Agent 操作硬规则」。
 
 ### 多进程 Worker
 - **Worker 内部禁用 `print()`**：MCP 环境下 stdout 是 JSON-RPC 通信管道，worker print 破坏协议边界，构建从 8s 飙到 172s
@@ -385,6 +346,8 @@ lsp_diagnostics / lsp_symbols               → 类型检查和符号分析
 pytest                                      → 审计后运行测试验证
 ```
 
+> `project` 工具是编译/审计/运行时检查的统一入口，无独立的 `project_compile`。**步骤 ⑦⑧⑨ 必须使用 `project` 工具**，不得用 bash 直接执行 dcc32/msbuild。
+
 ## 发布打包流程
 
 ### 创建 Release 包
@@ -402,7 +365,8 @@ git ls-files | Where-Object {
     $_ -notmatch '^\.coverage$' -and
     $_ -notmatch '^config/history\.json$' -and
     $_ -notmatch '^src/config/compilers\.json$' -and
-    $_ -notmatch '^\.gitignore$'
+    $_ -notmatch '^\.gitignore$' -and
+    $_ -notmatch '^tools/daudit/'
 } | ForEach-Object {
     $target = Join-Path "$out" "$_"
     $dir = Split-Path $target -Parent
@@ -418,6 +382,8 @@ Remove-Item "$out" -Recurse -Force
 ```
 
 **自动包含**：`tools/pasfmt/cli/pasfmt.exe` 等工具文件由 `git ls-files` 自动纳入（已在版本控制中），无需手动处理。
+
+**排除项**：`tools/daudit/` 下的文件（含 `StackTrace.pas`）属于商业付费部分，不包含在 Release 包中。
 
 ### 发布步骤
 

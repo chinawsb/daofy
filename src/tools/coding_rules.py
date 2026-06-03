@@ -27,6 +27,8 @@ SECTION_KEYS: Dict[str, str] = {
     "review_detail": "审核",
     "kb_build": "知识库重建",
     "agent_rules": "Agent 操作硬规则",
+    "human_collab": "⑧ 人机协同 — 异常诊断与人工介入",
+    "experience": "⑨ 经验保存 — 将知识沉淀到经验知识库",
     "maintenance": "规则维护",
     # 审核子章节（### 级别）
     "consistency": "一致性",
@@ -156,7 +158,7 @@ def _list_available_sections(content: str) -> str:
     lines_out.append("  基础流程: workflow, env, kb_search, writing, format, compile, review_guide, cleanup")
     lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak, delphi_specific,")
     lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
-    lines_out.append("  其他:     review_detail, kb_build, agent_rules, maintenance")
+    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance")
     lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+编译)")
     lines_out.append("")
     lines_out.append("不传 section 则返回全部内容（向后兼容）。")
@@ -303,12 +305,14 @@ async def get_coding_rules(
             "| `section=\"cleanup\"` | ⑦ 清理 | 最终清理 |",
             "| `section=\"safety\"` | 安全规则 | 涉及安全敏感操作时 |",
             "| `section=\"performance\"` | 性能规则 | 性能敏感路径 |",
-            "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
-            "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
-            "| `section=\"coding\"` | 组合：writing + format + compile | 完整编码流程 |",
-            "",
-            "也可获取细分章节：consistency, completeness, resource_leak, delphi_specific,",
-            "common_errors, code_quality, data_conversion, safety, performance, maintenance",
+             "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
+             "| `section=\"human_collab\"` | ⑧ 人机协同 — 异常诊断与人工介入 | 异常诊断或需要人工介入时 |",
+             "| `section=\"experience\"` | ⑨ 经验保存 — 知识沉淀到经验库 | 问题解决后保存经验时 |",
+             "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
+             "| `section=\"coding\"` | 组合：writing + format + compile | 完整编码流程 |",
+             "",
+             "也可获取细分章节：consistency, completeness, resource_leak, delphi_specific,",
+             "common_errors, code_quality, data_conversion, safety, performance, human_collab, experience, maintenance",
             "",
             "使用示例：",
             "```python",

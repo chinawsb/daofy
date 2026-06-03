@@ -13,14 +13,8 @@
       "is_default": false,
       "version": "Delphi 13 Florence",
       "registry_version": "37.0"
-    },
-    {
-      "name": "Delphi 13 Florence Linux64",
-      "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\37.0\\bin\\dcclinux64.exe",
-      "is_default": false,
-      "version": "Delphi 13 Florence",
-      "registry_version": "37.0"
     }
   ],
-  "default_compiler": "Delphi 13 Florence Win32"
+  "default_compiler": "Delphi 13 Florence Win32",
+  "show_timing": false
 }
