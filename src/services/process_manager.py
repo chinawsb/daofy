@@ -131,7 +131,10 @@ class ProcessManager:
         """
         try:
             logger.warning(f"终止进程 PID: {process.pid}")
-            process.kill()
+            # kill() 在 AsyncMock 中可能返回协程，兼容两种场景
+            _r = process.kill()
+            if asyncio.iscoroutine(_r):
+                await _r
             await process.wait()
             logger.info(f"进程已终止")
         except ProcessLookupError:
