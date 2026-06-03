@@ -85,6 +85,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
     elif task_type == "init_project_knowledge_base":
         from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+        import shutil
+        import time as _time_mod
 
         def init_project_task(**kwargs):
             project_path = kwargs.get("project_path")
@@ -93,9 +95,61 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
             project_kb = ProjectKnowledgeBase(project_path, progress_callback)
 
+            # ── 热切换：重建时构建到临时目录，旧 KB 仍可查 ──
+            old_kb_dir = project_kb.kb_dir
+            has_old_kb = old_kb_dir.exists() and any(old_kb_dir.iterdir())
+            use_temp_build = rebuild and has_old_kb
+            temp_dir = None
+
+            if use_temp_build:
+                # 用时间戳创建临时目录名，避免冲突
+                temp_suffix = f"-tmp-{int(_time_mod.time())}"
+                temp_dir = old_kb_dir.parent / f".delphi-kb{temp_suffix}"
+                # 临时用 kb_dir 指向 temp，构建到临时目录
+                project_kb.kb_dir = temp_dir
+                logger.info(
+                    "重建项目 KB 到临时目录: %s （旧 KB 位于 %s，仍可查）",
+                    temp_dir, old_kb_dir,
+                )
+
             results = {}
-            results["project"] = project_kb.build_project_knowledge_base(
-                rebuild=rebuild)
+            try:
+                _t0 = _time_mod.monotonic()
+                success = project_kb.build_project_knowledge_base(
+                    rebuild=rebuild)
+                _elapsed = _time_mod.monotonic() - _t0
+                logger.info(
+                    "项目 KB 构建%s: %s (%.1f 秒, %s)",
+                    "完成" if success else "失败",
+                    project_path,
+                    _elapsed,
+                    "全量" if rebuild else "增量",
+                )
+                results["project"] = success
+
+                # 构建成功 + 使用了临时目录 → 执行热切换
+                if use_temp_build and success:
+                    project_kb.close()
+                    # 删除旧 KB
+                    shutil.rmtree(old_kb_dir, ignore_errors=True)
+                    # 临时目录 → 正式目录
+                    shutil.move(str(temp_dir), str(old_kb_dir))
+                    # 清缓存，下次搜索走新实例
+                    from ..tools.knowledge_base import _clear_pkb_cache
+                    _clear_pkb_cache(project_path)
+                    logger.info("项目 KB 热切换完成: %s → %s", temp_dir, old_kb_dir)
+                elif use_temp_build and not success:
+                    # 构建失败：删除临时目录，旧 KB 保持不变
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    project_kb.kb_dir = old_kb_dir  # 恢复指针
+                    logger.warning("项目 KB 重建失败，已保留旧 KB: %s", old_kb_dir)
+
+            except Exception:
+                # 异常时也清理临时目录
+                if use_temp_build and temp_dir and temp_dir.exists():
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    project_kb.kb_dir = old_kb_dir
+                raise
 
             stats = project_kb.get_statistics()
             results["statistics"] = stats

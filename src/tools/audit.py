@@ -197,43 +197,6 @@ def _extract_json(text: str) -> Optional[str]:
     return None
 
 
-def _call_daudit(paths: List[str], recursive: bool = False) -> Optional[Dict]:
-    """调用 daudit.exe --mode audit 执行代码审计
-
-    实际 CLI: daudit --mode audit --format json [--recursive] <path(s)>
-
-    Args:
-        paths: 文件或目录路径列表
-        recursive: 是否递归扫描目录
-
-    Returns:
-        JSON 结果 dict ({findings, totalFindings})，或 None
-    """
-    daudit = _find_daudit()
-    if not daudit:
-        return None
-
-    cmd = [daudit, "--mode", "audit", "--format", "agent"]
-    if recursive:
-        cmd.append("--recursive")
-    cmd.extend(paths)
-
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=300,
-            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-        )
-        if result.returncode in (0, 1) and result.stdout.strip():
-            json_str = _extract_json(result.stdout)
-            if json_str:
-                return json.loads(json_str)
-        logger.warning("daudit 审计异常 (exit=%d): %s", result.returncode, result.stderr[:200])
-    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-        logger.error("daudit 审计调用失败: %s", e)
-
-    return None
-
-
 # ── 严重级别排序（映射 daudit 实际 severity → 显示级别）──
 _DAUDIT_SEVERITY_MAP = {
     "error": "critical",

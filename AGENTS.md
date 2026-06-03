@@ -7,6 +7,8 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 | Action | Command |
 |--------|---------|
 | Install deps | `pip install -r requirements.txt && pip install -e ".[dev]"` |
+| Install file watcher | `pip install daofy-for-delphi[watcher]` (可选，自动增量 KB) |
+| Install embedding | `pip install daofy-for-delphi[embedding]` (可选，语义搜索) |
 | Run all tests | `pytest` (or `python tests/run_all_tests.py` for basic) |
 | Run one test | `pytest tests/test_validator.py -v` |
 | Lint/type | `mypy src/` |
@@ -25,6 +27,19 @@ src/
 ├── models/                # Pydantic/dataclass models
 └── utils/                 # Utilities (delphi_env, dproj_parser, validator, logger)
 ```
+
+## 知识库自动生命周期
+
+项目知识库（`.delphi-kb/`）有以下自动化机制：
+
+| 机制 | 触发时机 | 说明 |
+|------|---------|------|
+| **启动时自动构建** | MCP Server 启动 | 自动检测 CWD 下的 `.dproj`，提交后台增量 KB 构建（不阻塞 MCP 就绪） |
+| **热切换重建** | 用户手动 rebuild | 构建到临时目录 `.delphi-kb-tmp-{ts}/`，旧 KB 在构建期间保持可查，构建完成原子 swap |
+| **文件变更监听** | 用户保存 `.pas/.dfm/.dproj` 等 | 需要 `pip install daofy-for-delphi[watcher]`，3秒去抖后自动触发增量更新 |
+
+**文件变更监听依赖**: `watchdog` 可选包，未安装时静默降级，不影响其他功能。
+**查看服务器状态**: MCP 资源 `delphi://health` 返回版本号、运行时长、监听器状态。
 
 ## 工具使用规则
 

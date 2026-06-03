@@ -495,59 +495,6 @@ class TestRunSkeleton:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _call_daudit
-# ═══════════════════════════════════════════════════════════════
-
-class TestCallDaudit:
-    """Tests for _call_daudit() — legacy agent format mode."""
-
-    def test_calls_with_agent_format(self, mock_daudit_found):
-        """Should use --mode agent --format agent."""
-        with patch("src.tools.audit.subprocess.run") as mock:
-            proc = MagicMock()
-            proc.returncode = 0
-            proc.stdout = SAMPLE_MIXED_OUTPUT
-            proc.stderr = ""
-            mock.return_value = proc
-
-            from src.tools.audit import _call_daudit
-            result = _call_daudit(["Src"])
-            assert result is not None
-
-            cmd = mock.call_args[0][0]
-            assert "--mode" in cmd
-            assert "agent" in cmd
-            assert "--format" in cmd
-
-    def test_agent_format_accepts_rc_0_and_1(self, mock_daudit_found):
-        """Both return codes 0 and 1 should be accepted in agent mode."""
-        for rc in [0, 1]:
-            with patch("src.tools.audit.subprocess.run") as mock:
-                proc = MagicMock()
-                proc.returncode = rc
-                proc.stdout = SAMPLE_MIXED_OUTPUT
-                proc.stderr = ""
-                mock.return_value = proc
-
-                from src.tools.audit import _call_daudit
-                result = _call_daudit(["Src"])
-                assert result is not None, f"Failed on return code {rc}"
-
-    def test_no_json_in_output_returns_none(self, mock_daudit_found):
-        """If no JSON found in stdout, should return None."""
-        with patch("src.tools.audit.subprocess.run") as mock:
-            proc = MagicMock()
-            proc.returncode = 0
-            proc.stdout = "No JSON here at all"
-            proc.stderr = ""
-            mock.return_value = proc
-
-            from src.tools.audit import _call_daudit
-            result = _call_daudit(["Src"])
-            assert result is None
-
-
-# ═══════════════════════════════════════════════════════════════
 # _extract_json
 # ═══════════════════════════════════════════════════════════════
 

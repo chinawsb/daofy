@@ -228,13 +228,15 @@ class ProjectKnowledgeBase:
         读取 MCP 服务器共享第三方知识库中已扫描的路径列表。
 
         共享知识库路径:
-          C:/User/delphi-complier-mcp-server/data/thirdparty-knowledge-base/thirdparty_paths.json
+          <项目根>/data/thirdparty-knowledge-base/thirdparty_paths.json
 
         Returns:
             已扫描的路径集合 (绝对路径,已规范化)
         """
-        shared_paths_file = Path(
-            r"C:\User\delphi-complier-mcp-server\data\thirdparty-knowledge-base\thirdparty_paths.json"
+        # 从当前文件位置推导项目根目录: src/services/know_base/ → 上3层 = 项目根
+        _project_root = Path(__file__).parent.parent.parent.parent
+        shared_paths_file = (
+            _project_root / "data" / "thirdparty-knowledge-base" / "thirdparty_paths.json"
         )
         if not shared_paths_file.exists():
             logger.info("共享第三方知识库路径文件不存在,跳过检查")

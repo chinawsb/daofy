@@ -43,6 +43,9 @@ embedding = [
     "numpy>=1.21.0",
     "sentence-transformers>=2.2.0",
 ]
+watcher = [
+    "watchdog>=6.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/chinawsb/daofy"

@@ -226,28 +226,6 @@ def _restore_dproj(dproj_path: str, backup_path: str):
         logger.info("已恢复原始 .dpr")
 
 
-def _parse_verify_output(output: str) -> str:
-    """解析验证程序的管道输出，提取异常信息"""
-    if 'EXCEPTION:' not in output:
-        return ""
-    lines = output.strip().split('\n')
-    excerpt = []
-    in_exception = False
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith('EXCEPTION:'):
-            in_exception = True
-            excerpt.append(stripped)
-        elif in_exception and stripped.startswith('STACKTRACE:'):
-            excerpt.append(stripped)
-        elif in_exception and stripped.startswith('END_EXCEPTION'):
-            excerpt.append(stripped)
-            break
-        elif in_exception and stripped != '' and not stripped.startswith('RUNTIME_VERIFY'):
-            excerpt.append('  ' + stripped)
-    return '\n'.join(excerpt)
-
-
 def set_compiler_service(service: CompilerService):
     """设置编译服务实例"""
     global _compiler_service

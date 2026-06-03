@@ -11,6 +11,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 import asyncio
 import sys
 import os
+import time
 import winreg
 from pathlib import Path
 from typing import Any, Optional
@@ -57,7 +58,7 @@ else:
     from src.services.compiler_service import CompilerService
     from src.services.knowledge_base import DelphiKnowledgeBaseService
     from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
-    from src.tools.project import handle_project as _handle_project, set_compiler_service as _set_compile_svc
+    from src.tools.project import handle_project as _handle_project
     # project 模块统一管理编译器服务，保留别名供初始化用
     from src.tools.compile_project import set_compiler_service as sp1
     from src.tools.compile_file import set_compiler_service as sp2
@@ -67,9 +68,6 @@ else:
     from src.tools.knowledge_base import (
         set_delphi_kb_service,
         set_thirdparty_kb_service,
-        search_knowledge,
-        build_unified_knowledge_base,
-        get_unified_knowledge_stats,
         _resolve_project_path,
     )
     from src.tools.read_source_file import set_knowledge_base_services, read_source_file
@@ -88,13 +86,21 @@ else:
     from src.tools.tool_help import get_tool_help
     from src.tools.experience import experience as _experience
     from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
-    from src.utils.logger import init_default_logger, get_logger, log_api_call
+    from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
 
     # 后台版本检查结果缓存（由 startup 异步任务填充）
     _update_check_result: Optional[dict] = None
     _update_check_done: bool = False
+
+    # 文件变更监听器（由 startup 异步任务启动）
+    _project_file_watcher: Optional[object] = None
+
+    # 服务器启动时间（用于 /health 资源）
+    _server_start_time: float = 0.0
+    # 最近一次 KB 构建时间
+    _last_kb_build_time: Optional[float] = None
 
     # 初始化日志
     logger = init_default_logger()
@@ -218,6 +224,8 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
 
 async def run_server():
     """运行 MCP Server"""
+    global _server_start_time
+    _server_start_time = time.time()
     logger.info(f"启动 Daofy v{__version__}")
     logger.info(f"{__copyright__}")
 
@@ -1017,6 +1025,13 @@ async def run_server():
                 description="Delphi 源码编码规则，包含命名规范、格式化、类型声明顺序、修改/审核代码规则等",
                 mimeType="text/markdown"
             ))
+        resources.append(Resource(
+            uri="delphi://health",
+            name="health",
+            title="Daofy 服务器状态",
+            description="服务器运行状态、版本号、文件监听器状态等健康检查信息",
+            mimeType="application/json"
+        ))
         return resources
 
     @server.read_resource()
@@ -1042,6 +1057,27 @@ async def run_server():
                     text="编码规则文件不存在"
                 )]
             )
+
+        if uri == "delphi://health":
+            import json as _json
+            uptime = time.monotonic() - _server_start_time
+            watcher_running = (
+                _project_file_watcher is not None
+            ) if '_project_file_watcher' in dir() else False
+            health = {
+                "version": __version__,
+                "uptime_seconds": round(uptime, 1),
+                "uptime": f"{int(uptime // 3600)}h{int((uptime % 3600) // 60)}m{int(uptime % 60)}s",
+                "file_watcher_active": watcher_running,
+            }
+            return ReadResourceResult(
+                contents=[TextResourceContents(
+                    uri=AnyUrl(uri),
+                    mimeType="application/json",
+                    text=_json.dumps(health, ensure_ascii=False, indent=2)
+                )]
+            )
+
         raise ValueError(f"未知资源: {uri}")
 
     # ============================================================
@@ -1074,6 +1110,104 @@ async def run_server():
     # 启动后台版本检查（不阻塞启动）
     asyncio.create_task(_background_version_check())
 
+    # ============================================================
+    # 自动构建项目知识库 — 启动时检测项目目录并后台构建
+    # ============================================================
+
+    async def _auto_build_project_kb():
+        """自动检测项目目录并后台构建项目知识库（不阻塞启动）"""
+        try:
+            logger.info("正在自动检测项目目录...")
+            loop = asyncio.get_running_loop()
+
+            # 在 executor 中执行 CWD 扫描（可能涉及文件系统 I/O）
+            project_path = await loop.run_in_executor(
+                None, _resolve_project_path, None
+            )
+
+            if not project_path:
+                logger.info(
+                    "未检测到项目文件（.dproj），跳过自动构建项目知识库"
+                )
+                return
+
+            logger.info(
+                "检测到项目: %s，正在后台自动构建项目知识库...",
+                project_path,
+            )
+
+            # 使用现有异步任务机制提交后台构建
+            # rebuild=False → 增量更新（只索引变更文件）
+            # 首次运行时 KB 不存在，build_project_knowledge_base 会自动全量构建
+            # Step 1 的热切换机制保证：已有 KB 重建时不阻塞搜索
+            task_params = {
+                "project_path": project_path,
+                "rebuild": False,
+                "build_thirdparty": True,
+                "build_project": True,
+            }
+            result = await async_tools.start_async_task({
+                "task_type": "init_project_knowledge_base",
+                "task_params": task_params,
+                "show_progress": False,
+            })
+
+            # start_async_task 返回 CallToolResult，isError=False 表示任务已成功提交到后台
+            if result.isError:
+                logger.warning(
+                    "自动构建项目知识库提交失败: %s", project_path
+                )
+            else:
+                logger.info(
+                    "自动构建项目知识库任务已提交到后台: %s", project_path
+                )
+
+            # ── Step 3: 启动文件变更监听（如果 watchdog 可用） ──
+            await _start_project_file_watcher(project_path)
+
+        except Exception as e:
+            logger.debug(
+                "自动构建项目知识库失败（不影响正常运行）: %s", e
+            )
+
+    async def _start_project_file_watcher(project_path: str) -> None:
+        """启动项目文件变更监听器，自动触发增量 KB 更新。
+
+        在 executor 中启动，不阻塞事件循环。watchdog 不可用时静默降级。
+        """
+        global _project_file_watcher
+        try:
+            from src.services.knowledge_base.file_watcher import (
+                ProjectFileWatcher,
+            )
+
+            project_dir = str(Path(project_path).parent)
+            loop = asyncio.get_running_loop()
+
+            def _start_watcher() -> Optional[object]:
+                w = ProjectFileWatcher(project_path, project_dir)
+                w.start()
+                return w
+
+            watcher = await loop.run_in_executor(None, _start_watcher)
+            if watcher:
+                _project_file_watcher = watcher
+                logger.info(
+                    "文件变更监听已启动 (watchdog 可用): %s", project_dir
+                )
+            else:
+                logger.info(
+                    "文件变更监听未启动 (watchdog 不可用): %s", project_dir
+                )
+
+        except Exception as e:
+            logger.debug(
+                "启动文件变更监听失败（不影响正常运行）: %s", e
+            )
+
+    # 启动后台项目知识库自动构建（不阻塞启动）
+    asyncio.create_task(_auto_build_project_kb())
+
     # 启动服务器
     logger.info("MCP Server 启动完成,准备接收请求...")
     async with stdio_server() as (read_stream, write_stream):
@@ -1102,6 +1236,13 @@ def _cleanup_resources():
         _cleanup_exp()
     except Exception:
         logger.warning("清理经验库时发生异常", exc_info=True)
+    global _project_file_watcher
+    if _project_file_watcher is not None:
+        try:
+            _project_file_watcher.stop()
+        except Exception:
+            logger.warning("停止文件监听时发生异常", exc_info=True)
+        _project_file_watcher = None
     logger.info("资源清理完成")
 
 

@@ -152,6 +152,21 @@ def _get_or_create_pkb(project_path: str, fresh: bool = False):
     return _pkb_cache[project_path]
 
 
+def _clear_pkb_cache(project_path: str) -> None:
+    """关闭并移除指定项目的 PKB 缓存实例（构建完成后刷新缓存用）
+
+    Args:
+        project_path: 项目 dproj 路径
+    """
+    if project_path in _pkb_cache:
+        try:
+            _pkb_cache[project_path].close()
+        except Exception as e:
+            logger.debug("关闭 PKB 缓存失败: %s", str(e))
+        del _pkb_cache[project_path]
+        logger.info(f"已清除项目 PKB 缓存: {project_path}")
+
+
 def _cleanup_pkb_cache():
     """关闭并清理所有缓存的 ProjectKnowledgeBase 实例"""
     for path, pkb in list(_pkb_cache.items()):

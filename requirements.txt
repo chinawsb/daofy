@@ -5,6 +5,9 @@ html2text>=2024.2.25
 lxml>=4.9.0
 requests>=2.31.0
 python-docx>=0.8.11
+# 可选依赖: 文件变更监听 —— 自动增量更新项目知识库
+# pip install daofy-for-delphi[watcher]
+# 或: pip install watchdog>=6.0.0
 # 可选依赖: 语义搜索(embedding) —— 安装后显著提升搜索质量
 # pip install daofy-for-delphi[embedding]
 # 或: pip install sentence-transformers numpy

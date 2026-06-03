@@ -387,33 +387,6 @@ def _is_runtime_only_package(project_path: str) -> bool:
         return False
 
 
-def _get_package_projects(group_path: str) -> List[tuple]:
-    """获取项目组中的所有项目及其依赖关系"""
-    import xml.etree.ElementTree as ET
-    
-    tree = ET.parse(group_path)
-    root = tree.getroot()
-    ns = 'http://schemas.microsoft.com/developer/msbuild/2003'
-    
-    projects = []
-    for project in root.findall(f'.//{{{ns}}}Projects'):
-        proj_file = project.get('Include')
-        if proj_file:
-            proj_path = str(Path(group_path).parent / proj_file)
-            is_runtime = _is_runtime_only_package(proj_path)
-            projects.append((proj_path, is_runtime))
-    
-    if not projects:
-        for project in root.findall('.//Projects'):
-            proj_file = project.get('Include')
-            if proj_file:
-                proj_path = str(Path(group_path).parent / proj_file)
-                is_runtime = _is_runtime_only_package(proj_path)
-                projects.append((proj_path, is_runtime))
-    
-    return projects
-
-
 def _format_results(results: List[tuple], install: bool, target_platform: str) -> CallToolResult:
     """格式化单个项目编译结果"""
     return _format_group_results([(proj, is_runtime, result) for proj, (is_runtime, result) in [
