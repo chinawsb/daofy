@@ -494,7 +494,7 @@ def detect_agents() -> list[dict]:
             install_path = shutil.which("opencode") or "CLI"
 
         # 3. 检查 VS Code 扩展
-        ext_pattern = defn.get("detect_vscode_ext", None)
+        ext_pattern = defn.get("detect_vscode_ext", lambda: None)()
         if not installed and ext_pattern and _check_vscode_ext(ext_pattern):
             installed = True
 
