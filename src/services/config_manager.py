@@ -395,54 +395,84 @@ class ConfigManager:
         """
         从注册表检测 Delphi 安装路径
 
+        同时扫描 HKCU (用户级) 和 HKLM (系统级), HKCU 优先级更高
+        (用户的 RAD Studio 设置通常覆盖机器级配置).
+
         Returns:
             字典,键为版本号,值为安装路径
         """
-        installations = {}
+        installations: Dict[str, str] = {}
 
-        try:
-            # 打开 Delphi 注册表项
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"SOFTWARE\Embarcadero\BDS",
-                0,
-                winreg.KEY_READ | winreg.KEY_WOW64_32KEY
-            )
+        # 扫描顺序: HKCU 先 (用户级优先), HKLM 后 (系统级兜底)
+        # 配合下方 "version not in installations" 跳过逻辑,
+        # 同版本号时 HKCU 的路径会胜出, HKLM 跳过.
+        registry_roots = [
+            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS", "HKCU"),
+            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Embarcadero\BDS", "HKLM"),
+        ]
 
-            # 枚举所有子项(版本号)
-            index = 0
-            while True:
-                try:
-                    version = winreg.EnumKey(key, index)
-                    index += 1
+        for hive, subkey, hive_name in registry_roots:
+            try:
+                key = winreg.OpenKey(
+                    hive,
+                    subkey,
+                    0,
+                    winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
+                )
+            except FileNotFoundError:
+                logger.debug(f"注册表 {hive_name}\\{subkey} 不存在,跳过")
+                continue
+            except Exception as e:
+                logger.warning(f"打开注册表 {hive_name}\\{subkey} 失败: {e}")
+                continue
 
-                    # 打开版本子项
-                    version_key = winreg.OpenKey(key, version)
+            try:
+                # 枚举所有子项(版本号)
+                index = 0
+                while True:
+                    try:
+                        version = winreg.EnumKey(key, index)
+                        index += 1
+                    except OSError:
+                        # 枚举结束
+                        break
+
+                    try:
+                        version_key = winreg.OpenKey(key, version)
+                    except Exception as e:
+                        logger.debug(f"打开 {hive_name}\\{subkey}\\{version} 失败: {e}")
+                        continue
 
                     try:
                         # 读取 RootDir 值
-                        root_dir, _ = winreg.QueryValueEx(version_key, "RootDir")
+                        try:
+                            root_dir, _ = winreg.QueryValueEx(version_key, "RootDir")
+                        except FileNotFoundError:
+                            logger.debug(f"Delphi {version} 没有 RootDir 值")
+                            continue
 
                         if root_dir and os.path.exists(root_dir):
-                            installations[version] = root_dir
-                            logger.debug(f"从注册表检测到 Delphi {version}: {root_dir}")
-
-                    except FileNotFoundError:
-                        logger.debug(f"Delphi {version} 没有 RootDir 值")
+                            if version not in installations:
+                                installations[version] = root_dir
+                                logger.debug(f"从 {hive_name} 检测到 Delphi {version}: {root_dir}")
+                            else:
+                                logger.debug(
+                                    f"Delphi {version} 已在 HKCU 优先注册,跳过 {hive_name} 路径: {root_dir}"
+                                )
 
                     finally:
-                        winreg.CloseKey(version_key)
+                        try:
+                            winreg.CloseKey(version_key)
+                        except Exception:
+                            pass
+            finally:
+                try:
+                    winreg.CloseKey(key)
+                except Exception:
+                    pass
 
-                except OSError:
-                    # 枚举结束
-                    break
-
-            winreg.CloseKey(key)
-
-        except FileNotFoundError:
-            logger.debug("注册表中未找到 Embarcadero BDS 项")
-        except Exception as e:
-            logger.error(f"读取注册表失败: {str(e)}")
+        if not installations:
+            logger.debug("HKLM/HKCU 均未找到 Embarcadero BDS 安装")
 
         return installations
 

@@ -214,6 +214,24 @@ def _userprofile() -> str:
     return _env("USERPROFILE") or _env("HOME") or str(Path.home())
 
 
+def _get_trae_config_path() -> str:
+    """获取 Trae IDE 的 MCP 配置文件路径
+
+    优先级: 新版 Roaming 目录 → 旧版 .trae-cn 目录 → 默认返回新版路径
+    (Trae 升级后配置从 ~/.trae-cn/mcp_config.json 迁到 %APPDATA%\\Trae CN\\User\\mcp.json)
+    """
+    # 新版 Trae 使用 Roaming 目录
+    roaming_path = os.path.join(_env("APPDATA"), "Trae CN", "User", "mcp.json")
+    if os.path.exists(roaming_path):
+        return roaming_path
+    # 兜底：旧版路径
+    legacy_path = os.path.join(_userprofile(), ".trae-cn", "mcp_config.json")
+    if os.path.exists(legacy_path):
+        return legacy_path
+    # 默认返回新版路径（未安装时也用此路径写新配置）
+    return roaming_path
+
+
 def _detect_path(paths: list[str], agent_name: str = "") -> str | None:
     """检测可执行文件是否存在（优先直接路径，其次快捷方式，最后注册表）。"""
 
@@ -332,10 +350,7 @@ AGENT_DEFINITIONS = {
     "Trae": {
         "config_type": "Standard",
         "doc_url": "https://docs.trae.ai/ide/add-mcp-servers",
-        "config_path": lambda: (
-            p if os.path.exists(p := os.path.join(_userprofile(), ".trae-cn", "mcp_config.json"))
-            else os.path.join(_userprofile(), ".trae", "mcp_config.json")
-        ),
+        "config_path": _get_trae_config_path,
         "detect_paths": lambda: [],  # 现在通过快捷方式和注册表检测
     },
     "TRAE SOLO CN": {
@@ -494,9 +509,19 @@ def detect_agents() -> list[dict]:
             install_path = shutil.which("opencode") or "CLI"
 
         # 3. 检查 VS Code 扩展
-        ext_pattern = defn.get("detect_vscode_ext", None)
+        # 注意: detect_vscode_ext 是 lambda (如 "lambda: 'saoudrizwan.claude-dev'"),
+        #      必须调用 () 拿到字符串,否则 .lower() 会在函数对象上炸 (Issue: ...)
+        ext_pattern_fn = defn.get("detect_vscode_ext", None)
+        ext_pattern = ext_pattern_fn() if callable(ext_pattern_fn) else ext_pattern_fn
         if not installed and ext_pattern and _check_vscode_ext(ext_pattern):
             installed = True
+
+        # 4. 特殊处理 Trae: 检查配置目录 (作为快捷方式/注册表未命中的兜底)
+        if not installed and name == "Trae":
+            traecfg_dir = os.path.join(_userprofile(), ".trae-cn")
+            if os.path.isdir(traecfg_dir):
+                installed = True
+                install_path = "Trae IDE (detected via config dir)"
 
         # 4. 配置文件存在时，检查是否有 MCP 配置（但仅作为"已配置"标记，
         #    不作为"已安装"的唯一依据——必须有可执行文件才算已安装）

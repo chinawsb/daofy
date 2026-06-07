@@ -221,3 +221,253 @@ def test_project_version_unknown_prefix_falls_back():
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__])
+
+
+# ════════════════════════════════════════════════════════════════
+#  _detect_delphi_from_registry 测试
+# ════════════════════════════════════════════════════════════════
+# 覆盖：
+#   - HKLM 单独存在 (系统级安装, HKCU 缺失)
+#   - HKCU 单独存在 (用户级安装, HKLM 缺失)
+#   - HKLM + HKCU 都有: 同一版本时 HKCU 胜出
+#   - HKLM + HKCU 都有: 不同版本时同时保留
+#   - 两边都没有: 返回空 dict
+#   - 修复回归: HKLM 存在但 HKCU 缺失时, 早期实现会直接 return 漏掉 HKLM
+#   - RootDir 指向不存在的目录: 跳过该条目
+#   - 版本键没有 RootDir 值: 跳过该条目
+
+import unittest.mock as mock
+import winreg
+
+
+class _FakeRegKey:
+    """模拟 winreg 父 key: 包含一组 (version, root_dir) 条目"""
+
+    def __init__(self, hive_name, versions):
+        # versions: Dict[str_version, str_root_dir]
+        self.hive_name = hive_name
+        self._versions = dict(versions)
+
+
+class _FakeVersionKey:
+    """模拟 winreg 子 key: 包含单个版本的 RootDir"""
+
+    def __init__(self, root_dir):
+        self._root_dir = root_dir
+
+
+def _make_fake_winreg(hklm_data=None, hkcu_data=None):
+    """
+    返回一个 patch 字典，可用于 patch.multiple(winreg, ...)：
+    - OpenKey: 第一次 (hive, subkey, 0, ...) 返回父 key；
+                第二次 (parent_key, version) 返回对应 version key
+    - EnumKey: 顺序返回父 key 的版本号, 越界抛 OSError
+    - QueryValueEx: 读取 version key 的 RootDir
+    - CloseKey: no-op
+    """
+    hklm = hklm_data or {}
+    hkcu = hkcu_data or {}
+
+    def fake_open_key(hive_or_key, subkey_or_reserved, *args, **kwargs):
+        # 第一次: (hive, subkey, 0, KEY_READ|KEY_WOW64_32KEY) → 父 key
+        if isinstance(hive_or_key, int):
+            subkey = subkey_or_reserved
+            if "Embarcadero" not in subkey or not subkey.endswith("BDS"):
+                raise FileNotFoundError(f"No such registry key: {subkey}")
+            if hive_or_key == winreg.HKEY_LOCAL_MACHINE:
+                return _FakeRegKey("HKLM", hklm)
+            elif hive_or_key == winreg.HKEY_CURRENT_USER:
+                return _FakeRegKey("HKCU", hkcu)
+            else:
+                raise FileNotFoundError(f"Unknown hive: {hive_or_key}")
+        # 第二次: (parent_key, version_str) → version key
+        elif isinstance(hive_or_key, _FakeRegKey):
+            version = subkey_or_reserved
+            if version in hive_or_key._versions:
+                return _FakeVersionKey(hive_or_key._versions[version])
+            raise FileNotFoundError(f"Version {version} not in {hive_or_key.hive_name}")
+        else:
+            raise FileNotFoundError(f"Unexpected OpenKey arg type: {type(hive_or_key)}")
+
+    def fake_enum_key(key, index):
+        if not isinstance(key, _FakeRegKey):
+            raise OSError("No more data")
+        versions = list(key._versions.keys())
+        if index >= len(versions):
+            raise OSError("No more data")
+        return versions[index]
+
+    def fake_query_value_ex(key, value_name):
+        if not isinstance(key, _FakeVersionKey):
+            raise FileNotFoundError(f"Value {value_name} not found")
+        if value_name != "RootDir":
+            raise FileNotFoundError(f"Value {value_name} not found")
+        return (key._root_dir, winreg.REG_SZ)
+
+    def fake_close_key(key):
+        return None
+
+    return {
+        "OpenKey": mock.MagicMock(side_effect=fake_open_key),
+        "EnumKey": mock.MagicMock(side_effect=fake_enum_key),
+        "QueryValueEx": mock.MagicMock(side_effect=fake_query_value_ex),
+        "CloseKey": mock.MagicMock(side_effect=fake_close_key),
+    }
+
+
+def _make_real_dir() -> str:
+    """创建真实存在的临时目录（验证 os.path.exists 路径检查）"""
+    return tempfile.mkdtemp(prefix="daofy_test_hklm_")
+
+
+def test_detect_hklm_only():
+    """只有 HKLM 有 Embarcadero BDS 时也能正确检测（修复关键 bug）"""
+    hklm_dir = _make_real_dir()
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        fake = _make_fake_winreg(hklm_data={"22.0": hklm_dir})
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert result == {"22.0": hklm_dir}, \
+            f"HKLM 单独存在时应被检测, 实际: {result}"
+    finally:
+        import shutil
+        shutil.rmtree(hklm_dir, ignore_errors=True)
+
+
+def test_detect_hkcu_only():
+    """只有 HKCU 有 Embarcadero BDS 时也能正确检测"""
+    hkcu_dir = _make_real_dir()
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        fake = _make_fake_winreg(hkcu_data={"23.0": hkcu_dir})
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert result == {"23.0": hkcu_dir}, \
+            f"HKCU 单独存在时应被检测, 实际: {result}"
+    finally:
+        import shutil
+        shutil.rmtree(hkcu_dir, ignore_errors=True)
+
+
+def test_detect_hkcu_overrides_hklm_same_version():
+    """同一版本号 HKLM + HKCU 都有时, HKCU 胜出（用户配置优先）"""
+    hklm_dir = _make_real_dir()
+    hkcu_dir = _make_real_dir()
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        fake = _make_fake_winreg(
+            hklm_data={"22.0": hklm_dir},
+            hkcu_data={"22.0": hkcu_dir},
+        )
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert result == {"22.0": hkcu_dir}, \
+            f"同版本号 HKCU 应胜出, 实际: {result}"
+    finally:
+        import shutil
+        shutil.rmtree(hklm_dir, ignore_errors=True)
+        shutil.rmtree(hkcu_dir, ignore_errors=True)
+
+
+def test_detect_hklm_and_hkcu_different_versions():
+    """不同版本号时 HKLM + HKCU 全部保留"""
+    hklm_dir = _make_real_dir()
+    hkcu_dir = _make_real_dir()
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        fake = _make_fake_winreg(
+            hklm_data={"22.0": hklm_dir},
+            hkcu_data={"23.0": hkcu_dir},
+        )
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert result == {"22.0": hklm_dir, "23.0": hkcu_dir}, \
+            f"不同版本号都应保留, 实际: {result}"
+    finally:
+        import shutil
+        shutil.rmtree(hklm_dir, ignore_errors=True)
+        shutil.rmtree(hkcu_dir, ignore_errors=True)
+
+
+def test_detect_no_registry_returns_empty():
+    """HKLM/HKCU 都没有时返回空 dict, 不抛异常"""
+    cm = ConfigManager(
+        os.path.join(tempfile.mkdtemp(), "compilers.json"),
+        os.path.join(tempfile.mkdtemp(), "history.json"),
+    )
+    fake = _make_fake_winreg()  # 两者都为空
+
+    with mock.patch.multiple(winreg, **fake):
+        result = cm._detect_delphi_from_registry()
+
+    assert result == {}, f"空注册表应返回空 dict, 实际: {result}"
+
+
+def test_detect_hklm_present_hkcu_missing_regression():
+    """
+    回归测试: 早期实现遇到 HKLM 存在但 HKCU 缺失时会直接 return,
+    导致 HKLM 检测被漏掉。修复后应能正常处理。
+    """
+    hklm_dir = _make_real_dir()
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        # 只配置 HKLM 数据, HKCU 返回 FileNotFoundError
+        fake = _make_fake_winreg(hklm_data={"22.0": hklm_dir})
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert "22.0" in result, \
+            f"HKLM 存在时不应被 HKCU 缺失打断, 实际: {result}"
+        assert result["22.0"] == hklm_dir
+    finally:
+        import shutil
+        shutil.rmtree(hklm_dir, ignore_errors=True)
+
+
+def test_detect_skips_nonexistent_rootdir():
+    """RootDir 指向不存在的目录时被跳过（不进入结果）"""
+    real_dir = _make_real_dir()
+    fake_nonexistent = r"C:\nonexistent\delphi_test_xyz"
+    try:
+        cm = ConfigManager(
+            os.path.join(tempfile.mkdtemp(), "compilers.json"),
+            os.path.join(tempfile.mkdtemp(), "history.json"),
+        )
+        fake = _make_fake_winreg(hklm_data={
+            "22.0": real_dir,
+            "23.0": fake_nonexistent,  # 路径不存在
+        })
+
+        with mock.patch.multiple(winreg, **fake):
+            result = cm._detect_delphi_from_registry()
+
+        assert result == {"22.0": real_dir}, \
+            f"不存在的 RootDir 应被跳过, 实际: {result}"
+    finally:
+        import shutil
+        shutil.rmtree(real_dir, ignore_errors=True)

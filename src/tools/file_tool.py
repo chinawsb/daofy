@@ -78,6 +78,56 @@ def _wrap_error(msg: str) -> Dict[str, Any]:
     return {"status": "failed", "message": msg}
 
 
+def _normalize_encoding_name(enc: str) -> str:
+    """
+    归一化编码名：去除 BOM 后缀、-/_ 变体，统一小写。
+
+    utf-8-sig 在归一化层面视为 utf-8（BOM 在打开时自动剥离/添加），
+    用于编码兼容性比较。
+    """
+    if not enc:
+        return ""
+    e = enc.lower().replace("_", "-")
+    if e == "utf-8-sig":
+        e = "utf-8"
+    return e
+
+
+def _is_encoding_compatible(user_enc: str, detected_enc: str) -> bool:
+    """
+    检查用户指定的 encoding 与文件实际编码是否兼容。
+
+    兼容规则:
+      - 完全相等（归一化后）
+      - utf-8 ↔ utf-8-sig 互相兼容
+      - utf-16 系列（utf-16/utf-16-le/utf-16-be）只在同子系列内兼容
+
+    Args:
+        user_enc: 用户显式指定的 encoding 参数
+        detected_enc: detect_encoding 实际检测结果
+
+    Returns:
+        True 表示兼容可继续；False 表示编码不匹配需拒绝
+    """
+    u = _normalize_encoding_name(user_enc)
+    d = _normalize_encoding_name(detected_enc)
+
+    if u == d:
+        return True
+
+    # utf-8 家族内部互兼
+    utf8_family = {"utf-8"}
+    if u in utf8_family and d in utf8_family:
+        return True
+
+    # utf-16 家族内部互兼（仅在两边都是 utf-16 系列时）
+    utf16_family = {"utf-16", "utf-16-le", "utf-16-be"}
+    if u in utf16_family and d in utf16_family:
+        return True
+
+    return False
+
+
 async def _read_content(
     file_path: str,
     start_line: int = 0,
@@ -97,8 +147,8 @@ async def _read_content(
       - start_line=0 表示从文件第 1 行开始
       - end_line 不传时等价于「读到 limit 行为止」
 
-    show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     1: unit Unit1;"），
-                       行号为 1-based 绝对行号。
+    show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     0: unit Unit1;"），
+                       行号为 0-based 绝对行号（与 batch_write / write 的 start_line 直接对齐）。
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
@@ -145,12 +195,15 @@ async def _read_content(
 
                 text = ''.join(selected)
 
-                # show_line_numbers: 为每行添加 1-based 绝对行号前缀
+                # show_line_numbers: 为每行添加 0-based 绝对行号前缀
+                # 修复: 之前是 1-based, 导致 AI 用 read 看到的行号传给 batch_write 时
+                # 必然错位 1 行 (1-based 第 N 行 = 0-based 第 N-1 行).
+                # 现在 read 输出与 batch_write 接受的格式完全对齐: 看到 5 传 5, 看到 0 传 0.
                 if show_line_numbers and selected:
                     line_offset = max(start_line, 0)  # 0-indexed start
                     numbered_lines = []
                     for i, line in enumerate(selected):
-                        abs_lineno = line_offset + i + 1  # 1-based 绝对行号
+                        abs_lineno = line_offset + i      # 0-based 绝对行号 (与 batch_write 对齐)
                         numbered_lines.append(f"{abs_lineno:>6}: {line}")
                     text = ''.join(numbered_lines)
 
@@ -158,34 +211,19 @@ async def _read_content(
                     text += '\n'
 
                 lines_shown = len(selected)
-                base_name = os.path.basename(file_path)
                 actual_end_line = start_line + lines_shown  # 0-indexed exclusive end
 
-                if total_lines is not None:
-                    total_display = str(total_lines)
-                else:
-                    total_display = f"至少 {target_end} 行"
-
-                range_suffix = "（带行号）" if show_line_numbers else ""
-                summary = (
-                    f"文件: {base_name}\n"
-                    f"完整路径: {os.path.abspath(file_path)}\n"
-                    f"总行数: {total_display}\n"
-                    f"显示范围: 第 {start_line} 行 到 第 {actual_end_line} 行 (0-indexed, [start, end)){range_suffix}\n"
-                    f"编码: {enc}\n"
-                    f"============================================================\n\n"
-                )
-
-                result = summary + text
-
-                # 截断提示（与 read_source_file.py 一致）
+                # 单行 meta: 编码 + 0-based 行号范围
+                # 0-based 前缀已隐含「行号可直接用于 batch_write / write / format 的 start_line」,
+                # 避免 AI 误用 1-based 导致错位 1 行 (历史最常见错误之一).
+                # 无论 show_line_numbers 是否开启, 范围都展示, 让 AI 始终知道读到哪段.
+                # 截断时仅追加 (truncated) 标记, 不重复暴露行数 (AI 用 start_line={actual_end_line} 续读即可).
+                meta = f"# encoding: {enc}, 0-based [{start_line}, {actual_end_line})"
                 if not reached_eof:
-                    result += (
-                        f"\n... (已截断，文件至少有 {target_end} 行) ...\n"
-                        f"提示: 使用 start_line={target_end} 继续读取后续内容 (0-indexed)\n"
-                    )
+                    meta += " (truncated)"
+                meta += "\n"
 
-                return {"status": "success", "message": result}
+                return {"status": "success", "message": meta + text}
             except UnicodeDecodeError:
                 last_error = f"编码 {enc} 解码失败"
                 continue
@@ -367,6 +405,9 @@ async def _handle_partial_write(
         #    成功→根据 backup 参数决定保留/删除；失败→从备份恢复
         bak_path = create_backup(file_path)
 
+        # 编码回退标志 (UnicodeEncodeError 时切到 utf-8, 用于输出提示)
+        encoding_fallback = False
+
         enc = original_encoding or "utf-8"
         with open(read_path, 'r', encoding=enc, newline='',
                   buffering=1048576) as f:
@@ -430,6 +471,7 @@ async def _handle_partial_write(
                               buffering=1048576) as f:
                         f.write(new_text)
                     enc = "utf-8"
+                    encoding_fallback = True
                     logger.warning("编码回退到 utf-8 后写入成功")
                 except (UnicodeEncodeError, OSError, IOError):
                     # 回退也失败 → 从备份恢复
@@ -500,37 +542,28 @@ async def _handle_partial_write(
             except Exception as ex:
                 logger.debug(f"auto_format 后重读行数失败: {ex}")
 
-        offset_note = (
-            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行{fmt_adjustment}）"
-            if offset != 0
-            else f"偏移量: 0（行数未变）"
-        )
-
-        range_desc = f"第 {s + 1}~{e} 行 (0-indexed [{s}, {e}), {e - s} 行)"
-        result_lines = [
-            f"文件已更新: {file_path}",
-            f"替换范围: {range_desc}",
-            f"{offset_note}",
-            f"编码: {enc}",
+        # 单行 meta (与 read 对齐):
+        #   wrote: basename
+        #   0-based [s, e) → [s, e+offset)   ← 隐含 offset (右端变化量)
+        #   encoding: utf-8
+        #   backup: __history\<basename>.~N~
+        basename = os.path.basename(file_path)
+        new_e = e + offset
+        parts = [
+            f"wrote: {basename}",
+            f"0-based [{s}, {e}) → [{s}, {new_e})",
+            f"encoding: {enc}",
         ]
-        # 后续编辑行号调整公式:
-        #   新行号 = 原行号 + 本偏移量   (当原行号 >= e 时)
-        #   新行号 = 原行号               (当原行号 < s 时)
-        #   原行号在 [s, e) 范围内 ⇒ 已被替换，不能再用
-        hint = (
-            f"后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + {offset}；"
-            f"行号 < {s} 的不变"
-        )
-        if offset != 0:
-            result_lines.append(hint)
-        if backup:
-            result_lines.append(f"备份已创建: {bak_path}")
+        if backup and bak_path:
+            parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
         if is_dfm_binary:
-            result_lines.append("格式: 已转换为二进制 DFM")
+            parts.append("format: binary DFM converted")
         if fmt_msg:
-            result_lines.append(fmt_msg)
+            parts.append("formatted: yes")
+        if encoding_fallback:
+            parts.append(f"⚠ fallback: {original_encoding or 'utf-8'} → utf-8")
 
-        return {"status": "success", "message": "\n".join(result_lines)}
+        return {"status": "success", "message": ", ".join(parts)}
 
     finally:
         if tmp_cleanup:
@@ -669,20 +702,19 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             except Exception as e:
                 logger.warning(f"写入后自动格式化失败: {e}")
 
-        result_lines = [
-            f"文件已写入: {file_path}",
-            f"编码: {write_encoding}",
-        ]
+        # 单行 meta (与 read 对齐: wrote/encoding/backup, 全部 basename 不含完整路径)
+        basename = os.path.basename(file_path)
+        parts = [f"wrote: {basename}", f"encoding: {write_encoding}"]
         if encoding_fallback:
-            result_lines.append(f"⚠ 原始编码 {original_encoding or 'utf-8'} 无法编码写入内容，已回退到 UTF-8")
-        if backup and file_exists:
-            result_lines.append(f"备份已创建: {backup_path}")
+            parts.append(f"⚠ fallback: {original_encoding or 'utf-8'} → utf-8")
+        if backup and file_exists and backup_path:
+            parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
         if is_dfm_binary:
-            result_lines.append("格式: 已转换为二进制 DFM")
+            parts.append("format: binary DFM converted")
         if fmt_msg:
-            result_lines.append(fmt_msg)
+            parts.append("formatted: yes")
 
-        return {"status": "success", "message": "\n".join(result_lines)}
+        return {"status": "success", "message": ", ".join(parts)}
 
     except Exception as e:
         logger.error(f"写入文件失败: {e}", exc_info=True)
@@ -741,7 +773,6 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return _wrap_error(f"文件不存在: {file_path}")
 
     # ── 检测文件编码 / DFM 状态 ──
-    original_encoding = None
     is_dfm_binary = False
     if _is_dfm_file(file_path):
         try:
@@ -749,10 +780,27 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             is_dfm_binary = (fmt == "binary")
         except (FileNotFoundError, PermissionError) as e:
             return _wrap_error(str(e))
+
+    # 总是先检测文件实际编码；按 encoding 参数决定 read/write 编码
+    detected_encoding = detect_encoding(file_path)
     if encoding == "auto":
-        original_encoding = detect_encoding(file_path)
+        # 自动模式：保持原编码（read/write 都用 detected）
+        read_enc = detected_encoding
+        write_enc = detected_encoding
+        encoding_transcoded = False
     else:
-        original_encoding = encoding
+        # 用户显式指定 encoding：内部自动转码
+        #   - read_enc  = detected_encoding (用文件实际编码解码，避免读到乱码)
+        #   - write_enc = 用户指定 encoding  (按用户期望的目标编码写出)
+        # 此设计同时支持:
+        #   1. encoding 与 detected 一致 → 无转码，原样保留
+        #   2. encoding 与 detected 不一致 → 内部透明转码 (UTF-8↔UTF-16LE/GBK)
+        # 修复: 之前 "AI Agent 报告 UTF-16LE 内容被写入 UTF-8 文件" 的根因之一 —
+        # 上游若错误指定 encoding, 旧逻辑会把内容按错误编码写入, 文件被静默改写。
+        # 新逻辑下即使指定错误, 也只会触发转码而非乱码, 文件编码符合用户预期。
+        read_enc = detected_encoding
+        write_enc = encoding
+        encoding_transcoded = not _is_encoding_compatible(encoding, detected_encoding)
 
     # ── 校验每个 edit 的合法性 ──
     validated_edits = []
@@ -815,8 +863,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         tmp_cleanup = tmp_dir
 
     try:
-        enc = original_encoding or "utf-8"
-        with open(read_path, 'r', encoding=enc, newline='', buffering=1048576) as f:
+        with open(read_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
             lines = f.readlines()
 
         total = len(lines)
@@ -851,9 +898,12 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 continue
 
             removed = adj_e - adj_s
+            removed_lines_preview = []  # for diff preview (all branches)
 
             if c == '':
                 # 删除行：直接移除
+                if removed > 0 and removed <= 5:
+                    removed_lines_preview = [lines[adj_s + i].rstrip('\n\r') for i in range(removed)]
                 lines[adj_s:adj_e] = []
                 inserted = 0
                 c_lines = []
@@ -871,6 +921,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
                 # ── AI 偏移检查（仅警告）: content 首行与被替换行内容相同 ──
                 first_new = c_lines[0].rstrip('\n\r')
+                first_old = ''
                 if removed > 0 and adj_s < len(lines):
                     first_old = lines[adj_s].rstrip('\n\r')
                     if first_old and first_old == first_new:
@@ -879,20 +930,56 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                             f"可能因偏移量错误造成重复（如需强制写入请设 force=true）"
                         )
 
+                # 保存被替换的行用于 diff 预览（截断长行）
+                if removed > 0 and removed <= 5:
+                    removed_lines_preview = [lines[adj_s + i].rstrip('\n\r') for i in range(removed)]
+
                 lines[adj_s:adj_e] = c_lines
 
             delta = inserted - removed
             cumulative_offset += delta
 
+            # ── 记录原始参照系的行号 + delta，AI 可逐行核对 ──
+            orig_e = e if e is not None else total
             results.append(
-                f"  ✅ {desc}: "
-                f"替换范围 第 {s}~{e if e is not None else total} 行 "
-                f"(0-indexed [{s},{e if e is not None else total})), "
-                f"偏移 {delta:+d}（删{removed}行, 插{inserted}行）"
+                f"  [{s}, {orig_e}) → [{s}, {orig_e + delta})  {desc}"
             )
+
+            # ── Per-edit diff 预览（≤5 行时显示全量，超过则省略） ──
+            # 这是早期预警：AI 通过对比 - / + 行可发现错位改写
+            if removed_lines_preview:
+                for rl in removed_lines_preview:
+                    display = rl if len(rl) <= 80 else rl[:77] + "..."
+                    results.append(f"    - {display}")
+            if c_lines:
+                # 同样截断
+                max_show = min(len(c_lines), 5)
+                for cl in c_lines[:max_show]:
+                    display = cl.rstrip('\n\r')
+                    display = display if len(display) <= 80 else display[:77] + "..."
+                    results.append(f"    + {display}")
+                if len(c_lines) > max_show:
+                    results.append(f"    + ...（共 {len(c_lines)} 行）")
 
         # ── 一次性写出 ──
         new_text = ''.join(lines)
+
+        # 记录是否发生过编码回退（与 handle_write 行为对齐：原编码无法编码时静默切到 UTF-8）
+        encoding_fallback = False
+
+        # ── 累计偏移一致性自检（早期预警错位改写） ──
+        # 编辑应用逻辑的不变量: len(lines) == total + cumulative_offset
+        # 若不一致说明 batch_write 内部处理出现 bug（不是 AI 的问题），必须报警
+        expected_total = total + cumulative_offset
+        actual_total = len(lines)
+        if actual_total != expected_total:
+            results.append(
+                f"  ❌ 内部错误: 编辑应用后行数 {actual_total} ≠ "
+                f"原始 {total} + 累计偏移 {cumulative_offset} = {expected_total}，"
+                f"请上报此问题"
+            )
+            all_success = False
+            # 不中断, 继续尝试写出 (让用户能看到完整结果)
 
         # ── AI 偏移错误检测: 对比原始文件和结果中的连续重复行 ──
         if not force:
@@ -933,7 +1020,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         final_path = file_path
         if is_dfm_binary:
             text_tmp = file_path + ".txt"
-            with open(text_tmp, 'w', encoding=enc, newline='', buffering=1048576) as f:
+            with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
                 f.write(new_text)
             try:
                 conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
@@ -948,13 +1035,14 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 logger.warning(f"DFM 转换异常，已保留文本: {ex}")
         else:
             try:
-                with open(file_path, 'w', encoding=enc, newline='', buffering=1048576) as f:
+                with open(file_path, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
                     f.write(new_text)
             except UnicodeEncodeError:
-                logger.warning(f"编码 {enc} 写出失败，回退到 utf-8")
+                logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
                 with open(file_path, 'w', encoding="utf-8", newline='', buffering=1048576) as f:
                     f.write(new_text)
-                enc = "utf-8"
+                write_enc = "utf-8"
+                encoding_fallback = True
 
         # 写入后自动格式化
         fmt_msg = ""
@@ -974,16 +1062,31 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 pass
 
         # ── 汇总 ──
-        summary = [
-            f"批量写入完成: {file_path}",
-            f"共 {len(validated_edits)} 个 edit（内部已按 start_line 排序，以备份文件为参照系）",
-            f"净偏移: {cumulative_offset:+d} 行",
-            f"编码: {enc}",
+        # 🧪 实验性功能: 批量写入在 AI 多次连续编辑时偏移量易错, 重复行检测可能误报
+        #   已知问题:
+        #     1. AI 误用 read 后的新行号 (而非原始文件行号) 触发 "连续重复行" 误报
+        #     2. 累计偏移量在 edits 数量 ≥ 3 时计算复杂, 容易累积误差
+        #     3. DFM 二进制 + batch_write 组合: 转换 → 文本 → 编辑 → 转回, 字节级可能漂移
+        #   推荐: 每次 read → write 一次, 多轮独立操作更稳
+        summary = ["🧪 batch_write is experimental, prefer action=write (one read+write per turn)"]
+        basename = os.path.basename(file_path)
+        header_parts = [
+            f"batch_wrote: {len(validated_edits)} edits, {basename}",
+            f"encoding: {write_enc}",
         ]
+        if encoding_transcoded:
+            header_parts.append(f"ℹ transcoded: {detected_encoding} → {write_enc}")
+        if encoding_fallback:
+            header_parts.append(f"⚠ fallback: {detected_encoding} → utf-8")
         if bak_path and backup:
-            summary.append(f"统一备份: {bak_path}")
+            header_parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
         if fmt_msg:
-            summary.append(fmt_msg)
+            header_parts.append("formatted: yes")
+        if is_dfm_binary:
+            header_parts.append("format: binary DFM converted")
+
+        # 空行分隔 header 与 per-edit 详情
+        summary.append(", ".join(header_parts))
         summary.append("")
         summary.extend(results)
 
@@ -1361,27 +1464,23 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
     # 计算 exclusive end: uses_end 所在行的下一行
     e = text[:uses_end].count('\n') + 1
 
-    action_desc = "添加" if uses_action == "add" else "删除"
-    result_lines = [
-        f"已{action_desc}单元: {unit_name_stripped}",
-        f"区域: {uses_section}",
-        f"当前 uses: {', '.join(new_units)}",
-        f"替换范围: 第 {s + 1}~{e} 行 (0-indexed [{s}, {e}), {removed} 行)",
+    action_desc = "added" if uses_action == "add" else "removed"
+    # 单行 meta (与 read/write 对齐)
+    basename = os.path.basename(file_path)
+    new_e = e + offset
+    parts = [
+        f"wrote: {basename}",
+        f"action: {action_desc} {unit_name_stripped} in {uses_section}",
+        f"uses: {', '.join(new_units)}",
+        f"0-based [{s}, {e}) → [{s}, {new_e})",
+        f"encoding: {original_encoding}",
     ]
-    if offset != 0:
-        result_lines.append(
-            f"偏移量: {offset:+d}（删{removed}行, 插{inserted}行）"
-        )
-        result_lines.append(
-            f"后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + {offset}；行号 < {s} 的不变"
-        )
-    result_lines.append(f"编码: {original_encoding}")
     if backup_path:
-        result_lines.append(f"备份: {backup_path}")
+        parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
     if fmt_msg:
-        result_lines.append(fmt_msg)
+        parts.append("formatted: yes")
 
-    return {"status": "success", "message": "\n".join(result_lines)}
+    return {"status": "success", "message": ", ".join(parts)}
 
 
 # ============================================================

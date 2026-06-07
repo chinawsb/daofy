@@ -22,7 +22,8 @@ if str(project_root) not in sys.path:
 
 from src.tools.file_tool import (
     handle_file_tool, handle_read, handle_write,
-    handle_backup, handle_format, _is_delphi_file, _is_dfm_file
+    handle_backup, handle_format, handle_batch_write,
+    _is_delphi_file, _is_dfm_file
 )
 from src.tools.pasfmt import format_code as _pasfmt_format_code
 
@@ -114,7 +115,7 @@ async def test_write_new_file():
             "backup": False,
         })
         _assert_success(result)
-        assert "文件已写入" in result["message"]
+        assert "wrote:" in result["message"]
         assert os.path.isfile(file_path)
         # 新文件默认 UTF-8 BOM，需指明编码读取
         with open(file_path, "r", encoding="utf-8-sig") as f:
@@ -136,7 +137,7 @@ async def test_write_existing_file_with_backup():
             "backup": True,
         })
         _assert_success(result)
-        assert "备份已创建" in result["message"]
+        assert "backup: __history\\" in result["message"]
 
         backups = os.listdir(history_dir)
         assert len(backups) == 1
@@ -195,7 +196,7 @@ async def test_write_preserves_encoding():
             "backup": False,
         })
         _assert_success(result)
-        assert "编码: gbk" in result["message"]
+        assert "encoding: gbk" in result["message"]
 
         with open(file_path, "rb") as f:
             raw = f.read()
@@ -436,7 +437,7 @@ async def test_read_with_end_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 0 行 到 第 3 行" in msg, f"unexpected range in: {msg}"
+        assert "0-based [0, 3)" in msg, f"unexpected range in: {msg}"
         assert "// line 3" in msg
         assert "// line 5" not in msg  # index 4, outside [0,3)
     finally:
@@ -460,7 +461,7 @@ async def test_read_with_start_line_and_end_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 4 行 到 第 10 行" in msg
+        assert "0-based [4, 10)" in msg
         assert "// line 5" in msg    # index 4 → line 5
         assert "// line 10" in msg   # index 9 → line 10
         assert "// line 4" not in msg   # index 3, outside [4,10)
@@ -569,7 +570,7 @@ async def test_write_dfm_binary_auto_convert():
             "backup": False,
         })
         _assert_success(result)
-        assert "二进制 DFM" in result["message"]
+        assert "binary DFM converted" in result["message"]
         # 验证仍是二进制格式
         assert _detect_dfm_format(bin_path) == "binary"
     finally:
@@ -589,7 +590,7 @@ async def test_write_encoding_auto_new_file():
             "encoding": "auto",
         })
         _assert_success(result)
-        assert "编码: utf-8" in result["message"]
+        assert "encoding: utf-8" in result["message"]
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -781,7 +782,7 @@ async def test_read_0indexed_default_start():
         result = await handle_read({"file_path": file_path, "end_line": 2})
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 0 行 到 第 2 行" in msg
+        assert "0-based [0, 2)" in msg
         assert "line1" in msg and "line2" in msg
         assert "line3" not in msg
     finally:
@@ -803,13 +804,12 @@ async def test_read_0indexed_empty_range():
         _assert_success(result)
         msg = result["message"]
         # [2,2) → 空区间，实际行数应为 0
-        assert "显示范围: 第 2 行 到 第 2 行" in msg
-        # 内容区域只有空行 + 截断提示，不应出现文件正文行
-        # 分离 header 后的内容
-        sep = "===="
-        idx = msg.rfind(sep)
-        body = msg[idx + len(sep):] if idx >= 0 else msg
-        assert "a\n" not in body
+        assert "0-based [2, 2)" in msg
+        # 空区间 → 紧随 meta 行之后不应出现文件正文行
+        # (新格式无 ==== 分隔线, 直接断言整条消息不含 "a\n")
+        assert "a\n" not in msg
+        assert "b\n" not in msg
+        assert "c\n" not in msg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -829,7 +829,7 @@ async def test_read_0indexed_single_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 2 行 到 第 3 行" in msg
+        assert "0-based [2, 3)" in msg
         assert "gamma" in msg
         assert "alpha" not in msg and "beta" not in msg and "delta" not in msg
     finally:
@@ -851,7 +851,9 @@ async def test_read_0indexed_truncation_hint():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "使用 start_line=8" in msg, f"应该推荐 0-indexed 续读行号: {msg}"
+        # meta 行应含 0-based 范围 + 截断标记 (替代旧版"使用 start_line=8"footer)
+        assert "0-based [5, 8)" in msg, f"meta 行应含 0-based 范围: {msg}"
+        assert " (truncated)" in msg, f"meta 行应含 (truncated) 标记: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -890,8 +892,8 @@ async def test_read_0indexed_beyond_eof():
         msg = result["message"]
         assert "x" in msg and "y" in msg and "z" in msg
         # 总行数应显示实际行数（3），因为 end_line 超过 EOF 时 reached_eof=True
-        assert "显示范围: 第 0 行 到 第 3 行" in msg
-        assert "已被截断" not in msg
+        assert "0-based [0, 3)" in msg
+        assert "truncated" not in msg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1084,10 +1086,9 @@ async def test_write_partial_offset_in_response():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "偏移量" in msg, f"返回值应包含偏移量信息: {msg}"
-        # 替换 [1,3) = 2行, 插入 3行, offset = +1
-        assert "替换范围" in msg
-        assert "后续编辑" in msg
+        # 新格式: offset 隐含在 [s, e) → [s, e+delta) 中
+        # 替换 [1,3) = 2行, 插入 3行, delta = +1, 新区间 [1, 4)
+        assert "0-based [1, 3) → [1, 4)" in msg, f"返回值应含 [s,e)→[s,e+delta): {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1108,7 +1109,8 @@ async def test_write_partial_offset_delete():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "偏移量: -3" in msg, f"删除3行偏移应为-3: {msg}"
+        # 删除 [1,4) = 3行, 插入 0行, delta = -3, 新区间 [1, 1)
+        assert "0-based [1, 4) → [1, 1)" in msg, f"删除3行新区间应为 [1, 1): {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1129,7 +1131,8 @@ async def test_write_partial_offset_no_change():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "偏移量: 0" in msg, f"行数不变时偏移应为0: {msg}"
+        # 替换 [1,2) = 1行, 插入 1行, delta = 0, 新区间 [1, 2) (不变)
+        assert "0-based [1, 2) → [1, 2)" in msg, f"行数不变新区间应与原区间相同: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1151,9 +1154,10 @@ async def test_read_show_line_numbers_default_false():
         })
         _assert_success(result)
         msg = result["message"]
-        # 内容不应有行号前缀
-        content_start = msg.rfind("====") + 4
-        content = msg[content_start:].strip()
+        # 新格式: meta 行 (# encoding: ...) + 内容, 无 ==== 分隔线
+        # 跳过 meta 行后内容不应有行号前缀
+        meta_end = msg.find("\n") + 1
+        content = msg[meta_end:].strip()
         assert content.startswith("line1"), f"不应有行号前缀: {content[:20]}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1161,7 +1165,7 @@ async def test_read_show_line_numbers_default_false():
 
 @pytest.mark.asyncio
 async def test_read_show_line_numbers_true():
-    """show_line_numbers=True 时应显示行号前缀"""
+    """show_line_numbers=True 时应显示 0-indexed 行号前缀 (与 batch_write 对齐)"""
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "with_linenum.pas")
     _make_file(file_path, "alpha\nbeta\ngamma\n")
@@ -1172,25 +1176,25 @@ async def test_read_show_line_numbers_true():
         })
         _assert_success(result)
         msg = result["message"]
-        # 应包含行号前缀
-        assert "1: alpha" in msg, f"第1行应有行号前缀: {msg}"
-        assert "2: beta" in msg, f"第2行应有行号前缀: {msg}"
-        assert "3: gamma" in msg, f"第3行应有行号前缀: {msg}"
-        # 摘要应显示"带行号"标记
-        assert "带行号" in msg
+        # 0-indexed 行号: 第 0 行=alpha, 第 1 行=beta, 第 2 行=gamma
+        assert "0: alpha" in msg, f"第 0 行应有行号前缀: {msg}"
+        assert "1: beta" in msg, f"第 1 行应有行号前缀: {msg}"
+        assert "2: gamma" in msg, f"第 2 行应有行号前缀: {msg}"
+        # meta 行应含 0-based 范围标记 (替代旧版"带行号"+"0-indexed"+"batch_write" 三处提示)
+        assert "0-based [0, 3)" in msg, f"meta 行应含 0-based 范围: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
 async def test_read_show_line_numbers_with_offset():
-    """show_line_numbers=True + start_line 偏移应显示正确的绝对行号"""
+    """show_line_numbers=True + start_line 偏移应显示正确的 0-indexed 绝对行号"""
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "linenum_offset.pas")
     lines = "\n".join(f"L{i}" for i in range(1, 21))
     _make_file(file_path, lines + "\n")
     try:
-        # 从第 5 行开始读 3 行
+        # 从第 5 行 (0-indexed) 开始读 3 行
         result = await handle_read({
             "file_path": file_path,
             "start_line": 5,
@@ -1199,11 +1203,11 @@ async def test_read_show_line_numbers_with_offset():
         })
         _assert_success(result)
         msg = result["message"]
-        # 绝对行号应为 6, 7, 8（1-based）
-        assert "6: L6" in msg
-        assert "7: L7" in msg
-        assert "8: L8" in msg
-        assert "5: L5" not in msg
+        # 0-indexed 绝对行号应为 5, 6, 7
+        assert "5: L6" in msg
+        assert "6: L7" in msg
+        assert "7: L8" in msg
+        assert "4: L5" not in msg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1256,11 +1260,545 @@ async def test_read_0indexed_limit_after_truncation():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "显示范围: 第 10 行 到 第 17 行" in msg, f"范围异常: {msg}"
+        assert "0-based [10, 17)" in msg, f"范围异常: {msg}"
         # 应包含 [10,17) → 7 行
         assert "R10" in msg
         assert "R16" in msg
         assert "R17" not in msg
-        assert "已截断" in msg
+        assert "truncated" in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_basic():
+    """batch_write: 按升序替换两处，互不干扰"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Unit1.pas")
+        original = (
+            "unit Unit1;\n"
+            "\n"
+            "interface\n"
+            "\n"
+            "implementation\n"
+            "\n"
+            "procedure A;\n"
+            "begin\n"
+            "  // A original\n"
+            "end;\n"
+            "\n"
+            "procedure B;\n"
+            "begin\n"
+            "  // B original\n"
+            "end;\n"
+            "\n"
+            "procedure C;\n"
+            "begin\n"
+            "  // C original\n"
+            "end;\n"
+            "\n"
+            "end.\n"
+        )
+        _make_file(file_path, original)
+
+        # Replace A body (lines 7-9 -> [7,10)) and C body (lines 18-20 -> [18,21))
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 7, "end_line": 10, "content": "  // A updated", "description": "更新 A"},
+                {"start_line": 18, "end_line": 21, "content": "  // C updated", "description": "更新 C"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "batch_wrote: 2 edits" in msg, f"edit 计数不对: {msg}"
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "// A updated" in final
+        assert "// C updated" in final
+        assert "// A original" not in final
+        assert "// B original" in final, "B 被误改了!"
+        assert "// C original" not in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_desc_order():
+    """batch_write: 即使传入顺序是降序，内部也正确按升序处理"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Unit2.pas")
+        original = (
+            "unit Unit2;\n"
+            "\n"
+            "implementation\n"
+            "\n"
+            "procedure First;\n"
+            "begin\n"
+            "  // First\n"
+            "end;\n"
+            "\n"
+            "procedure Second;\n"
+            "begin\n"
+            "  // Second\n"
+            "end;\n"
+            "\n"
+            "end.\n"
+        )
+        _make_file(file_path, original)
+
+        # 传入降序: Second 在前, First 在后
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 10, "end_line": 13, "content": "  // Second updated", "description": "更新 Second"},
+                {"start_line": 5, "end_line": 8, "content": "  // First updated", "description": "更新 First"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "// First updated" in final
+        assert "// Second updated" in final
+        assert "// First\n" not in final
+        assert "// Second\n" not in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_validation():
+    """batch_write: 参数校验"""
+    result1 = await handle_batch_write({"file_path": "", "edits": []})
+    assert result1.get("status") == "failed"
+
+    result2 = await handle_batch_write({"file_path": "/nonexistent/test.pas", "edits": [{"start_line": 0, "content": ""}]})
+    assert result2.get("status") == "failed"
+
+    result3 = await handle_batch_write({
+        "file_path": "test.pas",
+        "edits": [{"start_line": 5, "end_line": 3, "content": "x"}],
+    })
+    assert result3.get("status") == "failed"
+
+
+@pytest.mark.asyncio
+async def test_batch_write_delete_lines():
+    """batch_write: 空 content = 删除行"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Unit3.pas")
+        original = (
+            "unit Unit3;\n"
+            "\n"
+            "interface\n"
+            "\n"
+            "implementation\n"
+            "\n"
+            "procedure Keep;\n"
+            "begin\n"
+            "  preserved\n"
+            "end;\n"
+            "\n"
+            "end.\n"
+        )
+        _make_file(file_path, original)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "", "description": "删除空行2"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        # Line 1 (empty) should be gone, rest should be fine
+        assert "procedure Keep" in final
+        assert "preserved" in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ============================================================
+# batch_write 边界测试
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_batch_write_overlap():
+    """边界: 重叠区间应拒绝"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Overlap.pas")
+        _make_file(file_path)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 10, "end_line": 20, "content": "x", "description": "A"},
+                {"start_line": 15, "end_line": 25, "content": "y", "description": "B"},
+            ],
+        })
+        assert result.get("status") == "failed", "重叠应失败"
+        assert "重叠" in result.get("message", "")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_overlap_none_end():
+    """边界: edit 覆盖到末尾 + 后续 edit 重叠"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "OverlapNone.pas")
+        _make_file(file_path)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 5, "content": "x", "description": "到末尾"},
+                {"start_line": 3, "content": "y", "description": "冲突"},
+            ],
+        })
+        assert result.get("status") == "failed", "覆盖末尾应拒绝后续 edit"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_same_range_overlap():
+    """边界: 完全相同范围应拒绝"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "SameRange.pas")
+        _make_file(file_path)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 10, "end_line": 20, "content": "a", "description": "A"},
+                {"start_line": 10, "end_line": 20, "content": "b", "description": "B"},
+            ],
+        })
+        assert result.get("status") == "failed", "相同范围应拒绝"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_adjacent():
+    """边界: 恰好相邻 [0,5)+[5,10) 应正常"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Adjacent.pas")
+        data = "\n".join(f"line{i}" for i in range(10)) + "\n"
+        _make_file(file_path, data)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 0, "end_line": 5, "content": "AAA\nBBB\n", "description": "前半"},
+                {"start_line": 5, "end_line": 10, "content": "CCC\nDDD\n", "description": "后半"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert final == "AAA\nBBB\nCCC\nDDD\n", f"相邻编辑结果不对: {repr(final)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_start_boundary():
+    """边界: 从文件头部(start_line=0)编辑"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "StartBound.pas")
+        _make_file(file_path, "header\n---\nbody\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 0, "end_line": 1, "content": "HEADER", "description": "改首行"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert final.startswith("HEADER"), f"首行替换失败: {repr(final)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_to_eof():
+    """边界: end_line=None 覆盖到末尾"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "ToEof.pas")
+        _make_file(file_path, "a\nb\nc\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "content": "B\nC\nD\n", "description": "第2行到末尾"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert final == "a\nB\nC\nD\n", f"到末尾结果不对: {repr(final)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_large_insert():
+    """边界: 大插入(1行->50行)后续edit偏移正确"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "LargeIns.pas")
+        lines = [f"line{i}" for i in range(10)]
+        _make_file(file_path, "\n".join(lines) + "\n")
+
+        many = "\n".join(f"inserted{j}" for j in range(50)) + "\n"
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": many, "description": "大插入"},
+                {"start_line": 5, "end_line": 6, "content": "FIVE", "description": "后续edit"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "FIVE" in final, "后续edit未正确应用"
+        assert "inserted0" in final
+        assert "inserted49" in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_large_delete():
+    """边界: 大删除(100行)前后edit偏移正确"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "LargeDel.pas")
+        lines = [f"line{i}" for i in range(120)]
+        _make_file(file_path, "\n".join(lines) + "\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 10, "end_line": 110, "content": "", "description": "大删除"},
+                {"start_line": 5, "end_line": 6, "content": "FIVE", "description": "前方edit"},
+                {"start_line": 112, "end_line": 113, "content": "AFTER", "description": "后方edit"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "FIVE" in final, "前方edit未正确应用"
+        assert "AFTER" in final, "后方edit未正确应用"
+        assert "line9" in final, "删除前内容不应丢失"
+        assert "line10" not in final, "line10应被删除"
+        assert "line109" not in final, "line109应被删除"
+        assert "line111" in final, "line111应保留"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_many_edits():
+    """边界: 10个edit交替增删累积偏移准确"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "ManyEdits.pas")
+        _make_file(file_path, "\n".join(f"line{i}" for i in range(20)) + "\n")
+
+        edits = [
+            {"start_line": 0, "end_line": 1,   "content": "zero",       "description": "#0"},
+            {"start_line": 2, "end_line": 3,   "content": "two",        "description": "#1"},
+            {"start_line": 4, "end_line": 5,   "content": "",           "description": "#2 del"},
+            {"start_line": 6, "end_line": 7,   "content": "six\nsix2\n", "description": "#3 ins2"},
+            {"start_line": 8, "end_line": 9,   "content": "eight",      "description": "#4"},
+            {"start_line": 10, "end_line": 11,  "content": "",           "description": "#5 del"},
+            {"start_line": 12, "end_line": 13,  "content": "",           "description": "#6 del"},
+            {"start_line": 14, "end_line": 15,  "content": "fourteen\n", "description": "#7"},
+            {"start_line": 16, "end_line": 17,  "content": "sixteen",    "description": "#8"},
+            {"start_line": 18, "end_line": 20,  "content": "eighteen\neighteen2\n", "description": "#9"},
+        ]
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": edits,
+            "backup": False,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "batch_wrote: 10 edits" in msg, f"edit计数不对: {msg}"
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "zero" in final
+        assert "two" in final
+        assert "six" in final and "six2" in final
+        assert "eight" in final
+        assert "fourteen" in final
+        assert "sixteen" in final
+        assert "eighteen" in final and "eighteen2" in final
+        assert "line0" not in final
+        assert "line4" not in final
+        assert "line10" not in final
+        assert "line12" not in final
+        assert "line1" in final
+        assert "line3" in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_crlf():
+    """边界: CRLF文件的换行符统一"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Crlf.pas")
+        # 用二进制写 CRLF 内容，避免 _make_file 的 newline 翻译
+        with open(file_path, "wb") as f:
+            f.write(b"a\r\nb\r\nc\r\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "B\nBB\n", "description": "LF内容写入CRLF文件"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "rb") as f:
+            raw = f.read()
+        # 期望: a + CRLF + B + CRLF + BB + CRLF + c + CRLF
+        assert raw == b"a\r\nB\r\nBB\r\nc\r\n", f"CRLF不一致: {raw!r}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_single_edit():
+    """边界: 只有一个edit"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Single.pas")
+        _make_file(file_path, "aaa\nbbb\nccc\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "BBB", "description": "单edit"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "BBB" in final
+        assert "aaa" in final
+        assert "ccc" in final
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_trailing_newline():
+    """边界: content末尾无换行时自动补齐"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Trail.pas")
+        _make_file(file_path, "a\nb\nc\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "no_newline_at_end", "description": "补换行"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        assert lines[1].rstrip('\n\r') == "no_newline_at_end", f"第2行不对: {lines!r}"
+        assert lines[0] == "a\n"
+        assert lines[2] == "c\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_fully_replace():
+    """边界: 替换整个文件"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "FullReplace.pas")
+        _make_file(file_path, "old\ncontent\nhere\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 0, "end_line": 3, "content": "brand\nnew\nfile\n", "description": "全量替换"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert final == "brand\nnew\nfile\n", f"全量替换不对: {repr(final)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_multiline_content():
+    """边界: content含多行文本保留换行"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Multi.pas")
+        _make_file(file_path, "a\nb\nc\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "B1\nB2\nB3\n", "description": "3行替换1行"},
+            ],
+            "backup": False,
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert "B1\nB2\nB3\n" in final, f"多行丢失: {repr(final)}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)

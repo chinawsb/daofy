@@ -9,6 +9,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 import pytest
 from src.tools.file_tool import handle_batch_write
+from src.utils.file_backup import detect_encoding
 
 
 def _mf(path, txt):
@@ -19,6 +20,13 @@ def _mf(path, txt):
 
 def _ok(r):
     assert r.get("status") == "success", f"expected success, got: {r}"
+
+
+def _mf_encoded(path, txt, encoding):
+    """按指定编码写入文件（用于模拟非 UTF-8 文件）"""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(txt.encode(encoding))
 
 
 # --- Bug 1: content includes original text -> duplicate ---
@@ -283,6 +291,171 @@ async def test_force_bypasses_post_merge_dup():
             {"start_line": 5, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
         ], "backup": False, "force": True})
         assert r.get("status") == "success", f"force=true 应跳过重复检测:\n{r}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# --- Bug 3 (严重): encoding 不一致时静默改写 ---
+# AI Agent 报告: "将 Unicode16LE 的内容，写入了 UTF-8 编码的文件中"
+# 根因: 用户/AI 误指定 encoding, 旧逻辑直接用错码编码, 文件被改写
+# 修复: 显式指定 encoding 时内部自动转码 (read=detected, write=user_specified)
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_preserves_utf8():
+    """encoding='auto' (默认) 时 UTF-8 文件保持 UTF-8 编码, 无转码提示"""
+    d = tempfile.mkdtemp(prefix="enc_auto_")
+    try:
+        f = os.path.join(d, "U.pas")
+        _mf(f, "unit U;\ninterface\nimplementation\nend.\n")
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 2, "end_line": 3, "content": "implementation\n\nprocedure Foo;\nbegin\nend;", "description": "edit"},
+        ], "backup": False, "encoding": "auto"})
+        _ok(r)
+        msg = r.get("message", "")
+        assert "encoding: utf-8" in msg, f"应显示 utf-8 编码:\n{msg}"
+        assert "transcoded" not in msg, f"auto 模式不应有转码提示:\n{msg}"
+        # 文件仍为 UTF-8
+        assert detect_encoding(f) == "utf-8"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_utf8_to_utf16le_transcode():
+    """[转码] UTF-8 文件 + encoding='utf-16-le' → 内部转码, 文件变为 UTF-16LE"""
+    d = tempfile.mkdtemp(prefix="enc_trans_")
+    try:
+        f = os.path.join(d, "U.pas")
+        _mf(f, "unit U;\ninterface\nimplementation\nend.\n")
+        assert detect_encoding(f) == "utf-8"
+
+        # 显式指定 utf-16-le, 触发转码
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 2, "end_line": 3, "content": "implementation\n\nprocedure Foo;\nbegin\nend;", "description": "transcode"},
+        ], "backup": False, "encoding": "utf-16-le"})
+        _ok(r)
+        msg = r.get("message", "")
+        # 应该有转码提示 (新格式: "ℹ transcoded: utf-8 → utf-16-le")
+        assert "transcoded" in msg, f"应有转码提示:\n{msg}"
+        assert "utf-8" in msg and "utf-16-le" in msg, f"应包含两种编码:\n{msg}"
+        # 验证文件被成功转码为 UTF-16-LE
+        assert detect_encoding(f) == "utf-16-le", f"文件应被转码为 utf-16-le, 实际: {detect_encoding(f)}"
+        # 验证内容可正确以 UTF-16-LE 解读
+        with open(f, 'r', encoding='utf-16-le') as fh:
+            content = fh.read()
+        assert "procedure Foo" in content
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_utf16le_to_utf8_transcode():
+    """[转码] UTF-16-LE 文件 + encoding='utf-8' → 内部转码, 文件变为 UTF-8"""
+    d = tempfile.mkdtemp(prefix="enc_back_")
+    try:
+        f = os.path.join(d, "U.pas")
+        # 创建 UTF-16-LE 无 BOM 文件
+        text = "unit U;\ninterface\nimplementation\nend.\n"
+        _mf_encoded(f, text, "utf-16-le")
+        assert detect_encoding(f) == "utf-16-le"
+
+        # 显式指定 utf-8, 触发转码
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 2, "end_line": 3, "content": "implementation\n\nprocedure Foo;\nbegin\nend;", "description": "transcode back"},
+        ], "backup": False, "encoding": "utf-8"})
+        _ok(r)
+        # 验证文件被成功转码为 UTF-8
+        assert detect_encoding(f) == "utf-8", f"文件应被转码为 utf-8, 实际: {detect_encoding(f)}"
+        # 验证内容可正确以 UTF-8 解读
+        with open(f, 'r', encoding='utf-8') as fh:
+            content = fh.read()
+        assert "procedure Foo" in content
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_utf16le_explicit_preserved():
+    """UTF-16-LE 文件 + encoding='utf-16-le' (匹配) → 保持 UTF-16-LE, 无转码提示"""
+    d = tempfile.mkdtemp(prefix="enc_keep_")
+    try:
+        f = os.path.join(d, "U.pas")
+        text = "unit U;\ninterface\nimplementation\nend.\n"
+        _mf_encoded(f, text, "utf-16-le")
+        assert detect_encoding(f) == "utf-16-le"
+
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 2, "end_line": 3, "content": "implementation\n\nprocedure Foo;\nbegin\nend;", "description": "edit"},
+        ], "backup": False, "encoding": "utf-16-le"})
+        _ok(r)
+        msg = r.get("message", "")
+        # 不应有转码提示（编码匹配）
+        assert "转码" not in msg, f"编码匹配时不应有转码提示:\n{msg}"
+        # 文件仍为 UTF-16-LE
+        assert detect_encoding(f) == "utf-16-le"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_utf8_sig_treated_as_utf8():
+    """utf-8-sig 与 utf-8 视为兼容（同 utf-8 家族）, 不应触发转码提示"""
+    d = tempfile.mkdtemp(prefix="enc_sig_")
+    try:
+        f = os.path.join(d, "U.pas")
+        # 写入带 BOM 的 UTF-8 文件
+        with open(f, 'wb') as fh:
+            fh.write(b'\xef\xbb\xbf' + b'unit U;\ninterface\nimplementation\nend.\n')
+        assert detect_encoding(f) == "utf-8-sig"
+
+        # 显式指定 utf-8 (sig 视为 utf-8 的兼容变体) — 仅修改一个非重复行
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 1, "end_line": 2, "content": "interface\n\nuses SysUtils;", "description": "edit"},
+        ], "backup": False, "encoding": "utf-8"})
+        _ok(r)
+        msg = r.get("message", "")
+        # utf-8-sig 与 utf-8 视为兼容, 不应有转码提示
+        assert "转码" not in msg, f"utf-8-sig ↔ utf-8 不应触发转码:\n{msg}"
+        # 文件仍可正确读出
+        with open(f, 'r', encoding='utf-8-sig') as fh:
+            content = fh.read()
+        assert "uses SysUtils" in content
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_ai_bug_scenario_no_longer_corrupts():
+    """
+    [回归] AI Agent bug 场景: 文件是 UTF-8, AI 错误指定 encoding='utf-16-le'.
+    修复前: 文件被改写为 UTF-16LE, 内容被错误编码 (AI 报告的 bug).
+    修复后: 内部转码, 文件按用户指定的编码写出, 但内容仍正确可读.
+    """
+    d = tempfile.mkdtemp(prefix="ai_bug_")
+    try:
+        f = os.path.join(d, "U.pas")
+        # 原文件是 UTF-8
+        original = "unit U;\ninterface\nimplementation\nend.\n"
+        _mf(f, original)
+        assert detect_encoding(f) == "utf-8"
+
+        # AI 错误指定 utf-16-le (但提供了正确的 Python str 内容)
+        correct_content = "implementation\n\nprocedure Foo;\nbegin\n  Work;\nend;"
+        r = await handle_batch_write({"file_path": f, "edits": [
+            {"start_line": 2, "end_line": 3, "content": correct_content, "description": "AI edit"},
+        ], "backup": False, "encoding": "utf-16-le"})
+        _ok(r)
+
+        # 修复后行为: 文件被转码为 utf-16-le, 但内容仍正确
+        assert detect_encoding(f) == "utf-16-le"
+        with open(f, 'r', encoding='utf-16-le') as fh:
+            content = fh.read()
+        # 验证内容没有变成 'u\x00n\x00i\x00t\x00' 式的乱码
+        assert "procedure Foo" in content
+        assert "Work" in content
+        # 不应有内嵌的 \x00 (那是 UTF-16-LE 编码原始 ASCII 的特征, 表明内容被错编码)
+        assert "\x00" not in content, f"内容含 \\x00, 表明被错编码:\n{content!r}"
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

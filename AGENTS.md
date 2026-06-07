@@ -67,6 +67,7 @@ src/
 | ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `config/CODING_RULES.mdc` ② 节） |
 | ④ 读源码 | `delphi_file(action="read", file_path=...)` | 读取文件确认修改点 |
 | ⑤ 写代码 | `delphi_file(action="write", content=...)` | 写入代码（自动备份到 __history） |
+| ⑤b 批量写 | `delphi_file(action="batch_write", file_path=..., edits=[...])` | 批量写入多处（自动备份到 __history） |
 | ⑥ 格式化 | `delphi_file(action="format", file_path=...)` | pasfmt 格式化代码 |
 | **⑦ 编译验证** | **`project(action="compile", project_path=...)`** | **编译 `.dproj`/`.dpr`/`.dpk` 项目** |
 | **⑧ 运行验证** | **`project(action="compile", ..., run_verify=True)`** | **编译后启动 exe 运行 3 秒，检测运行时崩溃** |
@@ -119,6 +120,7 @@ src/
 - 恢复：`delphi_file(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
 - 列出备份：`delphi_file(action="backup", backup_action="list", file_path="src/Unit1.pas")`
 - ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 delphi_file 进行备份
+- `delphi_file(action="batch_write", file_path=..., edits=[...])` 批量写入多个代码段（自动备份到 __history），edits 顺序不限，内部自动排序后以备份文件为参照系、内存累积偏移后一次性写出
 
 ### 部分写入规则（start_line/end_line）
 
@@ -170,6 +172,74 @@ Agent 根据以下规则计算后续行号，**不需要重新读取文件**：
 - 如果一次改动涉及多个不连续的位置，优先用 `content` 传完整文件内容（全文替换），而非多次部分写入
 - 增加 uses 单元 → 用 `delphi_file(action="uses", uses_action="add", ...)`，不要手动算行号
 - 修改已有代码 → 一次 write 尽量覆盖完整方法/过程，避免拆成多个部分写入
+
+### delphi_file 紧凑输出格式（v2026.06.03+）
+
+`read` / `write` / `batch_write` / `uses` action 全部采用单行 meta + per-edit 详情的格式，省 token。
+
+**read 输出**:
+```
+# encoding: utf-8, 0-based [0, 200) (truncated)
+```
+| 字段 | 说明 |
+|------|------|
+| `encoding:` | 文件编码 (utf-8 / utf-16-le / utf-16 / gbk / 等) |
+| `0-based [s, e)` | 本次返回的 0-indexed 左闭右开区间（对应 read 的 `start_line`/`end_line`） |
+| `(truncated)` | 文件超出 2000 行被截断（可选标记） |
+
+**write 输出** (全文替换):
+```
+wrote: Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
+```
+
+**write 输出** (部分替换 `start_line`/`end_line`):
+```
+wrote: Unit1.pas, 0-based [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
+```
+- `[5, 10) → [5, 13)`：原始行号 → 写入后行号，**偏移量 = 13 - 10 = +3**（隐含在区间变换里）
+- DFM 转换 / 编码回退会附加额外标记: `ℹ transcoded: utf-16 → utf-8` / `⚠ fallback: gbk → utf-8` / `format: binary DFM converted` / `formatted: yes`
+
+**batch_write 输出** (🧪 实验性):
+```
+🧪 batch_write is experimental, prefer action=write (one read+write per turn)
+batch_wrote: 2 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
+
+  [5, 10) → [5, 13)  edit #0
+    - L5_old
+    - L6_old
+    + L5_new
+    + L6_new
+    + L7_new
+
+  [20, 22) → [20, 22)  edit #1
+    - L20_old
+    + L20_new
+```
+- 第 1 行永远是 **🧪 实验性警告**
+- 每个 edit 后跟 `- / +` diff 预览（≤5 行时全量, 超过则省略 + `...（共 N 行）`）
+- 累计偏移一致性自检: 若 `len(lines) ≠ total + cumulative_offset`, 会插入 `❌ 内部错误` 行（说明 batch_write 内部 bug, 请上报）
+- **known issues**:
+  1. AI 误用 read 后的新行号（而非原始文件行号）→ 触发"连续重复行"误报
+  2. 累计偏移量在 edits ≥ 3 时计算复杂, 容易累积误差
+  3. DFM 二进制 + batch_write 组合: 转换 → 文本 → 编辑 → 转回, 字节级可能漂移
+  4. **静默错位 bug** (实测发现): AI 1-indexed 错位或 cumulative offset 误算时, 不会触发任何警告（per-edit diff 预览可让 AI 视觉发现 `-` 和 `+` 内容不匹配）
+
+**uses 输出**:
+```
+wrote: Unit1.pas, 0-based [2, 3) → [2, 4), encoding: utf-8, backup: __history\Unit1.pas.~1~
+```
+格式与 `write` 部分替换一致，偏移量算法也相同。
+
+### batch_write 使用建议（🧪）
+
+| 场景 | 推荐 |
+|------|------|
+| 一次性改 1~2 个不连续位置 | `read` → `write`（更稳, 偏移量在响应中显式给出） |
+| 一次性改 3+ 个不连续位置 | `read` → `batch_write`（省往返, 但需核对 per-edit diff 预览） |
+| 涉及 uses 单元变更 | `uses` action（专做 uses 子句, 自动算偏移） |
+| 改 1 个完整方法/过程 | `write` + 完整 content（覆盖范围大, 不需要多次部分写） |
+
+**务必核对 batch_write 响应中的 `- / +` 预览**: 看到 `- L4_old` 配 `+ L3_NEW` 之类的不匹配时, 立即中止并重新 `read` 文件确认目标行号。
 
 ### 编译
 - `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）

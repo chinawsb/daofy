@@ -359,7 +359,7 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), format=格式化, backup=备份管理, uses=增删uses子句"},
+                        "action": {"type": "string", "enum": ["read", "write", "batch_write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), batch_write=批量写入(🧪 实验性, 详见各 action 描述), format=格式化, backup=备份管理, uses=增删uses子句"},
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
 
                         # ---- [仅 action=read] 参数 ----
@@ -375,11 +375,32 @@ async def run_server():
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
                         "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
 
-                        # ---- [仅 action=write] 参数 ----
+                        # ---- [仅 action=write/batch_write] 参数 ----
                         "content": {"type": "string", "description": "【action=write 必需】写入的内容。不传 start_line/end_line 时替换全文，必须包含完整文件内容。配合 start_line/end_line 时仅替换指定行范围。"},
-                        "encoding": {"type": "string", "default": "auto", "description": "[仅 action=write] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "[仅 action=write] 写入后自动调用 pasfmt 格式化代码"},
-                        "backup": {"type": "boolean", "default": True, "description": "[仅 action=write] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+                        "encoding": {"type": "string", "default": "auto", "description": "[write/batch_write] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "[write/batch_write] 写入后自动调用 pasfmt 格式化代码"},
+                        "backup": {"type": "boolean", "default": True, "description": "[write/batch_write] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+
+                        # ---- [仅 action=batch_write] 参数 ----
+                        # 🧪 实验性功能：批量写入在 AI 多次连续编辑场景下偏移量易错，
+                        #    重复行检测可能误报，实际使用中仍报较多错误。
+                        #    推荐场景：单次 ≥3 处修改且区间不连续。
+                        #    不推荐：与 read 后立即 write 混合调用、AI 不计算偏移量的多轮对话。
+                        #    如遇问题请用 action=write 多次调用（每次 read → write 一次）。
+                        "edits": {
+                            "type": "array",
+                            "description": "【action=batch_write 必需 🧪 实验性】编辑列表，传入顺序不限。以备份文件为参照系，内部自动排序后依次替换。相邻 edit 区间不能重叠。",
+                            "items": {
+                                "type": "object",
+                                "required": ["start_line", "content"],
+                                "properties": {
+                                    "start_line": {"type": "integer", "description": "起始行号（0-indexed inclusive）"},
+                                    "end_line": {"type": "integer", "description": "结束行号（0-indexed exclusive），不传则到文件末尾"},
+                                    "content": {"type": "string", "description": "替换内容（完整替代 [start_line, end_line) 区间，不要包含区间内已有的行）"},
+                                    "description": {"type": "string", "description": "可选的文字描述，仅用于返回消息标记"}
+                                }
+                            }
+                        },
 
                         # ---- [仅 action=format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
@@ -1246,8 +1267,38 @@ def _cleanup_resources():
     logger.info("资源清理完成")
 
 
+def _build_arg_parser() -> "argparse.ArgumentParser":
+    """构建 CLI 参数解析器 (不依赖任何服务, --help/--version 立即退出)"""
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="daofy",
+        description="Daofy for Delphi — MCP Server (Delphi 编译 + 知识库)",
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="显示版本信息并退出",
+    )
+    parser.add_argument(
+        "--config",
+        metavar="PATH",
+        help="自定义 compilers.json 路径 (默认: config/compilers.json)",
+    )
+    return parser
+
+
 def main():
     """主函数"""
+    # ── 早退: --help/--version 不触发任何服务初始化 ──
+    # 避免在没装 Delphi / 默认路径失效的环境下 --help 报错
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+    if args.version:
+        print(f"Daofy v{__version__}")
+        print(f"Python {sys.version.split()[0]}")
+        print(f"{__copyright__}")
+        return
+
     try:
         asyncio.run(run_server())
     except KeyboardInterrupt:
