@@ -75,3 +75,6 @@ opencode.json
 
 # Creative roadmap (not in version control)
 docs/roadmap-creative.md
+
+# Dot-prefixed directories (AI agent workdirs, etc.)
+.*/
