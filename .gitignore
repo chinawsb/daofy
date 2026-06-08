@@ -72,3 +72,6 @@ config/compilers.json
 config/history.json
 temp_scan_result.json
 opencode.json
+
+# Creative roadmap (not in version control)
+docs/roadmap-creative.md
