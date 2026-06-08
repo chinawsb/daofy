@@ -402,6 +402,7 @@ async def run_server():
                             }
                         },
                         "force": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 强制写入：true 时跳过 AI 偏移量检查（content 首行与被替换行相同、或结果中出现连续重复行时不再报错）。批量写入遇到偏移量误判时用此参数绕过。"},
+                        "preview": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 预览模式：true 时只计算 diff 不写盘（不备份、不写入、不格式化），返回 per-edit diff 预览用于确认"},
 
                         # ---- [仅 action=format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},

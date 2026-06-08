@@ -1802,3 +1802,146 @@ async def test_batch_write_multiline_content():
         assert "B1\nB2\nB3\n" in final, f"多行丢失: {repr(final)}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_preview_no_file_change():
+    """preview=True 时不应修改文件内容"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Unit1.pas")
+        original = "line1\nline2\nline3\nline4\nline5\n"
+        _make_file(file_path, original)
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 3, "content": "replaced\nnewline\n", "description": "替换中间"},
+            ],
+            "backup": False,
+            "preview": True,
+        })
+        _assert_success(result)
+        # 文件不应变化
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original, "preview 模式修改了文件!"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_preview_diff_in_message():
+    """preview=True 时消息中应包含 diff 预览 ( - / + 行)"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Demo.pas")
+        _make_file(file_path, "aaa\nbbb\nccc\n")
+
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 2, "content": "BBB\n", "description": "改 bbb"},
+            ],
+            "backup": False,
+            "preview": True,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "batch_preview:" in msg, f"应标记 preview, got: {msg}"
+        assert "- bbb" in msg, f"缺失删除行标记: {msg}"
+        assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
+        assert "preview: true" in msg, f"缺失 preview 标记: {msg}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_preview_no_backup():
+    """preview=True 时不应创建备份文件"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "NoBak.pas")
+        _make_file(file_path, "x\ny\nz\n")
+
+        # 先确认有没有 __history 目录
+        history_dir = os.path.join(tmp_dir, "__history")
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 0, "end_line": 1, "content": "X\n", "description": "改首行"},
+            ],
+            "backup": True,   # backup=True 但 preview=True 应跳过备份
+            "preview": True,
+        })
+        _assert_success(result)
+        # __history 不应被创建
+        assert not os.path.exists(history_dir), "preview 模式不应创建备份"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_preview_same_result_as_actual_write():
+    """preview 输出的 diff 应与实际写入内容一致"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "Check.pas")
+        _make_file(file_path, "a\nb\nc\nd\ne\n")
+
+        # 先 preview
+        preview = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
+            ],
+            "backup": False,
+            "preview": True,
+        })
+        _assert_success(preview)
+
+        # 读回原始内容确认文件未变
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "a\nb\nc\nd\ne\n", "preview 不应改文件"
+
+        # 实际写入
+        actual = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 1, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
+            ],
+            "backup": False,
+            "preview": False,
+        })
+        _assert_success(actual)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            final = f.read()
+        assert final == "a\nB\nC\nD\ne\n", f"实际写入结果不符: {repr(final)}"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_batch_write_preview_with_force():
+    """preview 与 force 可同时使用: 预览时跳过重复行检测"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "ForcePrev.pas")
+        _make_file(file_path, "aaa\nbbb\nccc\n")
+
+        # 故意产生 content 首行与被替换行相同的情况
+        result = await handle_batch_write({
+            "file_path": file_path,
+            "edits": [
+                {"start_line": 0, "end_line": 1, "content": "aaa\n", "description": "内容首行与 old 相同"},
+            ],
+            "backup": False,
+            "preview": True,
+            "force": True,
+        })
+        _assert_success(result)
+        # 文件仍不应变化
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "aaa\nbbb\nccc\n", "force+preview 也不应改文件"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

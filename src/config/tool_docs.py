@@ -277,9 +277,11 @@ TOOL_HELP_DOCS: dict = {
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
                     "auto_format": "写入后自动调用 pasfmt 格式化，默认 false",
                     "force": "强制写入，跳过 AI 偏移量检查（检测到重复行时阻止写入），默认 false",
+                    "preview": "预览模式，只计算 diff 不写盘（不备份、不写入、不格式化），默认 false",
                 },
                 "examples": [
                     'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"更新代码"},{start_line:18,end_line:21,content:"更新代码"}])',
+                    'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"新代码"}], preview=true)  预览 diff，不写入',
                 ],
             },
         },

@@ -738,6 +738,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       edits: 编辑列表，每个元素为 { start_line, end_line, content, description? }
       force: 可选，默认 false。设为 true 可跳过 AI 偏移量检查（检测到 content 首行与被替换行相同、
              或结果中出现连续重复行时报错），强制写入。
+      preview: 可选，默认 false。设为 true 时只计算 diff 预览，不备份、不写盘、不格式化。
 
     设计:
       - edits 传入顺序不限，内部自动按 start_line 升序排列后从前往后依次替换
@@ -759,6 +760,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     encoding = arguments.get("encoding", "auto")
     auto_format = arguments.get("auto_format", False)
     force = arguments.get("force", False)
+    preview = arguments.get("preview", False)
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
@@ -846,9 +848,9 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 f"edits 区间重叠: \"{d1}\" [{s1},{e1}) 与 \"{d2}\" [{s2},...) 重叠"
             )
 
-    # ── 一次完整备份 ──
+    # ── 一次完整备份（预览模式跳过） ──
     bak_path = None
-    if backup:
+    if backup and not preview:
         bak_path = create_backup(file_path)
 
     # ── 读文件（二进制 DFM 需转文本） ──
@@ -968,6 +970,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         # 记录是否发生过编码回退（与 handle_write 行为对齐：原编码无法编码时静默切到 UTF-8）
         encoding_fallback = False
+        fmt_msg = ""
 
         # ── 累计偏移一致性自检（早期预警错位改写） ──
         # 编辑应用逻辑的不变量: len(lines) == total + cumulative_offset
@@ -1018,50 +1021,55 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     "如需强制写入请设置 force=true"
                 )
 
-        # DFM 二进制 → 转回二进制
-        final_path = file_path
-        if is_dfm_binary:
-            text_tmp = file_path + ".txt"
-            with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
-                f.write(new_text)
-            try:
-                conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
-                if not conv_result.get("success"):
-                    os.rename(text_tmp, file_path)
-                    logger.warning(f"DFM 二进制转换失败，已保留文本: {conv_result.get('message')}")
-                else:
-                    os.remove(text_tmp)
-            except Exception as ex:
-                if os.path.exists(text_tmp):
-                    os.rename(text_tmp, file_path)
-                logger.warning(f"DFM 转换异常，已保留文本: {ex}")
+        # ── 预览模式：跳过磁盘写入 ──
+        if preview:
+            # diffs 已经记录在 results 中，直接进入汇总
+            pass
         else:
-            try:
-                with open(file_path, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
+            # DFM 二进制 → 转回二进制
+            final_path = file_path
+            if is_dfm_binary:
+                text_tmp = file_path + ".txt"
+                with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
                     f.write(new_text)
-            except UnicodeEncodeError:
-                logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
-                with open(file_path, 'w', encoding="utf-8", newline='', buffering=1048576) as f:
-                    f.write(new_text)
-                write_enc = "utf-8"
-                encoding_fallback = True
+                try:
+                    conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
+                    if not conv_result.get("success"):
+                        os.rename(text_tmp, file_path)
+                        logger.warning(f"DFM 二进制转换失败，已保留文本: {conv_result.get('message')}")
+                    else:
+                        os.remove(text_tmp)
+                except Exception as ex:
+                    if os.path.exists(text_tmp):
+                        os.rename(text_tmp, file_path)
+                    logger.warning(f"DFM 转换异常，已保留文本: {ex}")
+            else:
+                try:
+                    with open(file_path, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
+                        f.write(new_text)
+                except UnicodeEncodeError:
+                    logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
+                    with open(file_path, 'w', encoding="utf-8", newline='', buffering=1048576) as f:
+                        f.write(new_text)
+                    write_enc = "utf-8"
+                    encoding_fallback = True
 
-        # 写入后自动格式化
-        fmt_msg = ""
-        if auto_format and _is_delphi_file(file_path):
-            try:
-                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-                if fmt_result.get("formatted"):
-                    fmt_msg = "，写入后已格式化"
-            except Exception as ex:
-                logger.warning(f"写入后自动格式化失败: {ex}")
+            # 写入后自动格式化
+            fmt_msg = ""
+            if auto_format and _is_delphi_file(file_path):
+                try:
+                    fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
+                    if fmt_result.get("formatted"):
+                        fmt_msg = "，写入后已格式化"
+                except Exception as ex:
+                    logger.warning(f"写入后自动格式化失败: {ex}")
 
-        # 清理备份（如果不需保留）
-        if not backup and bak_path and os.path.exists(bak_path):
-            try:
-                os.remove(bak_path)
-            except OSError:
-                pass
+            # 清理备份（如果不需保留）
+            if not backup and bak_path and os.path.exists(bak_path):
+                try:
+                    os.remove(bak_path)
+                except OSError:
+                    pass
 
         # ── 汇总 ──
         # 🧪 实验性功能: 批量写入在 AI 多次连续编辑时偏移量易错, 重复行检测可能误报
@@ -1072,15 +1080,18 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         #   推荐: 每次 read → write 一次, 多轮独立操作更稳
         summary = ["🧪 batch_write is experimental, prefer action=write (one read+write per turn)"]
         basename = os.path.basename(file_path)
+        action_label = "batch_preview" if preview else "batch_wrote"
         header_parts = [
-            f"batch_wrote: {len(validated_edits)} edits, {basename}",
+            f"{action_label}: {len(validated_edits)} edits, {basename}",
             f"encoding: {write_enc}",
         ]
+        if preview:
+            header_parts.append("preview: true（未写入磁盘）")
         if encoding_transcoded:
             header_parts.append(f"ℹ transcoded: {detected_encoding} → {write_enc}")
         if encoding_fallback:
             header_parts.append(f"⚠ fallback: {detected_encoding} → utf-8")
-        if bak_path and backup:
+        if not preview and bak_path and backup:
             header_parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
         if fmt_msg:
             header_parts.append("formatted: yes")
