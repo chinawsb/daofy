@@ -85,9 +85,11 @@ class SQLiteVectorKnowledgeBase:
             # 检查 metadata 表是否存在（新 schema 始终有 metadata 表）
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
             if not cursor.fetchone():
-                # 空数据库：使用统一 schema 初始化
-                logger.warning("知识库为空，请先通过 create_source_tables() 初始化 schema")
-                # 这是只读查询类，不应该自动建表。由外部调用方负责初始化。
+                # 空数据库：自动初始化 schema，确保搜索方法不会因表不存在而崩溃
+                from .schema import create_source_tables
+                create_source_tables(cursor)
+                conn.commit()
+                logger.info("知识库已自动初始化（空库，尚未构建数据）")
             else:
                 # 从 metadata 表读取（key-value 格式）
                 cursor.execute("SELECT value FROM metadata WHERE key = 'total_files'")
