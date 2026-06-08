@@ -370,7 +370,7 @@ async def run_server():
                         "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
                         "start_line": {"type": "integer", "default": 0, "description": "起始行号（从0开始，左闭右开区间）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
                         "limit": {"type": "integer", "default": 500, "description": "[仅 action=read] 最大返回行数（默认500，上限1000）。当文件超长时分段读取"},
-                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（0-based，如 '     0: unit Unit1;'），默认 false"},
+                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（0-indexed，如 '     0: unit Unit1;'），默认 false"},
                         "end_line": {"type": "integer", "description": "结束行号（不包含该行，左闭右开区间），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
                         "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},

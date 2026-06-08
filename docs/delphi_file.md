@@ -97,11 +97,11 @@ delphi_file(action="read", search_type="class",
 
 `read` 输出紧凑格式示例：
 ```
-# encoding: utf-8, 0-based [0, 200) (truncated)
+# encoding: utf-8, 0-indexed [0, 200) (truncated)
 ```
 
 - `encoding:` 文件编码
-- `0-based [s, e)` 本次返回的 0-indexed 左闭右开区间
+- `0-indexed [s, e)` 本次返回的 0-indexed 左闭右开区间
 - `(truncated)` 文件被截断时标记
 
 ### 3.5 参数说明
@@ -111,7 +111,7 @@ delphi_file(action="read", search_type="class",
 | `start_line` | 0 | 起始行号（0-indexed） |
 | `end_line` | — | 结束行号（不包含，左闭右开），不传则到文件末尾 |
 | `limit` | 500 | 最大返回行数（上限 1000） |
-| `show_line_numbers` | false | 是否显示行号前缀（0-based） |
+| `show_line_numbers` | false | 是否显示行号前缀（0-indexed） |
 | `search_in` | all | 搜索范围：all/delphi/thirdparty |
 | `project_path` | — | 项目路径（搜索项目代码时使用） |
 
@@ -155,7 +155,7 @@ delphi_file(action="write",
 每次 `write` 返回偏移量信息：
 
 ```
-wrote: Unit1.pas, 0-based [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
+wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
 ```
 
 `[5, 10) → [5, 13)` 表示：原 5-10 行被替换为 5-13 行，**偏移量 = 13 - 10 = +3**。
@@ -333,13 +333,13 @@ delphi_file(action="uses", uses_action="remove",
 
 ```
 # 读文件
-encoding: utf-8, 0-based [0, 200) (truncated)
+encoding: utf-8, 0-indexed [0, 200) (truncated)
 
 # 写文件（全文替换）
 wrote: Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
 
 # 写文件（部分替换）
-wrote: Unit1.pas, 0-based [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
+wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
 
 # batch_write
 batch_wrote: 2 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
