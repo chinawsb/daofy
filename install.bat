@@ -263,6 +263,7 @@ echo [INFO] Downloading install_mcp.py...
 
 for %%s in (
     "https://raw.githubusercontent.com/chinawsb/daofy/main/install_mcp.py"
+    "https://gitee.com/zuoyouruanjian/daofy/raw/main/install_mcp.py"
     "https://ghproxy.net/https://raw.githubusercontent.com/chinawsb/daofy/main/install_mcp.py"
 ) do (
     if not exist "%SD%\install_mcp.py" (

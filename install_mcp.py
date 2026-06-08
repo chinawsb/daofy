@@ -1206,8 +1206,8 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
 # 自安装：检查当前目录是否为 MCP Server 目录
 # ============================================================
 
-RELEASE_REPO = "chinawsb/daofy"
-RELEASE_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+GITHUB_REPO = "chinawsb/daofy"
+RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 
 def _is_server_dir() -> bool:
@@ -1220,13 +1220,41 @@ MAX_RETRY = 5   # 每个 URL 最多重试次数（已有镜像回退，无需 30
 RETRY_DELAY = 2  # 秒
 DOWNLOAD_TIMEOUT = 30  # 单次下载超时（秒），urlretrieve 无默认超时
 
-# GitHub 国内镜像代理（用于加速下载和失败回退）
-# ghproxy 模式：只需在 GitHub URL 前添加前缀即可
-# fastgit 模式：替换 hostname
+# ============================================================
+# 多镜像源 + 测速（用于加速下载和失败回退）
+# ============================================================
+
+# GitHub 国内镜像代理
 GITHUB_MIRRORS: list[str] = [
-    "",  # 原始源（优先尝试）
-    "https://ghproxy.net",  # 国内 GitHub 代理（实测可用）
+    "",  # 原始源
+    "https://ghproxy.net",  # 国内 GitHub 代理
 ]
+
+# Gitee 镜像仓库（国内用户首选）
+GITEE_REPO = "zuoyouruanjian/daofy"
+GITEE_API = f"https://gitee.com/api/v5/repos/{GITEE_REPO}/releases/latest"
+
+
+def _measure_speed(url: str, timeout: int = 5) -> float | None:
+    """测量 URL 响应速度（秒），不可达返回 None"""
+    import time
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "daofy-installer"})
+        start = time.time()
+        with urllib.request.urlopen(req, timeout=timeout) as _:
+            return time.time() - start
+    except Exception:
+        return None
+
+
+def _sort_urls_by_speed(urls: list[str]) -> list[str]:
+    """测速排序：按响应时间升序（最快优先），不可达排在最后"""
+    results: list[tuple[float, str]] = []
+    for url in urls:
+        speed = _measure_speed(url)
+        results.append((speed if speed is not None else float('inf'), url))
+    results.sort()
+    return [url for _, url in results]
 
 
 def _build_mirror_urls(url: str) -> list[str]:
@@ -1268,20 +1296,85 @@ def _retry_urlopen(url: str, headers: dict | None = None, timeout: int = 15, max
     raise last_err  # type: ignore[misc]
 
 
-def _get_latest_release_url() -> tuple[str, str]:
-    """获取最新 release 的 zip 下载地址和版本号（自动回退国内镜像）"""
+def _build_api_urls() -> list[str]:
+    """构建所有镜像源的 release API URL 列表"""
     api_urls = _build_mirror_urls(RELEASE_API)
+    # 追加 Gitee API（结构不同，单独添加）
+    for m in GITHUB_MIRRORS:
+        if m:
+            api_urls.append(f"{m}/{GITEE_API}" if "://" in m else f"{m}/{GITEE_API}")
+    api_urls.append(GITEE_API)
+    # 去重
+    seen: set[str] = set()
+    result: list[str] = []
+    for u in api_urls:
+        if u not in seen:
+            seen.add(u)
+            result.append(u)
+    return result
+
+
+def _build_download_urls(download_url: str, version: str) -> list[str]:
+    """根据原始 GitHub 下载 URL 和版本，构建所有镜像源的下载 URL"""
+    urls = _build_mirror_urls(download_url)
+    # Gitee 下载 URL：从 tag + 文件名构建
+    filename = download_url.rstrip("/").split("/")[-1]
+    gitee_dl = f"https://gitee.com/{GITEE_REPO}/releases/download/{version}/{filename}"
+    for m in GITHUB_MIRRORS:
+        if m:
+            urls.append(f"{m}/{gitee_dl}" if "://" in m else gitee_dl)
+    urls.append(gitee_dl)
+    # 去重
+    seen: set[str] = set()
+    result: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            result.append(u)
+    return result
+
+
+def _parse_release_data(data: dict) -> tuple[str, str] | None:
+    """从 release API 响应中解析 (download_url, version)，兼容 GitHub 和 Gitee 格式"""
+    tag_name = data.get("tag_name", "")
+    if not tag_name:
+        return None
+    # 尝试 assets 列表（GitHub 格式 + Gitee 格式）
+    assets = data.get("assets") or []
+    for asset in assets:
+        name = asset.get("name", "")
+        if name.endswith(".zip"):
+            url = (asset.get("browser_download_url") or
+                   asset.get("zipball_url") or "")
+            if url:
+                return url, tag_name
+    # 无 assets 时构造 zipball URL（GitHub 格式）
+    zip_url = data.get("zipball_url", "")
+    if zip_url:
+        return zip_url, tag_name
+    return None
+
+
+def _get_latest_release_url() -> tuple[str, str]:
+    """获取最新 release 的 zip 下载地址和版本号（自动测速 + 多镜像回退）"""
+    api_urls = _build_api_urls()
+
+    # 测速排序：先测量各镜像响应速度，从最快开始尝试
+    info("正在测速选择最佳镜像源...")
+    sorted_urls = _sort_urls_by_speed(api_urls)
+    fastest = sorted_urls[0] if sorted_urls else ""
+    if fastest and fastest != api_urls[0]:
+        info(f"最佳镜像: {fastest.split('/')[2] if '://' in fastest else '直接连接'}")
+
     last_err: Exception | None = None
-    for api_url in api_urls:
+    for api_url in sorted_urls:
         try:
             data = json.loads(
                 _retry_urlopen(api_url, headers={"User-Agent": "daofy-installer"}).decode("utf-8")
             )
-            version = data.get("tag_name", "unknown")
-            for asset in data.get("assets", []):
-                name = asset.get("name", "")
-                if name.endswith(".zip"):
-                    return asset["browser_download_url"], version
+            result = _parse_release_data(data)
+            if result:
+                return result
         except Exception as e:
             last_err = e
             warn(f"从镜像获取 Release 信息失败: {api_url} — {e}")
@@ -1290,10 +1383,18 @@ def _get_latest_release_url() -> tuple[str, str]:
         warn(f"所有镜像获取 Release 信息均失败: {last_err}")
     return "", ""
 
-def _download_file(url: str, dest: str) -> bool:
-    """下载文件到指定路径，带重试 + 多镜像回退"""
 
-    download_urls = _build_mirror_urls(url)
+def _download_file(url: str, dest: str, version: str = "") -> bool:
+    """下载文件到指定路径，带测速 + 多镜像回退"""
+
+    # 构造多镜像 URL 列表并测速排序
+    raw_urls = _build_download_urls(url, version) if version else _build_mirror_urls(url)
+    info("正在测速选择最佳下载源...")
+    download_urls = _sort_urls_by_speed(raw_urls)
+    if download_urls:
+        fastest_host = download_urls[0].split("/")[2] if "://" in download_urls[0] else "直接连接"
+        info(f"最佳下载源: {fastest_host}")
+
     last_err: Exception | None = None
     for dl_url in download_urls:
         info(f"正在下载: {dl_url}")
@@ -1343,14 +1444,14 @@ def ensure_server_files() -> bool:
     zip_url, version = _get_latest_release_url()
     if not zip_url:
         error("无法获取最新 Release 下载地址")
-        error(f"请手动下载: https://github.com/{RELEASE_REPO}/releases")
+        error(f"请手动下载: https://github.com/{GITHUB_REPO}/releases")
         return False
 
     info(f"最新版本: {version}")
 
     with tempfile.TemporaryDirectory(prefix="daofy-install-") as tmp_dir:
         zip_path = os.path.join(tmp_dir, f"daofy-for-delphi-{version}.zip")
-        if not _download_file(zip_url, zip_path):
+        if not _download_file(zip_url, zip_path, version=version):
             return False
 
         info("正在解压...")
