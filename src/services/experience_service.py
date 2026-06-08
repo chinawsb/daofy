@@ -301,6 +301,8 @@ class ExperienceMemoryService:
         """语义搜索经验。
 
         优先使用 embedding 做真语义搜索，不可用时降级到 LIKE 关键词匹配。
+        如果 embedding 模型已加载但搜不到结果（可能是旧记录缺少向量），
+        自动触发 rebuild_embeddings() 补全后重试。
 
         Args:
             query: 搜索关键词
@@ -314,6 +316,15 @@ class ExperienceMemoryService:
         emb_results = self._search_embedding(query, top_k, tags)
         if emb_results:
             return emb_results
+
+        # embedding 可用但无结果 → 可能是旧记录缺少向量，自动重建后重试
+        if _embedding_ok():
+            rebuilt = self.rebuild_embeddings()
+            if rebuilt.get("rebuilt", 0) > 0:
+                logger.info("自动重建了 %d 条缺失向量，重试语义搜索", rebuilt["rebuilt"])
+                emb_results = self._search_embedding(query, top_k, tags)
+                if emb_results:
+                    return emb_results
 
         # 降级：关键词 LIKE 搜索
         return self._search_keyword(query, top_k, tags)

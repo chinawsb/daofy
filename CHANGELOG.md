@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`CODING_RULES.mdc` ⑨ 经验保存章节更新**：保存流程中补充 `rebuild_embedding` 操作说明，用于模型加载后重建缺失向量。
+- **`search()` 自动重建缺失向量**：`experience_service.py` 的 `search()` 在模型已加载但语义搜索无结果时，自动触发 `rebuild_embeddings()` 补全缺失向量后重试，无需用户手动调用 `rebuild_embedding` action。
+- **`CODING_RULES.mdc` / `AGENTS.md` 经验文档更新**：保存流程与维护规则中补充 `rebuild_embedding` 自动补全说明。
 
 ## [2026.06.03] - 2026-06-03
 

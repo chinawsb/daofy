@@ -658,11 +658,12 @@ end;
         已有重复 → experience(action="update", id=..., ...)
         多条相关 → experience(action="merge", ids=[...], ...)
 
-步骤 ④ 重建向量（可选，模型后加载时补全）
-        └─ experience(action="rebuild_embedding")
+步骤 ④ 重建向量（可选，模型后加载时自动补全）
+        └─ 自动: 模型加载后首次 search() 无结果时自动触发
+        └─ 手动: experience(action="rebuild_embedding")
         说明: 若首次使用时 embedding 模型未加载，保存的记录缺少向量。
-        在调用 delphi_kb(action=build_embedding) 加载模型后，执行此操作
-        为所有 WHERE embedding IS NULL 的记录补生成向量。
+        调用 delphi_kb(action=build_embedding) 加载模型后，首次语义搜索
+        会自动为所有 WHERE embedding IS NULL 的记录补生成向量后重试。
 
 步骤 ⑤ 验证
         └─ experience(action="search", query="...") 确认能语义召回
