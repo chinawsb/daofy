@@ -368,6 +368,7 @@ async def _handle_partial_write(
     end_line: Optional[int],
     original_encoding: str,
     is_dfm_binary: bool,
+    preview: bool = False,
 ) -> Dict[str, Any]:
     """
     部分写入：仅替换指定行范围的内容，其余部分保持不变。
@@ -403,9 +404,10 @@ async def _handle_partial_write(
         tmp_cleanup = tmp_dir
 
     try:
-        # ── 1. 安全网：始终在 __history 创建备份
-        #    成功→根据 backup 参数决定保留/删除；失败→从备份恢复
-        bak_path = create_backup(file_path)
+        # ── 1. 备份（预览模式跳过）
+        bak_path = None
+        if not preview:
+            bak_path = create_backup(file_path)
 
         # 编码回退标志 (UnicodeEncodeError 时切到 utf-8, 用于输出提示)
         encoding_fallback = False
@@ -457,6 +459,31 @@ async def _handle_partial_write(
                 content = content + line_ending
 
             new_text = before + content + after
+
+        # ── 预览模式：返回 diff 预览，不写盘 ──
+        if preview:
+            # 构建 per-edit diff 预览（模仿 batch_write 格式）
+            old_lines = [lines[s + i].rstrip('\n\r') for i in range(e - s)]
+            new_lines = content.splitlines(keepends=False) if content else []
+            diff_lines = []
+            for ol in old_lines:
+                display = ol if len(ol) <= 80 else ol[:77] + "..."
+                diff_lines.append(f"    - {display}")
+            for nl in new_lines:
+                display = nl if len(nl) <= 80 else nl[:77] + "..."
+                diff_lines.append(f"    + {display}")
+            removed = e - s
+            inserted = len(new_lines) if content else 0
+            delta = inserted - removed
+            new_e = e + delta
+            parts = [
+                f"wrote: {os.path.basename(file_path)} (preview)",
+                f"0-based [{s}, {e}) → [{s}, {new_e})",
+                f"encoding: {enc}",
+                "preview: true（未写入磁盘）",
+            ]
+            summary = [", ".join(parts), ""] + diff_lines
+            return {"status": "success", "message": "\n".join(summary)}
 
         # ── 2. 写入（失败时从 __history 备份恢复） ──
         try:
@@ -582,12 +609,15 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - DFM 文件自动处理：如果原文件是二进制，写出后自动转回二进制
       - 支持 start_line/end_line 部分写入：仅替换指定行范围，其余不变
 
+     preview: 可选，默认 false。设为 true 时只计算 diff 不写盘（不备份、不写入、不格式化）。
+              全量写入 preview 返回文件大小变化；部分写入 preview 返回 diff 预览（- / + 行）。
+    
      行范围参数（0-indexed 左闭右开区间）:
-       start_line=4, end_line=5  → 只替换第 5 行（0-indexed [4,5)）
-       start_line=2, end_line=7  → 替换第 3~7 行（0-indexed [2,7)）
-       start_line=4              → 从第 5 行替换到文件末尾
-       end_line=10               → 从第 1 行替换到第 10 行（0-indexed [0,10)）
-       
+        start_line=4, end_line=5  → 只替换第 5 行（0-indexed [4,5)）
+        start_line=2, end_line=7  → 替换第 3~7 行（0-indexed [2,7)）
+        start_line=4              → 从第 5 行替换到文件末尾
+        end_line=10               → 从第 1 行替换到第 10 行（0-indexed [0,10)）
+        
      ⚠️ 连续编辑注意事项:
        每次部分写入后文件行号会变化（增删行），输出中会返回偏移量：
          「后续编辑: 行号 ≥ X 的新行号 = 原行号 + N；行号 < X 的不变」
@@ -601,6 +631,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     auto_format = arguments.get("auto_format", False)
     start_line = arguments.get("start_line")
     end_line = arguments.get("end_line")
+    preview = arguments.get("preview", False)
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
@@ -642,6 +673,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 end_line=end_line,
                 original_encoding=original_encoding,
                 is_dfm_binary=is_dfm_binary,
+                preview=preview,
             )
 
         if backup:
@@ -649,9 +681,26 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     else:
         if start_line is not None or end_line is not None:
             return _wrap_error("start_line/end_line 仅对已有文件有效，不能用于新建文件")
+        if preview:
+            return {"status": "success", "message":
+                f"[preview] would create new file: {os.path.basename(file_path)}, "
+                f"{len(content.encode('utf-8'))} bytes"}
         # 新文件默认 UTF-8 BOM（避免中文 Windows 下 Delphi/pasfmt 误判为 GBK）
         original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
+    # 预览模式（全量写入）：读原文件，计算 diff 后返回
+    if preview and file_exists:
+        original_content = ""
+        with open(file_path, 'r', encoding=original_encoding or 'utf-8',
+                  buffering=1048576) as f:
+            original_content = f.read()
+        # 简单的 diff 预览：标记全文替换
+        old_bytes = len(original_content.encode('utf-8'))
+        new_bytes = len(content.encode('utf-8'))
+        return {"status": "success", "message":
+            f"[preview] would replace full file: {os.path.basename(file_path)}, "
+            f"{old_bytes} bytes → {new_bytes} bytes"}
+    
     # 写入文件
     tmp_path = None
     try:

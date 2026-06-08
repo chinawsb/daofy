@@ -1805,6 +1805,119 @@ async def test_batch_write_multiline_content():
 
 
 @pytest.mark.asyncio
+async def test_write_partial_preview_no_file_change():
+    """write 部分写入 preview=True 时不应修改文件"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_write_")
+    try:
+        file_path = os.path.join(tmp_dir, "Unit1.pas")
+        original = "line1\nline2\nline3\nline4\nline5\n"
+        _make_file(file_path, original)
+
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "replaced\nnewline\n",
+            "start_line": 1,
+            "end_line": 3,
+            "backup": False,
+            "preview": True,
+        })
+        _assert_success(result)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original, "preview 模式修改了文件!"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_preview_diff_in_message():
+    """write 部分写入 preview=True 时返回 - / + diff"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_write_")
+    try:
+        file_path = os.path.join(tmp_dir, "Demo.pas")
+        _make_file(file_path, "aaa\nbbb\nccc\n")
+
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "BBB\n",
+            "start_line": 1,
+            "end_line": 2,
+            "backup": False,
+            "preview": True,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "preview" in msg, f"应标记 preview, got: {msg}"
+        assert "- bbb" in msg, f"缺失删除行标记: {msg}"
+        assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "aaa\nbbb\nccc\n", "preview 不应改文件"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_full_preview_new_file():
+    """write 全量预览：新建文件时不写盘"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_write_")
+    try:
+        file_path = os.path.join(tmp_dir, "New.pas")
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "unit New;\nbegin\nend.\n",
+            "preview": True,
+        })
+        _assert_success(result)
+        assert "preview" in result["message"]
+        assert "would create" in result["message"]
+        assert not os.path.isfile(file_path), "预览不应创建文件"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_full_preview_existing_file():
+    """write 全量预览：已有文件时不写盘，返回大小变化"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_write_")
+    try:
+        file_path = os.path.join(tmp_dir, "Old.pas")
+        _make_file(file_path, "old content\n")
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "new content\n",
+            "preview": True,
+        })
+        _assert_success(result)
+        assert "preview" in result["message"]
+        assert "bytes" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "old content\n", "预览不应改文件"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_preview_no_backup():
+    """write 部分写入 preview=True 不应创建备份"""
+    tmp_dir = tempfile.mkdtemp(prefix="test_write_")
+    try:
+        file_path = os.path.join(tmp_dir, "NoBak.pas")
+        _make_file(file_path, "x\ny\nz\n")
+        history_dir = os.path.join(tmp_dir, "__history")
+        result = await handle_write({
+            "file_path": file_path,
+            "content": "X\n",
+            "start_line": 0,
+            "end_line": 1,
+            "backup": True,
+            "preview": True,
+        })
+        _assert_success(result)
+        assert not os.path.exists(history_dir), "preview 不应创建备份"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_batch_write_preview_no_file_change():
     """preview=True 时不应修改文件内容"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")

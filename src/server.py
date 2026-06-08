@@ -380,6 +380,7 @@ async def run_server():
                         "encoding": {"type": "string", "default": "auto", "description": "[write/batch_write/uses] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
                         "auto_format": {"type": "boolean", "default": False, "description": "[write/batch_write/uses] 写入后自动调用 pasfmt 格式化代码"},
                         "backup": {"type": "boolean", "default": True, "description": "[write/batch_write/uses] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+                        "preview": {"type": "boolean", "default": False, "description": "[write/batch_write] 预览模式：true 时只计算 diff 不写盘（不备份、不写入、不格式化）。write 全量预览返回文件大小变化；write 部分预览和 batch_write 返回 per-edit diff 预览（- / + 行）"},
 
                         # ---- [仅 action=batch_write] 参数 ----
                         # 🧪 实验性功能：批量写入在 AI 多次连续编辑场景下偏移量易错，
@@ -402,7 +403,6 @@ async def run_server():
                             }
                         },
                         "force": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 强制写入：true 时跳过 AI 偏移量检查（content 首行与被替换行相同、或结果中出现连续重复行时不再报错）。批量写入遇到偏移量误判时用此参数绕过。"},
-                        "preview": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 预览模式：true 时只计算 diff 不写盘（不备份、不写入、不格式化），返回 per-edit diff 预览用于确认"},
 
                         # ---- [仅 action=format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},

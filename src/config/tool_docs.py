@@ -250,7 +250,7 @@ TOOL_HELP_DOCS: dict = {
         "workflow": "get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(format) → compile_project",
         "actions": {
             "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位。start_line 为 0-indexed（第 1 行=0）",
-            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整",
+            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整。支持 preview 参数预览 diff",
             "batch_write": "批量写入：传入 edits 数组（顺序不限），内部自动排序后以备份文件为参照系累积偏移，一次性写出。相邻 edit 区间不能重叠（自动检测并拒绝）",
             "format": "使用 pasfmt 格式化代码",
             "backup": "备份管理（创建/列表/恢复）",
@@ -261,6 +261,7 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="read", search_type="class", type_name="TForm1")                       搜索类定义',
             'delphi_file(action="write", file_path="src/Unit1.pas", content="...")                     写入文件',
             'delphi_file(action="write", file_path="src/Unit1.pas", content="替换", start_line=5, end_line=10)  部分写入',
+            'delphi_file(action="write", file_path="src/Unit1.pas", content="新内容", start_line=5, end_line=10, preview=true)  预览 diff，不写入',
             'delphi_file(action="format", file_path="src/Unit1.pas")                                   格式化',
             'delphi_file(action="backup", file_path="Unit1.pas")                                       创建备份',
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
