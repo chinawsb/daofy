@@ -90,7 +90,7 @@ delphi_kb(
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
 | `tool_help` | 获取任意工具的完整帮助文档（按需，含参数说明/示例/触发词） |
-| `experience` | 经验记忆管理：保存/搜索 AI 成功解决问题的做法（语义搜索） |
+| `experience` | 经验记忆管理：保存/搜索/更新/合并/删除 AI 成功解决问题的做法；定期清理低价值条目（prune）；模型加载后重建缺失向量（rebuild_embedding） |
 
 ## 系统要求
 

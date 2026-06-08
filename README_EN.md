@@ -285,7 +285,7 @@ The following configs apply to users who installed via git clone. Replace the pa
 | `code_hosting` | Unified operations for Gitea/GitHub/GitLab/Gitee/GitCode + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
 | `tool_help` | Get full documentation for any tool (on-demand: params/examples/workflows) |
-| `experience` | Memory management: save/search AI problem-solving experience (semantic search) |
+| `experience` | Memory management: save/search/update/merge/delete AI problem-solving experience; prune low-value entries; rebuild_embedding for records missing vectors after model load |
 
 ## Knowledge Base
 

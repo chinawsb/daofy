@@ -53,6 +53,7 @@ src/
 1. **任务完成后**：如果刚解决的问题与已有经验高度相关，但解决方式不同，用 `action=merge` 手动合并两条经验
 2. **定期清理**：用 `action=prune` 列出低价值（低 hit_count、长期未更新）的经验，检查后 `action=delete` 删除
 3. **抽象合并**：发现多条经验描述的是同一类问题（如不同工具的「消息精简」），手动合并为一条抽象经验，`tags` 要覆盖各类场景
+4. **重建缺失向量**：若 embedding 模型后来才加载（首次使用时未加载），旧记录缺少向量。调用 `experience(action="rebuild_embedding")` 为所有 `WHERE embedding IS NULL` 的记录补生成向量。
 
 ## Agent 编码工作流（优先级顺序）
 
