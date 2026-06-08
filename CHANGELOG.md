@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.08.1] - 2026-06-08
+
+### Added
+
+- **`delphi_file` 全操作 RWLock 防并发文件损坏**: 所有 `file_tool` 操作（read/write/batch_write/format/backup/uses）引入多读单写锁 `_file_rw_locks`。`_acquire_read_lock` / `_release_read_lock` 用于共享读取，`_acquire_write_lock` / `_release_write_lock` 用于排他写入。多个 agent 同时对同一文件写入时，后到者直接返回明确错误，引导合并为一次 `batch_write`。配套修复 `handle_read` 中 DFM 转换后 `file_path` 重新赋值导致锁释放在错误路径的 bug。
+- **`tool_docs.py` 约束强化**: `delphi_file` 文档中新增 `"🚫 禁止对同一个文件并行写入"` 和 `"🚫 同一个文件不要分多次 write"` 约束，`batch_write` 标注为 `"⭐ 优先使用"`。
+- **`tools/7z/7z.dll` 打包**: 补齐 7z.exe 运行所需的 7z.dll（1.9MB），确保 release 包解压后开箱可用，无需单独安装 7-Zip。
+
+### Changed
+
+- **`.gitignore` 排除 dot-prefixed 目录**: 新增 `.*/` 模式，`git rm --cached .arts .omo .sisyphus`，避免项目内 AI 工作目录被意外追踪。
+
 ## [2026.06.08] - 2026-06-08
 
 ### Added

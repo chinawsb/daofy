@@ -368,7 +368,14 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.06.03 (最新)
+### v2026.06.08.1 (最新)
+
+- `delphi_file` 全操作 RWLock 防并发文件损坏：read/write/batch_write/format/backup/uses 全部引入多读单写锁，并发写入返回明确错误引导合并 batch_write
+- `tools/7z/` 补齐 7z.dll，release 包开箱可用
+- `tool_docs.py` 约束强化：batch_write 标注"⭐ 优先使用"，新增并行写入禁令
+- `.gitignore` 排除 dot-prefixed 目录，清理 AI 工作目录追踪
+
+### v2026.06.03
 
 - `delphi_file` 新增 `batch_write` action：一次传入多个 edit，内部按 `start_line` 升序排列，以备份文件为参照系，内存中累积偏移量后一次性写出（配套 18 个测试用例）
 - `compilers.json` 路径自愈：检测到不在 `src/config/` 时自动回退到项目根 `config/`，避免 MCP 启动时因路径差异直接报错
