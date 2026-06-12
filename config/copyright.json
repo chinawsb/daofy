@@ -1,0 +1,41 @@
+{
+  "software_name": "左右道飞MCP服务系统",
+  "software_name_en": "Daofy MCP Server",
+  "version": "V2026.06.08.1",
+  "completed_date": "2026年6月8日",
+  "copyright_holder": "吉林省左右软件开发有限公司",
+  "copyright_holder_en": "Equilibrium Software Development Co., Ltd, Jilin",
+  "unified_social_credit_code": "91220101MA17XQYF5N",
+  "contact_person": "管耸寰",
+  "contact_phone": "17790004302",
+  "contact_address": "吉林省长春市幸福街27号幸福嘉园2栋3单元401室",
+  "source_code": {
+    "front_pages": 30,
+    "back_pages": 30,
+    "lines_per_page": 55,
+    "front_files": [
+      "server.py",
+      "tools/file_tool.py"
+    ],
+    "back_files": [
+      "services/compiler_service.py",
+      "services/config_manager.py",
+      "services/process_manager.py",
+      "services/args_generator.py",
+      "services/knowledge_base/__init__.py",
+      "services/knowledge_base/schema.py",
+      "services/knowledge_base/embedding_service.py",
+      "services/knowledge_base/project_knowledge_base.py",
+      "services/knowledge_base/thirdparty_knowledge_base.py",
+      "services/knowledge_base/document_knowledge_base.py",
+      "services/knowledge_base/service.py",
+      "services/knowledge_base/smart_cache.py",
+      "services/knowledge_base/scan_service.py",
+      "services/knowledge_base/async_task_manager.py",
+      "utils/logger.py",
+      "utils/validator.py",
+      "utils/dproj_parser.py",
+      "utils/delphi_env.py"
+    ]
+  }
+}

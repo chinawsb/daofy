@@ -89,6 +89,8 @@ else:
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
+    from src.services.automation_service import execute_script as _execute_script
+    from src.services.copyright_service import generate_copyright as _generate_copyright
 
     # 后台版本检查结果缓存（由 startup 异步任务填充）
     _update_check_result: Optional[dict] = None
