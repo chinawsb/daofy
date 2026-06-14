@@ -94,6 +94,8 @@ docs/tutorial/
 | 5.2 安装组件包 | — | 编译注册 .dpk |
 | 5.3 复杂编译错误诊断 | `compile-error-demo/ErrorCode.pas` | KB 查泛型约束 → 根因修复 |
 | 5.4 完整从 0 到 1 工作流 | `demo-project/*` | 规范→API→编码→编译→审计→工单 |
+| **5.6 自动化测试（GUI）** | 含 DaofyAutomation 单元的 GUI 程序 | Named Pipe 截图 + 控件交互 |
+| **5.6 自动化测试（Console）** | 任意控制台程序 | subprocess stdin/stdout，无需改造 |
 
 ---
 

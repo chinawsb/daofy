@@ -1,0 +1,161 @@
+---
+name: delphi-rtti-bridge
+description: >-
+  通过 Delphi RTTI 发现和调用 Delphi 应用程序的运行时能力。
+  当你需要读取 Delphi 应用的运行时数据、调用其业务方法、
+  或将 Delphi 应用作为 AI 数据源时使用此技能。
+  典型场景：通过 Daofy MCP Server 的 delphi_rtti 工具操作 Delphi 应用。
+  先使用 delphi_rtti(action='discover') 扫描能力，
+  再使用 delphi_rtti(action='call') 调用方法。
+license: MIT
+compatibility: claude-code, opencode, cursor, windsurf
+metadata:
+  author: daofy
+  version: "1.0"
+  requires: daofy MCP Server (delphi_rtti tool)
+---
+
+# Delphi RTTI Bridge
+
+## 概述
+
+通过 Delphi Enhanced RTTI 将 Delphi 应用程序暴露为 AI 可发现和调用的能力源。
+此技能配合 Daofy MCP Server 的 `delphi_rtti` 工具使用。
+
+## 使用流程
+
+### 第一步：连接并发现能力
+
+```
+delphi_rtti(action="discover", app_path="C:\\App\\MyApp.exe")
+```
+
+返回该应用所有类的 published 方法清单，包含 JSON Schema 格式的参数定义。
+
+### 第二步：理解能力清单
+
+返回的 JSON 结构：
+
+```json
+{
+  "classes": [
+    {
+      "className": "TMainForm",
+      "ancestor": "TForm",
+      "tools": [
+        {
+          "name": "CreateOrder",
+          "kind": "function",
+          "returnType": {"type": "integer"},
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "customerName": {"type": "string"},
+              "amount": {"type": "number", "minimum": 0}
+            }
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "Caption",
+          "schema": {"type": "string"},
+          "readable": true,
+          "writable": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 第三步：调用方法
+
+```
+delphi_rtti(
+  action="call",
+  app_path="C:\\App\\MyApp.exe",
+  class_name="TMainForm",
+  method="CreateOrder",
+  params={"customerName": "张三", "amount": 100}
+)
+```
+
+## 前置条件
+
+1. Delphi 应用已链接 `DaofyAutomation` 单元（编译运行）
+2. 应用启动后命名管道 `\\.\pipe\daofy_auto` 已就绪
+3. Daofy MCP Server 已配置并运行
+
+## 类型映射
+
+| Delphi 类型 | JSON 类型 | 说明 |
+|------------|----------|------|
+| string / UnicodeString | string | 默认 UTF-8 |
+| Integer / Int64 | integer | 32/64 位有符号整数 |
+| Cardinal / Byte / Word | integer | 无符号，minimum: 0 |
+| Single / Double / Currency | number | 浮点数/货币 |
+| Boolean / ByteBool | boolean | |
+| TDateTime | string (date-time) | ISO 8601 格式 |
+| 枚举 | string (enum) | 带可选值列表 |
+| TObject / TPersistent | object | 子对象 |
+| 动态数组 / TArray\<T\> | array | 递归映射元素类型 |
+| TStrings / TStringList | array of string | |
+| Variant | any | 动态类型 |
+| Pointer | string | 特殊处理 |
+
+## 最佳实践
+
+### 先 discover 再 call
+始终先 discover 获取完整能力清单，确认方法签名后再调用。
+
+### 缓存发现结果
+同一 Delphi 应用进程生命周期内 RTTI 能力不变，discover 一次即可。
+`delphi_rtti` 服务层已内置 5 分钟缓存。
+
+### 使用 keep_alive
+如需多次调用，在首次 discover 时使用 `keep_alive=True` 保持进程运行。
+
+### 参数匹配
+- 确保参数名与 discover 返回的完全一致（大小写敏感）
+- 确保参数类型符合类型映射表
+- 所有参数都是必需的（Delphi RTTI 不提供默认值标志）
+
+### 安全
+- Delphi 端 `rtti_discover` 仅暴露 `published` 区段的方法
+- 基类的 inherited published 方法也会被扫描
+- 生产环境可通过自定义属性实现白名单/黑名单过滤
+
+## 故障排除
+
+### "pipe_unavailable"
+Delphi 应用未启动或未链接 DaofyAutomation 单元。
+确认应用已编译并包含 DaofyAutomation 单元。
+
+### 方法调用失败
+检查：
+1. 方法名是否与 discover 返回的完全一致
+2. 参数名是否匹配
+3. 参数类型是否符合映射表
+4. 该方法是否为 `published`
+
+### 空返回
+检查目标类的方法是否标记为 `published`。
+只有 published 区段的方法才能被 RTTI 发现。
+
+### discover 返回为空
+确认：
+1. Delphi 应用版本 >= Delphi 2010（支持 Enhanced RTTI）
+2. 编译时启用了 `$METHODINFO ON`（默认开启）
+3. 类定义中确实有 published 方法
+
+## 参考
+
+完整技术细节见：
+- `docs/rtti-mcp-bridge-design.md`
+- `src/services/rtti_bridge.py`
+- `src/tools/delphi_rtti.py`
+
+详细类型映射和示例见：
+- `references/type-mapping.md`
+- `references/examples.md`

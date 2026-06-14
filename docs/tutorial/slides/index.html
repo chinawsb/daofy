@@ -10,7 +10,7 @@
     /* ===== Mermaid ===== */
     .mermaid { background: transparent !important; border: none !important; box-shadow: none !important; text-align: center; }
     .mermaid svg { max-width: 100%; display: block; margin: 0 auto; overflow: visible; }
-    .mermaid foreignObject { overflow: visible !important; }
+    /* foreignObject 已禁用，改用 SVG text 渲染以避免排版兼容问题 */
     .reveal .mermaid { margin: 0.2em 0; }
 
     /* ===== 基础 ===== */
@@ -511,17 +511,33 @@
         <h2><span class="ico ico-orange">&#x2753;</span> 01 什么是 MCP？</h2>
         <p><span class="highlight">M</span>odel <span class="highlight">C</span>ontext <span class="highlight">P</span>rotocol — 由 Anthropic 提出的<strong>开放协议</strong></p>
         <div class="quote">核心价值：为 AI 打开一扇通向本地世界的门——从对话到行动</div>
-        <pre class="mermaid">
-flowchart LR
-    A["🤖 AI 助手<br/>(Claude / CodeArts)"]
-    M["🔌 MCP Server<br/>(工具网关)"]
-    C["🔧 Delphi 编译器"]
-    K["📚 源码知识库<br/>30万函数"]
-    F["🎨 pasfmt 格式化"]
-    A -->|MCP 协议| M
-    M --> C
-    M --> K
-    M --> F</pre>
+        <div style="display:flex; align-items:stretch; gap:0.4em; margin:0.5em 0;">
+          <div style="flex:1; background:#fff; border-radius:12px; padding:0.5em; border:2px solid #e7e5e4; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:1.4em;">🤖</div>
+            <div style="font-weight:700; font-size:0.7em;">AI 助手</div>
+            <div style="font-size:0.45em; color:#78716c; margin-top:0.15em;">Claude / CodeArts</div>
+          </div>
+          <div style="display:flex; align-items:center; color:#ff7a00; font-weight:700; font-size:0.55em; writing-mode:vertical-lr; letter-spacing:0.15em;">MCP 协议</div>
+          <div style="flex:1; background:#fff; border-radius:12px; padding:0.5em; border:2px solid #ff7a00; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+            <div style="font-size:1.4em;">🔌</div>
+            <div style="font-weight:700; font-size:0.7em;">MCP Server</div>
+            <div style="font-size:0.45em; color:#78716c; margin-top:0.15em;">工具网关</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.25em; flex:1.2;">
+            <div style="display:flex; align-items:center; gap:0.35em; background:#fff; border-radius:8px; padding:0.35em 0.5em; border:1px solid #e7e5e4; flex:1;">
+              <span style="font-size:0.9em;">🔧</span>
+              <div><div style="font-weight:600; font-size:0.55em;">Delphi 编译器</div><div style="font-size:0.45em; color:#78716c;">dcc32 / msbuild</div></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.35em; background:#fff; border-radius:8px; padding:0.35em 0.5em; border:1px solid #e7e5e4; flex:1;">
+              <span style="font-size:0.9em;">📚</span>
+              <div><div style="font-weight:600; font-size:0.55em;">源码知识库</div><div style="font-size:0.45em; color:#78716c;">30万函数</div></div>
+            </div>
+            <div style="display:flex; align-items:center; gap:0.35em; background:#fff; border-radius:8px; padding:0.35em 0.5em; border:1px solid #e7e5e4; flex:1;">
+              <span style="font-size:0.9em;">🎨</span>
+              <div><div style="font-weight:600; font-size:0.55em;">pasfmt 格式化</div><div style="font-size:0.45em; color:#78716c;">代码美化</div></div>
+            </div>
+          </div>
+        </div>
         <p class="dim">类比：AI 的"USB 接口"——插上什么工具，AI 就会用什么</p>
       </div>
     </section>
@@ -568,43 +584,55 @@ flowchart LR
     <div class="deco deco-3"></div>
     <div class="slide-content">
       <h2><span class="ico ico-orange">&#x1F680;</span> 02 功能全景</h2>
-      <div class="grid-4">
-        <div class="card card-num-orange">
-          <div class="ico ico-orange" style="margin:0 auto 0.3em;">&#x1F527;</div>
-          <div class="num">编译</div>
-          <div class="label">项目 / 语法 / 批量<br>多平台 / 多配置</div>
-        </div>
-        <div class="card card-num-blue">
-          <div class="ico ico-blue" style="margin:0 auto 0.3em;">&#x1F4DA;</div>
-          <div class="num">知识库</div>
-          <div class="label">30万函数 + 16万文档<br>精确 / 语义 / 引用</div>
-        </div>
-        <div class="card card-num-green">
-          <div class="ico ico-green" style="margin:0 auto 0.3em;">&#x1F3A8;</div>
-          <div class="num">格式化</div>
-          <div class="label">pasfmt 集成<br>自动 __history 备份</div>
-        </div>
-        <div class="card card-num-orange">
-          <div class="ico ico-orange" style="margin:0 auto 0.3em;">&#x1F4CB;</div>
-          <div class="num">编码规范</div>
-          <div class="label">驱动代码生成<br>驱动代码审计</div>
+      <div style="font-size:0.78em;">
+        <div class="grid-4">
+          <div class="card card-num-orange">
+            <div class="ico ico-orange" style="margin:0 auto 0.3em;">&#x1F527;</div>
+            <div class="num">编译</div>
+            <div class="label">项目 / 语法 / 批量<br>多平台 / 多配置 / run_verify</div>
+          </div>
+          <div class="card card-num-blue">
+            <div class="ico ico-blue" style="margin:0 auto 0.3em;">&#x1F4DA;</div>
+            <div class="num">知识库</div>
+            <div class="label">30万函数 + 16万文档<br>精确 / 语义 / 引用</div>
+          </div>
+          <div class="card card-num-green">
+            <div class="ico ico-green" style="margin:0 auto 0.3em;">&#x1F3A8;</div>
+            <div class="num">文件操作</div>
+            <div class="label">读 / 写 / 格式化 / 备份<br>uses 管理 / DFM 自动转换</div>
+          </div>
+          <div class="card card-num-orange">
+            <div class="ico ico-orange" style="margin:0 auto 0.3em;">&#x1F4CB;</div>
+            <div class="num">编码规范</div>
+            <div class="label">驱动代码生成<br>驱动代码审计</div>
+          </div>
         </div>
       </div>
-      <div style="display:flex; gap:0.7em; justify-content:center; margin-top:0.7em;">
-        <div class="card" style="flex:1; max-width:170px;">
+      <div style="display:flex; gap:0.5em; justify-content:center; margin-top:0.5em; font-size:0.65em;">
+        <div class="card" style="flex:1; max-width:155px;">
           <div class="ico ico-purple" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F4E6;</div>
-          <div class="num" style="font-size:1em; color:#8b5cf6;">组件</div>
-          <div class="label">编译安装 .dpk</div>
+          <div class="num" style="font-size:0.95em; color:#8b5cf6;">组件管理</div>
+          <div class="label">DFM 增删改<br>.dpk 编译安装</div>
         </div>
-        <div class="card" style="flex:1; max-width:170px;">
-          <div class="ico ico-yellow" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F504;</div>
-          <div class="num" style="font-size:1em; color:#b8860b;">重构</div>
-          <div class="label">引用→修改→验证</div>
+        <div class="card" style="flex:1; max-width:155px;">
+          <div class="ico ico-yellow" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F9F0;</div>
+          <div class="num" style="font-size:0.95em; color:#d97706;">RTTI 桥接</div>
+          <div class="label">运行时发现对象<br>调用 published/public 方法</div>
         </div>
-        <div class="card" style="flex:1; max-width:170px;">
-          <div class="ico ico-red" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F41B;</div>
-          <div class="num" style="font-size:1em; color:#ff3b30;">诊断</div>
-          <div class="label">KB 驱动的错误分析</div>
+        <div class="card" style="flex:1; max-width:155px;">
+          <div class="ico ico-red" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F916;</div>
+          <div class="num" style="font-size:0.95em; color:#ea580c;">自动化测试</div>
+          <div class="label">GUI 截图 / Console<br>PE 自动检测</div>
+        </div>
+        <div class="card" style="flex:1; max-width:155px;">
+          <div class="ico ico-green" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F9E0;</div>
+          <div class="num" style="font-size:0.95em; color:#16a34a;">经验记忆</div>
+          <div class="label">AI 自动积累<br>去重 + 语义搜索</div>
+        </div>
+        <div class="card" style="flex:1; max-width:155px;">
+          <div class="ico ico-blue" style="margin:0 auto 0.2em; width:1.8em; height:1.8em;">&#x1F4C4;</div>
+          <div class="num" style="font-size:0.95em; color:#2563eb;">软著生成</div>
+          <div class="label">源码+手册+汇总表<br>PDF 一键出稿</div>
         </div>
       </div>
     </div>
@@ -617,7 +645,7 @@ flowchart LR
         <h2><span class="ico ico-orange">&#x1F4E5;</span> 03 AI 自动安装</h2>
         <p style="margin-bottom:0.4em;">用户只需一句话：</p>
         <div class="quote" style="font-size:0.75em; text-align:center; border-left-color:#ff9500; background:#fffaf5;">
-          <span class="ico ico-orange ico-sm">&#x1F4AC;</span> "帮我安装 Daofy"
+          <span class="ico ico-orange ico-sm">&#x1F4AC;</span> "帮我安装 Daofy MCP Server"
         </div>
         <p style="margin-top:0.4em;">AI 自动完成：</p>
         <ul>
@@ -727,42 +755,86 @@ AI 分析: 标准库没有直接的深层比较函数，
     <section>
       <div class="slide-content">
         <h3>复杂编译错误诊断</h3>
-        <div style="display:flex; align-items:flex-start; gap:0.7em;">
-          <div class="ico ico-red" style="width:2.8em;height:2.8em;border-radius:14px;font-size:1.2em;flex-shrink:0;margin-top:0.3em;">&#x1F41B;</div>
+        <div style="display:flex; align-items:flex-start; gap:0.5em;">
+          <div class="ico ico-red" style="width:2em;height:2em;border-radius:10px;font-size:0.9em;flex-shrink:0;">&#x1F41B;</div>
           <div style="flex:1;">
-            <pre style="font-size:0.6em;"><code data-trim>// E2511 — Type parameter must have a comparer
+            <pre style="font-size:0.45em; margin:0;"><code data-trim>// E2511 — Type parameter must have a comparer
 TDictionary&lt;TCustomKey, string&gt;.Create;
 //          ^^^^^^^^^^
 // 错误: record 类型做 TKey 需要 IEqualityComparer</code></pre>
           </div>
         </div>
-        <p style="font-size:0.6em; margin-top:0.3em;">AI 不是只看错误行——它搜索 KB 理解根因：</p>
-        <pre class="mermaid" style="font-size:0.7em;">
-flowchart LR
-    E["❌ 编译错误<br/>E2511"] --> S1["🔍 搜 KB<br/>TDictionary 类定义"]
-    S1 -->|发现泛型约束| S2["🔍 搜 KB<br/>TEqualityComparer"]
-    S2 -->|了解实现方式| R["💡 根因分析<br/>record 无默认比较器"]
-    R --> F["✏️ 生成比较器<br/>TCustomKeyComparer"]
-    F --> P["✅ 修复 → 编译通过"]</pre>
+        <p style="font-size:0.55em; margin-top:0.2em; margin-bottom:0.15em;">AI 不是只看错误行——它搜索 KB 理解根因：</p>
+        <div style="display:flex; gap:0.25em; margin-top:0.15em;">
+          <div style="display:flex; flex-direction:column; gap:0.6em; align-items:center; justify-content:space-around; padding:0 0.15em;">
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#ff3b30; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">1</div>
+            <div style="width:0;"> </div>
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#007aff; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">2</div>
+            <div style="width:0;"> </div>
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#007aff; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">3</div>
+            <div style="width:0;"> </div>
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#d97706; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">4</div>
+            <div style="width:0;"> </div>
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#16a34a; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">5</div>
+            <div style="width:0;"> </div>
+            <div style="width:1.5em; height:1.5em; border-radius:50%; background:#16a34a; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:0.55em;">6</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:0.25em; flex:1; font-size:0.6em;">
+            <div style="background:#fff0f0; border-radius:8px; padding:0.3em 0.5em; border:1px solid #ffc0c0;">
+              <strong>❌ 编译错误</strong> E2511
+            </div>
+            <div style="background:#f0f7ff; border-radius:8px; padding:0.3em 0.5em; border:1px solid #c0d8ff;">
+              <strong>🔍 搜 KB → TDictionary 类定义</strong>
+            </div>
+            <div style="background:#f0f7ff; border-radius:8px; padding:0.3em 0.5em; border:1px solid #c0d8ff;">
+              <strong>🔍 搜 KB → TEqualityComparer</strong><br><span style="color:#78716c; font-size:0.9em;">发现泛型约束</span>
+            </div>
+            <div style="background:#fff8f0; border-radius:8px; padding:0.3em 0.5em; border:1px solid #ffd8b0;">
+              <strong>💡 根因分析</strong><br><span style="color:#78716c; font-size:0.9em;">record 无默认比较器</span>
+            </div>
+            <div style="background:#f0fff4; border-radius:8px; padding:0.3em 0.5em; border:1px solid #b0e0b0;">
+              <strong>✏️ 生成比较器</strong> TCustomKeyComparer
+            </div>
+            <div style="background:#f0fff4; border-radius:8px; padding:0.3em 0.5em; border:1px solid #b0e0b0;">
+              <strong>✅ 修复 → 编译通过</strong>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
     <section>
       <div class="slide-content">
         <h3>批量多项目编译</h3>
         <p style="font-size:0.6em;">一句话编译整个解决方案：</p>
-        <div style="display:flex; gap:0.7em; margin-top:0.4em;">
+        <div style="display:flex; gap:0.5em; margin-top:0.3em;">
           <div style="flex:1;">
-            <pre class="mermaid" style="font-size:0.55em;">
-flowchart TD
-    G["📁 ProjectGroup.groupproj"] --> LIB["📁 LibProject"]
-    G --> APP["📁 AppProject"]
-    LIB --> L["LibUtils.dproj"]
-    APP --> M["MainApp.dproj"]
-    L -. 先编译 .-> M
-    classDef lib fill:#e8f8f0,stroke:#34c759
-    classDef app fill:#e8f4ff,stroke:#007aff
-    class L lib
-    class M app</pre>
+            <div style="background:#fff; border-radius:10px; padding:0.4em 0.5em; border:2px solid #d97706; text-align:center; font-size:0.55em; font-weight:700;">
+              📁 ProjectGroup.groupproj
+            </div>
+            <div style="display:flex; gap:0.3em; margin-top:0.3em;">
+              <div style="flex:1;">
+                <div style="background:#f0fff4; border-radius:8px; padding:0.35em; border:1px solid #b0e0b0; text-align:center;">
+                  <div style="font-size:0.5em; font-weight:600;">📁 LibProject</div>
+                  <div style="font-size:0.45em; color:#78716c;">先编译</div>
+                </div>
+                <div style="text-align:center; font-size:0.5em; color:#16a34a; padding:0.1em 0;">⬇</div>
+                <div style="background:#e8f8f0; border-radius:8px; padding:0.35em; border:1px solid #34c759; text-align:center;">
+                  <div style="font-size:0.5em; font-weight:600;">LibUtils.dproj</div>
+                </div>
+              </div>
+              <div style="flex:1;">
+                <div style="background:#f0f7ff; border-radius:8px; padding:0.35em; border:1px solid #b0d0ff; text-align:center;">
+                  <div style="font-size:0.5em; font-weight:600;">📁 AppProject</div>
+                  <div style="font-size:0.45em; color:#78716c;">后编译</div>
+                </div>
+                <div style="text-align:center; font-size:0.5em; color:#007aff; padding:0.1em 0;">⬇</div>
+                <div style="background:#e8f4ff; border-radius:8px; padding:0.35em; border:1px solid #007aff; text-align:center;">
+                  <div style="font-size:0.5em; font-weight:600;">MainApp.dproj</div>
+                  <div style="font-size:0.4em; color:#78716c;">依赖 LibUtils</div>
+                </div>
+              </div>
+            </div>
+            <div style="text-align:center; margin-top:0.2em;"><span style="display:inline-block; background:#fff3e6; border:1px dashed #d97706; border-radius:6px; padding:0.15em 0.5em; font-size:0.42em; color:#d97706;">自动解析 BuildOrder，按依赖顺序编译</span></div>
           </div>
           <div style="flex:1;">
             <pre style="font-size:0.5em;"><code data-trim>用户: Release Win64 编译全部
@@ -780,34 +852,44 @@ AI:
   <!-- ==================== 06 格式化+备份 ==================== -->
   <section>
     <div class="slide-content">
-      <h2><span class="ico ico-orange">&#x1F3A8;</span> 06 文件写入 &amp; 自动备份</h2>
+      <h2><span class="ico ico-orange">&#x1F3A8;</span> 06 文件操作 &amp; 组件管理</h2>
       <div class="two-col">
         <div class="col" style="border-top:3px solid #ff7a00;">
-          <p style="font-weight:600; color:#ff7a00; font-size:0.68em; display:flex; align-items:center; gap:0.4em;">
-            <span class="ico ico-orange ico-sm">&#x1F4C1;</span> 格式化前自动备份
+          <p style="font-weight:600; color:#ff7a00; font-size:0.65em; display:flex; align-items:center; gap:0.4em;">
+            <span class="ico ico-orange ico-sm">&#x1F4C1;</span> <code>delphi_file</code> 文件操作
           </p>
-          <pre style="font-size:0.5em;"><code data-trim>DataProcessor.pas
-    ↓  file_tool(action="write", backup=true)
-__history/
-├── DataProcessor.pas.~1~
-├── DataProcessor.pas.~2~  (版本递增)
-└── DataProcessor.pas.~3~</code></pre>
+          <pre style="font-size:0.42em;"><code data-trim>delphi_file(action="read")       — 读(类/函数导航)
+delphi_file(action="write",      — 写(edits 格式)
+  edits=[{start_line:1, content:"..."}])
+delphi_file(action="format")     — pasfmt 格式化
+delphi_file(action="backup")     — 备份管理(列表/恢复)
+delphi_file(action="uses")       — uses 子句增删
+
+&#x2705; 写入即自动备份到 __history
+&#x2705; DFM 二进制自动转文本</code></pre>
         </div>
-        <div class="col" style="border-top:3px solid #34c759;">
-          <p style="font-weight:600; color:#34c759; font-size:0.68em; display:flex; align-items:center; gap:0.4em;">
-            <span class="ico ico-green ico-sm">&#x1F504;</span> 备份管理
+        <div class="col" style="border-top:3px solid #007aff;">
+          <p style="font-weight:600; color:#007aff; font-size:0.65em; display:flex; align-items:center; gap:0.4em;">
+            <span class="ico ico-blue ico-sm">&#x1F4E6;</span> <code>manage_component</code> 组件管理
           </p>
-          <ul style="font-size:0.55em;">
-            <li>&#x1F4C2; 查看备份文件列表</li>
-            <li>&#x1F4CA; diff 对比差异</li>
-            <li>&#x21A9; 一键从备份恢复</li>
-            <li>&#x1F522; 版本号自动递增</li>
-          </ul>
-          <p class="dim" style="margin-top:0.4em;">与 Delphi IDE 的 __history 机制完全兼容</p>
+          <pre style="font-size:0.42em;"><code data-trim>manage_component(action="add",
+  new_component_class="TButton",
+  properties={"Caption":"OK"})
+
+  &#x27A1; DFM 新增组件
+  &#x27A1; PAS 自动声明字段+事件
+
+manage_component(action="modify",
+  component_name="Button1",
+  properties={"Caption":"确定"})
+
+manage_component(action="remove",
+  component_name="Button1")</code></pre>
         </div>
       </div>
-      <div class="quote" style="font-size:0.55em;">
-        &#x1F4A1; 自动备份不仅限于格式化——重构、编译错误修复等所有修改操作都会先备份
+      <div class="quote" style="font-size:0.5em;">
+        &#x1F4A1; 所有 <code>delphi_file</code> 写操作默认 <code>backup=True</code>，自动创建 <code>__history</code> 版本备份。<br>
+        &#x1F4A1; 同一文件多处修改请合并到一次 <code>edits=[...]</code>，不要分多次 write
       </div>
     </div>
   </section>
@@ -927,7 +1009,7 @@ __history/
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-left:3px solid #007aff;">
             <strong>&#x1F50D; 扫描代码</strong>
-            <div class="dim">file_tool(action="read", file_path)<br>读取源码，定位类/函数</div>
+            <div class="dim">delphi_file(action="read", file_path)<br>读取源码，定位类/函数</div>
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-left:3px solid #ff9500;">
             <strong>&#x1F4DD; 输出报告</strong>
@@ -997,7 +1079,7 @@ __history/
         <span class="arr">&#x27A1;</span>
         <span class="step"><span class="ico ico-blue ico-sm" style="width:1.4em;height:1.4em;">&#x1F50D;</span> 搜 TFDQuery</span>
         <span class="arr">&#x27A1;</span>
-        <span class="step"><span class="ico ico-orange ico-sm" style="width:1.4em;height:1.4em;">&#x270F;</span> 生成代码</span>
+        <span class="step"><span class="ico ico-orange ico-sm" style="width:1.4em;height:1.4em;">&#x270F;</span> delphi_file 写入</span>
         <span class="arr">&#x27A1;</span>
         <span class="step"><span class="ico ico-green ico-sm" style="width:1.4em;height:1.4em;">&#x2705;</span> 编译通过</span>
       </div>
@@ -1056,68 +1138,258 @@ procedure Draw(X, Y: Integer;
       <div class="slide-content">
         <h2><span class="ico ico-orange">&#x1F3AF;</span> 12 完整从 0 到 1 工作流</h2>
         <p style="margin-bottom:0.4em;">故事线：<span class="highlight">JSON 配置文件管理单元</span></p>
-        <pre class="mermaid" style="font-size:0.65em;">
-flowchart LR
-    S1["① 获取规范"] --> S2["② 搜索 API"]
-    S2 --> S3["③ 写入代码<br/>(自动备份)"]
-    S3 --> S4["④ 格式化"]
-    S4 --> S5["⑤ 编译验证"]
-    S5 --> S6["⑥ 代码审计"]
-    S6 --> S7["⑦ 清理 & 验证"]
-    classDef step1 fill:#e8f8f0,stroke:#34c759
-    classDef step2 fill:#e8f4ff,stroke:#007aff
-    classDef step3 fill:#fff3e6,stroke:#ff9500
-    classDef step4 fill:#fff0f0,stroke:#ff3b30
-    classDef step5 fill:#e8f8f0,stroke:#34c759
-    classDef step6 fill:#e8f4ff,stroke:#007aff
-    classDef step7 fill:#f3ecff,stroke:#8b5cf6
-    class S1 step1
-    class S2 step2
-    class S3 step3
-    class S4 step4
-    class S5 step5
-    class S6 step6
-    class S7 step7</pre>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:0.2em; margin-top:0.25em;">
+          <div style="background:#f0f0f0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #a0a0a0; text-align:center;"><span style="font-weight:700; font-size:0.7em;">①</span><br><span style="font-size:0.45em;">环境检查</span></div>
+          <div style="background:#e8f8f0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #34c759; text-align:center;"><span style="font-weight:700; font-size:0.7em;">②</span><br><span style="font-size:0.45em;">编码规则</span></div>
+          <div style="background:#e8f4ff; border-radius:8px; padding:0.15em 0.2em; border:2px solid #007aff; text-align:center;"><span style="font-weight:700; font-size:0.7em;">③</span><br><span style="font-size:0.45em;">搜索 API</span></div>
+          <div style="background:#fff3e6; border-radius:8px; padding:0.15em 0.2em; border:2px solid #ff9500; text-align:center;"><span style="font-weight:700; font-size:0.7em;">④</span><br><span style="font-size:0.45em;">读源码</span></div>
+          <div style="background:#fff0f0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #ff3b30; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑤</span><br><span style="font-size:0.45em;">写入代码</span></div>
+          <div style="background:#e8f8f0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #34c759; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑥</span><br><span style="font-size:0.45em;">格式化</span></div>
+          <div style="background:#e8f4ff; border-radius:8px; padding:0.15em 0.2em; border:2px solid #007aff; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑦</span><br><span style="font-size:0.45em;">编译验证</span></div>
+          <div style="background:#ffe0d0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #ea580c; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑧</span><br><span style="font-size:0.45em;">运行验证</span></div>
+          <div style="background:#f3ecff; border-radius:8px; padding:0.15em 0.2em; border:2px solid #8b5cf6; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑨</span><br><span style="font-size:0.45em;">运行时审计</span></div>
+          <div style="background:#e0f8e0; border-radius:8px; padding:0.15em 0.2em; border:2px solid #16a34a; text-align:center;"><span style="font-weight:700; font-size:0.7em;">⑩</span><br><span style="font-size:0.45em;">保存经验</span></div>
+        </div>
       </div>
     </section>
     <section>
       <div class="slide-content">
         <h3>工作流详解</h3>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4em 0.7em; font-size:0.5em;">
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #34c759;">
-            <strong>&#x2460; 获取规范</strong>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.3em 0.5em; font-size:0.45em;">
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #a0a0a0;">
+            <strong>&#x2460; 环境检查</strong>
+            <div class="dim">check_environment(action="check")</div>
+          </div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #34c759;">
+            <strong>&#x2461; 编码规则</strong>
             <div class="dim">get_coding_rules(section="writing")</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #007aff;">
-            <strong>&#x2461; 搜索 API</strong>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #007aff;">
+            <strong>&#x2462; 搜索 API</strong>
             <div class="dim">delphi_kb("TJSONObject")</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #ff9500;">
-            <strong>&#x2462; 写入代码</strong>
-            <div class="dim">file_tool(action="write")<br>默认 backup=True，自动备份到 __history</div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #ff9500;">
+            <strong>&#x2463; 读源码</strong>
+            <div class="dim">delphi_file(action="read")</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #ff3b30;">
-            <strong>&#x2463; 格式化</strong>
-            <div class="dim">file_tool(action="format")</div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #ff3b30;">
+            <strong>&#x2464; 写入代码</strong>
+            <div class="dim">delphi_file(action="write", edits=[...])<br>默认 backup=True，自动备份</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #34c759;">
-            <strong>&#x2464; 编译验证</strong>
-            <div class="dim">compile_project &#x2705;</div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #34c759;">
+            <strong>&#x2465; 格式化</strong>
+            <div class="dim">delphi_file(action="format") → pasfmt</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #007aff;">
-            <strong>&#x2465; 审计</strong>
-            <div class="dim">对照规范，输出审查报告</div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #007aff;">
+            <strong>&#x2466; 编译验证</strong>
+            <div class="dim">project(action="compile") &#x2705;</div>
           </div>
-          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #8b5cf6; grid-column:1 / -1;">
-            <strong>&#x2466; 创建工单</strong>
-            <div class="dim">code_hosting(action="create_issue") → 关联标签与修复</div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #ea580c;">
+            <strong>&#x2467; 运行验证</strong>
+            <div class="dim">project(action="compile", run_verify=True)<br>捕获启动崩溃</div>
+          </div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #8b5cf6;">
+            <strong>&#x2468; 运行时审计</strong>
+            <div class="dim">project(action="runtime")<br>检测遗漏 uses</div>
+          </div>
+          <div style="background:#fff; border-radius:10px; padding:0.3em 0.4em; border:1px solid #e8e4e0; border-left:3px solid #16a34a; grid-column:1 / -1;">
+            <strong>&#x2469; 保存经验</strong>
+            <div class="dim">experience(action="save") → AI 自动去重积累</div>
           </div>
         </div>
-        <p style="color:#ff7a00; font-size:0.55em; margin-top:0.5em; text-align:center;">
+        <p style="color:#ff7a00; font-size:0.55em; margin-top:0.4em; text-align:center;">
           共执笔，同成章
         </p>
       </div>
     </section>
+  </section>
+
+  <!-- ==================== 自动化测试 GUI ==================== -->
+  <section>
+    <section>
+      <div class="slide-content">
+        <h2><span class="ico ico-orange">&#x1F916;</span> 自动化测试 — GUI 模式</h2>
+        <p style="font-size:0.6em; margin-bottom:0.4em;">基于 Named Pipe 的 Delphi 原生自动化单元 <code>DaofyAutomation</code></p>
+        <pre style="font-size:0.5em; background:#f8f6f3; border-radius:8px; padding:0.5em; border:1px solid #e7e5e4;"><code>automate_delphi(action="gui", app_path="App.exe",
+  script=[{"cmd":"goto","target":"TMainForm"},
+          {"cmd":"click","target":"btnOK"},
+          {"cmd":"capture","target":"result.png"}])</code></pre>
+        <p style="font-size:0.5em; margin-top:0.3em;"><strong>协议：JSON 请求/响应</strong></p>
+        <table style="font-size:0.5em;">
+          <thead><tr><th>命令</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>goto / click / dblclick</td><td>定位/点击/双击组件</td></tr>
+            <tr><td>type / key</td><td>输入文本 / 按键</td></tr>
+            <tr><td>capture / listwnd / dumpstate</td><td>截图 / 窗口列表 / 控件树</td></tr>
+            <tr><td>wait / waitfor</td><td>等待超时 / 等待窗口出现</td></tr>
+            <tr><td>rcall / rget / rset</td><td>调用/读取/设置组件属性</td></tr>
+          </tbody>
+        </table>
+        <p class="dim" style="font-size:0.5em; margin-top:0.3em;">编译时通过 <code>DCC_UnitSearchPath=</code> 自动链接 DaofyAutomation 单元，无需手动配置</p>
+      </div>
+    </section>
+  </section>
+
+  <!-- ==================== 自动化测试 Console ==================== -->
+  <section>
+    <section>
+      <div class="slide-content">
+        <h2><span class="ico ico-orange">&#x1F916;</span> 自动化测试 — Console 模式</h2>
+        <p style="font-size:0.6em; margin-bottom:0.4em;">基于 subprocess stdin/stdout 的控制台程序交互，<strong>无需 Delphi 端改造</strong></p>
+        <pre style="font-size:0.5em; background:#f8f6f3; border-radius:8px; padding:0.5em; border:1px solid #e7e5e4;"><code>automate_delphi(action="console", app_path="Tool.exe",
+  input="Y\n", expect="Continue?")
+
+automate_delphi(action="auto", app_path="Deploy.exe",
+  input="\n", expect="success", args=["--silent"])</code></pre>
+        <table style="font-size:0.5em;">
+          <thead><tr><th>参数</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>input</td><td>发送到 stdin 的文本（支持 \n 换行）</td></tr>
+            <tr><td>expect</td><td>期待的输出模式（匹配到才返回）</td></tr>
+            <tr><td>timeout</td><td>超时秒数（默认 30s）</td></tr>
+            <tr><td>args</td><td>命令行参数列表</td></tr>
+          </tbody>
+        </table>
+        <p class="dim" style="font-size:0.5em; margin-top:0.3em;"><strong>Windows PE 自动检测：</strong> action="auto" 读取 EXE 头 Subsystem 字段区分 GUI/Console，无需手动指定</p>
+      </div>
+    </section>
+  </section>
+
+  <!-- ==================== 13 RTTI 桥接 ==================== -->
+  <section>
+    <section>
+      <div class="slide-content">
+        <h2><span class="ico ico-orange">&#x1F9F0;</span> 13 Delphi RTTI 桥接</h2>
+        <p style="font-size:0.6em; margin-bottom:0.4em;">通过 Enhanced RTTI 发现和调用 Delphi 应用程序的 <strong>published + public 方法</strong> — 无需源码</p>
+        <div class="arrow-flow" style="font-size:0.55em; margin:0.6em 0;">
+          <span class="step"><span class="ico ico-green ico-sm">&#x1F4D6;</span> guide</span>
+          <span class="arr">&#x27A1;</span>
+          <span class="step"><span class="ico ico-blue ico-sm">&#x1F50D;</span> discover</span>
+          <span class="arr">&#x27A1;</span>
+          <span class="step"><span class="ico ico-orange ico-sm">&#x1F916;</span> call</span>
+        </div>
+        <pre style="font-size:0.5em;"><code data-trim>delphi_rtti(action="discover", app_path="App.exe")
+  → 返回所有类的 published + public 方法 + JSON Schema 参数定义
+
+delphi_rtti(action="call",
+  app_path="App.exe",
+  class_name="TMainForm",
+  method="LoadCustomer",
+  params={"customerName": "张三"})
+  → 调用方法，返回结果</code></pre>
+        <div class="quote" style="font-size:0.55em;">
+          &#x1F4A1; 典型场景：AI 远程控制正在运行的 Delphi 业务系统，无需改造程序（链接 DaofyAutomation 即可）
+        </div>
+      </div>
+    </section>
+    <section>
+      <div class="slide-content">
+        <h3>三步法详解</h3>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:0.5em; margin-top:0.4em; font-size:0.55em;">
+          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-top:3px solid #34c759;">
+            <strong>&#x1F4D6; guide</strong>
+            <div class="dim" style="margin-top:0.3em;">获取完整使用指南<br>参数说明 + 示例</div>
+          </div>
+          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-top:3px solid #007aff;">
+            <strong>&#x1F50D; discover</strong>
+            <div class="dim" style="margin-top:0.3em;">扫描所有类 published + public 方法<br>返回 JSON Schema<br>5 分钟缓存</div>
+          </div>
+          <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-top:3px solid #ff9500;">
+            <strong>&#x1F916; call</strong>
+            <div class="dim" style="margin-top:0.3em;">按方法名 + 参数调用<br>支持 15 种类型映射<br>Integer/枚举/集合/TDateTime</div>
+          </div>
+        </div>
+        <p style="font-size:0.5em; margin-top:0.5em; color:#a8a29e;">支持 15 类 Delphi 类型 → JSON Schema 映射：Integer &middot; Float &middot; Boolean &middot; 字符串 &middot; 枚举 &middot; 集合 &middot; DynamicArray &middot; TDateTime &middot; Variant &middot; Pointer 等</p>
+      </div>
+    </section>
+  </section>
+
+  <!-- ==================== 14 经验记忆 ==================== -->
+  <section>
+    <div class="slide-content">
+      <h2><span class="ico ico-orange">&#x1F9E0;</span> 14 经验记忆 — AI 学会记住</h2>
+      <p style="margin-bottom:0.3em;">Agent 经验自动积累，<span class="highlight">问题越用越少</span></p>
+      <div class="two-col">
+        <div class="col" style="border-top:3px solid #34c759;">
+          <p style="font-weight:600; color:#34c759; font-size:0.65em; display:flex; align-items:center; gap:0.4em;">
+            <span class="ico ico-green ico-sm">&#x1F4BE;</span> 自动保存
+          </p>
+          <pre style="font-size:0.48em;"><code data-trim>experience(action="save",
+  problem="编译后 output_file 冗余",
+  solution="清理临时 .dcu 文件...")
+
+  &#x27A1; 自动去重（相似度 > 0.85 合并）
+  &#x27A1; 后续任务自动搜索匹配</code></pre>
+        </div>
+        <div class="col" style="border-top:3px solid #007aff;">
+          <p style="font-weight:600; color:#007aff; font-size:0.65em; display:flex; align-items:center; gap:0.4em;">
+            <span class="ico ico-blue ico-sm">&#x1F50D;</span> 语义搜索
+          </p>
+          <pre style="font-size:0.48em;"><code data-trim>experience(action="search",
+  query="编译临时文件清理")
+
+  &#x27A1; 语义匹配已有经验
+  &#x27A1; 避免重复踩坑</code></pre>
+        </div>
+      </div>
+      <div class="quote" style="font-size:0.55em;">
+        &#x1F4A1; 维护机制：merge（合并同类经验）&middot; prune（清理低价值条目）&middot; rebuild_embedding（补全缺失向量）
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 15 软著生成 ==================== -->
+  <section>
+    <div class="slide-content">
+      <h2><span class="ico ico-orange">&#x1F4C4;</span> 15 软著文档生成 — 一键出稿</h2>
+      <p style="margin-bottom:0.3em;">满足中国软件著作权登记需求的自动化工具</p>
+      <div style="display:flex; gap:0.7em; margin-top:0.4em;">
+        <div class="card" style="flex:1;">
+          <div class="ico ico-orange" style="margin:0 auto 0.2em;">&#x1F4D6;</div>
+          <div class="num" style="font-size:1em;">源代码文档</div>
+          <div class="label">逐页截图 + 行号</div>
+        </div>
+        <div class="card" style="flex:1;">
+          <div class="ico ico-blue" style="margin:0 auto 0.2em;">&#x1F4D8;</div>
+          <div class="num" style="font-size:1em;">用户操作手册</div>
+          <div class="label">按场景组织</div>
+        </div>
+        <div class="card" style="flex:1;">
+          <div class="ico ico-green" style="margin:0 auto 0.2em;">&#x1F4CA;</div>
+          <div class="num" style="font-size:1em;">汇总表</div>
+          <div class="label">项目信息 + 文档清单</div>
+        </div>
+      </div>
+      <pre style="font-size:0.55em; margin-top:0.4em;"><code data-trim>generate_copyright(action="generate")  → 生成全部文档
+generate_copyright(action="validate")  → 检查配置完整性
+generate_copyright(action="status")    → 查看环境状态</code></pre>
+      <p class="dim">浏览器 PDF 渲染，所见即所得 · 自动校验文档完整性</p>
+    </div>
+  </section>
+
+  <!-- ==================== 16 版本更新 ==================== -->
+  <section>
+    <div class="slide-content" style="text-align:center;">
+      <h2 style="justify-content:center;"><span class="ico ico-orange">&#x1F504;</span> 版本更新</h2>
+      <div style="display:flex; gap:0.7em; justify-content:center; margin-top:0.6em; font-size:0.6em;">
+        <div class="card" style="max-width:200px;">
+          <div class="ico ico-blue" style="margin:0 auto 0.2em;">&#x1F50D;</div>
+          <div class="num" style="font-size:1em;">check</div>
+          <div class="label">检查 GitHub 新版</div>
+        </div>
+        <div class="card" style="max-width:200px;">
+          <div class="ico ico-green" style="margin:0 auto 0.2em;">&#x1F504;</div>
+          <div class="num" style="font-size:1em;">update</div>
+          <div class="label">git pull 自动更新</div>
+        </div>
+        <div class="card" style="max-width:200px;">
+          <div class="ico ico-orange" style="margin:0 auto 0.2em;">&#x2139;</div>
+          <div class="num" style="font-size:1em;">version</div>
+          <div class="label">显示当前版本</div>
+        </div>
+      </div>
+      <p class="dim" style="margin-top:0.5em;">daofy_update(action="check") 在每次 MCP 启动时后台静默检查</p>
+    </div>
   </section>
 
   <!-- ==================== 总结 ==================== -->
@@ -1128,14 +1400,16 @@ flowchart LR
         <table>
           <thead><tr><th>能力</th><th>一句话</th></tr></thead>
           <tbody>
-            <tr><td><span class="ico ico-orange ico-sm">&#x2699;</span> 编译</td><td>项目 + 语法 + 批量 + 多平台，一句话完成</td></tr>
+            <tr><td><span class="ico ico-orange ico-sm">&#x2699;</span> 编译</td><td>项目 + 语法 + 批量 + 多平台 + run_verify，一句话完成</td></tr>
             <tr><td><span class="ico ico-blue ico-sm">&#x1F4DA;</span> 知识库</td><td>17 万类 / 33 万函数 / 16 万文档，三模式搜索</td></tr>
-            <tr><td><span class="ico ico-green ico-sm">&#x1F3A8;</span> 格式化</td><td>pasfmt + __history 备份，改不坏</td></tr>
+            <tr><td><span class="ico ico-green ico-sm">&#x1F3A8;</span> 文件操作</td><td>读/写/格式化/备份/uses 管理 + DFM 自动转换</td></tr>
+            <tr><td><span class="ico ico-purple ico-sm">&#x1F4E6;</span> 组件管理</td><td>DFM 增删改 + .dpk 编译安装，PAS 自动同步</td></tr>
             <tr><td><span class="ico ico-orange ico-sm">&#x1F4CB;</span> 编码规范</td><td>驱动代码生成 + 审计，真实控制 AI 行为</td></tr>
             <tr><td><span class="ico ico-red ico-sm">&#x1F41B;</span> 诊断</td><td>KB 驱动的复杂错误分析，从根因修复</td></tr>
-            <tr><td><span class="ico ico-yellow ico-sm">&#x1F504;</span> 重构</td><td>引用 → 修改 → 编译，全自动</td></tr>
-            <tr><td><span class="ico ico-purple ico-sm">&#x1F4E6;</span> 组件</td><td>编译 + 注册 .dpk 到 IDE</td></tr>
-            <tr><td><span class="ico ico-orange ico-sm">&#x1F916;</span> 自动化</td><td>审计报告 → 一键 Gitea 工单（MCP 内置）</td></tr>
+            <tr><td><span class="ico ico-yellow ico-sm">&#x1F9F0;</span> RTTI 桥接</td><td>运行时发现/调用 Delphi published+public 方法</td></tr>
+            <tr><td><span class="ico ico-orange ico-sm">&#x1F916;</span> 自动化</td><td>审计报告 → 工单 + GUI/Console 自动化测试</td></tr>
+            <tr><td><span class="ico ico-green ico-sm">&#x1F9E0;</span> 经验记忆</td><td>AI 自动积累经验，去重 + 语义搜索</td></tr>
+            <tr><td><span class="ico ico-blue ico-sm">&#x1F4C4;</span> 软著生成</td><td>源码 + 手册 + 汇总表，PDF 一键出稿</td></tr>
           </tbody>
         </table>
       </div>
@@ -1161,38 +1435,38 @@ flowchart LR
       <div class="slide-content">
         <h2><span class="ico ico-orange">&#x2728;</span> 更多亮点</h2>
         <p class="dim" style="margin-bottom:0.3em;">不止于此——这些能力让 AI 如虎添翼</p>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.4em 0.7em; font-size:0.5em;">
-          <div style="border-left:3px solid #ea580c; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.35em 0.6em; font-size:0.5em;">
+          <div style="border-left:3px solid #ea580c; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
             <strong>&#x1F3DB; 全版本 Delphi</strong>
             <div class="dim">2005→13 全版本，注册表自动检测</div>
           </div>
-          <div style="border-left:3px solid #2563eb; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F4D6; 文件读写工具</strong>
-            <div class="dim">file_tool(action="read") 类/函数导航+行级定位</div>
+          <div style="border-left:3px solid #8b5cf6; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+            <strong>&#x1F9F0; RTTI 桥接</strong>
+            <div class="dim">运行时发现/调用 Delphi published+public 方法</div>
           </div>
-          <div style="border-left:3px solid #16a34a; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+          <div style="border-left:3px solid #2563eb; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+            <strong>&#x1F4D6; 文件读写工具</strong>
+            <div class="dim">delphi_file 类/函数导航+行级定位+uses 管理</div>
+          </div>
+          <div style="border-left:3px solid #16a34a; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+            <strong>&#x1F9E0; 经验记忆</strong>
+            <div class="dim">AI 自动去重保存经验，语义搜索复用</div>
+          </div>
+          <div style="border-left:3px solid #d97706; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
             <strong>&#x23F3; 异步任务管理</strong>
             <div class="dim">知识库后台构建，进度实时追踪</div>
           </div>
-          <div style="border-left:3px solid #8b5cf6; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F504; 增量索引更新</strong>
-            <div class="dim">只扫变更文件，秒级完成</div>
+          <div style="border-left:3px solid #ea580c; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+            <strong>&#x1F4C4; 软著生成</strong>
+            <div class="dim">源码/手册/汇总表，PDF 一键出稿</div>
           </div>
-          <div style="border-left:3px solid #d97706; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F9E0; 智能路径解析</strong>
-            <div class="dim">自动选择三方库路径，避免命令行过长</div>
-          </div>
-          <div style="border-left:3px solid #ea580c; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F4C1; 项目级知识库</strong>
-            <div class="dim">自动追踪项目源码 + 三方依赖</div>
-          </div>
-          <div style="border-left:3px solid #2563eb; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+          <div style="border-left:3px solid #2563eb; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
             <strong>&#x1F517; 8+ AI 平台兼容</strong>
             <div class="dim">Claude / CodeArts / Trae / Cursor / Windsurf / 通义灵码 / 豆包 / Kimi</div>
           </div>
-          <div style="border-left:3px solid #16a34a; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F3AF; KB 驱动诊断</strong>
-            <div class="dim">搜索 KB 理解根因，从源头修复</div>
+          <div style="border-left:3px solid #16a34a; background:#fff; border-radius:10px; padding:0.35em 0.5em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
+            <strong>&#x1F504; 版本更新</strong>
+            <div class="dim">daofy_update 一键检查/更新</div>
           </div>
         </div>
       </div>
@@ -1238,9 +1512,9 @@ flowchart LR
         lineColor: '#c7c4c0',
         secondaryColor: '#f8f6f3',
         tertiaryColor: '#ffffff',
-        fontSize: '14px'
+        fontSize: '16px'
       },
-      flowchart: { useMaxWidth: true, htmlLabels: true, padding: 12 }
+      flowchart: { useMaxWidth: true, htmlLabels: false, padding: 16 }
     });
     // Mermaid 渲染：逐个处理 pre.mermaid，用 render() 生成 SVG
       (function renderNext() {

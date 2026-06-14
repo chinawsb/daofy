@@ -1,4 +1,4 @@
-"""
+﻿"""
 delphi_file — Delphi 文件专用操作工具（MCP 注册名 delphi_file，原 file_tool）
 
 整合读取/写入/格式化/备份管理，覆盖 Delphi 文件操作完整生命周期。
@@ -46,14 +46,30 @@ else:
     _SYSTEM_SENSITIVE_DIRS = ['/etc/shadow', '/etc/ssh']
 
 
-def _validate_path(file_path: str) -> Optional[str]:
-    """校验文件路径安全性，返回 None 表示安全，否则返回错误信息"""
+def _validate_path(file_path: str, project_path: Optional[str] = None) -> Optional[str]:
+    """校验文件路径安全性，返回 None 表示安全，否则返回错误信息
+
+    Args:
+        file_path: 待校验的文件路径
+        project_path: 项目路径（.dproj/.dpr），用于 PathValidator 解析允许目录
+    """
+    # 基础校验
     if '\0' in file_path:
         return "路径包含 null 字节"
     try:
         resolved = os.path.abspath(os.path.realpath(file_path))
     except (OSError, ValueError) as e:
         return "路径解析失败: %s" % str(e)
+
+    # 白名单式路径校验 (PathValidator)
+    from src.utils.path_validator import get_path_validator
+    validator = get_path_validator()
+    validator.resolve(project_path)
+    err = validator.validate(file_path)
+    if err:
+        return err
+
+    # 保留原有系统敏感目录深度防御
     for sensitive_dir in _SYSTEM_SENSITIVE_DIRS:
         try:
             resolved_relative = os.path.relpath(resolved, sensitive_dir)
@@ -133,7 +149,7 @@ def _is_encoding_compatible(user_enc: str, detected_enc: str) -> bool:
 
 async def _read_content(
     file_path: str,
-    start_line: int = 0,
+    start_line: int = 1,
     limit: int = 500,
     search_in: str = "all",
     project_path: Optional[str] = None,
@@ -146,12 +162,12 @@ async def _read_content(
     如果文件在本地直接存在，检测编码后直接读取（支持 UTF-8/GBK/UTF-16 等）。
     否则委托给 read_source_file 走知识库搜索路径。
 
-    start_line/end_line 为 0-indexed 左闭右开区间：
-      - start_line=0 表示从文件第 1 行开始
-      - end_line 不传时等价于「读到 limit 行为止」
+    start_line/end_line 为 1-indexed 左闭右闭区间：
+      - start_line=1 表示从文件第 1 行开始
+      - end_line 不传时等价于「读到 start_line + limit - 1 行为止」
 
-    show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     0: unit Unit1;"），
-                       行号为 0-indexed 绝对行号（与 batch_write / write 的 start_line 直接对齐）。
+    show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     1: unit Unit1;"），
+                       行号为 1-indexed 绝对行号。
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
@@ -177,8 +193,8 @@ async def _read_content(
                 # 流式读取：只读取需要的行，避免大文件全量读入内存
                 # 对于读取开头 N 行或指定行范围的场景，线性扫描比 readlines() 更省内存
                 # target_start/target_end 是内部 1-indexed inclusive 表示
-                target_start = max(start_line, 0) + 1
-                target_end = end_line if end_line is not None else (start_line + limit)
+                target_start = start_line
+                target_end = end_line if end_line is not None else (start_line + limit - 1)
                 selected = []
                 reached_eof = True  # 跟踪是否读到文件末尾
                 line_no = 0  # 空文件时 for 循环体不会执行，需初始化
@@ -198,30 +214,25 @@ async def _read_content(
 
                 text = ''.join(selected)
 
-                # show_line_numbers: 为每行添加 0-indexed 绝对行号前缀
-                # 修复: 之前是 1-based, 导致 AI 用 read 看到的行号传给 batch_write 时
-                # 必然错位 1 行 (1-based 第 N 行 = 0-indexed 第 N-1 行).
-                # 现在 read 输出与 batch_write 接受的格式完全对齐: 看到 5 传 5, 看到 0 传 0.
+                # show_line_numbers: 为每行添加 1-indexed 绝对行号前缀
                 if show_line_numbers and selected:
-                    line_offset = max(start_line, 0)  # 0-indexed start
+                    line_offset = start_line  # 1-indexed start
                     numbered_lines = []
                     for i, line in enumerate(selected):
-                        abs_lineno = line_offset + i      # 0-indexed 绝对行号 (与 batch_write 对齐)
-                        numbered_lines.append(f"{abs_lineno:>6}: {line}")
+                        lineno = line_offset + i  # 1-indexed 绝对行号
+                        numbered_lines.append(f"{lineno:>6}: {line}")
                     text = ''.join(numbered_lines)
 
                 if not text.endswith('\n'):
                     text += '\n'
 
                 lines_shown = len(selected)
-                actual_end_line = start_line + lines_shown  # 0-indexed exclusive end
+                actual_end_line = start_line + lines_shown - 1  # 1-indexed inclusive end
 
-                # 单行 meta: 编码 + 0-indexed 行号范围
-                # 0-indexed 前缀已隐含「行号可直接用于 batch_write / write / format 的 start_line」,
-                # 避免 AI 误用 1-based 导致错位 1 行 (历史最常见错误之一).
-                # 无论 show_line_numbers 是否开启, 范围都展示, 让 AI 始终知道读到哪段.
-                # 截断时仅追加 (truncated) 标记, 不重复暴露行数 (AI 用 start_line={actual_end_line} 续读即可).
-                meta = f"# encoding: {enc}, 0-indexed [{start_line}, {actual_end_line})"
+                # 单行 meta: 编码 + 1-indexed 行号范围
+                # 所有行号都是 1-indexed，可直接用于 write 的 start_line/edits。
+                # 截断时仅追加 (truncated) 标记。
+                meta = f"# encoding: {enc}, 1-indexed [{start_line}, {actual_end_line}]"
                 if not reached_eof:
                     meta += " (truncated)"
                 meta += "\n"
@@ -260,7 +271,7 @@ async def _search_and_read(
     record_name: Optional[str] = None,
     function_name: Optional[str] = None,
     search_in: str = "all",
-    start_line: int = 0,
+    start_line: int = 1,
     limit: int = 100,
 ) -> Dict[str, Any]:
     """按类名/函数名搜索并读取文件"""
@@ -290,10 +301,10 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_path = arguments.get("file_path")
     search_type = arguments.get("search_type", "path")
-    start_line = arguments.get("start_line", 0)
+    start_line = arguments.get("start_line", 1)
     end_line = arguments.get("end_line")
     if end_line is not None:
-        limit = min(end_line - start_line, 1000)
+        limit = min(end_line - start_line + 1, 1000)
     else:
         limit = min(arguments.get("limit", 500), 1000)
     search_in = arguments.get("search_in", "all")
@@ -316,9 +327,12 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
 
-    path_err = _validate_path(file_path)
+    path_err = _validate_path(file_path, project_path)
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
+
+    # 读取清除脏标记：AI 重新读到了最新行号
+    _clear_dirty(file_path)
 
     # 获取读取许可（多读单写：多个读取可并发，写入时不可读）
     # 必须在 DFM 检测/转换之前获取，防止并发写入干扰
@@ -365,246 +379,6 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if tmp_cleanup:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
-
-async def _handle_partial_write(
-    file_path: str,
-    content: str,
-    backup: bool,
-    encoding: str,
-    auto_format: bool,
-    start_line: Optional[int],
-    end_line: Optional[int],
-    original_encoding: str,
-    is_dfm_binary: bool,
-    preview: bool = False,
-) -> Dict[str, Any]:
-    """
-    部分写入：仅替换指定行范围的内容，其余部分保持不变。
-
-    start_line/end_line 为 0-indexed 左闭右开区间：
-      - 不传 start_line 时从第 0 行开始 (=文件第1行)
-      - 不传 end_line 时到文件末尾
-
-    左闭右开 [start_line, end_line) 的转换：
-      Python 切片:  s = start_line (0-indexed inclusive start)
-                    e = end_line   (0-indexed exclusive end)
-       验证：lines[s:e] = lines[start_line : end_line] = 第 (start_line+1) 到 end_line 行  ✓
-
-    ⚠️ 连续编辑的行号偏移：
-      每次部分写入后文件行号会变化（增删行），输出中会包含偏移量信息：
-        偏移量: +3（删5行, 插8行）
-        后续编辑: 行号 ≥ {e} 的新行号 = 原行号 + 3；行号 < {s} 的不变
-      AI Agent 应根据每次 write 返回的偏移量累加计算后续行号，
-      而非直接使用上次 read 输出的原始行号。
-    """
-    read_path = file_path
-    tmp_cleanup = None
-
-    # 二进制 DFM → 文本
-    if is_dfm_binary:
-        tmp_dir = tempfile.mkdtemp(prefix="filetool_")
-        text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
-        result = await dfm_utils.convert_dfm(file_path, text_path, to_text=True)
-        if not result.get("success"):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return _wrap_error(f"二进制 DFM 转换失败: {result.get('message', '未知错误')}")
-        read_path = text_path
-        tmp_cleanup = tmp_dir
-
-    try:
-        # ── 1. 备份（预览模式跳过）
-        bak_path = None
-        if not preview:
-            bak_path = create_backup(file_path)
-
-        # 编码回退标志 (UnicodeEncodeError 时切到 utf-8, 用于输出提示)
-        encoding_fallback = False
-
-        enc = original_encoding or "utf-8"
-        with open(read_path, 'r', encoding=enc, newline='',
-                  buffering=1048576) as f:
-            lines = f.readlines()
-
-        total = len(lines)
-        original_total = total  # 保存写入前的行数，用于 auto_format 后重新校正偏移量
-
-        # 左闭右开 [start_line, end_line) → Python 切片
-        # s = 0-indexed inclusive start = start_line
-        # e = 0-indexed exclusive end = end_line
-        s = start_line if start_line is not None else 0
-        e = end_line if end_line is not None else total
-
-        if s < 0:
-            return _wrap_error(f"start_line ({start_line}) 不能小于 0")
-        if e > total:
-            return _wrap_error(f"end_line ({end_line}) 超出文件总行数 ({total})")
-        if s >= e:
-            return _wrap_error(f"替换范围为空: start_line ({start_line}) >= end_line ({end_line})。需满足 start_line < end_line")
-
-        before = ''.join(lines[:s])
-        after = ''.join(lines[e:])
-
-        # 空内容 = 删除行：before + after 直接拼接
-        # 非空内容 = 替换行：统一换行符后拼接
-        if content == '':
-            new_text = before + after
-        else:
-            # 检测原文件换行符风格：遍历 lines 列表而非拼接全文
-            # 避免对大文件做 O(n) 全量字符串拷贝（''.join(lines) 会复制整个文件）
-            has_crlf_in_original = any('\r\n' in line for line in lines)
-
-            # 统一 content 换行符为原文件风格
-            if has_crlf_in_original:
-                content = content.replace('\r\n', '\n').replace('\n', '\r\n')
-            else:
-                content = content.replace('\r\n', '\n')
-
-            # 确保 content 末尾有换行，避免替换区最后一行与后续行粘连。
-            # readlines() 返回的每行都含换行符，替换区也必须保持一致。
-            # 即使 after 为空（替换到 EOF），也应加上结尾换行保持文件规范。
-            if not content.endswith('\n') and not content.endswith('\r\n'):
-                line_ending = '\r\n' if has_crlf_in_original else '\n'
-                content = content + line_ending
-
-            new_text = before + content + after
-
-        # ── 预览模式：返回 diff 预览，不写盘 ──
-        if preview:
-            # 构建 per-edit diff 预览（模仿 batch_write 格式）
-            # 行号以 L{orig-line-no}: 标注，便于 AI 对照 0-indexed 行号
-            new_lines = content.splitlines(keepends=False) if content else []
-            diff_lines = []
-            for i, ol in enumerate([lines[s + i].rstrip('\n\r') for i in range(e - s)]):
-                display = ol if len(ol) <= 80 else ol[:77] + "..."
-                diff_lines.append(f"    - L{s + i}: {display}")
-            for nl in new_lines:
-                display = nl if len(nl) <= 80 else nl[:77] + "..."
-                diff_lines.append(f"    + {display}")
-            removed = e - s
-            inserted = len(new_lines) if content else 0
-            delta = inserted - removed
-            new_e = e + delta
-            parts = [
-                f"wrote: {os.path.basename(file_path)} (preview)",
-                f"0-indexed [{s}, {e}) → [{s}, {new_e})",
-                f"encoding: {enc}",
-                "preview: true（未写入磁盘）",
-            ]
-            summary = [", ".join(parts), ""] + diff_lines
-            return {"status": "success", "message": "\n".join(summary)}
-
-        # ── 2. 写入（失败时从 __history 备份恢复） ──
-        try:
-            with open(file_path, 'w', encoding=enc, newline='',
-                      buffering=1048576) as f:
-                f.write(new_text)
-        except (UnicodeEncodeError, OSError, IOError) as write_err:
-            logger.warning(f"部分写入失败: {write_err}")
-
-            # UnicodeEncodeError → 先试 UTF-8 回退
-            if isinstance(write_err, UnicodeEncodeError):
-                try:
-                    with open(file_path, 'w', encoding="utf-8", newline='',
-                              buffering=1048576) as f:
-                        f.write(new_text)
-                    enc = "utf-8"
-                    encoding_fallback = True
-                    logger.warning("编码回退到 utf-8 后写入成功")
-                except (UnicodeEncodeError, OSError, IOError):
-                    # 回退也失败 → 从备份恢复
-                    if bak_path and os.path.exists(bak_path):
-                        shutil.copy2(bak_path, file_path)
-                    return _wrap_error(
-                        f"文件写入失败，已从备份恢复: {write_err}"
-                    )
-            else:
-                # OSError/IOError → 从备份恢复
-                if bak_path and os.path.exists(bak_path):
-                    shutil.copy2(bak_path, file_path)
-                return _wrap_error(
-                    f"文件写入失败，已从备份恢复: {write_err}"
-                )
-
-        # ── 3. 写入成功，根据 backup 参数决定备份的去留 ──
-        if not backup and bak_path and os.path.exists(bak_path):
-            try:
-                os.remove(bak_path)
-            except OSError:
-                pass
-
-        # DFM 二进制 → 转换回二进制
-        if is_dfm_binary:
-            text_tmp = file_path + ".txt"
-            os.rename(file_path, text_tmp)
-            try:
-                conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
-                if not conv_result.get("success"):
-                    os.rename(text_tmp, file_path)
-                    logger.warning(f"DFM 二进制转换失败，已保留文本: {conv_result.get('message')}")
-                else:
-                    os.remove(text_tmp)
-            except Exception as ex:
-                if os.path.exists(text_tmp):
-                    os.rename(text_tmp, file_path)
-                logger.warning(f"DFM 转换异常，已保留文本: {ex}")
-
-        # 写入后自动格式化
-        fmt_msg = ""
-        if auto_format:
-            try:
-                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-                if fmt_result.get("formatted"):
-                    fmt_msg = "，写入后已格式化"
-            except Exception as ex:
-                logger.warning(f"写入后自动格式化失败: {ex}")
-
-        # 计算偏移量：插入行数 - 删除行数，供 Agent 累加后续行号
-        removed = e - s
-        inserted = content.count('\n') if content else 0
-        offset = inserted - removed
-
-        # auto_format 可能额外改变行数（展开 uses、调整空行等），重新读取文件计算真实偏移
-        fmt_adjustment = ""
-        if auto_format and os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding=enc, newline='',
-                          buffering=1048576) as f:
-                    new_total = sum(1 for _ in f)
-                if new_total != original_total:
-                    real_offset = new_total - original_total
-                    fmt_change = real_offset - offset
-                    offset = real_offset
-                    inserted += fmt_change
-                    fmt_adjustment = f"（含格式化调整{fmt_change:+d}行）"
-            except Exception as ex:
-                logger.debug(f"auto_format 后重读行数失败: {ex}")
-
-        # 单行 meta (与 read 对齐):
-        #   wrote: basename
-        #   0-indexed [s, e) → [s, e+offset)   ← 隐含 offset (右端变化量)
-        #   encoding: utf-8
-        #   backup: __history\<basename>.~N~
-        basename = os.path.basename(file_path)
-        new_e = e + offset
-        parts = [
-            f"wrote: {basename}",
-            f"0-indexed [{s}, {e}) → [{s}, {new_e})",
-            f"encoding: {enc}",
-        ]
-        if backup and bak_path:
-            parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
-        if is_dfm_binary:
-            parts.append("format: binary DFM converted")
-        if fmt_msg:
-            parts.append("formatted: yes")
-        if encoding_fallback:
-            parts.append(f"⚠ fallback: {original_encoding or 'utf-8'} → utf-8")
-
-        return {"status": "success", "message": ", ".join(parts)}
-
-    finally:
-        if tmp_cleanup:
-            shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
 
 # ── 文件级写入锁：防止对同一个文件并行写入 ──────────────────────────────
@@ -699,254 +473,164 @@ def _release_write_lock(file_path: str) -> None:
         entry["writer"] = False
 
 
+# ── 脏写入标记：防止 AI 未重读/预览就再次写入同一文件 ──────────────────
+# 文件修改后（write/format/uses）行号变化，AI 必须 re-read 或 preview 确认后才能再次写入。
+_dirty_files: Set[str] = set()
+_dirty_lock = threading.Lock()
+
+
+def _mark_dirty(file_path: str) -> None:
+    """标记文件已修改，下次写入前需预览或重读。"""
+    normalized = os.path.abspath(file_path)
+    with _dirty_lock:
+        _dirty_files.add(normalized)
+
+
+def _clear_dirty(file_path: str) -> None:
+    """清除脏标记（re-read 或 preview 后标记清除）。"""
+    normalized = os.path.abspath(file_path)
+    with _dirty_lock:
+        _dirty_files.discard(normalized)
+
+
+def _check_dirty(file_path: str, preview: bool = False) -> None:
+    """
+    检查文件是否脏（上次修改后未重读/预览）。
+    如果 dirty 且不是 preview 模式，抛异常阻止写入。
+    """
+    if preview:
+        _clear_dirty(file_path)
+        return
+    normalized = os.path.abspath(file_path)
+    with _dirty_lock:
+        if normalized in _dirty_files:
+            raise RuntimeError(
+                f"文件 {os.path.basename(normalized)} 上次写入后行号可能已变化。"
+                "请先调用 read 获取最新行号，或使用 preview=true 预览本次修改。"
+                "基于最新行号规划 edits 后重新发起 write。"
+            )
+
+
 async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    处理 write action。
+    处理 write action（合并原 write + batch_write）。
+
+    统一使用 edits 参数：
+      - 全量替换：edits=[{start_line:1, content:"完整文件内容"}]
+      - 部分替换：edits=[{start_line:5, end_line:10, content:"替换内容"}]
+      - 多段替换：edits=[{start_line:5, end_line:10, content:"..."},
+                       {start_line:20, end_line:22, content:"..."}]
+      - 删除行：  edits=[{start_line:10, end_line:15, content:""}]
 
     核心特性:
       - 自动备份原文件到 __history（backup=True 默认）
       - 自动检测并保持原始编码
-      - DFM 文件自动处理：如果原文件是二进制，写出后自动转回二进制
-      - 支持 start_line/end_line 部分写入：仅替换指定行范围，其余不变
+      - DFM 文件自动处理：二进制 DFM 自动转文本→编辑→转回二进制
+      - 支持 auto_format 写入后自动格式化代码
+      - 支持 preview 预览 diff 不写盘
 
-     preview: 可选，默认 false。设为 true 时只计算 diff 不写盘（不备份、不写入、不格式化）。
-              全量写入 preview 返回文件大小变化；部分写入 preview 返回 diff 预览（- / + 行）。
-    
-     行范围参数（0-indexed 左闭右开区间）:
-        start_line=4, end_line=5  → 只替换第 5 行（0-indexed [4,5)）
-        start_line=2, end_line=7  → 替换第 3~7 行（0-indexed [2,7)）
-        start_line=4              → 从第 5 行替换到文件末尾
-        end_line=10               → 从第 1 行替换到第 10 行（0-indexed [0,10)）
-        
-     ⚠️ 连续编辑注意事项:
-       每次部分写入后文件行号会变化（增删行），输出中会返回偏移量：
-         「后续编辑: 行号 ≥ X 的新行号 = 原行号 + N；行号 < X 的不变」
-       发下一次 write 时，根据上次返回的偏移量累加计算新行号即可，
-        不需要每次都 re-read。但如果偏移量累加后不确定，建议重新读取确认。
+    行号均为 1-indexed 左闭右闭:
+      edits=[{start_line:5, end_line:10}]  → 替换第 5~10 行
+      edits=[{start_line:5}]               → 从第 5 行替换到文件末尾
+      edits=[{end_line:10}]                → 从第 1 行替换到第 10 行
+
+    ⚠️ 连续编辑安全保护:
+      每次写入（含 auto_format）后文件行号会变化。
+      在重新 read 文件或 preview 确认前，不允许对同一文件再次写入，
+      防止 AI 使用过期行号导致错位改写。
     """
     file_path = arguments.get("file_path")
-    content = arguments.get("content")
+    edits = arguments.get("edits")
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
     auto_format = arguments.get("auto_format", False)
-    start_line = arguments.get("start_line")
-    end_line = arguments.get("end_line")
     preview = arguments.get("preview", False)
+    force = arguments.get("force", False)
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
-    if content is None:
-        return _wrap_error("请提供 content 参数")
+    if not edits:
+        return _wrap_error("请提供 edits 参数（全量替换: [{start_line:1, content:'...'}]）")
 
-    path_err = _validate_path(file_path)
+    # ── 脏标记检查 ──
+    try:
+        _check_dirty(file_path, preview=preview)
+    except RuntimeError as e:
+        return _wrap_error(str(e))
+
+    path_err = _validate_path(file_path, arguments.get("project_path"))
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
-    # 检测原始文件状态
-    backup_path = None
+    return await _handle_batch_write_internal(
+        file_path=file_path,
+        edits=edits,
+        backup=backup,
+        encoding=encoding,
+        auto_format=auto_format,
+        preview=preview,
+        force=force,
+    )
+
+
+async def _handle_batch_write_internal(
+    file_path: str,
+    edits: List[Dict],
+    backup: bool = True,
+    encoding: str = "auto",
+    auto_format: bool = False,
+    preview: bool = False,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """
+    批量写入内部实现（edits 数组，以原始文件为参照系）。
+
+    edits 元素:
+      start_line: 1-indexed inclusive（替换起始行）
+      end_line:   1-indexed inclusive（替换结束行，不传则到文件末尾）
+      content:    替换内容（空字符串=删除行）
+      description: 描述（可选）
+
+    force: true 时跳过 AI 偏移量检测（连续重复行检查）。
+    """
+    if not edits:
+        return _wrap_error("请提供 edits 列表")
+    if not isinstance(edits, (list, tuple)):
+        return _wrap_error("edits 必须是一个列表")
+
     file_exists = os.path.isfile(file_path)
-    original_encoding = None
-    is_dfm_binary = False
+    if not file_exists:
+        # 新文件：必须只有 1 个 edit，start_line=1
+        if len(edits) != 1:
+            return _wrap_error("新文件只能有一个 edit")
+        e0 = edits[0]
+        if e0.get("start_line", 0) != 1:
+            return _wrap_error("新文件必须从 start_line=1 开始")
+        if not e0.get("content"):
+            return _wrap_error("新文件必须提供 content")
+        # 直接走全量写入
+        content = e0["content"]
+        original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
-    if file_exists:
-        if _is_dfm_file(file_path):
-            try:
-                fmt = dfm_utils._detect_dfm_format(file_path)
-                is_dfm_binary = (fmt == "binary")
-            except (FileNotFoundError, PermissionError) as e:
-                return _wrap_error(str(e))
-
-        if encoding == "auto":
-            original_encoding = detect_encoding(file_path)
-        else:
-            original_encoding = encoding
-
-    # ────────────── 部分写入（读取→修改→写回）──────────────
-        if start_line is not None or end_line is not None:
-            if preview:
-                lock_err = _acquire_read_lock(file_path)
-            else:
-                lock_err = _acquire_write_lock(file_path)
-            if lock_err:
-                return _wrap_error(lock_err)
-            try:
-                return await _handle_partial_write(
-                    file_path=file_path,
-                    content=content,
-                    backup=backup,
-                    encoding=encoding,
-                    auto_format=auto_format,
-                    start_line=start_line,
-                    end_line=end_line,
-                    original_encoding=original_encoding,
-                    is_dfm_binary=is_dfm_binary,
-                    preview=preview,
-                )
-            finally:
-                if preview:
-                    _release_read_lock(file_path)
-                else:
-                    _release_write_lock(file_path)
-
-        if backup:
-            backup_path = create_backup(file_path)
-    else:
-        if start_line is not None or end_line is not None:
-            return _wrap_error("start_line/end_line 仅对已有文件有效，不能用于新建文件")
+        # 预览模式
         if preview:
             return {"status": "success", "message":
                 f"[preview] would create new file: {os.path.basename(file_path)}, "
                 f"{len(content.encode('utf-8'))} bytes"}
-        # 新文件默认 UTF-8 BOM（避免中文 Windows 下 Delphi/pasfmt 误判为 GBK）
-        original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
-    # ────────────── 预览（全量写入，只读不写）──────────────
-    if preview and file_exists:
-        lock_err = _acquire_read_lock(file_path)
-        if lock_err:
-            return _wrap_error(lock_err)
+        # 写入新文件
         try:
-            original_content = ""
-            with open(file_path, 'r', encoding=original_encoding or 'utf-8',
-                      buffering=1048576) as f:
-                original_content = f.read()
-            old_bytes = len(original_content.encode('utf-8'))
-            new_bytes = len(content.encode('utf-8'))
-            return {"status": "success", "message":
-                f"[preview] would replace full file: {os.path.basename(file_path)}, "
-                f"{old_bytes} bytes → {new_bytes} bytes"}
-        finally:
-            _release_read_lock(file_path)
-    
-    # ────────────── 全量写入 ──────────────
-    lock_err = _acquire_write_lock(file_path)
-    if lock_err:
-        return _wrap_error(lock_err)
-    
-    tmp_path = None
-    try:
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            suffix=os.path.splitext(file_path)[1],
-            dir=os.path.dirname(os.path.abspath(file_path)),
-        )
-        os.close(tmp_fd)
-
-        write_encoding = original_encoding or "utf-8"
-        encoding_fallback = False
-        try:
-            with open(tmp_path, "w", encoding=write_encoding, newline='',
+            with open(file_path, 'w', encoding=original_encoding, newline='',
                       buffering=1048576) as f:
                 f.write(content)
-        except UnicodeEncodeError:
-            logger.warning(f"编码 {write_encoding} 写出失败，回退到 utf-8")
-            with open(tmp_path, "w", encoding="utf-8", newline='',
-                      buffering=1048576) as f:
-                f.write(content)
-            write_encoding = "utf-8"
-            encoding_fallback = True
+        except Exception as e:
+            return _wrap_error(f"创建文件失败: {e}")
 
-        # DFM 二进制格式处理
-        if is_dfm_binary:
-            text_tmp = tmp_path + ".txt"
-            os.rename(tmp_path, text_tmp)
-            try:
-                conv_result = await dfm_utils.convert_dfm(text_tmp, tmp_path, to_text=False)
-                if not conv_result.get("success"):
-                    os.rename(text_tmp, tmp_path)
-                    logger.warning(f"DFM 二进制转换失败，已保留文本格式: {conv_result.get('message')}")
-                else:
-                    os.remove(text_tmp)
-            except Exception as e:
-                if os.path.exists(text_tmp):
-                    os.rename(text_tmp, tmp_path)
-                logger.warning(f"DFM 转换异常，已保留文本格式: {e}")
+        _mark_dirty(file_path)
+        return {"status": "success", "message":
+            f"wrote: {os.path.basename(file_path)}, encoding: {original_encoding}"}
 
-        shutil.move(tmp_path, file_path)
-        tmp_path = None  # 成功写入，标记无需清理
-
-        # 写入后自动格式化
-        fmt_msg = ""
-        if auto_format and _is_delphi_file(file_path):
-            try:
-                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-                if fmt_result.get("formatted"):
-                    fmt_msg = "，写入后已格式化"
-            except Exception as e:
-                logger.warning(f"写入后自动格式化失败: {e}")
-
-        # 单行 meta (与 read 对齐: wrote/encoding/backup, 全部 basename 不含完整路径)
-        basename = os.path.basename(file_path)
-        parts = [f"wrote: {basename}", f"encoding: {write_encoding}"]
-        if encoding_fallback:
-            parts.append(f"⚠ fallback: {original_encoding or 'utf-8'} → utf-8")
-        if backup and file_exists and backup_path:
-            parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
-        if is_dfm_binary:
-            parts.append("format: binary DFM converted")
-        if fmt_msg:
-            parts.append("formatted: yes")
-
-        return {"status": "success", "message": ", ".join(parts)}
-
-    except Exception as e:
-        logger.error(f"写入文件失败: {e}", exc_info=True)
-        return _wrap_error(f"写入文件失败: {str(e)}")
-    finally:
-        _release_write_lock(file_path)
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError as e:
-                logger.debug(f"清理临时DFM文件失败: {tmp_path}: {e}")
-
-
-async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    处理 batch_write action — 批量写入。  # <-- reads once into memory, applies edits, writes once
-
-    参数:
-      file_path: 目标文件路径
-      edits: 编辑列表，每个元素为 { start_line, end_line, content, description? }
-      force: 可选，默认 false。设为 true 可跳过 AI 偏移量检查（检测到结果中出现连续重复行时报错），强制写入。
-             注意：content 首行与被替换行相同仅在 s>0 时告警（s=0 时文件头重复为正常情况）。
-      preview: 可选，默认 false。设为 true 时只计算 diff 预览，不备份、不写盘、不格式化。
-
-    设计:
-      - edits 传入顺序不限，内部自动按 start_line 升序排列后从前往后依次替换
-      - 先备份文件 → 读入内存 → 依次应用 edit（累计行号偏移） → 一次性写出磁盘
-      - 所有 edit 的行号都以「备份文件」（原始内容）为参照系
-      - 内部维护累计偏移量，逐 edit 调整 start_line/end_line，确保正确位置
-      - AI 偏移量自动检测: 每 edit 检查 content 首行是否与被替换行相同（仅 s>0 时，s=0 正常）；
-         全部 edit 应用后扫描连续重复行；检测到问题返回错误信息，除非 force=true
-
-    edits 内元素说明（与 write action 的 start_line/end_line 语义完全一致）:
-      start_line: 0-indexed inclusive start 行号（以原始文件为参照系）
-      end_line:   0-indexed exclusive end 行号（不传则到文件末尾，以原始文件为参照系）
-      content:    替换内容（空字符串=删除行）
-      description: 可选的文字描述，仅用于返回消息中的标记
-    """
-    file_path = arguments.get("file_path")
-    edits_raw = arguments.get("edits", [])
-    backup = arguments.get("backup", True)
-    encoding = arguments.get("encoding", "auto")
-    auto_format = arguments.get("auto_format", False)
-    force = arguments.get("force", False)
-    preview = arguments.get("preview", False)
-
-    if not file_path:
-        return _wrap_error("请提供 file_path 参数")
-    if not edits_raw:
-        return _wrap_error("请提供 edits 列表")
-    if not isinstance(edits_raw, (list, tuple)):
-        return _wrap_error("edits 必须是一个列表")
-
-    path_err = _validate_path(file_path)
-    if path_err:
-        return _wrap_error("路径安全校验失败: %s" % path_err)
-
-    if not os.path.isfile(file_path):
-        return _wrap_error(f"文件不存在: {file_path}")
-
+    # ── 已有文件：批量编辑 ──
     # ── 检测文件编码 / DFM 状态 ──
     is_dfm_binary = False
     if _is_dfm_file(file_path):
@@ -956,75 +640,67 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         except (FileNotFoundError, PermissionError) as e:
             return _wrap_error(str(e))
 
-    # 总是先检测文件实际编码；按 encoding 参数决定 read/write 编码
     detected_encoding = detect_encoding(file_path)
     if encoding == "auto":
-        # 自动模式：保持原编码（read/write 都用 detected）
         read_enc = detected_encoding
         write_enc = detected_encoding
         encoding_transcoded = False
     else:
-        # 用户显式指定 encoding：内部自动转码
-        #   - read_enc  = detected_encoding (用文件实际编码解码，避免读到乱码)
-        #   - write_enc = 用户指定 encoding  (按用户期望的目标编码写出)
-        # 此设计同时支持:
-        #   1. encoding 与 detected 一致 → 无转码，原样保留
-        #   2. encoding 与 detected 不一致 → 内部透明转码 (UTF-8↔UTF-16LE/GBK)
-        # 修复: 之前 "AI Agent 报告 UTF-16LE 内容被写入 UTF-8 文件" 的根因之一 —
-        # 上游若错误指定 encoding, 旧逻辑会把内容按错误编码写入, 文件被静默改写。
-        # 新逻辑下即使指定错误, 也只会触发转码而非乱码, 文件编码符合用户预期。
         read_enc = detected_encoding
         write_enc = encoding
         encoding_transcoded = not _is_encoding_compatible(encoding, detected_encoding)
 
-    # ── 校验每个 edit 的合法性 ──
+    # ── 校验每个 edit 并转换为内部 0-indexed ──
     validated_edits = []
-    for i, edit in enumerate(edits_raw):
+    for i, edit in enumerate(edits):
         if not isinstance(edit, dict):
-            return _wrap_error(f"edits[{i}] 必须是 dict，实际类型 {type(edit).__name__}")
-        s = edit.get("start_line")
-        e = edit.get("end_line")
+            return _wrap_error(f"edits[{i}] 必须是 dict")
+        s_1 = edit.get("start_line")  # 1-indexed
+        e_1 = edit.get("end_line")    # 1-indexed inclusive
         c = edit.get("content")
         desc = edit.get("description", f"edit #{i}")
-        if s is None:
+        if s_1 is None:
             return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 start_line")
         if c is None:
             return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 content")
-        if not isinstance(s, int):
+        if not isinstance(s_1, int):
             return _wrap_error(f"edits[{i}] ({desc}): start_line 必须是整数")
-        if e is not None and not isinstance(e, int):
+        if e_1 is not None and not isinstance(e_1, int):
             return _wrap_error(f"edits[{i}] ({desc}): end_line 必须是整数")
-        if e is not None and s >= e:
-            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s}) >= end_line ({e})，需满足 start_line < end_line")
-        if s < 0:
-            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s}) 不能小于 0")
-        validated_edits.append((s, e, c, desc))
+        if s_1 < 1:
+            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) 不能小于 1")
+        if e_1 is not None and s_1 > e_1:
+            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) > end_line ({e_1})，需满足 start_line ≤ end_line")
 
-    # ── 按 start_line 升序排列（以备份文件为参照系，从头往尾处理） ──
+        # 转换为内部 0-indexed
+        s_0 = s_1 - 1
+        e_0 = e_1  # 1-indexed inclusive = 0-indexed exclusive
+        validated_edits.append((s_0, e_0, c, desc, s_1, e_1))
+
+    # ── 按 start_line 升序排列 ──
     validated_edits.sort(key=lambda x: x[0])
 
-    # ── 重叠区间检测 ──
-    # 排序后相邻两个 edit，前一个的 end_line 必须 ≤ 后一个的 start_line
-    # 否则在原始文件参照系中区间重叠，偏移调整后无法正确映射
+    # ── 重叠区间检测（内部 0-indexed） ──
     for i in range(len(validated_edits) - 1):
-        s1, e1, _, d1 = validated_edits[i]
-        s2, _e2, _, d2 = validated_edits[i + 1]
-        if e1 is None:
+        s0_1, e0_1, _, _, _, _ = validated_edits[i]
+        s1_0, _, _, _, _, _ = validated_edits[i + 1]
+        if e0_1 is None:
             return _wrap_error(
-                f"edits 区间重叠: \"{d1}\" (start={s1}) 覆盖到文件末尾，"
-                f"与 \"{d2}\" (start={s2}) 重叠"
+                f"edits 区间重叠: \"{validated_edits[i][3]}\" (start={validated_edits[i][4]}) 覆盖到文件末尾，"
+                f"与 \"{validated_edits[i+1][3]}\" (start={validated_edits[i+1][4]}) 重叠"
             )
-        if s2 < e1:
+        if s1_0 < e0_1:
             return _wrap_error(
-                f"edits 区间重叠: \"{d1}\" [{s1},{e1}) 与 \"{d2}\" [{s2},...) 重叠"
+                f"edits 区间重叠: \"{validated_edits[i][3]}\" [{validated_edits[i][4]},{validated_edits[i][5]}] "
+                f"与 \"{validated_edits[i+1][3]}\" [{validated_edits[i+1][4]},...) 重叠"
             )
 
-    # ── 一次完整备份（预览模式跳过） ──
+    # ── 备份 ──
     bak_path = None
     if backup and not preview:
         bak_path = create_backup(file_path)
 
-    # ── 加锁：写锁或读锁，覆盖整个读→改→写周期 ──
+    # ── 加锁 ──
     if preview:
         lock_err = _acquire_read_lock(file_path)
     else:
@@ -1040,7 +716,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     read_path = file_path
     tmp_cleanup = None
     try:
-        # ── 读文件（二进制 DFM 需转文本） ──
+        # ── 读文件 ──
         if is_dfm_binary:
             tmp_dir = tempfile.mkdtemp(prefix="filetool_")
             text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
@@ -1054,29 +730,24 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             lines = f.readlines()
 
         total = len(lines)
-        original_lines = lines[:]  # 保存原始行，用于重复检测对比
+        original_lines = lines[:]
 
-        # ── 检测换行符风格 ──
         has_crlf = any('\r\n' in line for line in lines)
 
-        # ── 依次应用每个 edit，维护累计偏移量 ──
-        # 所有 edit 的行号以备份文件（原始 lines）为参照系
-        # cumulative_offset = 当前 lines 相比原始 lines 的净行数变化
         cumulative_offset = 0
         results = []
         all_success = True
 
-        for s, e, c, desc in validated_edits:
-            adj_s = s + cumulative_offset
-            adj_e = (e + cumulative_offset) if e is not None else len(lines)
+        for s_0, e_0, c, desc, s_1, e_1 in validated_edits:
+            adj_s = s_0 + cumulative_offset
+            adj_e = (e_0 + cumulative_offset) if e_0 is not None else len(lines)
 
-            # 边界检查：adj_e 不能超出当前 lines
             if adj_s < 0 or adj_s > len(lines):
-                results.append(f"  ❌ {desc}: start_line {s}（调整后 {adj_s}）超出当前范围 [0, {len(lines)}]")
+                results.append(f"  ❌ {desc}: start_line {s_1}（调整后 {adj_s}）超出当前范围")
                 all_success = False
                 continue
             if adj_e > len(lines):
-                results.append(f"  ❌ {desc}: end_line {e}（调整后 {adj_e}）超出当前总行数 {len(lines)}")
+                results.append(f"  ❌ {desc}: end_line {e_1 or total}（调整后 {adj_e}）超出当前总行数 {len(lines)}")
                 all_success = False
                 continue
             if adj_s >= adj_e:
@@ -1085,17 +756,15 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 continue
 
             removed = adj_e - adj_s
-            removed_lines_preview = []  # for diff preview (stores (orig_line_no, content) tuples)
+            removed_lines_preview = []
 
             if c == '':
-                # 删除行：直接移除
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [(s + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
+                    removed_lines_preview = [(s_1 + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
                 lines[adj_s:adj_e] = []
                 inserted = 0
                 c_lines = []
             else:
-                # 统一换行符
                 if has_crlf:
                     c = c.replace('\r\n', '\n').replace('\n', '\r\n')
                 else:
@@ -1106,42 +775,35 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 c_lines = c.splitlines(keepends=True)
                 inserted = len(c_lines)
 
-                # ── AI 偏移检查（仅警告）: content 首行与被替换行内容相同 ──
-                # 注意: s > 0 时才检查。s=0 时（文件头替换）首行相同是完全正常的。
-                first_new = c_lines[0].rstrip('\n\r')
-                first_old = ''
-                if s > 0 and removed > 0 and adj_s < len(lines):
+                # AI 偏移检查：s_1 > 1 时检查（非文件头替换）
+                if s_1 > 1 and removed > 0 and adj_s < len(lines):
+                    first_new = c_lines[0].rstrip('\n\r')
                     first_old = lines[adj_s].rstrip('\n\r')
                     if first_old and first_old == first_new:
                         results.append(
-                            f"  ⚠️ {desc}: content 首行与将被替换的第 {s} 行内容相同，"
+                            f"  ⚠️ {desc}: content 首行与将被替换的第 {s_1} 行内容相同，"
                             f"可能因偏移量错误造成重复（如需强制写入请设 force=true）"
                         )
 
-                # 保存被替换的行用于 diff 预览（截断长行），附带原始行号
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [(s + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
+                    removed_lines_preview = [(s_1 + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
 
                 lines[adj_s:adj_e] = c_lines
 
             delta = inserted - removed
             cumulative_offset += delta
 
-            # ── 记录原始参照系的行号 + delta，AI 可逐行核对 ──
-            orig_e = e if e is not None else total
+            orig_e_display = e_1 if e_1 is not None else total
             results.append(
-                f"  [{s}, {orig_e}) → [{s}, {orig_e + delta})  {desc}"
+                f"  [{s_1}, {orig_e_display}] → [{s_1}, {orig_e_display + delta}] (offset: {delta:+d})  {desc}"
             )
 
-            # ── Per-edit diff 预览（≤5 行时显示全量，超过则省略） ──
-            # 这是早期预警：AI 通过对比 - / + 行可发现错位改写
-            # 行号以 L{orig-line-no}: 形式标注，便于 AI 对照 0-indexed 行号
+            # Per-edit diff 预览（1-indexed 行号）
             if removed_lines_preview:
                 for orig_lineno, rl in removed_lines_preview:
                     display = rl if len(rl) <= 80 else rl[:77] + "..."
                     results.append(f"    - L{orig_lineno}: {display}")
             if c_lines:
-                # 同样截断
                 max_show = min(len(c_lines), 5)
                 for cl in c_lines[:max_show]:
                     display = cl.rstrip('\n\r')
@@ -1150,16 +812,11 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 if len(c_lines) > max_show:
                     results.append(f"    + ...（共 {len(c_lines)} 行）")
 
-        # ── 一次性写出 ──
         new_text = ''.join(lines)
-
-        # 记录是否发生过编码回退（与 handle_write 行为对齐：原编码无法编码时静默切到 UTF-8）
         encoding_fallback = False
         fmt_msg = ""
 
-        # ── 累计偏移一致性自检（早期预警错位改写） ──
-        # 编辑应用逻辑的不变量: len(lines) == total + cumulative_offset
-        # 若不一致说明 batch_write 内部处理出现 bug（不是 AI 的问题），必须报警
+        # 累计偏移一致性自检
         expected_total = total + cumulative_offset
         actual_total = len(lines)
         if actual_total != expected_total:
@@ -1169,23 +826,20 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 f"请上报此问题"
             )
             all_success = False
-            # 不中断, 继续尝试写出 (让用户能看到完整结果)
 
-        # ── AI 偏移错误检测: 对比原始文件和结果中的连续重复行 ──
+        # AI 偏移错误检测
         if not force:
-            # 收集原始文件中的连续重复（仅内容行，跳过空白）
             orig_dup_contents = set()
             for i in range(1, len(original_lines)):
-                prev = original_lines[i - 1].rstrip('\n\r').strip()
-                curr = original_lines[i].rstrip('\n\r').strip()
+                prev = original_lines[i - 1].rstrip('\r\n')
+                curr = original_lines[i].rstrip('\r\n')
                 if prev and curr and prev == curr:
                     orig_dup_contents.add(prev)
 
-            # 扫描结果中的连续重复，排除原始已存在的重复
             new_dup_lines = []
             for i in range(1, len(lines)):
-                prev = lines[i - 1].rstrip('\n\r').strip()
-                curr = lines[i].rstrip('\n\r').strip()
+                prev = lines[i - 1].rstrip('\r\n')
+                curr = lines[i].rstrip('\r\n')
                 if prev and curr and prev == curr and prev not in orig_dup_contents:
                     new_dup_lines.append((i, prev))
 
@@ -1193,22 +847,19 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 dup_msgs = [f"    第 {i} 行: {txt}" for i, txt in new_dup_lines[:10]]
                 if len(new_dup_lines) > 10:
                     dup_msgs.append(f"    ... 还有 {len(new_dup_lines) - 10} 处")
-                # 清理临时备份
-                if bak_path and os.path.exists(bak_path):
-                    if not backup:
-                        try:
-                            os.remove(bak_path)
-                        except OSError:
-                            pass
+                if bak_path and os.path.exists(bak_path) and not backup:
+                    try:
+                        os.remove(bak_path)
+                    except OSError:
+                        pass
                 return _wrap_error(
-                    "批量写入中止: 检测到连续重复行，可能因 AI 偏移量错误导致。\n"
+                    "写入中止: 检测到连续重复行，可能因 AI 偏移量错误导致。\n"
                     f"共 {len(new_dup_lines)} 处新增重复：\n" + "\n".join(dup_msgs) + "\n"
                     "如需强制写入请设置 force=true"
                 )
 
-        # ── 写入磁盘（非预览模式） ──
+        # 写入磁盘
         if not preview:
-            # DFM 二进制 → 转回二进制
             if is_dfm_binary:
                 text_tmp = file_path + ".txt"
                 with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
@@ -1244,19 +895,43 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as ex:
                     logger.warning(f"写入后自动格式化失败: {ex}")
 
-            # 清理备份（如果不需保留）
+            # auto_format 可能额外改变行数（展开 uses、调整空行等），重算真实偏移
+            if auto_format and not preview and os.path.isfile(file_path) and fmt_msg:
+                try:
+                    with open(file_path, 'r', encoding=write_enc, newline='',
+                              buffering=1048576) as f:
+                        new_total = sum(1 for _ in f)
+                    expected_total = total + cumulative_offset
+                    if new_total != expected_total:
+                        fmt_diff = new_total - expected_total
+                        cumulative_offset += fmt_diff
+                        # 更新 results 中最后一个 edit 的偏移显示
+                        for i in range(len(results) - 1, -1, -1):
+                            m = re.search(r'\(offset:\s*([+-]?\d+)\)', results[i])
+                            if m:
+                                old_val = int(m.group(1))
+                                new_val = old_val + fmt_diff
+                                old_part = results[i][m.start():m.end()]
+                                new_part = f'(offset: {new_val:+d})'
+                                results[i] = results[i][:m.start()] + new_part + results[i][m.end():]
+                                break
+                except Exception as ex:
+                    logger.debug(f"auto_format 后重读行数失败: {ex}")
+
+            # 清理备份
             if not backup and bak_path and os.path.exists(bak_path):
                 try:
                     os.remove(bak_path)
                 except OSError:
                     pass
 
-        # ── 汇总 ──
-        # batch_write 是推荐的批量写入方式。edits 以原始文件为参照系，内部自动处理偏移。
-        # 单次 edit 覆盖完整方法/过程时可直接用 write 全文替换。
+            # 标记脏
+            _mark_dirty(file_path)
+
+        # 汇总输出
         summary = []
         basename = os.path.basename(file_path)
-        action_label = "batch_preview" if preview else "batch_wrote"
+        action_label = "preview" if preview else "wrote"
         header_parts = [
             f"{action_label}: {len(validated_edits)} edits, {basename}",
             f"encoding: {write_enc}",
@@ -1274,7 +949,6 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if is_dfm_binary:
             header_parts.append("format: binary DFM converted")
 
-        # 空行分隔 header 与 per-edit 详情
         summary.append(", ".join(header_parts))
         summary.append("")
         summary.extend(results)
@@ -1286,13 +960,31 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "failed", "message": "\n".join(summary)}
 
     finally:
-        # 释放锁
         if preview:
             _release_read_lock(file_path)
         else:
             _release_write_lock(file_path)
         if tmp_cleanup:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
+
+
+async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    处理 batch_write action（已弃用，请使用 write action + edits 参数代替）。
+
+    此函数保留以兼容旧调用，内部委托给 handle_write。
+    """
+    # 转换参数：batch_write 的 edits 和 force 映射到 write
+    args = {
+        "file_path": arguments.get("file_path"),
+        "edits": arguments.get("edits", []),
+        "backup": arguments.get("backup", True),
+        "encoding": arguments.get("encoding", "auto"),
+        "auto_format": arguments.get("auto_format", False),
+        "preview": arguments.get("preview", False),
+        "force": arguments.get("force", False),
+    }
+    return await handle_write(args)
 
 
 async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1306,7 +998,7 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
     backup_flag = arguments.get("backup", True)
 
     if action != "code" and file_path:
-        path_err = _validate_path(file_path)
+        path_err = _validate_path(file_path, arguments.get("project_path"))
         if path_err:
             return _wrap_error("路径安全校验失败: %s" % path_err)
 
@@ -1377,12 +1069,16 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                         if offset != 0:
                             offset_info = (
                                 f"\n偏移量: {offset:+d}（格式化后行数变化）\n"
-                                f"后续编辑: 行号 ≥ 0 的新行号 = 原行号 + {offset}"
+                                f"后续编辑: 行号 ≥ 1 的新行号 = 原行号 + {offset}"
                             )
                             if isinstance(result.get("message"), str):
                                 result["message"] += offset_info
                     except (OSError, UnicodeDecodeError):
                         pass
+
+                # 格式化成功 → 标记脏（行号已变）
+                if result.get("status") == "success" and result.get("formatted"):
+                    _mark_dirty(file_path)
             finally:
                 _release_write_lock(file_path)
 
@@ -1406,7 +1102,7 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
 
-    path_err = _validate_path(file_path)
+    path_err = _validate_path(file_path, arguments.get("project_path"))
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
@@ -1604,7 +1300,7 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if not unit_name:
         return _wrap_error("请提供 unit_name 参数")
 
-    path_err = _validate_path(file_path)
+    path_err = _validate_path(file_path, arguments.get("project_path"))
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
     if uses_action not in ("add", "remove"):
@@ -1737,23 +1433,23 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 logger.warning(f"uses 操作后格式化失败: {ex}")
 
         # 计算偏移量（uses 修改也会影响行号）
-        s = text[:uses_start].count('\n')           # 0-indexed: uses 关键字所在行
+        s_0 = text[:uses_start].count('\n')          # 0-indexed: uses 关键字所在行
         uses_old_text = text[uses_start:uses_end]
-        removed = uses_old_text.count('\n')          # 旧 uses 子句占用的行数
-        inserted = new_uses_clause.count('\n')       # 新 uses 子句占用的行数
+        removed = uses_old_text.count('\n')           # 旧 uses 子句占用的行数
+        inserted = new_uses_clause.count('\n')        # 新 uses 子句占用的行数
         offset = inserted - removed
         # 计算 exclusive end: uses_end 所在行的下一行
-        e = text[:uses_end].count('\n') + 1
+        e_0 = text[:uses_end].count('\n') + 1
 
         action_desc = "added" if uses_action == "add" else "removed"
-        # 单行 meta (与 read/write 对齐)
+        # 单行 meta (与 read/write 对齐，1-indexed)
         basename = os.path.basename(file_path)
-        new_e = e + offset
+        new_e = e_0 + offset
         parts = [
             f"wrote: {basename}",
             f"action: {action_desc} {unit_name_stripped} in {uses_section}",
             f"uses: {', '.join(new_units)}",
-            f"0-indexed [{s}, {e}) → [{s}, {new_e})",
+            f"1-indexed [{s_0 + 1}, {e_0}] → [{s_0 + 1}, {new_e}] (offset: {offset:+d})",
             f"encoding: {write_enc}",
         ]
         if backup_path:
@@ -1764,7 +1460,10 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
             parts.append(f"⚠ fallback: {detected_enc} → utf-8")
         if write_enc != detected_enc and not encoding_fallback:
             parts.append(f"ℹ transcoded: {detected_enc} → {write_enc}")
-        
+
+        # uses 操作修改了文件 → 标记脏
+        _mark_dirty(file_path)
+
         return {"status": "success", "message": ", ".join(parts)}
     finally:
         _release_write_lock(file_path)
@@ -1777,14 +1476,7 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_tool 主入口。
-
-    根据 action 参数路由到对应的处理函数:
-      read        → handle_read
-      write       → handle_write
-      batch_write → handle_batch_write
-      format      → handle_format
-      backup      → handle_backup
-      uses        → handle_uses
+    write 和 batch_write 已合并，batch_write 保留为别名。
     """
     action = arguments.get("action", "read")
 
@@ -1801,4 +1493,4 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     elif action == "uses":
         return await handle_uses(arguments)
     else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, batch_write, format, backup, uses")
+        return _wrap_error(f"未知 action: {action}。支持的 action: read, write(format=批量替换), format, backup, uses")

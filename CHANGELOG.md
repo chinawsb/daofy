@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.13] - 2026-06-14
+
+### Added
+
+- **`delphi_rtti` MCP 工具**: Delphi RTTI 桥接 — 通过 Enhanced RTTI 发现和调用 Delphi 应用的 published 方法。三步法：`action=guide`（使用指南）、`action=discover`（扫描能力）、`action=call`（调用方法）。返回 JSON Schema 格式的参数定义。
+- **`DaofyAutomation.RttiDiscovery.pas`**: 新增 TRttiDiscoverer 类，实现 `DiscoverClass(AClass)` 扫描 published 方法/属性，`TypeToSchema(AType)` 将 Delphi 类型→JSON Schema 映射（支持 Integer/Float/Boolean/字符串/枚举/集合/DynamicArray/TDateTime/Variant/Pointer 等 15 类类型）。
+- **`DaofyAutomation.Base.pas` RTTI 支持**: 新增 `rtti_discover` 命令路由、`HandleRttiDiscover()` 处理器、基类 `GetRttiClasses()` 虚方法（返回空数组 TClass[]）。
+- **`Vcl.DaofyAutomation.pas` RTTI 支持**: 重写 `GetRttiClasses()` 返回 VCL Application 中所有已注册 Form 的 ClassType（`Screen.Forms[*].ClassType`）。
+- **`src/services/rtti_bridge.py`**: RttiBridge 服务 — 管理 Delphi 应用 RTTI 连接，5 分钟缓存（`_cache_ttl`），支持 `connect()`/`discover()`/`call()`/`clear_cache()`，复用现有命名管道通信。
+- **`src/tools/delphi_rtti.py`**: MCP Tool handler — `action=guide` 返回完整使用指南（~80 行 Markdown），`action=discover` 先 connect 再 discover，`action=call` 先 connect 再 call；参数校验（app_path/class_name/method 缺失时返回明确错误）。
+- **`.opencode/skills/delphi-rtti-bridge/`**: 权威 SKILL.md（YAML frontmatter + 渐进式 L3 文档）+ `references/type-mapping.md`（15 类类型映射表）+ `references/examples.md`（5+ 完整工作流示例）。
+- **`scripts/build-skills.py`**: 多平台分发脚本，支持 claude-code/cursor/windsurf 一键分发。
+- **`tests/test_rtti_bridge.py`**: 22 个测试用例 — 缓存生命周期（命中/过期/清除）、discover（完整/缓存/强制/类过滤/管道错误/JSON 错误）、call（成功/管道错误/方法找不到/类找不到）、connect（新建/复用/失败）。
+- **`tests/test_delphi_rtti.py`**: 16 个测试用例 — guide（文本内容/章节完整性）、discover（参数校验/mock 调用/连接失败/错误传递）、call（参数校验/mock 调用/错误传递）、未知 action。
+
+- **DaofyAutomation 三层架构拆分**: `tools/auto/` 拆分为 `DaofyAutomation.Base.pas`、`Vcl.DaofyAutomation.pas`、`Fmx.DaofyAutomation.pas` 三层架构，每层独立单元、独立职责。
+- **Overlapped I/O 管道通信**: 使用 `WaitForMultipleObjects` 实现零延迟推送，`FAsyncResults` 60 秒 TTL 自动清理，异步结果通过 `peekresult` 按 reqId 取回。
+- **全部命令标准化**: 所有 `HandleCmd*` 统一 reqId 回显；`rcall`/`rset`/`type`/`key` 改为异步（防模态弹窗阻塞管道）。
+- **扩展命令集**: 新增 `move`/`drag`/`key`/`waitfor`/`listwnd`/`rcall`/`dlgfile`/`peekresult` 等命令。
+- **FMX 截图支持**: `PaintTo`/`Context.CopyToBitmap`/`fsModal` 检测，覆盖 FMX 2D 和 3D 程序。
+- **`dumpstate`/`dlgscan`/`rinspect` 改为管道返回**: 不再写文件，通过命名管道直接返回结果。
+- **进程池复用**: `keep_alive` 参数支持进程复用，避免反复启动 Delphi 应用。
+- **测试项目**: VCL/FMX 2D/FMX 3D 三个测试程序 + 4 个测试脚本（`test_all_commands.py`、`test_capture_all.py`、`test_dlgclick_msgbox.py`、`test_json_protocol.py`）。
+- **完整命令集文档**: `docs/automate_test_guide.md`。
+
+- **`automate_delphi` 新增 Console 模式**: 通过 `action="console"` 或 `action="auto"`（自动 PE 头检测）支持 subprocess stdin/stdout 交互。无需 Delphi 端改造，通过 `input`/`expect`/`timeout`/`args` 参数控制。引入 `detect_exe_subsystem()` 读取 PE OptionalHeader Subsystem 字段区分 GUI(2) vs Console(3)。
+- **Windows 兼容 expect 模式**: 使用 `threading.Thread` + `queue.Queue` 替代 `select.select`（Windows 不支持 pipe select）。无 expect 时直接用 `proc.communicate()` 避免多线程竞争 pipe 读取。
+- **`tests/test_console_automation.py`**: 18 个测试用例覆盖 `detect_exe_subsystem`（PE 检测/边界）、`console_execute`（basic/expect/timeout/keep_alive/stderr/exit_code）、`execute_automation` 分发（gui/console/auto/unknown）、边缘情况。
+
+- **`file_tool` 路径白名单校验**: 新增 `_validate_path()` 函数，集成 `PathValidator` 对文件路径进行白名单式安全校验，限制文件操作在允许目录范围内。
+- **`file_tool` 脏标记系统**: 文件写入后标记为"脏"，再次 `write` 前必须 `read` 或 `preview` 确认行号，防止 AI 基于过时行号继续编辑。
+
+- **`CODING_RULES.mdc` §⑧ 自动化UI交互测试**: 新增完整的 GUI 自动化测试规则（单元链接、命令示例、验证流程）。
+- **`CODING_RULES.mdc` §⑨ 控制台程序交互验证**: 新增 Console 模式工具调用、测试模式、基础用法、分步交互、进程池复用规则。
+- **`CODING_RULES.mdc` delphi_file 规则重构**: 全面重写 delphi_file 写入规则、紧凑输出格式、脏标记保护、行号规则，迁移 AGENTS.md 中详细规则到此统一文档。
+- **`src/config/tool_docs.py`**: 注册 `delphi_rtti` 工具；精简 write 文档为 edits 唯一参数格式；移除 0-indexed 行号说明。
+- **`src/server.py` tool 描述更新**: 注册 `delphi_rtti` 和 automation 工具；delphi_file 参数统一至 1-indexed 描述；移除 `batch_write` 独立路由。
+- **delphi_rtti 技能分发脚本**: `scripts/build-skills.py` 支持自动分发到 claude-code/cursor/windsurf。
+
+### Fixed
+
+- **`console_execute` Windows pipe 读取**: `select.select` 不适用于 Windows 上的 subprocess pipe（仅支持 socket）。改为 thread + Queue 实现非阻塞 expect 读取，无 expect 时退回 `proc.communicate()`。
+- **`batch_write` experimental 标记移除**: 删除 server.py 和 file_tool.py 中的 experimental 标注，`batch_write`（通过 `write(edits=[...])`）正式作为标准接口。
+- **`batch_write` content 首行重复检测修正**: s=0 时（文件头替换）content 首行与原文件首行重复属于正常场景，不再误报 `⚠️` 警告。
+
+### Changed
+
+- **`automate_delphi` 参数扩展**: 新增 `input`/`expect`/`timeout`/`args` 参数，`action` 增加 `auto`（默认）和 `console` 模式。`action="auto"` 通过 PE 头自动检测 GUI vs Console。
+- **`tool_docs.py` 更新**: automate_delphi 文档拆分为 gui/console 双模式，新增 console 参数说明和示例。
+- **`file_tool` 重构**: 统一 1-indexed 行号体系，代码精简化（+297 / -605 行），移除 `batch_write` 独立 action 入口。
+- **`AGENTS.md` 精简**: 将 delphi_file 详细规则、行号规则、脏标记、输出格式等迁移至 `CODING_RULES.mdc`，AGENTS.md 仅保留工作流总览和核心要点。
+- **`CODING_RULES.mdc` 版本**: 更新至 `1.12.0` / 2026-06-14。
+- **copyright 服务**: 更新版权模板和骨架代码，修复 f-string 大括号问题，模板通用化。
+
+## [2026.06.12] - 2026-06-12
+
+### Fixed
+
+- **`auto_format` 后偏移量重算**: `_handle_batch_write_internal` 在 auto_format 写入后重读文件计算真实偏移差，更新最后一个 edit 的 `(offset: +N)` 显示。之前返回的 offset 仅反映原始 edit 的行数变化，不含 formatting 影响（如 uses 展开、空行调整）。
+- **`test_sanity_warn_on_dup_first_line` 行号适配**: 替换区间从 `[4,5]` 改为 `[5,5]`（1-indexed 下 `[4,5]` 覆盖 2 行，首行被替换行是 `T=class` 而非 `F1: Integer`，导致 ⚠️ 警告触发条件不满足）。
+
+### Changed
+
+- **`_read_content`/`handle_read` 统一为 1-indexed**: 行号前缀、meta 行号范围、默认 `start_line` 全部改为 1-indexed，与 `write`/`edits` 使用相同的行号体系，消除历史常见的 ±1 错位。
+- **`handle_read` 自动清除脏标记**: 读取成功后自动 `_clear_dirty(file_path)`，避免脏标记阻塞后续写入序列。（预览模式 `preview=True` 也清除脏标记。）
+- **`handle_read` 锁降级**: 移除 `handle_read` 在读取期间的写锁（实际只读），改为仅获取读锁，允许多 agent 同时读取同一文件。
+- **`tool_docs.py` write 文档精简**: action 列表移除 `batch_write` 独立入口，`write` 的文档补充 `edits` 为唯一参数格式，移除 0-indexed 行号说明。
+- **`server.py` tool 注册同步**: `call_tool` 中移除 `batch_write` 独立路由（已通过 `write` + `edits` 合并），同步更新 `list_tools` 工具描述。
+
+### Updated
+
+- **`CODING_RULES.mdc`**: §⑧ 人机协同规则（前置自检、触发条件表、优先级交互说明）；§⑥ 审核表末尾确认规则（🔴 等确认 / 🟡 列选项 / 🟢 先修后报）；§⑧ 偏移量文档补充 `auto_format` 影响说明。
+- **`AGENTS.md`**: 删除 `project_compile` 历史合并提醒（已合并至主文档）。
+- **`CODING_RULES.mdc` 版本**: 更新至 `1.11.0` / 2026-06-12。
+
 ## [2026.06.08.1] - 2026-06-08
 
 ### Added

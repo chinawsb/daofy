@@ -57,11 +57,16 @@ AI 从"给建议"变成"帮你做"。
 |------|------|
 | 🔧 编译 | 项目编译、语法检查、批量编译 |
 | 📚 知识库 | 30 万函数、16 万页面索引 |
-| 📝 文件操作 | 读/写/格式化/备份 一站集成（含 pasfmt） |
+| 📝 文件操作 | 读/写/格式化/备份/uses 管理（含 pasfmt） |
+| 🧩 组件管理 | DFM 增删改 + .dpk 编译安装 |
 | 📋 编码规范 | 规范驱动代码生成与审计 |
-| 🛡️ 运行时验证 | 编译后自动运行，检测启动崩溃（`run_verify`）|
-| 🔍 运行时审计 | 扫描 DFM 组件类，检测遗漏 uses 单元 |
-| 📦 组件管理 | 编译安装 .dpk 组件包 |
+| 🛡️ 运行时验证 | 编译后自动运行，检测启动崩溃 |
+| 🔍 运行时审计 | 扫描 DFM 组件类，检测遗漏 uses |
+| 🔗 RTTI 桥接 | 运行时发现/调用 Delphi 对象 published+public 方法 |
+| 🤖 自动化测试 | GUI 截图 + Console 交互，PE 自动检测 |
+| 🧠 经验记忆 | AI 经验自动去重保存 + 语义搜索 |
+| 📄 软著生成 | 源码+说明书+汇总表，浏览器 PDF 渲染 |
+| 🔄 版本更新 | 一键检查/更新 Daofy 版本 |
 
 ---
 
@@ -70,7 +75,7 @@ AI 从"给建议"变成"帮你做"。
 **用户只需：**
 
 ```
-用户: 帮我安装 Daofy
+用户: 帮我安装 Daofy MCP Server
 ```
 
 **AI 自动完成：**
@@ -136,11 +141,11 @@ AI 从"给建议"变成"帮你做"。
 **AI 的工作流：**
 
 ```
-① get_coding_rules()    → 获取规范
-② delphi_kb(TFDConnection) → 查 API 签名
-③ delphi_kb(TFDQuery)      → 查参数绑定
-④ file_tool(action="write") → 生成代码（自动备份）
-⑤ compile_project           → 编译验证
+① get_coding_rules()         → 获取规范
+② delphi_kb(TFDConnection)  → 查 API 签名
+③ delphi_kb(TFDQuery)       → 查参数绑定
+④ delphi_file(action="write", edits=[...]) → 生成代码（自动备份）
+⑤ project(action="compile") → 编译验证
 ```
 
 > 💡 不是凭记忆写，而是先查 KB 确认 API
@@ -177,19 +182,21 @@ TDictionary<TCustomKey, string>  // 编译错误！
 
 ## 统一文件操作 + 自动备份
 
-**一体化的文件接口 `delphi_file`（原名 `file_tool`，旧名仍兼容）：**
+**一体化的文件接口 `delphi_file`：**
 
 ```
-file_tool(action="read")              — 读文件（DFM 二进制→文本自动转换）
-file_tool(action="write", content=...) — 写文件（默认 backup=True，自动备份到 __history）
-file_tool(action="format")            — 格式化（pasfmt 驱动，自动备份）
-file_tool(action="backup")            — 备份管理（创建/列表/恢复）
+delphi_file(action="read")              — 读文件（类/函数导航 + DFM 二进制→文本自动转换）
+delphi_file(action="write", edits=[...]) — 写文件（edits 格式，默认 backup=True）
+delphi_file(action="format")            — 格式化（pasfmt 驱动，自动备份）
+delphi_file(action="backup")            — 备份管理（创建/列表/恢复）
+delphi_file(action="uses")              — uses 子句增删（add/remove）
+manage_component(action="add|remove|modify") — DFM 组件管理 + PAS 声明自动同步
 ```
 
 **写入即备份 — 无需额外步骤：**
 
 ```
-file_tool(action="write", file_path="Unit1.pas", content="...")
+delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:1, content:"..."}])
                               ↑ 默认 backup=True，自动创建 __history 备份
 ```
 
@@ -222,11 +229,26 @@ DataProcessor.pas  →  DataProcessor.pas.~1~
 **`delphi_file` 透明处理：**
 
 ```
-file_tool(action="read",  file_path="Form1.dfm")
+delphi_file(action="read",  file_path="Form1.dfm")
   → 检测到二进制 → 自动转文本 → 返回可读内容 ✓
 
-file_tool(action="write", file_path="Form1.dfm", content="...")
+delphi_file(action="write", file_path="Form1.dfm", edits=[...])
   → 原文件是二进制 → 写出后自动转回二进制 ✓
+```
+
+**组件级操作：`manage_component` 工具 — 无需手动编辑 DFM 文本**
+
+```
+manage_component(action="add",    target_dfm="Form1.dfm",
+  new_component_class="TButton", properties={"Caption": "OK"})
+  → DFM 新增按钮 + PAS 自动声明字段和事件 ✓
+
+manage_component(action="modify", component_name="Button1",
+  properties={"Caption": "确定", "Enabled": "False"})
+  → 改属性 + 自动同步 PAS ✓
+
+manage_component(action="remove", component_name="Button1")
+  → 删组件 + 自动清理 PAS 声明 ✓
 ```
 
 **原理：按需编译 Delphi 转换器，调用 `ObjectResourceToText` / `ObjectTextToResource`**
@@ -285,7 +307,7 @@ GitHub Issue / Gitee 工单
 
 **AI 工作流：**
 1. 🔗 引用查询 → 评估影响范围
-2. 📝 逐文件修改（file_tool write 默认自动备份）
+2. 📝 逐文件修改（delphi_file write 默认自动备份）
 3. ✅ 每改一个编译验证
 4. 🎨 统一格式化
 
@@ -357,15 +379,16 @@ AI: 列出所有注册的 BPL 包
 ```
 
 ```
-① get_coding_rules                    → 获取规范
-② delphi_kb(TJSON*)                   → 搜索 API 确认签名
-③ file_tool(action="write")           → 写入代码（默认自动备份到 __history）
-④ file_tool(action="format")          → 格式化代码
-⑤ compile_project                     → 编译验证
-⑥ compile_project(run_verify=True)    → 运行验证（捕获 CreateForm 阶段崩溃）
-⑦ get_coding_rules(section="review")  → 审计
-⑧ run_audit(mode="runtime")           → 运行时注册检查（遗漏 uses 检测）
-⑨ 清理 + 确认备份
+① get_coding_rules                       → 获取规范
+② delphi_kb(TJSON*)                      → 搜索 API 确认签名
+③ delphi_file(action="write", edits=[...]) → 写入代码（自动备份到 __history）
+④ delphi_file(action="format")           → 格式化代码
+⑤ project(action="compile")              → 编译验证
+⑥ project(action="compile", run_verify=True) → 运行验证（捕获 CreateForm 阶段崩溃）
+⑦ get_coding_rules(section="review")      → 审计
+⑧ project(action="runtime")              → 运行时注册检查（遗漏 uses 检测）
+⑨ experience(action="save")              → 保存经验（AI 自动去重）
+⑩ 清理 + 确认备份
 ```
 
 > 💡 重建前先检查现有帮助文档目录，避免重复构建
@@ -398,7 +421,7 @@ StackTrace.pas
 ## run_verify 工作流
 
 ```
-compile_project(run_verify=True)
+project(action="compile", run_verify=True)
 
 ① inject_verify_units()
    ├── 备份 .dproj / .dpr
@@ -431,7 +454,7 @@ compile_project(run_verify=True)
 **编译通过 ≠ 运行正常** — 组件运行时注册可能缺失
 
 ```
-run_audit(mode="runtime", source_dir=...)
+project(action="runtime", project_path="App.dproj")
 ```
 
 **检查原理：**
@@ -474,15 +497,135 @@ employee-input/
 - SQLite DB 自动创建在 exe 同级目录
 - DBGrid 列表（只读）+ DBEdit 编辑面板（左右分栏）
 - UTF-8 BOM 编码 — 消除 `W1057` 隐式字符串转换警告
-- `compile_project(run_verify=True)` — 编译 → 运行验证 一键通过
+- `project(action="compile", run_verify=True)` — 编译 → 运行验证 一键通过
+
+---
+
+## 自动化测试 — GUI 模式
+
+**基于 Named Pipe 的 Delphi 原生自动化单元 `DaofyAutomation`**
+
+```
+automate_delphi(action="gui", app_path="App.exe",
+  script=[{"cmd":"goto","target":"TMainForm"},
+          {"cmd":"click","target":"btnOK"},
+          {"cmd":"capture","target":"result.png"}])
+```
+
+**协议：JSON 请求/响应**
+
+| 命令 | 说明 |
+|------|------|
+| goto / click / dblclick | 定位/点击/双击组件 |
+| type / key | 输入文本 / 按键 |
+| capture / listwnd / dumpstate | 截图 / 窗口列表 / 控件树 |
+| wait / waitfor | 等待超时 / 等待窗口出现 |
+| rcall / rget / rset | 调用/读取/设置组件属性 |
+
+**无需手动配置：** 编译时通过 `DCC_UnitSearchPath=` 自动链接 DaofyAutomation 单元
+
+---
+
+## 自动化测试 — Console 模式
+
+**基于 subprocess stdin/stdout 的控制台程序交互，无需 Delphi 端改造**
+
+```
+automate_delphi(action="console", app_path="Tool.exe",
+  input="Y\n", expect="Continue?")
+```
+
+```
+automate_delphi(action="auto", app_path="Deploy.exe",
+  input="\n", expect="success", args=["--silent"])
+```
+
+**参数：**
+| 参数 | 说明 |
+|------|------|
+| input | 发送到 stdin 的文本（支持 `\n` 换行）|
+| expect | 期待的输出模式（匹配到才返回）|
+| timeout | 超时秒数（默认 30s）|
+| args | 命令行参数列表 |
+
+**Windows PE 自动检测：** `action="auto"` 读取 EXE 头 Subsystem 字段区分 GUI/Console，无需手动指定
+
+---
+
+## RTTI 桥接 — 运行时发现 Delphi 能力
+
+**三步法**：无需源码，通过 RTTI 发现和调用运行时对象
+
+```
+① delphi_rtti(action="guide")     → 使用指南
+② delphi_rtti(action="discover")  → 扫描所有类的 published+public 方法+参数
+③ delphi_rtti(action="call",      → 调用具体方法
+     class_name="TMainForm",
+     method="LoadCustomer",
+     params={"customerName": "张三"})
+```
+
+**应用场景：**
+- 远程控制正在运行的 Delphi 应用
+- 在 AI 对话中直接操作业务对象
+- 动态发现 VCL Form 的所有组件和方法
+- 不需要额外改造程序（链接 DaofyAutomation 即可）
+
+---
+
+## 经验记忆 — AI 学会记住
+
+**Agent 经验自动积累，问题越用越少**
+
+```
+experience(action="save")
+  ├─ 自动去重：相似度 > 0.85 → 合并到旧记录
+  ├─ 保存成功解决过的问题 + 解决步骤
+  └─ 后续任务自动搜索匹配经验
+
+experience(action="search", query="...")
+  └─ 语义搜索已有经验，避免重复踩坑
+
+experience(action="merge", ids=[...])
+  └─ 将多条同类经验合并为一条抽象经验
+```
+
+**效果**：下次遇到同样的问题，AI 直接使用已验证的解决方案
+
+---
+
+## 软著文档生成 — 一键出稿
+
+**满足中国软件著作权登记需求的自动化工具**
+
+```
+generate_copyright(action="generate")
+  ├─ 源代码文档（逐页截图+行号）
+  ├─ 用户操作手册（按场景组织）
+  └─ 汇总表（项目信息+文档清单）
+
+generate_copyright(action="validate")
+  └─ 检查配置完整性
+```
+
+**特点：**
+- 浏览器 PDF 渲染，所见即所得
+- 自动校验文档完整性
+- 支持配置更新
+
+---
+
+## 版本更新 — 保持最新
+
+```
+daofy_update(action="check")   → 检查 GitHub 新版
+daofy_update(action="update")  → git pull 自动更新
+daofy_update(action="version") → 显示当前版本
+```
 
 ---
 
 ## 支持平台
-
-| AI 助手 | 配置方式 |
-|---------|----------|
-| Claude Desktop | 自动 / 手动 |
 | Trae | 自动 |
 | CodeArts Agent | 自动 |
 | Cursor | 自动 / 手动 |
@@ -500,11 +643,15 @@ employee-input/
 |------|--------|
 | 🔧 编译 | 编译 + 诊断 + 批量 + run_verify |
 | 📚 KB 搜索 | 精确 + 语义 + 引用 |
-| 📝 文件操作 | 读/写/格式化/备份一站集成（含 pasfmt） |
+| 📝 文件操作 | 读/写/格式化/备份/uses 管理（含 pasfmt） |
+| 🧩 组件管理 | DFM 增删改 + 组件包编译安装 + PAS 同步 |
 | 📋 规范 | 驱动生成 + 驱动审计 |
 | 🛡️ 运行验证 | 启动崩溃检测 + 运行时注册审计 |
-| 📦 组件 | 编译 + 安装 |
-| 🤖 自动化 | 重构 + 修复 + 工单 |
+| 🔗 RTTI 桥接 | 运行时发现/调用 Delphi 对象方法 |
+| 🤖 自动化 | 重构 + 修复 + 工单 + 自动化测试 |
+| 🧠 经验记忆 | AI 自动积累经验，去重+语义搜索 |
+| 📄 软著生成 | 源码+手册+汇总表，PDF 一键出稿 |
+| 🔄 版本更新 | 一键检查更新 Daofy |
 
 ---
 

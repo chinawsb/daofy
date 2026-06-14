@@ -74,6 +74,7 @@ type
     procedure DoTerminateApp; override;
     function FindNamedControl(const AName: string): TObject; override;
     function GetActiveForm: TObject; override;
+    function GetRttiClasses: TArray<TClass>; override;
 
   public
     constructor Create(const APipeName: string);
@@ -928,6 +929,15 @@ end;
 function TAutomationProcessor.GetActiveForm: TObject;
 begin
   Result := Screen.ActiveForm;
+end;
+
+function TAutomationProcessor.GetRttiClasses: TArray<TClass>;
+var
+  I: Integer;
+begin
+  SetLength(Result, Screen.FormCount);
+  for I := 0 to Screen.FormCount - 1 do
+    Result[I] := Screen.Forms[I].ClassType;
 end;
 
 end.

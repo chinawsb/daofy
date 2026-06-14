@@ -1177,6 +1177,58 @@ AI 的做法跟人类完全不同：
 
 ---
 
+### 场景 5.6 — 自动化测试（约 3 分钟）
+
+> **威力点**：同一个工具同时支持 GUI 截图和控制台交互，auto 模式自动识别 PE 类型，无需手动切换。
+
+#### AI 对话演示
+
+**GUI 模式 — 截图验证：**
+
+```
+用户: 对 App.exe 的登录界面截图，检查界面布局
+```
+
+- AI 调用 `automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"goto","target":"TLoginForm"},{"cmd":"capture","target":"login.png"}])`
+- 返回截图和控件信息
+
+```
+用户: 点击登录按钮，触发验证逻辑，输入用户名后截图
+```
+
+- AI 调用 `automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"goto","target":"TLoginForm"},{"cmd":"type","target":"edtUser","text":"admin"},{"cmd":"click","target":"btnLogin"},{"cmd":"capture","target":"after_login.png"}])`
+- 展示登录后的界面截图
+
+**Console 模式 — 命令行工具交互：**
+
+```
+用户: 测试 Deploy.exe 部署工具，用 auto 模式自动识别
+```
+
+- AI 调用 `automate_delphi(action="auto", app_path="Deploy.exe", input="Y\n", expect="Deploy complete", args=["--silent"])`
+- 返回匹配到 `Deploy complete` 后的完整输出
+
+```
+用户: 测试一下如果没有 input 输入，超时会不会正常退出
+```
+
+- AI 调用 `automate_delphi(action="console", app_path="Tool.exe", timeout=5)`
+- 返回：超时正确触发，进程已终止
+
+#### 旁白
+
+最后这个场景，我们看 Daofy 的自动化测试能力。
+
+**GUI 模式**用于基于截图的界面验证。AI 可以通过 `DaofyAutomation` 单元（需要在 Delphi 项目中引用）与目标程序建立 Named Pipe 通信，模拟用户操作——定位窗口、点击按钮、输入文本、截图验证。全程在 AI 对话中完成，无需手动编写 UI 测试脚本。
+
+**Console 模式**则不需要任何 Delphi 端改造——直接用 `subprocess` 启动控制台程序，通过 stdin/stdout 交互。`input` 参数发送文本（支持 `\n` 换行），`expect` 参数等待特定输出模式，`timeout` 控制超时。
+
+最关键的是 **`action="auto"` 模式**——工具会自动读取 EXE 文件的 PE 头 Subsystem 字段（2=GUI, 3=Console），判断目标程序类型，选择正确的交互方式。完全不需要用户指定。
+
+这解决了 Delphi 生态中一个长期痛点：**GUI 和 Console 程序互斥**。同一个 Delphi 项目要么是 GUI Application，要么是 Console Application——但测试的时候你可能两种都有，而 Daofy 用一个 `automate_delphi` 工具统一覆盖了两个场景。
+
+---
+
 ## 第六部分：总结 & 结束（约 1 分钟）
 
 ### 画面
@@ -1215,6 +1267,7 @@ AI 的做法跟人类完全不同：
 - 安装 .dpk 组件包到 IDE
 - 完整从 0 到 1 工作流：规范 → API 查证 → 代码生成 → 编译 → 格式化 → 审计 → 工单
 - **🆕 Gitea 缺陷闭环实战**：代码提交 → 审计 → 创建工单 → 修复 → 关闭，以本项目自身为案例
+- **🆕 自动化测试**：GUI 截图（Named Pipe） + 控制台交互（subprocess），同工具双模式，action=auto 自动识别 PE 类型
 
 你可以把这个 MCP Server 配合任何支持 MCP 协议的 AI 助手使用——Claude Desktop、Trae、CodeArts Agent、Cursor 等等。
 
@@ -1244,6 +1297,8 @@ AI 的做法跟人类完全不同：
 | 代码格式化 + 自动备份 | 分屏：左 = AI 对话，右 = 文件资源管理器展示 __history 目录 |
 | 编码规范影响对比 | 分屏：左 = 现代规范生成代码，右 = 旧规范生成代码，并排对比 |
 | Gitea 缺陷闭环实战 | 全屏 AI 对话 + **画中画** Gitea 工单界面展示工单状态变化 |
+| 自动化测试 GUI 模式 | 全屏 AI 对话，突出返回的截图结果和控件树信息 |
+| 自动化测试 Console 模式 | 全屏 AI 对话，突出 stdin/stdout 交互过程 |
 
 ### 需要提前准备
 
@@ -1263,6 +1318,7 @@ AI 的做法跟人类完全不同：
 - [ ] 语义搜索场景需要提前构建 embedding 向量索引：`delphi_kb(action="build_embedding")`
 - [ ] Gitea 场景需要可访问的 Gitea 实例（如 https://code.qdac.cc:3000）和仓库权限
 - [ ] Gitea 缺陷闭环场景需要预先在仓库中运行一次 init_labels 创建标签
+- [ ] 自动化测试场景需要准备一个可运行的 GUI 程序（含 DaofyAutomation 单元）和一个控制台程序
 - [ ] 延时代码：`Start-Sleep -Seconds 3` 插入操作间控制节奏
 
 ### 剪辑标记

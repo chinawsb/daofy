@@ -51,6 +51,7 @@ type
     FAsyncEvent: THandle;
     FAsyncQueue: TList<string>;
     FAsyncQueueCS: TRTLCriticalSection;
+    FRegFilePath: string;  // 进程注册文件路径 (%TEMP%\daofy-rtti-{PID}.json)
   protected
     FSSDir: string;
     class function GetCurrent: TAutomationProcessorBase; static;
@@ -125,6 +126,14 @@ type
     /// <summary>获取当前活动窗体</summary>
     function GetActiveForm: TObject; virtual; abstract;
 
+    // ── RTTI 发现（可选重写，基类提供默认实现）──
+
+    /// <summary>返回所有可选 RTTI 类（子类重写可返回 Screen.Forms 等）</summary>
+    function GetRttiClasses: TArray<TClass>; virtual;
+
+    /// <summary>RTTI 发现 — 扫描 published 方法/属性，返回 JSON Schema</summary>
+    function HandleRttiDiscover(const ReqId, Target: string): string; virtual;
+
     // ── JSON 协议辅助 ──
 
     function GetReqId(const Req: string): string;
@@ -148,6 +157,11 @@ type
     function DoMsgClick(const Param: string): string;
     function DoDlgFile(const APath, ATarget: string): string;
 
+    // ── 进程注册（共享文件发现）──
+
+    procedure WriteRegFile;
+    procedure DeleteRegFile;
+
     // ── 命令分发 ──
 
     function ExecCmd(const AReq: string): string;
@@ -168,6 +182,9 @@ type
   end;
 
 implementation
+
+uses
+  DaofyAutomation.RttiDiscovery;
 
 { ═════════════════════════════════════════════════════════════════════════════
   WndProc（stdcall 静态函数，可被 SendMessage 跨线程调用）
@@ -217,6 +234,7 @@ end;
 
 destructor TAutomationProcessorBase.Destroy;
 begin
+  DeleteRegFile;
   Terminate;
   WaitFor;
   if FMsgWnd <> 0 then begin
@@ -240,6 +258,58 @@ end;
 procedure TAutomationProcessorBase.DoCapPub(const AName: string);
 begin
   DoCap(AName);
+end;
+
+(*═════════════════════════════════════════════════════════════════════════════
+  进程注册（共享文件发现）
+  写入 %TEMP%\daofy-rtti-{PID}.json，MCP 端通过扫描这些文件发现运行中的进程。
+  ════════════════════════════════════════════════════════════════════════════*)
+
+procedure TAutomationProcessorBase.WriteRegFile;
+var
+  TempDir: array[0..MAX_PATH] of Char;
+  AppPath: array[0..MAX_PATH] of Char;
+  PID: DWORD;
+  RegObj: TJSONObject;
+  UTF8NoBom: TEncoding;
+begin
+  if FRegFilePath <> '' then Exit;
+
+  GetTempPath(MAX_PATH, TempDir);
+  PID := GetCurrentProcessId;
+  GetModuleFileName(0, AppPath, MAX_PATH);
+
+  FRegFilePath := Format('%sdaofy-rtti-%d.json', [TempDir, PID]);
+
+  UTF8NoBom := TEncoding.GetEncoding(CP_UTF8);
+  RegObj := TJSONObject.Create;
+  try
+    RegObj.AddPair('pipe', TJSONString.Create(FPipeName));
+    RegObj.AddPair('pid', TJSONNumber.Create(PID));
+    RegObj.AddPair('name', TJSONString.Create(ExtractFileName(AppPath)));
+    RegObj.AddPair('timestamp', TJSONNumber.Create(Now * 86400));
+
+    var Bytes: TBytes := UTF8NoBom.GetBytes(RegObj.ToJSON);
+    var FS: TFileStream := TFileStream.Create(FRegFilePath, fmCreate);
+    try
+      FS.Write(Bytes[0], Length(Bytes));
+    finally
+      FS.Free;
+    end;
+  finally
+    RegObj.Free;
+    UTF8NoBom.Free;
+  end;
+end;
+
+procedure TAutomationProcessorBase.DeleteRegFile;
+begin
+  if FRegFilePath <> '' then
+  begin
+    if FileExists(FRegFilePath) then
+      DeleteFile(FRegFilePath);
+    FRegFilePath := '';
+  end;
 end;
 
 { ── 管道线程 ── }
@@ -292,6 +362,9 @@ begin
     if not ConnectNamedPipe(h, nil) and (GetLastError <> ERROR_PIPE_CONNECTED) then begin
       CloseHandle(h); Sleep(500); Continue;
     end;
+
+    // 首次连接成功后写入进程注册文件
+    WriteRegFile;
 
     // 初始化 OVERLAPPED 结构
     FillChar(Overlap, SizeOf(Overlap), 0);
@@ -550,6 +623,9 @@ begin
       else if Cmd = 'rcall' then
         Result := HandleRCall(ReqId, Target, GetJSONStr(J, 'method', ''),
           GetJSONStr(J, 'params', ''))
+
+      else if Cmd = 'rtti_discover' then
+        Result := HandleRttiDiscover(ReqId, Target)
 
       else if Cmd = 'waitfor' then
         Result := HandleCmdWaitFor(ReqId, Target, GetJSONStr(J, 'prop', ''),
@@ -883,6 +959,77 @@ begin
   end;
 
   Result := WriteResp(ReqId, 'err', 'TIMEOUT:' + CurrentValue);
+end;
+
+{ ── RTTI 发现 ── }
+
+function TAutomationProcessorBase.GetRttiClasses: TArray<TClass>;
+begin
+  // 基类默认返回空数组，子类（VCL/FMX）可重写返回所有可用窗体类
+  Result := [];
+end;
+
+function TAutomationProcessorBase.HandleRttiDiscover(const ReqId,
+  Target: string): string;
+var
+  Obj: TObject;
+  Classes: TArray<TClass>;
+  i: Integer;
+  Root: TJSONObject;
+  ClassesArr: TJSONArray;
+  DiscoveredObj: TJSONObject;
+  Found: Boolean;
+begin
+  Found := False;
+  Root := TJSONObject.Create;
+  try
+    if Target <> '' then
+    begin
+      // ── 指定 target：按名称查找控件或类 ──
+      Obj := FindNamedControl(Target);
+      if Obj <> nil then
+      begin
+        // 找到了控件实例 → 扫描它的类
+        ClassesArr := TJSONArray.Create;
+        ClassesArr.AddElement(TRttiDiscoverer.DiscoverClass(Obj.ClassType, Target));
+        Root.AddPair('classes', ClassesArr);
+        Found := True;
+      end
+      else
+      begin
+        // 未找到控件 → 尝试在 GetRttiClasses 中匹配类名
+        Classes := GetRttiClasses;
+        for i := 0 to Length(Classes) - 1 do
+          if SameText(Classes[i].ClassName, Target) then
+          begin
+            ClassesArr := TJSONArray.Create;
+            ClassesArr.AddElement(TRttiDiscoverer.DiscoverClass(Classes[i], Target));
+            Root.AddPair('classes', ClassesArr);
+            Found := True;
+            Break;
+          end;
+      end;
+
+      if not Found then
+        Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
+    end
+    else
+    begin
+      // ── 未指定 target：扫描所有已知类 ──
+      Classes := GetRttiClasses;
+      ClassesArr := TJSONArray.Create;
+      for i := 0 to Length(Classes) - 1 do
+      begin
+        DiscoveredObj := TRttiDiscoverer.DiscoverClass(Classes[i]);
+        ClassesArr.AddElement(DiscoveredObj);
+      end;
+      Root.AddPair('classes', ClassesArr);
+    end;
+
+    Result := WriteResp(ReqId, 'ok', Root.ToJSON);
+  finally
+    Root.Free;
+  end;
 end;
 
 { ── dlgfile ── }

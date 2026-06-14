@@ -198,10 +198,10 @@ TOOL_HELP_DOCS: dict = {
             },
         },
         "workflow_hints": {
-            "创建项目": "project(action=create, ...) → project(action=info) → project(action=compile)",
-            "日常编译": "project(action=compile, project_path=...) 自动检测 .pas 或 .dproj",
-            "审计代码": "project(action=ast, base_dir=src) → 分析结构 → delphi_file → project(action=compile)",
-            "改配置": "project(action=set, property_name=...) → project(action=compile) 验证",
+            "创建项目": "project(create) → project(info) → project(compile)",
+            "日常编译": "project(compile, project_path=...) 自动识别 .pas/.dproj",
+            "审计代码": "project(ast) → 分析 → delphi_file → project(compile)",
+            "改配置": "project(set, property_name=...) → project(compile) 验证",
         },
     },
     "delphi_kb": {
@@ -213,7 +213,7 @@ TOOL_HELP_DOCS: dict = {
         "file_triggers": "写 .pas 代码前应先搜索 KB 查 API 定义",
         "workflow": "写代码前→delphi_kb查API→delphi_file(read)看定义→写代码→compile",
         "actions": {
-            "search": '搜索类/函数/文档, kb_type=all/delphi/project/thirdparty/document, search_type=function/procedure/class/record/semantic/reference',
+            "search": "搜索类/函数/文档(query必需)，kb_type限定范围，search_type限定类型",
             "stats": "查看知识库统计(文件数、类数、函数数、末次构建时间)",
             "build": "构建/更新知识库（支持异步 async_mode=true）",
             "scan": "扫描目录添加文档(kb_type=document)",
@@ -230,62 +230,90 @@ TOOL_HELP_DOCS: dict = {
     },
     "delphi_file": {
         "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作。禁止用原生 read/write/edit！",
-        "description": "Delphi 文件专用操作：读/写/批量写入/格式化/备份管理/uses子句增删（编码检测+自动备份+DFM转换）",
+        "description": "Delphi 文件专用操作：读/写(edits)/格式化/备份管理/uses子句增删（编码检测+自动备份+DFM转换）",
         "triggers": [
             "读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码",
             "新建文件、格式化、整理代码、恢复备份、回退修改、diff、差异对比",
             "查看备份、还原文件、增删uses、添加单元、删除单元",
-            "批量写入、批量修改、多处修改、多 edit、batch_write",
+            "批量写入、批量修改、多处修改、多 edit、write edits",
         ],
         "file_triggers": "操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此",
         "constraints": [
-            "❌ 严禁使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份+编码检测）",
-            "🚫 禁止对同一个文件并行写入。多个 agent 不得同时 write/batch_write 同一个文件。",
-            "🚫 如果需要修改同一个文件的多个位置，必须合并为一次 batch_write，由单个 agent 一次 read → 规划全部 edits → 一次 batch_write 完成。",
+            "❌ 严禁 edit/write/bash echo 直接改 .pas/.dfm（绕过备份+编码检测）",
+            "🚫 禁止对同一个文件并行写入，多处修改合并到一次 write(edits=[...])",
+            "🚫 format/uses/write 标记脏，需 read 后才能再 write",
         ],
         "features": [
-            "自动编码检测(UTF-8/GBK/UTF-16)",
-            "自动备份(__history)",
+            "自动编码检测(UTF-8/GBK/UTF-16)，自动备份(__history)",
             "DFM二进制↔文本透明转换",
-            "按类名/函数名搜索定位代码、部分写入、批量写入(batch_write)、格式化、uses子句增删",
+            "1-indexed 行号（参数和输出一致），脏标记机制",
         ],
-        "workflow": "get_coding_rules → delphi_file(read)（规划全部修改，记下原始行号）→ delphi_file(action=batch_write, edits=[...]) 一次性写出 → delphi_file(format) → compile_project。关键规则：同一个文件的所有修改必须打包到一次 batch_write 中，不得分多次 write。不同文件可并行写。",
+        "workflow": "get_coding_rules → delphi_file(read)规划修改→ write(edits=[...])一次性写出 → format → compile。write/format/uses 标记脏，需 read 后才能再 write。不同文件可并行。",
         "actions": {
-            "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位。start_line 为 0-indexed（第 1 行=0）",
-            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整。支持 preview 参数预览 diff。🚫 同一个文件不要分多次 write，如需多处修改请用 batch_write 一次完成",
-            "batch_write": "⭐ 优先使用。批量写入：传入 edits 数组（顺序不限，统一以原始文件为参照系），内部自动排序+累积偏移，一次性写出。相邻 edit 区间不能重叠（自动检测并拒绝）。适合：同一文件有 2+ 处修改时，一次性规划全部 edits 调用一次 batch_write",
-            "format": "使用 pasfmt 格式化代码",
+            "read": "读文件，支持分段读取(start_line/end_line)或按类名/函数名定位。所有行号为 1-indexed inclusive。读取时自动清除脏标记。",
+            "write": "⭐ 唯一写入接口（已合并 batch_write）。接收 edits 数组，内部自动排序+累积偏移，一次性写出。edits=[{start_line:1, content:'...'}] 全量替换；edits=[{start_line:5, end_line:10, content:'...'}] 部分替换。支持 preview 预览 diff。写入后标记脏。",
+            "batch_write": "⚠️ 已废弃，作为 write 的别名保留。请改用 action=write(edits=[...])。",
+            "format": "使用 pasfmt 格式化代码。格式化后标记脏。",
             "backup": "备份管理（创建/列表/恢复）",
-            "uses": "增删 uses 子句中的单元",
+            "uses": "增删 uses 子句中的单元。成功后标记脏。",
         },
         "examples": [
             'delphi_file(action="read", file_path="Unit1.pas")                                         读文件',
             'delphi_file(action="read", search_type="class", type_name="TForm1")                       搜索类定义',
-            'delphi_file(action="write", file_path="src/Unit1.pas", content="...")                     写入文件',
-            'delphi_file(action="write", file_path="src/Unit1.pas", content="替换", start_line=5, end_line=10)  部分写入',
-            'delphi_file(action="write", file_path="src/Unit1.pas", content="新内容", start_line=5, end_line=10, preview=true)  预览 diff，不写入',
+            'delphi_file(action="read", file_path="Unit1.pas", start_line=5, end_line=15)              读取第5~15行',
+            'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:1,content:"unit ..."}])             全量替换',
+            'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:10,end_line:12,content:"替换内容"}])  部分替换第10~12行',
+            'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:5,content:"新内容"}], preview=true)   预览 diff（从第5行到末尾）',
+            'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"..."},{start_line:18,end_line:21,content:"..."}])  批量替换两处',
             'delphi_file(action="format", file_path="src/Unit1.pas")                                   格式化',
             'delphi_file(action="backup", file_path="Unit1.pas")                                       创建备份',
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
             'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)   恢复',
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
-            'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:10,end_line:12,content:"..."},{start_line:5,end_line:7,content:"..."}])  批量写入(edits顺序不限/自动检测重叠)',
         ],
         "action_params": {
-            "batch_write": {
-                "description": "批量写入。传入 edits 数组（顺序不限），内部自动排序后以备份文件为参照系累积偏移，一次性写出。edits 每项结构：{start_line(必需,0-indexed inclusive), end_line(可选,0-indexed exclusive,不传则末尾), content(必需,完整替代[start,end)区间,空串=删除行), description(可选)}。相邻 edit 区间不能重叠（自动检测并拒绝）。注意：content 应包含替换后的完整内容，不要包含已存在的行，否则可能造成重复",
+            "read": {
+                "description": "读取文件，支持分段读取或按类名/函数名定位。所有行号为 1-indexed inclusive。",
+                "required": ["file_path"],
+                "optional": {
+                    "start_line": "起始行号（1-indexed inclusive, 默认1）",
+                    "end_line": "结束行号（1-indexed inclusive），不传则 start_line+limit-1",
+                    "limit": "最大返回行数（默认500，上限1000）",
+                    "show_line_numbers": "是否显示 1-indexed 行号前缀（默认 false）",
+                    "search_type": "读取模式: path/class/function/record",
+                    "type_name": "类名/接口名",
+                    "function_name": "函数/过程名",
+                },
+                "examples": [
+                    'delphi_file(action="read", file_path="Unit1.pas")',
+                    'delphi_file(action="read", file_path="Unit1.pas", start_line=5, end_line=15)',
+                ],
+            },
+            "write": {
+                "description": "唯一写入接口。edits 内行号为 1-indexed inclusive。全量: [{start_line:1, content:'...'}]；部分: [{start_line:5, end_line:10, content:'...'}]。edits 顺序不限，内部自动排序+累积偏移。相邻区间不能重叠。写入后标记脏。",
                 "required": ["file_path", "edits"],
                 "optional": {
                     "backup": "写入前自动备份，默认 true",
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
-                    "auto_format": "写入后自动调用 pasfmt 格式化，默认 false",
-                    "force": "强制写入，跳过 AI 偏移量检查（检测到重复行时阻止写入），默认 false",
-                    "preview": "预览模式，只计算 diff 不写盘（不备份、不写入、不格式化），默认 false",
+                    "auto_format": "写入后自动调用 pasfmt 格式化，默认 false。返回的偏移量已包含格式化造成的行数变化",
+                    "force": "强制写入，跳过 AI 偏移量检查（连续重复行检测），默认 false",
+                    "preview": "预览模式，只计算 diff 不写盘（不备份、不写入、不格式化），默认 false。预览后清除脏标记，允许继续编辑",
                 },
                 "examples": [
-                    'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"更新代码"},{start_line:18,end_line:21,content:"更新代码"}])',
-                    'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"新代码"}], preview=true)  预览 diff，不写入',
+                    'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"新行"},{start_line:18,end_line:21,content:"新行"}])',
+                    'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"新代码"}], preview=true)',
                 ],
+            },
+            "format": {
+                "description": "使用 pasfmt 格式化代码。格式化成功后标记文件脏。",
+                "required": ["file_path"],
+                "optional": {
+                    "mode": "格式化模式: file/code/check，默认 file",
+                    "code": "mode=code 时待格式化的代码文本",
+                    "config_path": "pasfmt 配置文件路径",
+                    "uses_style": "uses子句风格: compact/pasfmt_default",
+                    "dry_run": "true=仅检查格式不修改文件",
+                },
             },
         },
     },
@@ -332,9 +360,7 @@ TOOL_HELP_DOCS: dict = {
         "description": "异步任务管理 — 管理后台构建知识库等耗时任务",
         "triggers": ["任务状态、查看进度、后台任务、构建进度、取消任务"],
         "push_notification": (
-            "所有异步任务（知识库构建、文档扫描、embedding 等）"
-            " 完成/失败/取消时自动推送 TaskStatusNotification 到 MCP 客户端，无需轮询。"
-            " AI Agent 可通过 async_task 查询任务结果。"
+            "异步任务完成/失败时自动推送通知到 MCP 客户端，无需轮询。"
         ),
         "actions": {
             "start": "启动异步任务（通常 delphi_kb(action=build) 已自动启动，无需手动调用）",
@@ -383,7 +409,7 @@ TOOL_HELP_DOCS: dict = {
     },
     "code_hosting": {
         "summary": "Git 本地操作 + 代码托管平台。必须使用此工具进行所有 Git 操作，禁止用 bash 直接执行 git。",
-        "description": "所有 Git 操作(status/add/commit/push/clone/push_retry)都必须通过此工具，不要用 bash 直接执行 git 命令。code_hosting 自动格式化输出、处理异步推送重试，比原始 bash git 更省 token。同时支持 Gitea/GitHub/GitLab/Gitee/GitCode 平台 API 操作。",
+        "description": "所有 Git 操作(status/add/commit/push/clone) + 代码托管平台 API。禁止用 bash 执行 git（code_hosting 更省 token 且自动处理异步推送）。",
         "triggers": ["git", "status", "add", "commit", "push", "clone", "pull", "提交", "推送", "暂存", "仓库"],
         "platforms": {
             "gitea": "自托管 Gitea",
@@ -394,22 +420,16 @@ TOOL_HELP_DOCS: dict = {
         },
         "actions": {
             "api": {
-                "create_token": "创建访问令牌（仅 Gitea）",
-                "init_labels": "批量初始化四维流程标签",
-                "create_issue": "创建工单",
-                "close_issue": "关闭工单",
-                "add_comment": "添加评论",
-                "list_issues": "查询工单列表",
+                "create_token": "创建令牌(仅Gitea)", "init_labels": "初始化标签",
+                "create_issue": "创建工单", "close_issue": "关闭工单",
+                "add_comment": "评论工单", "list_issues": "查询工单",
             },
             "git_sync": {
-                "git_status": "查看仓库状态",
-                "git_add": "暂存文件",
-                "git_commit": "创建提交",
+                "git_status": "仓库状态", "git_add": "暂存文件", "git_commit": "提交",
             },
             "git_async": {
-                "git_clone": "克隆远程仓库（支持 GitHub 镜像源）",
-                "git_push": "推送到远程（单次尝试）",
-                "git_push_retry": "后台自动重试推送",
+                "git_clone": "克隆(支持 GitHub 镜像)", "git_push": "推送",
+                "git_push_retry": "推送(后台自动重试)",
             },
         },
         "china_access": "git_clone 支持 mirror 参数指定镜像源。推送依赖用户自身的 SSH/HTTPS 代理配置。",
@@ -421,9 +441,81 @@ TOOL_HELP_DOCS: dict = {
         "triggers": ["帮助、帮助文档、用法、如何使用、详细说明、全量帮助"],
         "usage": "当不确定某个工具的详细用法时调用此工具。输入 tool_name 即可返回触发词、action 说明、示例、协作链等所有详细信息。",
         "examples": [
-            'tool_help(tool_name="compile_project")',
             'tool_help(tool_name="delphi_file")',
+            'tool_help(tool_name="project")',
         ],
+    },
+    "delphi_rtti": {
+        "summary": "Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用程序的运行时能力。三步法: discover→发现能力, call→调用方法, guide→使用指南。",
+        "description": "Delphi RTTI 桥接 — 通过 Enhanced RTTI 发现/调用 Delphi 应用能力",
+        "triggers": [
+            "RTTI、运行时发现、调用Delphi方法、发现Delphi能力、发布published+public方法",
+            "delphi rtti、rtti bridge、运行时类型信息",
+        ],
+        "constraints": [
+            "❌ 需要 Delphi 应用已链接 DaofyAutomation 单元",
+            "❌ 需要 Delphi 2010+ (Enhanced RTTI)",
+            "⚠️ 不能发现 protected 和 private 区段的方法/属性",
+        ],
+        "workflow": "delphi_rtti(action='guide') → discover → call",
+        "features": [
+            "三步法：guide(使用指南) → discover(能力扫描) → call(方法调用)",
+            "自动 JSON Schema 类型映射（15 类 Delphi 类型）",
+            "5 分钟缓存，同一应用生命周期内不重复扫描",
+            "进程池复用，keep_alive 支持多次调用",
+            "AI 注解支持：AIDescription / AIResultDescription / AIExample / AIParamDescription",
+        ],
+        "actions": {
+            "guide": "返回完整使用指南（含类型映射表、最佳实践、故障排除）",
+            "discover": "扫描并返回 Delphi 应用所有类的 published+public 方法/属性，含 JSON Schema 参数定义及 AI 注解描述",
+            "call": "调用指定类的指定方法，params 为可选参数 dict",
+        },
+        "action_params": {
+            "guide": {
+                "description": "获取 delphi_rtti 工具的使用指南",
+                "optional": {},
+            },
+            "discover": {
+                "description": "扫描 Delphi 应用的 RTTI 能力",
+                "required": ["app_path"],
+                "optional": {
+                    "class_name": "限定的类名，空串扫描所有",
+                    "force": "true 强制刷新缓存（默认 false）",
+                    "keep_alive": "true 保持进程运行供后续复用（默认 false）",
+                },
+            },
+            "call": {
+                "description": "调用 Delphi 应用的 RTTI 暴露方法",
+                "required": ["app_path", "class_name", "method"],
+                "optional": {
+                    "params": "参数 dict，键名需与 discover 返回的 Schema 一致",
+                },
+            },
+        },
+        "examples": [
+            'delphi_rtti(action="guide")                                                        获取使用指南',
+            'delphi_rtti(action="discover", app_path="C:\\App\\MyApp.exe")                      扫描所有类',
+            'delphi_rtti(action="discover", app_path="C:\\App\\MyApp.exe", class_name="TMainForm")  扫描指定类',
+            'delphi_rtti(action="discover", app_path="C:\\App\\MyApp.exe", keep_alive=True)      扫描并保持进程',
+            'delphi_rtti(action="call", app_path="C:\\App\\MyApp.exe", class_name="TMainForm", method="CreateOrder", params={"customerName":"张三"})  调用方法',
+        ],
+        "workflow_hints": {
+            "首次使用": "delphi_rtti(action='guide') 查看完整使用说明",
+            "连接应用": "delphi_rtti(action='discover', app_path='...') → 自动连接 → 发现能力",
+            "调用方法": "delphi_rtti(action='call', app_path='...', class_name='...', method='...')",
+            "批量调用": "首次使用 keep_alive=True → 多次 call → 自动复用进程",
+        },
+        "type_mapping": {
+            "string": "String/UnicodeString/AnsiString → string",
+            "integer": "Integer/Int64/Cardinal/Byte/Word → integer(无符号加minimum:0)",
+            "number": "Single/Double/Currency → number",
+            "boolean": "Boolean/ByteBool/WordBool/LongBool → boolean",
+            "datetime": "TDateTime → string with format:date-time",
+            "enum": "枚举类型 → string with enum约束",
+            "array": "动态数组/TArray → array, 元素类型递归映射",
+            "object": "TObject子类 → object",
+            "variant": "Variant → [string,number,boolean,null]",
+        },
     },
     "experience": {
         "summary": "经验记忆管理：保存/搜索 AI 成功解决问题的做法，下次遇到类似问题自动复用。save 自动去重。",
@@ -431,15 +523,15 @@ TOOL_HELP_DOCS: dict = {
         "triggers": ["经验、记忆、保存经验、搜索经验、之前怎么解决的、我记得"],
         "workflow": "任务成功 → experience(action=save, ...) → 自动去重(>0.85 合并非新增) → 定期 experience(action=prune) 清理低价值条目",
         "actions": {
-            "save": "保存经验（自动去重：embedding 相似度 >0.85 时合并非新增）。problem=问题描述, solution=解决步骤, tools_used=用到的工具列表, tags=标签",
-            "search": "语义搜索经验。query=搜索关键词, top_k=返回条数, tags=按标签过滤",
+            "save": "保存经验(自动去重：相似度>0.85时合并)。必要: problem+solution",
+            "search": "语义搜索经验。query+top_k",
             "get": "查看经验详情。id=经验ID",
-            "list": "浏览经验列表。tags=过滤标签, sort_by=排序字段, limit=条数",
-            "update": "更新经验。id=经验ID, solution/tags/problem 等",
-            "merge": "合并多条经验为一条。ids=[id1,id2,...] 至少2个, keep=保留的ID(可选)",
-            "prune": "列出低价值经验（按价值升序），供 AI 检查后删除。limit=返回条数",
+            "list": "浏览列表。tags+sort_by+limit",
+            "update": "更新经验。id+要改的字段",
+            "merge": "合并多条经验。ids=[id1,id2,...] 至少2个",
+            "prune": "列出低价值经验供检查删除",
             "delete": "删除经验。id=经验ID",
-            "rebuild_embedding": "重建缺失向量的经验记录。需先通过 delphi_kb(action=build_embedding) 加载模型",
+            "rebuild_embedding": "重建缺失向量。需先 delphi_kb(build_embedding) 加载模型",
         },
     },
     "daofy_update": {
@@ -470,12 +562,9 @@ TOOL_HELP_DOCS: dict = {
         "triggers": ["软著、版权、著作权登记、copyright"],
         "constraints": ["需要 Edge/Chrome 浏览器 headless"],
         "actions": {
-            "generate": "生成文档（自动校验配置）",
-            "validate": "检查配置完整性",
-            "update_config": "更新配置（传 config 字典）",
-            "status": "检查浏览器就绪",
-            "list": "列出已生成文件",
-            "generate_content": "扫描源码生成 Markdown 草稿（AI 补充正文后调用 generate）",
+            "generate": "生成文档", "validate": "检查配置",
+            "update_config": "更新配置(config字典)", "status": "检查浏览器",
+            "list": "列出已生成文件", "generate_content": "生成草稿",
             "audit": "审计草稿驳回风险",
         },
         "examples": [
@@ -486,29 +575,47 @@ TOOL_HELP_DOCS: dict = {
         ],
     },
     "automate_delphi": {
-        "summary": "驱动 Delphi 程序自动化执行流程并截图。",
-        "description": "Delphi 自动化截图",
-        "triggers": ["自动化测试、截图、Delphi自动化、automate"],
-        "constraints": ["需要 Delphi 程序已链接 DaofyAutomation 单元"],
-        "protocol": {
-            "transport": "命名管道 JSON 请求/响应",
-            "async_cmds": "click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type",
-            "sync_cmds": "其它命令",
-        },
-        "commands": {
-            "goto": "激活窗体", "click": "点击(RTTI/@x,y)", "rclick": "右键菜单",
-            "dblclick": "双击", "hover": "悬停", "move": "移动鼠标",
-            "drag": "拖拽(source→target)", "type": "输入文本", "key": "发送按键",
-            "wait": "等待 ms", "waitfor": "等待属性满足条件",
-            "capture": "截图", "listwnd": "枚举窗口",
-            "dumpstate": "控件树", "dlgscan/dlgclick": "弹出菜单",
-            "msgscan/msgclick/msgclose": "MessageBox", "dlgfile": "文件对话框",
-            "rget/rset": "RTTI 读写属性", "rcall": "调用方法",
-            "rinspect": "检视成员", "snapdir": "设目录", "exit": "退出",
+        "summary": "驱动 Delphi 程序自动化测试（GUI 截图 + 控制台交互）。",
+        "description": "Delphi 自动化测试(GUI+控制台)",
+        "triggers": ["自动化测试、截图、Delphi自动化、控制台测试、automate"],
+        "constraints": ["gui 模式需要 Delphi 程序已链接 DaofyAutomation 单元；console 模式无需 Delphi 端改造"],
+        "modes": {
+            "gui": {
+                "description": "通过命名管道驱动 GUI 程序执行操作并截图。",
+                "needs_auto_unit": True,
+                "protocol": {
+                    "transport": "命名管道 JSON 请求/响应",
+                    "async_cmds": "click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type",
+                    "sync_cmds": "其它命令",
+                },
+                "commands": {
+                    "goto/click/rclick/dblclick": "激活/点击控件",
+                    "hover/move/drag": "鼠标操作",
+                    "type/key": "输入/按键",
+                    "wait/waitfor": "等待(ms/条件)",
+                    "capture/listwnd/dumpstate": "截图/枚举/控件树",
+                    "dlgscan/dlgclick/msgscan/msgclick": "弹窗/菜单操作",
+                    "rget/rset/rcall/rinspect": "RTTI 读写属性/方法",
+                    "dlgfile/snapdir": "文件对话框/截图画目录",
+                    "exit": "退出进程",
+                },
+            },
+            "console": {
+                "description": "通过 subprocess stdin/stdout 驱动控制台程序交互。无需 Delphi 端改造。",
+                "needs_auto_unit": False,
+                "params": {
+                    "input": "发送到 stdin 的文本",
+                    "expect": "等待的 stdout 正则模式",
+                    "timeout": "超时秒数（默认 30）",
+                    "args": "额外命令行参数数组",
+                },
+            },
         },
         "examples": [
-            'automate_delphi(app_path="App.exe", script=[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}])',
-            'automate_delphi(app_path="App.exe", script=[{"cmd":"listwnd"}])',
+            'automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}])',
+            'automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"listwnd"}])',
+            'automate_delphi(action="console", app_path="Tool.exe", input="Y\\n", expect="Continue?", timeout=10)',
+            'automate_delphi(action="console", app_path="Deploy.exe", input="\\n", expect="success", args=["--silent"])',
         ],
     },
 }
@@ -529,64 +636,60 @@ TOOL_NAMES: list = [
     "daofy_update",
     "automate_delphi",
     "generate_copyright",
+    "delphi_rtti",
 ]
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
     "project": (
         "项目全生命周期管理: 编译(compile)/配置(info/set/create)/审计(audit/ast/runtime)。"
-        " 用 tool_help('project') 查看各 action 的详细参数。禁止手动 dcc32/msbuild。"
+        " 禁止手动 dcc32/msbuild。详情 tool_help('project')。"
     ),
     "delphi_kb": (
-        "搜索 Delphi API/项目代码/文档(类/函数/语义搜索)，构建知识库。"
+        "搜索 Delphi API/项目代码/文档: 类/函数/语义搜索，构建知识库。"
     ),
     "delphi_file": (
-        "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作: 读/写/批量写入/格式化/备份/uses管理。"
-        " 禁止用原生 read/write/edit 修改 .pas/.dfm 文件。"
-        " ⚠️ 同文件不得并行写：同一文件的多处修改必须由单个 agent 用 batch_write 一次性完成。"
+        "Delphi 文件专用操作: read/write(edits格式)/format/backup/uses。"
+        " 禁止原生 read/write/edit 修改 .pas/.dfm。"
+        " 🚫 同文件多处修改必须合并到一次 write(edits=[...])，不得分多次。"
     ),
     "manage_component": (
         "DFM 组件增/删/改/生成 + PAS 自动同步。"
     ),
     "check_environment": (
-        "诊断 Delphi 编译环境(检测编译器/安装 pasfmt)。"
-        " 首次使用或编译失败时先调用此工具。"
+        "诊断 Delphi 编译环境: 检测编译器/安装 pasfmt。首次使用或编译前先调用。"
     ),
     "async_task": (
-        "管理后台任务(构建知识库等)。查看进度/获取结果/取消任务。"
-        " AI Agent 需通过此工具查询异步任务结果。"
+        "管理后台异步任务(知识库构建等): 查进度/获取结果/取消。"
     ),
     "package": (
-        "编译/安装/管理 Delphi 组件包。action=install 安装，action=list 列出已安装。"
+        "编译/安装 Delphi 组件包。action=install 装，action=list 查已装。"
     ),
     "get_coding_rules": (
-        "获取 Delphi 编码规则。修改 .pas 代码前必须先调用此工具。"
+        "获取 Delphi 编码规则。写/改 Delphi 代码前必须先调用！"
     ),
     "code_hosting": (
-        "Git 本地操作(status/add/commit/push/clone) + 代码托管平台(Gitea/GitHub/GitLab/Gitee/GitCode)。"
-        " 所有 Git 操作必须使用此工具，禁止用 bash 直接执行 git 命令（更省 token）。"
+        "所有 Git 操作(status/add/commit/push/clone) + 代码托管平台 API。"
+        " 禁止用 bash 执行 git（必须用此工具）。"
     ),
     "tool_help": (
-        "获取任意工具的完整帮助文档(参数说明/示例/触发词/协作链)。"
-        " 不确定某个工具用法时调用此工具。"
+        "获取工具完整帮助文档: 参数说明/示例/触发词。用法不清时调用。"
     ),
     "experience": (
-        "经验记忆管理: 保存/搜索 AI 成功解决问题的做法(语义搜索)。"
-        " save 自动去重(>0.85 合并到旧记录)。"
-        " 支持 merge(合并多条为一条) / prune(列出低价值条目) / rebuild_embedding(重建缺失向量) 等维护操作。"
+        "经验记忆管理: 保存/搜索 AI 经验(save自动去重)。支持 merge/prune/rebuild_embedding 维护。"
     ),
     "daofy_update": (
-        "检查 Daofy 版本更新、执行 git pull 更新。"
-        " action=check 检查新版, action=update 执行更新, action=version 显示当前版本。"
+        "检查 Daofy 版本更新/执行 git pull。action=check/update/version。"
     ),
     "automate_delphi": (
-        "Delphi 自动化测试：驱动 Delphi 程序执行流程并截图。"
-        " 支持 keep_alive 复用进程。"
-        " 命令: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/"
-        "capture/listwnd/dumpstate/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/"
-        "rget/rset/rcall/rinspect/snapdir/exit。"
+        "Delphi 自动化测试(action=gui: GUI操作+截图/action=console: 控制台交互)。"
+        " gui 需 Delphi 端链接 DaofyAutomation 单元；console 无需改造。支持 keep_alive。"
     ),
     "generate_copyright": (
-        "生成软著文档（源代码+说明书+汇总表），基于浏览器 PDF 渲染。"
-        " 自动校验配置完整性，支持 action=audit 检查草稿驳回风险。"
+        "生成软著文档(源代码+说明书+汇总表)，浏览器 PDF 渲染+自动校验。"
+    ),
+    "delphi_rtti": (
+        "Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用程序的运行时能力。"
+        " 三步法: discover→发现能力, call→调用方法, guide→使用指南。"
+        " 首次使用先 action='guide' 获取完整说明。"
     ),
 }

@@ -1,703 +1,703 @@
 {
   "entries": [
     {
-      "timestamp": "2026-06-10T09:14:46.450993",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
+      "timestamp": "2026-06-14T19:36:16.663471",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1522,
+      "duration": 1098,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-10T09:07:26.000474",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 1573,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-10T09:02:57.288070",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1297,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-10T09:02:24.656157",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 957,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-10T09:01:54.205357",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 2019,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-10T08:58:52.752215",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1051,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-10T08:48:52.166848",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1758,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-10T08:47:21.115747",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1206,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-10T08:44:18.907305",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 1996,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T22:02:20.085256",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1039,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T21:39:40.851430",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1067,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T21:29:32.773488",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1003,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T21:28:58.282517",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 849,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T21:26:34.961995",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 896,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T21:05:24.934469",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1079,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T21:04:55.187201",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 930,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T21:01:07.210473",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:35:19.766401",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
       "duration": 1095,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T20:58:50.706310",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 901,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T20:50:40.191841",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:34:55.231658",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1068,
+      "duration": 1075,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T20:47:22.166513",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:34:31.180709",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1065,
+      "duration": 1116,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T20:45:21.628354",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:32:35.722415",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1032,
+      "duration": 1092,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T20:41:52.140339",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:30:52.581694",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1073,
+      "duration": 1113,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T20:38:52.048028",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1063,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:37:02.732612",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1067,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:33:24.390113",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1056,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:29:14.526668",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 919,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T20:27:05.084081",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1136,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:14:35.039637",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1040,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:13:31.450839",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1055,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:11:59.737490",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1266,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:11:11.066114",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 548,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T20:10:24.115117",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 378,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T20:08:43.892752",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 980,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T20:08:37.015827",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit.dproj",
-      "status": "success",
-      "duration": 998,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T19:57:43.798533",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1148,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T19:34:23.585945",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1099,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T19:20:47.964570",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1225,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T18:16:05.341174",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit_test.dproj",
+      "timestamp": "2026-06-14T19:30:25.966829",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
       "duration": 1153,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T18:15:08.558116",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit.dproj",
+      "timestamp": "2026-06-14T19:28:36.772914",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1007,
+      "duration": 1188,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T18:14:05.988292",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit_test.dpr",
+      "timestamp": "2026-06-14T19:27:46.844858",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1196,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T19:27:15.945866",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1132,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T19:23:23.244187",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1145,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T19:23:03.957043",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "failed",
-      "duration": 401,
+      "duration": 1330,
       "error_message": "无错误"
     },
     {
-      "timestamp": "2026-06-09T18:10:00.098738",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T19:19:29.130600",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1007,
+      "duration": 1131,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T18:09:17.034629",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 975,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T17:56:16.155049",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:41:10.179241",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1867,
+      "duration": 1075,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T14:59:31.764448",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:36:29.413870",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1051,
+      "duration": 1157,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T14:12:26.060966",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:33:45.072175",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1038,
+      "duration": 1125,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T14:10:16.264045",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:26:19.363658",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "success",
-      "duration": 1076,
+      "duration": 1075,
       "error_message": null
     },
     {
-      "timestamp": "2026-06-09T13:55:04.758488",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 993,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T13:53:23.660900",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1061,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T13:12:57.145106",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 1001,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T12:41:20.483950",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1056,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T12:40:14.854620",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 887,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T12:39:16.456627",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 1001,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T12:36:03.662774",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1085,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T10:59:56.111231",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1072,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T10:03:01.178625",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1086,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T10:01:47.479878",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 964,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T09:56:57.512606",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 987,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T09:56:15.553230",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 896,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T09:54:48.481054",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1008,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T09:53:29.636793",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 907,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T09:49:36.962654",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 871,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-09T09:42:14.646330",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1102,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T09:34:44.853966",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 978,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T09:31:43.145881",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1016,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T09:11:17.216007",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 985,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T08:56:52.311873",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1960,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T08:54:52.668111",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1319,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-09T08:53:05.853223",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "failed",
-      "duration": 1925,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T22:47:22.862655",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 964,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:44:38.674891",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 950,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:13:29.456078",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 952,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:12:40.708797",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 962,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:10:48.584609",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 971,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:09:29.830503",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 969,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:08:34.505731",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 977,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:05:17.735491",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1003,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:03:27.226898",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 976,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:01:09.036090",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 957,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T22:00:21.592315",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 969,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T21:59:14.533556",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 999,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T21:57:53.176171",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 867,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:57:26.290328",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 880,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:54:38.510219",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 986,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T21:53:36.210132",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 952,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T21:52:14.829245",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 877,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:51:11.184870",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 931,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:35:22.753898",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 998,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T21:30:08.874211",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 877,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:20:09.570225",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 886,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:14:32.609955",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 860,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T21:10:27.774561",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 921,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T20:46:55.354594",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1062,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T20:43:46.517790",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 865,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T20:42:05.913794",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 893,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T20:39:52.862368",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "failed",
-      "duration": 885,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-06-08T20:36:28.952939",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dpr",
-      "status": "success",
-      "duration": 1077,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T20:29:33.911905",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
-      "status": "success",
-      "duration": 1077,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-06-08T20:28:34.397846",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:26:04.572109",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "failed",
       "duration": 862,
       "error_message": "无错误"
     },
     {
-      "timestamp": "2026-06-08T20:27:48.999988",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:25:48.788549",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "failed",
-      "duration": 903,
+      "duration": 913,
       "error_message": "无错误"
     },
     {
-      "timestamp": "2026-06-08T20:27:00.781876",
-      "project_path": "c:\\user\\daofy-agent\\daudit2\\ast_format_demo.dproj",
+      "timestamp": "2026-06-14T18:17:33.337929",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1068,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T18:05:56.359752",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1086,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T18:03:36.153650",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1088,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T18:02:08.506860",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1218,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T18:00:46.548410",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
       "status": "failed",
-      "duration": 875,
+      "duration": 2006,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T16:58:27.750291",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1207,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T16:47:54.731233",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1211,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T16:46:02.827213",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1178,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T16:44:58.411059",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_varconv.dproj",
+      "status": "failed",
+      "duration": 706,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T15:55:36.160917",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1163,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T15:49:35.318319",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1181,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T15:48:06.249381",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 999,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T15:47:11.580770",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 943,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T15:45:48.960389",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 1190,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T15:28:19.994725",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1594,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:48:55.074413",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1092,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:48:08.020326",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 1080,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:47:50.330068",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 997,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:30:47.160712",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1053,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:29:52.181306",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1046,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:27:10.183340",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1121,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:26:19.233917",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1024,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:26:07.274848",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 889,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:22:49.825377",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1054,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:20:13.491854",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1034,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:12:14.191644",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1099,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:12:02.444167",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 954,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:10:45.555457",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 984,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:10:27.059154",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 882,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:09:43.050316",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 886,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:09:32.053831",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 882,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:09:12.453773",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 871,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:07:44.466350",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 979,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T14:07:28.295463",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 892,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:06:49.178701",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 942,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T14:05:57.293449",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_inifiles.dproj",
+      "status": "success",
+      "duration": 1130,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T13:47:39.410773",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_inifiles.dproj",
+      "status": "failed",
+      "duration": 587,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T13:45:26.412967",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1046,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T13:44:45.141460",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1051,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T13:37:35.270530",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1037,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T13:37:24.198856",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "failed",
+      "duration": 1082,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T11:32:50.221906",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1019,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:31:29.120177",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dproj",
+      "status": "success",
+      "duration": 981,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:30:29.757052",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dproj",
+      "status": "success",
+      "duration": 1096,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:25:12.831695",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "success",
+      "duration": 1037,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:20:32.159908",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "success",
+      "duration": 1076,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:13:57.495315",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "success",
+      "duration": 1136,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:10:03.567690",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "success",
+      "duration": 1200,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:08:29.661784",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "success",
+      "duration": 1025,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T11:08:16.240317",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 1061,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T11:08:02.816029",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 994,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T11:07:15.626197",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 1053,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T10:47:46.266893",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 947,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:47:14.767694",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 924,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:46:53.107137",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 1024,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:45:43.627705",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 940,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:45:26.972013",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 958,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:44:54.638010",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 991,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:43:42.661468",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 937,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:42:59.358356",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 998,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:42:40.829053",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 955,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:33:54.840472",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 970,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:33:05.614527",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 950,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:32:49.655694",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 955,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:32:33.460510",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 954,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:32:05.278786",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 958,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:31:39.334204",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_dm.dpr",
+      "status": "success",
+      "duration": 1699,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:30:39.671837",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "success",
+      "duration": 969,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-14T10:30:28.284524",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "failed",
+      "duration": 866,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T10:30:18.507573",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "failed",
+      "duration": 1094,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T10:29:21.237974",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "failed",
+      "duration": 334,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T10:29:02.475255",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_re.dpr",
+      "status": "failed",
+      "duration": 417,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-14T10:20:13.237461",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "success",
+      "duration": 2368,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-13T23:34:09.002684",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dproj",
+      "status": "success",
+      "duration": 1053,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-13T23:33:28.608121",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 317,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-13T23:33:03.051569",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit.dproj",
+      "status": "success",
+      "duration": 1045,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-13T23:32:37.153380",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 336,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-13T23:28:47.065630",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit.dproj",
+      "status": "success",
+      "duration": 1068,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-13T23:21:03.283948",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\daudit.dproj",
+      "status": "success",
+      "duration": 1172,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-06-13T22:42:20.562036",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 376,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-06-13T22:41:19.058797",
+      "project_path": "c:\\user\\daofy-agent\\daudit2\\test_debug.dpr",
+      "status": "failed",
+      "duration": 383,
       "error_message": "无错误"
     }
   ],

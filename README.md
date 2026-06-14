@@ -90,6 +90,7 @@ delphi_kb(
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
 | `tool_help` | 获取任意工具的完整帮助文档（按需，含参数说明/示例/触发词） |
+| `delphi_rtti` | Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用的运行时能力（三步法：discover/call/guide） |
 | `experience` | 经验记忆管理：保存/搜索/更新/合并/删除 AI 成功解决问题的做法；定期清理低价值条目（prune）；模型加载后重建缺失向量（rebuild_embedding） |
 
 ## 系统要求
@@ -368,7 +369,23 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.06.08.1 (最新)
+### v2026.06.13 (最新)
+
+- **新增 `delphi_rtti` 工具**: Delphi RTTI 桥接 — 通过 Enhanced RTTI 发现和调用 Delphi 应用的 published 方法（三步法：guide/discover/call）
+- **`DaofyAutomation.RttiDiscovery.pas`**: 新增 RTTI 能力发现单元，`TRttiDiscoverer` 类将 Delphi 类型映射为 JSON Schema
+- **`DaofyAutomation.Base.pas` / `Vcl.DaofyAutomation.pas`**: 新增 `rtti_discover` 命令路由和 VCL 端 `GetRttiClasses` 重写
+- **`src/services/rtti_bridge.py`**: 新增 RTTI 桥接服务（连接管理/5分钟缓存/discover/call）
+- **`src/tools/delphi_rtti.py`**: 新增 MCP 工具 handler（action=guide/discover/call）
+- **`.opencode/skills/delphi-rtti-bridge/SKILL.md`**: 新增 AI Agent 技能文件（含 YAML frontmatter + 渐进式 L3 文档）
+- **`scripts/build-skills.py`**: 技能多平台分发脚本（自动分发到 .claude/ .cursor/ .windsurfrules）
+- **`tests/test_rtti_bridge.py` / `tests/test_delphi_rtti.py`**: 38 个测试用例覆盖桥接服务 + 工具 handler
+- **DaofyAutomation 三层架构拆分**: tools/auto/ 拆分为 Base/VCL/FMX 三层，Overlapped I/O 管道，扩展命令集（move/drag/key/waitfor/rcall 等）
+- **`automate_delphi` 新增 Console 模式**: 支持 subprocess stdin/stdout 交互，自动 PE 头检测 GUI vs Console
+- **`file_tool` 路径白名单校验 + 脏标记系统**: `_validate_path()` 安全校验，写后标记脏防止行号错位
+- **`CODING_RULES.mdc` 规则重构**: 全面重写 delphi_file 写入规则、紧凑输出格式、脏标记保护
+- **编译验证**: DCC 0 错误通过，Python import 无报错
+
+### v2026.06.08.1
 
 - `delphi_file` 全操作 RWLock 防并发文件损坏：read/write/batch_write/format/backup/uses 全部引入多读单写锁，并发写入返回明确错误引导合并 batch_write
 - `tools/7z/` 补齐 7z.dll，release 包开箱可用

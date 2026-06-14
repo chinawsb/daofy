@@ -29,7 +29,12 @@ SECTION_KEYS: Dict[str, str] = {
     "agent_rules": "Agent 操作硬规则",
     "human_collab": "⑧ 人机协同 — 异常诊断与人工介入",
     "experience": "⑨ 经验保存 — 将知识沉淀到经验知识库",
-    "maintenance": "规则维护",
+    "maintenance": "⑩ 规则维护",
+    # ③ 写 Delphi 代码 内的子章节
+    "delphi_file_write_rule": "delphi_file 写入规则",
+    "delphi_file_dirty_flag": "连续编辑与脏标记保护（v2026.06.12+）",
+    "delphi_file_output_format": "delphi_file 紧凑输出格式（v2026.06.12+）",
+    "delphi_file_usage_tips": "write 使用建议",
     # 审核子章节（### 级别）
     "consistency": "一致性",
     "completeness": "完整性",
@@ -158,8 +163,10 @@ def _list_available_sections(content: str) -> str:
     lines_out.append("  基础流程: workflow, env, kb_search, writing, format, compile, review_guide, cleanup")
     lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak, delphi_specific,")
     lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
+    lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
+    lines_out.append("                 delphi_file_usage_tips")
     lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance")
-    lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+编译)")
+    lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
     lines_out.append("")
     lines_out.append("不传 section 则返回全部内容（向后兼容）。")
 
@@ -298,7 +305,7 @@ async def get_coding_rules(
             "| `section=\"workflow\"` | 工作流总览 | 任务开始，了解整体流程 |",
             "| `section=\"env\"` | ① 环境检查 | 首次运行/环境异常时 |",
             "| `section=\"kb_search\"` | ② KB 搜索 | 编码前查 API 定义 |",
-            "| `section=\"writing\"` | ③ 写 Delphi 代码（命名/格式/泛型/异步/代码组织/版本兼容/自动备份） | 编码阶段 |",
+             "| `section=\"writing\"` | ③ 写 Delphi 代码（命名/格式/泛型/异步/代码组织/版本兼容/自动备份/写入规则） | 编码阶段 |",
             "| `section=\"format\"` | ④ 格式化 | 格式化代码 |",
             "| `section=\"compile\"` | ⑤ 编译 | 编译验证 |",
             "| `section=\"review\"` | ⑥ 代码审核（含完整审核表） | 编译通过后审查代码 |",
@@ -310,9 +317,11 @@ async def get_coding_rules(
              "| `section=\"experience\"` | ⑨ 经验保存 — 知识沉淀到经验库 | 问题解决后保存经验时 |",
              "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
              "| `section=\"coding\"` | 组合：writing + format + compile | 完整编码流程 |",
+             "| `section=\"delphi_file_write_rule\"` | delphi_file 写入规则（1-indexed/edits 参数） | 编辑 Delphi 文件需了解行号规则时 |",
              "",
-             "也可获取细分章节：consistency, completeness, resource_leak, delphi_specific,",
-             "common_errors, code_quality, data_conversion, safety, performance, human_collab, experience, maintenance",
+             "也可获取细分章节：consistency, completeness, resource_leak, delphi_specific, common_errors,",
+             "code_quality, data_conversion, safety, performance, delphi_file_write_rule,",
+             "delphi_file_dirty_flag, delphi_file_output_format, delphi_file_usage_tips, human_collab, experience, maintenance",
             "",
             "使用示例：",
             "```python",

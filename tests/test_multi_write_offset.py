@@ -34,23 +34,15 @@ def _assert_success(result: dict):
 
 
 def _extract_offset(msg: str) -> int:
-    """
-    从新的紧凑输出格式中提取偏移量.
-    新格式: 'wrote: foo.pas, 0-indexed [s, e) \u2192 [s, e+delta), ...'
-    偏移量 = (e+delta) - e
-    """
-    # 优先匹配 \u2192 前后的两个范围, 计算 e_delta - e
-    m = re.search(r'0-indexed \[(\d+),\s*(\d+)\)\s*\u2192\s*\[(\d+),\s*(\d+)\)', msg)
+    """从输出中提取偏移量。新格式含 '(offset: +N)' 显式标记。"""
+    m = re.search(r'\(offset:\s*([+-]?\d+)\)', msg)
     if m:
-        s1, e1, s2, e2 = map(int, m.groups())
-        return e2 - e1
-    # 兼容旧格式: 偏移量: N
-    m = re.search(r'\u504f\u79fb\u91cf:\s*([+-]?\d+)', msg)
-    return int(m.group(1)) if m else 0
+        return int(m.group(1))
+    return 0
 
 
 def _extract_range(msg: str) -> tuple:
-    m = re.search(r'0-indexed \[(\d+),\s*(\d+)\)', msg)
+    m = re.search(r'1-indexed \[(\d+),\s*(\d+)\]', msg)
     if m:
         return (int(m.group(1)), int(m.group(2)))
     return (0, 0)
@@ -70,11 +62,10 @@ class TestMultiWriteOffset:
         file_path = os.path.join(tmp_dir, "seq_test.pas")
         _make_file(file_path, "\n".join(f"L{i}" for i in range(10)) + "\n")
 
-        # First: replace [3,5) = L3,L4 -> X1,X2,X3 (ins 3, del 2, offset=+1)
+        # First: replace lines 4~5 (1-indexed, L3,L4) -> X1,X2,X3 (ins 3, del 2, offset=+1)
         r1 = await handle_write({
             "file_path": file_path,
-            "content": "X1\nX2\nX3\n",
-            "start_line": 3, "end_line": 5,
+            "edits": [{"start_line": 4, "end_line": 5, "content": "X1\nX2\nX3\n"}],
             "backup": False,
         })
         _assert_success(r1)
@@ -88,11 +79,13 @@ class TestMultiWriteOffset:
         assert lines[5] == "X3", f"line 6 should be X3, got: {lines[5]}"
         assert len(lines) == 11, f"should be 11 lines, got: {len(lines)}"
 
-        # Second: replace [8,10) (lines 9,10 in current 11-line file)
+        # Read to clear dirty flag before next write
+        await handle_read({"file_path": file_path})
+
+        # Second: replace lines 9~10 (1-indexed, after +1 offset)
         r2 = await handle_write({
             "file_path": file_path,
-            "content": "Y1\nY2\n",
-            "start_line": 8, "end_line": 10,
+            "edits": [{"start_line": 9, "end_line": 10, "content": "Y1\nY2\n"}],
             "backup": False,
         })
         _assert_success(r2)
@@ -109,31 +102,30 @@ class TestMultiWriteOffset:
         file_path = os.path.join(tmp_dir, "accum_test.pas")
         _make_file(file_path, "\n".join(f"L{i}" for i in range(10)) + "\n")
 
-        # 1) Replace [2,4) (L2,L3) -> A1,A2,A3 (ins 3, del 2, offset=+1)
+        # 1) Replace lines 3~4 (1-indexed, L2,L3) -> A1,A2,A3 (ins 3, del 2, offset=+1)
         r1 = await handle_write({
             "file_path": file_path,
-            "content": "A1\nA2\nA3\n",
-            "start_line": 2, "end_line": 4,
+            "edits": [{"start_line": 3, "end_line": 4, "content": "A1\nA2\nA3\n"}],
             "backup": False,
         })
         _assert_success(r1)
         assert _extract_offset(r1["message"]) == 1
+        await handle_read({"file_path": file_path})
 
-        # 2) Replace [4,7) (3 lines) -> B1 (ins 1, del 3, offset=-2)
+        # 2) Replace lines 5~7 (1-indexed) -> B1 (ins 1, del 3, offset=-2)
         r2 = await handle_write({
             "file_path": file_path,
-            "content": "B1\n",
-            "start_line": 4, "end_line": 7,
+            "edits": [{"start_line": 5, "end_line": 7, "content": "B1\n"}],
             "backup": False,
         })
         _assert_success(r2)
         assert _extract_offset(r2["message"]) == -2
+        await handle_read({"file_path": file_path})
 
-        # 3) Replace [3,5) -> C1,C2 (ins 2, del 2, offset=0)
+        # 3) Replace lines 4~5 (1-indexed) -> C1,C2 (ins 2, del 2, offset=0)
         r3 = await handle_write({
             "file_path": file_path,
-            "content": "C1\nC2\n",
-            "start_line": 3, "end_line": 5,
+            "edits": [{"start_line": 4, "end_line": 5, "content": "C1\nC2\n"}],
             "backup": False,
         })
         _assert_success(r3)
@@ -177,12 +169,11 @@ class TestMultiWriteOffset:
 
         from unittest.mock import patch
         with patch("src.tools.file_tool.pasfmt.format_file", new=mock_fmt_add_line):
-            # Replace [1,3) -> X1,X2 (2 lines for 2 lines, raw offset=0)
+            # Replace lines 2~3 (1-indexed) -> X1,X2 (2 lines for 2 lines, raw offset=0)
             # But mock pasfmt adds 1 line -> actual offset=+1
             r = await handle_write({
                 "file_path": file_path,
-                "content": "X1\nX2\n",
-                "start_line": 1, "end_line": 3,
+                "edits": [{"start_line": 2, "end_line": 3, "content": "X1\nX2\n"}],
                 "backup": False,
                 "auto_format": True,
             })

@@ -89,7 +89,13 @@ else:
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
-    from src.services.automation_service import execute_script as _execute_script
+    from src.services.automation_service import (
+    execute_automation as _execute_automation,
+    detect_exe_subsystem as _detect_exe_subsystem,
+    IMAGE_SUBSYSTEM_WINDOWS_GUI,
+    IMAGE_SUBSYSTEM_WINDOWS_CUI,
+)
+    from src.tools.delphi_rtti import handle_delphi_rtti as _handle_delphi_rtti
     from src.services.copyright_service import generate_copyright as _generate_copyright
 
     # 后台版本检查结果缓存（由 startup 异步任务填充）
@@ -361,63 +367,59 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "batch_write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), batch_write=批量写入(推荐, 详见 edits 参数), format=格式化, backup=备份管理, uses=增删uses子句"},
+                        "action": {"type": "string", "enum": ["read", "write", "batch_write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(edits参数), batch_write=已废弃(用write), format=格式化, backup=备份管理, uses=增删uses"},
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
 
-                        # ---- [仅 action=read] 参数 ----
-                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[仅 action=read] 读取模式: path=按路径, class=按类名定位, function=按函数名定位, record=按record名定位"},
-                        "type_name": {"type": "string", "description": "[仅 action=read, search_type=class] 类名/接口名/枚举名，如 'TForm1'"},
-                        "class_name": {"type": "string", "description": "[仅 action=read, search_type=class] 类名（与type_name二选一，兼容旧版）"},
-                        "record_name": {"type": "string", "description": "[仅 action=read, search_type=record] Record 类型名"},
-                        "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
-                        "start_line": {"type": "integer", "default": 0, "description": "起始行号（从0开始，左闭右开区间）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
-                        "limit": {"type": "integer", "default": 500, "description": "[仅 action=read] 最大返回行数（默认500，上限1000）。当文件超长时分段读取"},
-                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（0-indexed，如 '     0: unit Unit1;'），默认 false"},
-                        "end_line": {"type": "integer", "description": "结束行号（不包含该行，左闭右开区间），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
-                        "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
+                        # ---- [read] 参数 ----
+                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
+                        "type_name": {"type": "string", "description": "[read/class] 类名/接口名/枚举名"},
+                        "class_name": {"type": "string", "description": "[read/class] 类名（与type_name二选一，兼容旧版）"},
+                        "record_name": {"type": "string", "description": "[read/record] Record 类型名"},
+                        "function_name": {"type": "string", "description": "[read/function] 函数/过程名"},
+                        "start_line": {"type": "integer", "default": 1, "description": "[read] 起始行号(1-indexed inclusive)"},
+                        "limit": {"type": "integer", "default": 500, "description": "[read] 最大返回行数(默认500，上限1000)"},
+                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[read] 显示 1-indexed 行号前缀"},
+                        "end_line": {"type": "integer", "description": "[read] 结束行号(1-indexed inclusive)，默认 start_line+limit-1"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[read/class] 搜索范围 delphi/thirdparty/all"},
+                        "project_path": {"type": "string", "description": "[read/class] 项目文件路径，用于搜索项目 KB"},
 
-                        # ---- [仅 action=write/batch_write] 参数 ----
-                        "content": {"type": "string", "description": "【action=write 必需】写入的内容。不传 start_line/end_line 时替换全文，必须包含完整文件内容。配合 start_line/end_line 时仅替换指定行范围。"},
-                        "encoding": {"type": "string", "default": "auto", "description": "[write/batch_write/uses] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "[write/batch_write/uses] 写入后自动调用 pasfmt 格式化代码"},
-                        "backup": {"type": "boolean", "default": True, "description": "[write/batch_write/uses] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
-                        "preview": {"type": "boolean", "default": False, "description": "[write/batch_write] 预览模式：true 时只计算 diff 不写盘（不备份、不写入、不格式化）。write 全量预览返回文件大小变化；write 部分预览和 batch_write 返回 per-edit diff 预览（- / + 行）"},
-
-                        # ---- [仅 action=batch_write] 参数 ----
-                        # 推荐使用 batch_write 进行所有部分写入（替代多次 write 调用）。
-                        # edits 以原始文件为参照系，内部自动处理行号偏移，无需 AI 手动计算。
+                        # ---- [write] 参数 ----
+                        # write 统一使用 edits 参数，content/start_line/end_line 已合并到 edits 中
                         "edits": {
                             "type": "array",
-                            "description": "【action=batch_write 必需】编辑列表，传入顺序不限。以备份文件为参照系，内部自动排序后依次替换。相邻 edit 区间不能重叠。",
+                            "description": "[write] 编辑列表。全量: [{start_line:1, content:'...'}]；部分: [{start_line:5, end_line:10, content:'...'}]。相邻区间不能重叠。",
                             "items": {
                                 "type": "object",
                                 "required": ["start_line", "content"],
                                 "properties": {
-                                    "start_line": {"type": "integer", "description": "起始行号（0-indexed inclusive）"},
-                                    "end_line": {"type": "integer", "description": "结束行号（0-indexed exclusive），不传则到文件末尾"},
-                                    "content": {"type": "string", "description": "替换内容（完整替代 [start_line, end_line) 区间，不要包含区间内已有的行）"},
+                                    "start_line": {"type": "integer", "description": "起始行号（1-indexed inclusive）"},
+                                    "end_line": {"type": "integer", "description": "结束行号（1-indexed inclusive），不传则到文件末尾"},
+                                    "content": {"type": "string", "description": "替换内容（空串=删除该区间）。全量替换时 start_line=1 不加 end_line"},
                                     "description": {"type": "string", "description": "可选的文字描述，仅用于返回消息标记"}
                                 }
                             }
                         },
-                        "force": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 强制写入：true 时跳过 AI 偏移量检查（结果中出现连续重复行时不再报错）。注意 content 首行与被替换行相同仅在 s>0 时告警（s=0 时文件头重复为正常情况）。批量写入遇到偏移量误判时用此参数绕过。"},
+                        "encoding": {"type": "string", "default": "auto", "description": "[write/uses] 写入编码: auto/utf-8/gbk/utf-16，默认 auto"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "[write] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
+                        "backup": {"type": "boolean", "default": True, "description": "[write/uses] 写入前自动备份到 __history（建议保持 true）"},
+                        "preview": {"type": "boolean", "default": False, "description": "[write] 预览模式: 只算 diff 不写盘，清除脏标记"},
+                        "force": {"type": "boolean", "default": False, "description": "[write] 跳过 AI 偏移检测(连续重复行)，默认 false"},
 
-                        # ---- [仅 action=format] 参数 ----
-                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
-                        "code": {"type": "string", "description": "[仅 action=format, mode=code] 待格式化的代码文本"},
-                        "config_path": {"type": "string", "description": "[仅 action=format] pasfmt 配置文件路径（可选，高级用法）"},
-                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "[仅 action=format] uses子句风格: compact=合并为一行, pasfmt_default=每行一个"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "[仅 action=format] true=仅检查格式不修改文件"},
+                        # ---- [format] 参数 ----
+                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[format] 模式: file/code/check"},
+                        "code": {"type": "string", "description": "[format/code] 待格式化的代码文本"},
+                        "config_path": {"type": "string", "description": "[format] pasfmt 配置文件路径(高级)"},
+                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "[format] uses风格: compact=一行, pasfmt_default=每行一个"},
+                        "dry_run": {"type": "boolean", "default": False, "description": "[format] true=仅检查不修改"},
 
-                        # ---- [仅 action=backup] 参数 ----
-                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[仅 action=backup] 备份子操作: create=创建备份, list=列出版本, restore=恢复指定版本"},
-                        "version": {"type": "integer", "description": "[仅 action=backup, backup_action=restore] 要恢复的版本号，不传则恢复最新版"},
+                        # ---- [backup] 参数 ----
+                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[backup] 子操作: create/list/restore"},
+                        "version": {"type": "integer", "description": "[backup/restore] 版本号，不传则恢复最新"},
 
-                        # ---- [仅 action=uses] 参数 ----
-                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[仅 action=uses] uses子句操作: add=添加单元, remove=删除单元"},
-                        "unit_name": {"type": "string", "description": "[仅 action=uses] 单元名，如 Vcl.Dialogs、System.SysUtils"},
-                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[仅 action=uses] uses子句所在区域: interface 或 implementation"},
+                        # ---- [uses] 参数 ----
+                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[uses] add=添加, remove=删除"},
+                        "unit_name": {"type": "string", "description": "[uses] 单元名，如 Vcl.Dialogs"},
+                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[uses] 所在区域: interface/implementation"},
                     }
                 }
             ),
@@ -475,7 +477,7 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "description": "操作类型", "default": "list"},
                         "task_id": {"type": "string", "description": "任务ID（action=status/result/cancel时使用）"},
-                        "long_poll_seconds": {"type": "integer", "default": 0, "minimum": 0, "maximum": 30, "description": "[仅 action=status] 长轮询等待秒数（可选，默认0即立即返回。MCP请求通道有超时限制，建议≤30秒，超时改用短轮询）"},
+                        "long_poll_seconds": {"type": "integer", "default": 0, "minimum": 0, "maximum": 30, "description": "[status] 长轮询秒数(默认0=立即返回，建议≤30)"},
                         "task_type": {"type": "string", "description": "任务类型（action=start时使用），如: build_knowledge_base, build_thirdparty_knowledge_base, init_project_knowledge_base, build_document_knowledge_base, build_embedding"},
                         "task_params": {"type": "object", "description": "任务参数（action=start时使用，根据task_type不同而不同）"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
@@ -560,7 +562,7 @@ async def run_server():
                         "tool_name": {
                             "type": "string",
                             "enum": TOOL_NAMES,
-                            "description": "工具名",
+                            "description": "要查询的工具名",
                         },
                     },
                     "required": ["tool_name"],
@@ -647,39 +649,118 @@ async def run_server():
                 }
             ),
 
-            # ===== Delphi 自动化截图 =====
+            # ===== Delphi 自动化测试（GUI+控制台） =====
             Tool(
                 name="automate_delphi",
-                description=TOOL_SHORT_DESC.get("automate_delphi", "Delphi 自动化测试"),
+                description=TOOL_SHORT_DESC.get("automate_delphi", "Delphi 自动化测试(GUI+控制台)"),
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["auto", "gui", "console"],
+                            "default": "auto",
+                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元), console=subprocess控制台交互(无需Delphi端改造)",
+                        },
                         "app_path": {
                             "type": "string",
                             "description": "Delphi exe 文件路径",
                         },
+                        # ── GUI 模式参数 ──
                         "script": {
                             "type": "string",
-                            "description": "JSON 脚本（文件路径 或 JSON 字符串）。"
+                            "description": "[gui] JSON 脚本（文件路径 或 JSON 字符串）。"
                                            " 格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
                                            " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rinspect)立即返回ACK；sync其余阻塞等待。",
                         },
                         "snapshots_dir": {
                             "type": "string",
-                            "description": "截图输出目录（可选，默认 docs/copyright/snapshots）",
+                            "description": "[gui] 截图输出目录（可选，默认 docs/copyright/snapshots）",
                         },
                         "wait_timeout": {
                             "type": "number",
                             "default": 10,
-                            "description": "等待 Delphi 管道就绪的超时秒数（默认 10s）",
+                            "description": "[gui] 等待 Delphi 管道就绪的超时秒数（默认 10s）",
+                        },
+                        # ── Console 模式参数 ──
+                        "input": {
+                            "type": "string",
+                            "default": "",
+                            "description": "[console] 发送到 stdin 的文本",
+                        },
+                        "expect": {
+                            "type": "string",
+                            "default": "",
+                            "description": "[console] 等待的 stdout 正则模式（expect 式等待，匹配即返回）",
+                        },
+                        "timeout": {
+                            "type": "number",
+                            "default": 30,
+                            "description": "[console] 超时秒数（默认 30s）",
+                        },
+                        "args": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "[console] 额外命令行参数",
+                        },
+                        # ── 公共参数 ──
+                        "keep_alive": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "True=执行完后保持进程运行供后续复用，False=执行完退出（默认）",
+                        },
+                    },
+                    "required": ["app_path"],
+                }
+            ),
+
+            # ===== Delphi RTTI 桥接 ⭐ =====
+            Tool(
+                name="delphi_rtti",
+                description=(
+                    "Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用程序的运行时能力。\n"
+                    "三步法：\n"
+                    "① discover(app_path, class_name?) → 扫描 RTTI 暴露的方法和参数 Schema\n"
+                    "② call(app_path, class_name, method, params) → 调用方法\n"
+                    "③ guide → 返回完整使用指南\n"
+                    "💡 首次使用先 action='guide' 获取完整说明。"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["guide", "discover", "call"],
+                            "description": "操作类型: guide=使用指南, discover=发现能力, call=调用方法",
+                        },
+                        "app_path": {
+                            "type": "string",
+                            "description": "Delphi exe 文件路径（discover/call 需要，guide 不需要）",
+                        },
+                        "class_name": {
+                            "type": "string",
+                            "description": "目标类名（discover/call），为空则扫描所有类",
+                        },
+                        "method": {
+                            "type": "string",
+                            "description": "方法名（call 时需要）",
+                        },
+                        "params": {
+                            "type": "object",
+                            "description": "方法参数（call 时需要），如 {\"customerName\": \"张三\"}",
                         },
                         "keep_alive": {
                             "type": "boolean",
                             "default": False,
-                            "description": "执行完后是否保持进程运行。True=常驻供后续复用，False=执行完退出（默认）",
+                            "description": "是否保持进程运行供后续复用",
+                        },
+                        "force": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "是否强制刷新发现缓存",
                         },
                     },
-                    "required": ["app_path", "script"],
+                    "required": ["action"],
                 }
             ),
         ]
@@ -956,35 +1037,127 @@ async def run_server():
             return {"status": "failed", "message": f"generate_copyright failed: {e}"}
 
     async def _handle_automate_delphi(arguments: dict) -> dict:
-        """处理 automate_delphi 工具调用。"""
+        """处理 automate_delphi 工具调用（自动检测或按 action 路由）。"""
         import asyncio
+        action = arguments.get("action", "auto")
         app_path = arguments.get("app_path", "")
-        script = arguments.get("script", "")
-        snapshots_dir = arguments.get("snapshots_dir", "")
-        wait_timeout = arguments.get("wait_timeout", 10)
-        keep_alive = arguments.get("keep_alive", False)
+        keep_alive = _coerce_bool(arguments.get("keep_alive", False))
 
-        if not app_path or not script:
-            return {"status": "error", "message": "缺少必需参数: app_path, script"}
+        if not app_path:
+            return {"status": "error", "message": "缺少必需参数: app_path"}
 
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_execute_script,
-                                  app_path=app_path,
-                                  script=script,
-                                  snapshots_dir=snapshots_dir,
-                                  wait_for_pipe=wait_timeout,
-                                  keep_alive=keep_alive),
-                timeout=300,
-            )
-            return result
-        except asyncio.TimeoutError:
-            return {
-                "status": "failed",
-                "message": "automate_delphi 执行超时（300s）",
-            }
-        except Exception as e:
-            return {"status": "failed", "message": f"automate_delphi failed: {e}"}
+        # auto 检测：读 PE 头 Subsystem
+        if action == "auto":
+            subsys = _detect_exe_subsystem(app_path)
+            if subsys == IMAGE_SUBSYSTEM_WINDOWS_CUI:
+                action = "console"
+            elif subsys == IMAGE_SUBSYSTEM_WINDOWS_GUI:
+                action = "gui"
+            else:
+                # 无法检测时默认 gui（保持兼容）
+                action = "gui"
+
+        if action == "gui":
+            script = arguments.get("script", "")
+            snapshots_dir = arguments.get("snapshots_dir", "")
+            wait_timeout = arguments.get("wait_timeout", 10)
+
+            if not script:
+                return {"status": "error", "message": "gui 模式缺少必需参数: script"}
+
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_execute_automation,
+                                      action="gui",
+                                      app_path=app_path,
+                                      script=script,
+                                      snapshots_dir=snapshots_dir,
+                                      wait_for_pipe=wait_timeout,
+                                      keep_alive=keep_alive),
+                    timeout=300,
+                )
+                return result
+            except asyncio.TimeoutError:
+                return {
+                    "status": "failed",
+                    "message": "automate_delphi(gui) 执行超时（300s）",
+                }
+            except Exception as e:
+                return {"status": "failed", "message": f"automate_delphi(gui) failed: {e}"}
+
+        elif action == "console":
+            input_text = arguments.get("input", "")
+            expect = arguments.get("expect", "")
+            timeout = arguments.get("timeout", 30)
+            args = arguments.get("args", None)
+
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(_execute_automation,
+                                      action="console",
+                                      app_path=app_path,
+                                      input_text=input_text,
+                                      expect=expect,
+                                      timeout=timeout,
+                                      keep_alive=keep_alive,
+                                      args=args),
+                    timeout=max(timeout + 10, 120),
+                )
+                return result
+            except asyncio.TimeoutError:
+                return {
+                    "status": "failed",
+                    "message": "automate_delphi(console) 执行超时",
+                    "action": "console",
+                }
+            except Exception as e:
+                return {"status": "failed", "message": f"automate_delphi(console) failed: {e}"}
+
+        else:
+            return {"status": "error", "message": f"未知 action: {action}"}
+
+    async def _handle_delphi_rtti(arguments: dict) -> dict:
+        """处理 delphi_rtti 工具调用（RTTI 发现/调用）。"""
+        return await _handle_delphi_rtti(arguments)
+
+    # ── Layer A 路径校验 ──────────────────────────────────
+
+    _PATH_TOOLS_ARGS = {
+        "delphi_file":    ["file_path"],
+        "file_tool":      ["file_path"],
+        "delphi_kb":      ["file_path"],
+        "manage_component": ["target_dfm", "target_pas"],
+        "project":        ["project_path"],
+        "code_hosting":   ["dir"],
+    }
+
+    def _validate_tool_paths(tool_name: str, arguments: dict) -> None:
+        """Layer A 防御：在工具入口处校验路径参数
+
+        对涉及文件操作的工具，使用 PathValidator 白名单校验所有路径参数。
+        校验失败时抛出 ValueError，由 call_tool 的 except 统一处理。
+
+        Args:
+            tool_name: 工具名称
+            arguments: 工具参数字典
+
+        Raises:
+            ValueError: 路径校验失败时抛出
+        """
+        path_args = _PATH_TOOLS_ARGS.get(tool_name)
+        if not path_args:
+            return
+        from src.utils.path_validator import get_path_validator
+        validator = get_path_validator()
+        project_path = arguments.get("project_path")
+        validator.resolve(project_path)
+        for arg_name in path_args:
+            raw = arguments.get(arg_name)
+            if not raw or not isinstance(raw, str):
+                continue
+            err = validator.validate(raw)
+            if err:
+                raise ValueError(f"工具 {tool_name} 参数 {arg_name} 路径校验失败: {err}")
 
     _TOOL_HANDLERS = {
         "project": _handle_project_tool,
@@ -1002,6 +1175,7 @@ async def run_server():
         "daofy_update": _handle_daofy_update,
         "generate_copyright": _handle_generate_copyright,
         "automate_delphi": _handle_automate_delphi,
+        "delphi_rtti": _handle_delphi_rtti,
     }
 
     @server.call_tool()
@@ -1020,6 +1194,10 @@ async def run_server():
         try:
             handler = _TOOL_HANDLERS.get(name)
             if handler:
+                # ── Layer A 防御: 路径参数校验 ──
+                # 对涉及文件操作的工具，在入口处二次校验路径参数
+                _validate_tool_paths(name, arguments)
+
                 # ── MCP 推送通知注入 ──
                 # 对于 code_hosting 等支持异步任务的工具，注入 _on_complete 回调
                 # 任务完成时自动推送 TaskStatusNotification 到 MCP 客户端，无需轮询

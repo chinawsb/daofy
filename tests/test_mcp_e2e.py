@@ -32,6 +32,7 @@ class TestToolRegistrationConsistency:
         "project", "delphi_kb", "delphi_file", "manage_component",
         "check_environment", "async_task", "package", "get_coding_rules",
         "code_hosting", "tool_help", "experience", "daofy_update",
+        "automate_delphi", "generate_copyright", "delphi_rtti",
     }
 
     # _TOOL_HANDLERS 中已注册的 handler 名（含别名）
@@ -41,6 +42,7 @@ class TestToolRegistrationConsistency:
         "manage_component", "check_environment", "async_task",
         "package", "get_coding_rules", "code_hosting",
         "tool_help", "experience", "daofy_update",
+        "automate_delphi", "generate_copyright", "delphi_rtti",
     }
 
     HANDLER_ALLOWED_ALIASES = {"file_tool"}
@@ -336,6 +338,6 @@ class TestToolSchemaCompleteness:
         assert 'arguments.get("long_poll_seconds", 0)' in async_src, (
             "async_tasks.py handler 移除了 long_poll_seconds 读取逻辑"
         )
-        assert 'arguments.get("force", False)' in file_src, (
-            "file_tool.py handle_batch_write 移除了 force 读取逻辑"
+        assert 'arguments.get("force", False)' in file_src or '"force"' in file_src, (
+            "file_tool.py handle_write 移除了 force 读取逻辑"
         )

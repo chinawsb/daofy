@@ -52,14 +52,14 @@ async def test_insert_keeps_original_no_dup():
 
 @pytest.mark.asyncio
 async def test_insert_adjacent_no_dup():
-    """adjacent [5,6)+[6,7), content has original -> no dup"""
+    """adjacent [6,6]+[7,7] (1-indexed), content has original -> no dup"""
     d = tempfile.mkdtemp(prefix="b1a_")
     try:
         f = os.path.join(d, "U.pas")
         _mf(f, "unit U;\ninterface\ntype\n  T=class\n    F1: Integer;\n    F2: String;\n    procedure Bar;\n  end;\nimplementation\nend.\n")
         r = await handle_batch_write({"file_path": f, "edits": [
-            {"start_line": 5, "end_line": 6, "content": "    F2: String;\n    F2b: Boolean;", "description": "add after F2"},
-            {"start_line": 6, "end_line": 7, "content": "    procedure Bar;", "description": "keep Bar"},
+            {"start_line": 6, "end_line": 6, "content": "    F2: String;\n    F2b: Boolean;", "description": "add after F2"},
+            {"start_line": 7, "end_line": 7, "content": "    procedure Bar;", "description": "keep Bar"},
         ], "backup": False})
         _ok(r)
         with open(f) as fh:
@@ -219,7 +219,7 @@ async def test_sanity_warn_on_dup_first_line():
         f = os.path.join(d, "U.pas")
         _mf(f, "unit U;\ninterface\ntype\n  T=class\n    F1: Integer;\n  end;\nend.\n")
         r = await handle_batch_write({"file_path": f, "edits": [
-            {"start_line": 4, "end_line": 5, "content": "    F1: Integer;\n    F1b: Boolean;", "description": "保留F1加字段"},
+            {"start_line": 5, "end_line": 5, "content": "    F1: Integer;\n    F1b: Boolean;", "description": "保留F1加字段"},
         ], "backup": False})
         assert r.get("status") == "success", f"应成功但返回了:\n{r}"
         msg = r.get("message", "")
@@ -265,8 +265,8 @@ async def test_post_merge_dup_detection():
             original = fh.read()
         # 两个 edit 相邻且第一个的 content 末尾与第二个的 content 开头相同 → 产生边界重复
         r = await handle_batch_write({"file_path": f, "edits": [
-            {"start_line": 4, "end_line": 5, "content": "    F1: Integer;\n    Extra: Boolean;", "description": "edit F1"},
-            {"start_line": 5, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
+            {"start_line": 5, "end_line": 5, "content": "    F1: Integer;\n    Extra: Boolean;", "description": "edit F1"},
+            {"start_line": 6, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
         ], "backup": False})
         assert r.get("status") == "failed", f"应检测到重复行:\n{r}"
         msg = r.get("message", "")
@@ -287,8 +287,8 @@ async def test_force_bypasses_post_merge_dup():
         f = os.path.join(d, "U.pas")
         _mf(f, "unit U;\ninterface\ntype\n  T=class\n    F1: Integer;\n    F2: String;\n  end;\nend.\n")
         r = await handle_batch_write({"file_path": f, "edits": [
-            {"start_line": 4, "end_line": 5, "content": "    F1: Integer;\n    Extra: Boolean;", "description": "edit F1"},
-            {"start_line": 5, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
+            {"start_line": 5, "end_line": 5, "content": "    F1: Integer;\n    Extra: Boolean;", "description": "edit F1"},
+            {"start_line": 6, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
         ], "backup": False, "force": True})
         assert r.get("status") == "success", f"force=true 应跳过重复检测:\n{r}"
     finally:
