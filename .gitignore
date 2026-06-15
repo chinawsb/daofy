@@ -95,6 +95,7 @@ node_modules/
 # Config (可能包含本地路径)
 config/compilers.json
 config/history.json
+src/config/
 temp_scan_result.json
 opencode.json
 
