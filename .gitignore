@@ -62,10 +62,32 @@ tools/7z/
 
 # Temp / test files
 *.obj
+*.exe
+*.dcu
+*.drc
+*.map
+*.res
+*.identcache
+*.tgs
+*.tgw
+*.local
 tests/*.py
 !tests/__init__.py
 !tests/test_*.py
 !tests/run_*.py
+
+# Delphi build output directories
+Win32/
+Win64/
+__history/
+snapshots/
+
+# Temp scripts
+tmp_*.py
+tmp_*.ps1
+
+# npm artifacts (accidental)
+node_modules/
 
 # Config (可能包含本地路径)
 config/compilers.json
