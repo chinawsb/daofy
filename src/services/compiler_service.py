@@ -11,7 +11,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 import time
 import os
 import winreg
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from pathlib import Path
 from ..models.compile_request import ProjectCompileRequest, FileCompileRequest, TargetPlatform, CompileOptions, OutputType, RuntimeLibrary
@@ -695,7 +695,7 @@ class CompilerService:
             self._save_history(request.project_path, result.status.value, duration, error_msg)
             return result
 
-    def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str) -> List[str]:
+    def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str) -> list[str]:
         """生成 .dpr 文件的直接编译参数"""
         from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
         
@@ -1452,7 +1452,7 @@ class CompilerService:
         target_platform: str = "win32",
         build_configuration: str = "Debug",
         output_path_override: Optional[str] = None,
-    ) -> List[str]:
+    ) -> list[str]:
         """扫描编译产物目录，收集所有生成的文件路径（exe/dll/bpl/bpi/dcp 等）
 
         Args:
@@ -1485,7 +1485,7 @@ class CompilerService:
                 logger.debug("DProj 解析失败（继续用候选目录列表）: %s", e)
 
         # 收集所有可能输出目录（去重、按可信度排序）
-        candidate_dirs: List[Path] = []
+        candidate_dirs: list[Path] = []
         if output_path_override:
             candidate_dirs.append(Path(output_path_override))
         if dproj_output:
@@ -1495,7 +1495,7 @@ class CompilerService:
 
         # 输出产物列表（daudit 需要 .map 做堆栈解析，.drc 不需要）
         extensions = ['.exe', '.dll', '.bpl', '.bpi', '.dcp', '.map']
-        found: List[str] = []
+        found: list[str] = []
 
         for output_dir in candidate_dirs:
             if not output_dir.exists():

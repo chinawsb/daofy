@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.15.1] - 2026-06-15
+
+### Changed
+
+- **`compiler_service` 过时 typing 迁移至原生泛型**: 移除 `typing.List` 导入，4 处 `List[str]`/`List[Path]` 迁移至 Python 3.10+ 原生泛型 `list[str]`/`list[Path]`。项目要求 Python >= 3.10，原生泛型完全兼容。
+
 ## [2026.06.15] - 2026-06-15
 
 ### Added
