@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
+from src.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -240,7 +240,7 @@ class TestMigratedMCPTools:
 
     def test_all_list_tools_have_docs(self):
         """list_tools() 中的每个工具都有 TOOL_HELP_DOCS 文档（含 summary）"""
-        from src.config.tool_docs import TOOL_HELP_DOCS
+        from src.tool_docs import TOOL_HELP_DOCS
 
         for name in TOOL_NAMES:
             assert name in TOOL_HELP_DOCS, (
@@ -251,7 +251,7 @@ class TestMigratedMCPTools:
 
     def test_tool_help_docs_not_empty(self):
         """每个工具的 TOOL_HELP_DOCS 非空"""
-        from src.config.tool_docs import TOOL_HELP_DOCS
+        from src.tool_docs import TOOL_HELP_DOCS
 
         for name, doc in TOOL_HELP_DOCS.items():
             assert len(str(doc)) > 50, f"{name} TOOL_HELP_DOCS too short"

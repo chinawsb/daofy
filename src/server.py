@@ -85,7 +85,7 @@ else:
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.tools.tool_help import get_tool_help
     from src.tools.experience import experience as _experience
-    from src.config.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
+    from src.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
