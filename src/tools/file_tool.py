@@ -23,7 +23,7 @@ import shutil
 import tempfile
 import re
 import threading
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict, List, Set
 from mcp.types import CallToolResult
 from ..utils.logger import get_logger
 from ..utils.file_backup import create_backup, list_backups, restore_backup, detect_encoding
@@ -534,10 +534,11 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       edits=[{start_line:5}]               → 从第 5 行替换到文件末尾
       edits=[{end_line:10}]                → 从第 1 行替换到第 10 行
 
-    ⚠️ 连续编辑安全保护:
-      每次写入（含 auto_format）后文件行号会变化。
-      在重新 read 文件或 preview 确认前，不允许对同一文件再次写入，
-      防止 AI 使用过期行号导致错位改写。
+    ⚠️ 脏标记保护:
+       每次写入（含 auto_format）后文件行号会变化。
+       在重新 read 文件或 preview 确认前，不允许对同一文件再次写入，
+       防止 AI 使用过期行号导致错位改写。
+       续重行检测已降级为警告，不再阻断写入。
     """
     file_path = arguments.get("file_path")
     edits = arguments.get("edits")
@@ -591,7 +592,7 @@ async def _handle_batch_write_internal(
       content:    替换内容（空字符串=删除行）
       description: 描述（可选）
 
-    force: true 时跳过 AI 偏移量检测（连续重复行检查）。
+    force: true 时跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）。
     """
     if not edits:
         return _wrap_error("请提供 edits 列表")
@@ -758,6 +759,7 @@ async def _handle_batch_write_internal(
             removed = adj_e - adj_s
             removed_lines_preview = []
 
+            before_len = len(lines)  # 编辑前行数（含此前 edits 累计）
             if c == '':
                 if removed > 0 and removed <= 5:
                     removed_lines_preview = [(s_1 + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
@@ -793,7 +795,7 @@ async def _handle_batch_write_internal(
             delta = inserted - removed
             cumulative_offset += delta
 
-            orig_e_display = e_1 if e_1 is not None else total
+            orig_e_display = e_1 if e_1 is not None else before_len
             results.append(
                 f"  [{s_1}, {orig_e_display}] → [{s_1}, {orig_e_display + delta}] (offset: {delta:+d})  {desc}"
             )
@@ -847,15 +849,14 @@ async def _handle_batch_write_internal(
                 dup_msgs = [f"    第 {i} 行: {txt}" for i, txt in new_dup_lines[:10]]
                 if len(new_dup_lines) > 10:
                     dup_msgs.append(f"    ... 还有 {len(new_dup_lines) - 10} 处")
-                if bak_path and os.path.exists(bak_path) and not backup:
-                    try:
-                        os.remove(bak_path)
-                    except OSError:
-                        pass
-                return _wrap_error(
-                    "写入中止: 检测到连续重复行，可能因 AI 偏移量错误导致。\n"
-                    f"共 {len(new_dup_lines)} 处新增重复：\n" + "\n".join(dup_msgs) + "\n"
-                    "如需强制写入请设置 force=true"
+                warn = (
+                    "⚠️ 写入完成，但检测到连续重复行，请 verify 结果。\n"
+                    f"共 {len(new_dup_lines)} 处新增重复：\n" + "\n".join(dup_msgs)
+                )
+                results.append(warn)
+                logger.warning(
+                    f"续重行警告 ({os.path.basename(file_path)}): "
+                    f"{len(new_dup_lines)} 处"
                 )
 
         # 写入磁盘
@@ -896,6 +897,7 @@ async def _handle_batch_write_internal(
                     logger.warning(f"写入后自动格式化失败: {ex}")
 
             # auto_format 可能额外改变行数（展开 uses、调整空行等），重算真实偏移
+            fmt_diff = 0
             if auto_format and not preview and os.path.isfile(file_path) and fmt_msg:
                 try:
                     with open(file_path, 'r', encoding=write_enc, newline='',
@@ -905,18 +907,12 @@ async def _handle_batch_write_internal(
                     if new_total != expected_total:
                         fmt_diff = new_total - expected_total
                         cumulative_offset += fmt_diff
-                        # 更新 results 中最后一个 edit 的偏移显示
-                        for i in range(len(results) - 1, -1, -1):
-                            m = re.search(r'\(offset:\s*([+-]?\d+)\)', results[i])
-                            if m:
-                                old_val = int(m.group(1))
-                                new_val = old_val + fmt_diff
-                                old_part = results[i][m.start():m.end()]
-                                new_part = f'(offset: {new_val:+d})'
-                                results[i] = results[i][:m.start()] + new_part + results[i][m.end():]
-                                break
                 except Exception as ex:
                     logger.debug(f"auto_format 后重读行数失败: {ex}")
+            if fmt_diff:
+                results.append(
+                    f"  ⚠ auto_format 额外偏移: {fmt_diff:+d}，累计总偏移: {cumulative_offset:+d}"
+                )
 
             # 清理备份
             if not backup and bak_path and os.path.exists(bak_path):
@@ -938,6 +934,8 @@ async def _handle_batch_write_internal(
         ]
         if preview:
             header_parts.append("preview: true（未写入磁盘）")
+            if auto_format:
+                header_parts.append("⚠ preview 不含 auto_format 偏移")
         if encoding_transcoded:
             header_parts.append(f"ℹ transcoded: {detected_encoding} → {write_enc}")
         if encoding_fallback:
@@ -1039,17 +1037,6 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
             if lock_err:
                 return _wrap_error(lock_err)
             try:
-                # 记录格式化前行数，用于计算偏移量
-                before_lines = 0
-                if os.path.isfile(file_path):
-                    try:
-                        fmt_enc = detect_encoding(file_path)
-                        with open(file_path, 'r', encoding=fmt_enc, newline='',
-                                  buffering=1048576) as f:
-                            before_lines = sum(1 for _ in f)
-                    except (OSError, UnicodeDecodeError):
-                        pass
-
                 result = await pasfmt.format_file(
                     file_path=file_path,
                     config_path=arguments.get("config_path"),
@@ -1058,25 +1045,9 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     uses_style=uses_style,
                 )
 
-                # 格式化成功且文件存在时，计算行数变化并附加到返回消息
-                if result.get("status") == "success" and result.get("formatted") and os.path.isfile(file_path):
-                    try:
-                        fmt_enc = detect_encoding(file_path)
-                        with open(file_path, 'r', encoding=fmt_enc, newline='',
-                                  buffering=1048576) as f:
-                            after_lines = sum(1 for _ in f)
-                        offset = after_lines - before_lines
-                        if offset != 0:
-                            offset_info = (
-                                f"\n偏移量: {offset:+d}（格式化后行数变化）\n"
-                                f"后续编辑: 行号 ≥ 1 的新行号 = 原行号 + {offset}"
-                            )
-                            if isinstance(result.get("message"), str):
-                                result["message"] += offset_info
-                    except (OSError, UnicodeDecodeError):
-                        pass
-
-                # 格式化成功 → 标记脏（行号已变）
+                # 格式化成功 → 标记脏（行号已变，强制 re-read）
+                # ⚠ 不计算偏移量：pasfmt 可能重构代码结构（展开 uses、调整 begin/end 等），
+                #   格式化前后的行号无线性对应关系。AI 须通过 dirty flag 触发 re-read。 
                 if result.get("status") == "success" and result.get("formatted"):
                     _mark_dirty(file_path)
             finally:

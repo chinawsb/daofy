@@ -296,7 +296,7 @@ TOOL_HELP_DOCS: dict = {
                     "backup": "写入前自动备份，默认 true",
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
                     "auto_format": "写入后自动调用 pasfmt 格式化，默认 false。返回的偏移量已包含格式化造成的行数变化",
-                    "force": "强制写入，跳过 AI 偏移量检查（连续重复行检测），默认 false",
+                    "force": "跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）",
                     "preview": "预览模式，只计算 diff 不写盘（不备份、不写入、不格式化），默认 false。预览后清除脏标记，允许继续编辑",
                 },
                 "examples": [
@@ -453,9 +453,14 @@ TOOL_HELP_DOCS: dict = {
             "delphi rtti、rtti bridge、运行时类型信息",
         ],
         "constraints": [
-            "❌ 需要 Delphi 应用已链接 DaofyAutomation 单元",
+            "❌ 需要 Delphi 应用已链接 DaofyAutomation 单元（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）",
             "❌ 需要 Delphi 2010+ (Enhanced RTTI)",
             "⚠️ 不能发现 protected 和 private 区段的方法/属性",
+        ],
+        "auto_unit_paths": [
+            "VCL 项目 → Vcl.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
+            "FMX 项目 → Fmx.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
+            "以上文件均在 $(DaofyRoot)\\tools\\auto\\，将此路径加入项目 Search path 即可编译",
         ],
         "workflow": "delphi_rtti(action='guide') → discover → call",
         "features": [
@@ -578,7 +583,12 @@ TOOL_HELP_DOCS: dict = {
         "summary": "驱动 Delphi 程序自动化测试（GUI 截图 + 控制台交互）。",
         "description": "Delphi 自动化测试(GUI+控制台)",
         "triggers": ["自动化测试、截图、Delphi自动化、控制台测试、automate"],
-        "constraints": ["gui 模式需要 Delphi 程序已链接 DaofyAutomation 单元；console 模式无需 Delphi 端改造"],
+        "constraints": ["gui 模式需要 Delphi 程序已链接 DaofyAutomation 单元（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）；console 模式无需 Delphi 端改造"],
+        "auto_unit_paths": [
+            "VCL 项目 → Vcl.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
+            "FMX 项目 → Fmx.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
+            "以上文件均在 $(DaofyRoot)\\tools\\auto\\，将此路径加入项目 Search path 即可编译",
+        ],
         "modes": {
             "gui": {
                 "description": "通过命名管道驱动 GUI 程序执行操作并截图。",
@@ -682,7 +692,7 @@ TOOL_SHORT_DESC: dict = {
     ),
     "automate_delphi": (
         "Delphi 自动化测试(action=gui: GUI操作+截图/action=console: 控制台交互)。"
-        " gui 需 Delphi 端链接 DaofyAutomation 单元；console 无需改造。支持 keep_alive。"
+        " gui 需 Delphi 端链接 DaofyAutomation 单元（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）；console 无需改造。支持 keep_alive。"
     ),
     "generate_copyright": (
         "生成软著文档(源代码+说明书+汇总表)，浏览器 PDF 渲染+自动校验。"
@@ -691,5 +701,6 @@ TOOL_SHORT_DESC: dict = {
         "Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用程序的运行时能力。"
         " 三步法: discover→发现能力, call→调用方法, guide→使用指南。"
         " 首次使用先 action='guide' 获取完整说明。"
+        " 需要链接 DaofyAutomation 单元（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）。"
     ),
 }

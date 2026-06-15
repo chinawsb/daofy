@@ -84,14 +84,20 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
 
 def _resolve_project_path(project_path: Optional[str] = None) -> Optional[str]:
     """
-    解析项目路径：如果未提供则自动检测当前目录下的 .dproj 文件。
+    解析项目路径：如果未提供则自动检测当前目录下的项目文件。
+
+    支持的项目文件类型（按优先级）：
+    - .dproj (MSBuild 项目文件，信息最丰富)
+    - .dpr   (传统 Delphi 项目文件)
+    - .dpk   (包文件)
 
     检测顺序：
     1. 如果传入了 project_path（非空），直接使用（不检查存在性，让下游报错）
-    2. 扫描 CWD 查找 *.dproj
-    3. 扫描 CWD 的父目录查找 *.dproj
+    2. 扫描 CWD 查找 *.dproj / *.dpr / *.dpk（优先选择 .dproj）
+    3. 扫描 CWD 的父目录查找同类文件
     4. 如果找到恰好一个，返回该路径
-    5. 如果找到 0 个或多个，返回 None（由调用方处理错误信息）
+    5. 如果找到多个，按优先级选（.dproj > .dpr > .dpk），同名匹配优先
+    6. 如果找到 0 个或多个，返回 None（由调用方处理错误信息）
 
     Args:
         project_path: 用户传入的项目路径（可选）
@@ -103,19 +109,40 @@ def _resolve_project_path(project_path: Optional[str] = None) -> Optional[str]:
     if project_path:
         return str(Path(project_path))
 
-    # 自动检测：从 CWD 开始，向上查找 .dproj
+    # 按优先级排序的搜索模式
+    project_patterns = ["*.dproj", "*.dpr", "*.dpk"]
+
+    # 自动检测：从 CWD 开始，向上查找项目文件
     cwd = Path.cwd()
     for search_dir in [cwd] + list(cwd.parents)[:5]:
-        dproj_files = list(search_dir.glob("*.dproj"))
-        if len(dproj_files) == 1:
-            return str(dproj_files[0].resolve())
-        elif len(dproj_files) > 1:
-            # 找到多个 .dproj，试试看有没有和目录名同名的
-            project_name = search_dir.name
-            for f in dproj_files:
+        found_all: dict[str, list[Path]] = {}
+        for pattern in project_patterns:
+            found_all[pattern] = list(search_dir.glob(pattern))
+
+        total_found = sum(len(v) for v in found_all.values())
+
+        if total_found == 0:
+            continue
+
+        if total_found == 1:
+            # 唯一找到，直接返回
+            for files in found_all.values():
+                if files:
+                    return str(files[0].resolve())
+
+        # 多个文件 → 按优先级选
+        project_name = search_dir.name
+        for pattern in project_patterns:
+            for f in found_all[pattern]:
                 if f.stem == project_name or f.stem.lower() == project_name.lower():
                     return str(f.resolve())
-            # 仍然不明确，继续向上搜索
+
+        # 同名匹配失败 → 按优先级返回第一个
+        for pattern in project_patterns:
+            if found_all[pattern]:
+                return str(found_all[pattern][0].resolve())
+
+        # 理论上不会到达这里
 
     return None
 

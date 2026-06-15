@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.15] - 2026-06-15
+
+### Added
+
+- **`compiler_service` Delphi >= XE5 自动启用响应文件编译**: 检测到 Delphi 版本 >= 12.0 时，自动添加 `DCC_UseMSBuildExternally=true` 参数，解决 MSBuild 命令行过长 (>32K) 导致编译失败的问题。
+- **`knowledge_base._resolve_project_path` 支持 .dpr/.dpk**: 项目路径自动检测扩展为按优先级搜索 `.dproj` > `.dpr` > `.dpk`，优先匹配目录同名项目文件。
+- **`tool_docs`/`delphi_rtti`/`automate_delphi` 文档补充 DaofyAutomation 单元选择**: 明确标注 VCL 项目用 `Vcl.DaofyAutomation.pas`，FMX 项目用 `Fmx.DaofyAutomation.pas`，以及 tools\\auto\ 路径说明。
+
+### Changed
+
+- **`file_tool` 连续重复行检测降级为警告**: 不再阻断写入，仅警告提示AI verify 结果。`force` 参数描述同步更新为"跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）"。
+- **`file_tool` format action 移除偏移量计算**: pasfmt 可能非线性重构代码结构（展开 uses、调整 begin/end 等），格式化前后的行号无线性对应关系。移除偏移量计算，format 后仅标记脏标记强制 re-read。
+- **`file_tool` auto_format 偏移显示优化**: 新增单独警告行显示 auto_format 额外偏移和累计总偏移，不再修改 per-edit 的偏移量显示。
+- **`file_tool` preview 模式补充 auto_format 提示**: 预览时标注 `⚠️ preview 不含 auto_format 偏移`。
+- **`project_knowledge_base` 日志降级**: 非 `.dproj` 文件的三方库路径提取从 `logger.warning` 降为 `logger.debug`，减少冗余日志。
+- **`delphi_rtti` 故障排除文档更新**: pipe_unavailable 错误提示补充 VCL/FMX 单元选择说明。
+- **`server.py` delphi_kb/project_path 描述更新**: 补充 `.dpr/.dpk` 扩展名支持说明。
+- **`tool_help` 新增 auto_unit_paths 显示**: delphi_rtti/automate_delphi 的帮助信息中新增 DaofyAutomation 单元选择提示。
+
+### Fixed
+
+- **`file_tool` 批量写入 orig_e_display 导出错误**: 当 `e` 为 None（替换到文件末尾）时，原代码使用编辑后的 `total` 而非编辑前的 `before_len`，导致偏移显示错误。
+- **`file_tool` format action 遗留代码清理**: 移除格式化前/后行数计算的无用代码（~20 行）。
+- **`file_tool` auto_format 后 fmt_diff 未初始化**: 当 pasfmt 未格式化（fmt_msg 为空）时，Python 的局部变量 `fmt_diff` 可能未定义。
+
+### Tests
+
+- **`test_post_merge_dup_detection` → `test_post_merge_dup_warning`**: 适配重复行检测降级为警告的新行为，测试断言改为验证写入成功 + 文件中含预期内容。
+- **`test_format_offset_in_response` → `test_format_calls_pasfmt`**: 移除格式化返回偏移量的断言，改为验证 format 成功且 dirty flag 阻止后续 write。
+- **`test_auto_format_offset_correction`**: 适配新的偏移显示格式（per-edit offset=0，auto_format 额外偏移单独行显示）。
+- **`test_format_action_returns_offset` → `test_format_action_marks_dirty`**: 验证 format 后不应包含偏移量，且 dirty flag 阻止 write。
+
 ## [2026.06.13] - 2026-06-14
 
 ### Added

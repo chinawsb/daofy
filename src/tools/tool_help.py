@@ -52,6 +52,13 @@ def get_tool_help(tool_name: str) -> dict:
             lines.append(c)
         lines.append("")
 
+    auto_paths = docs.get("auto_unit_paths", [])
+    if auto_paths:
+        lines.append("DaofyAutomation 单元选择（根据框架类型选其一）:")
+        for p in auto_paths:
+            lines.append(f"  • {p}")
+        lines.append("")
+
     if docs.get("features"):
         lines.append("功能特性:")
         for f in docs["features"]:

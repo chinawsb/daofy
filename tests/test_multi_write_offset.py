@@ -145,8 +145,8 @@ class TestMultiWriteOffset:
     @pytest.mark.asyncio
     async def test_auto_format_offset_correction(self, tmp_dir):
         """
-        auto_format=True: offset should be based on ACTUAL file after pasfmt.
-        Pasfmt mock adds 1 extra line during formatting.
+        auto_format=True: per-edit offset is 0 (2 lines -> 2 lines),
+        separate warning line shows total offset (+1 after pasfmt).
         """
         file_path = os.path.join(tmp_dir, "fmt_correct.pas")
         _make_file(file_path, "unit  Test; \ninterface\n\nimplementation\n\nend.\n")
@@ -170,7 +170,7 @@ class TestMultiWriteOffset:
         from unittest.mock import patch
         with patch("src.tools.file_tool.pasfmt.format_file", new=mock_fmt_add_line):
             # Replace lines 2~3 (1-indexed) -> X1,X2 (2 lines for 2 lines, raw offset=0)
-            # But mock pasfmt adds 1 line -> actual offset=+1
+            # But mock pasfmt adds 1 line -> total offset=+1
             r = await handle_write({
                 "file_path": file_path,
                 "edits": [{"start_line": 2, "end_line": 3, "content": "X1\nX2\n"}],
@@ -179,20 +179,20 @@ class TestMultiWriteOffset:
             })
             _assert_success(r)
             msg = r["message"]
-            offset = _extract_offset(msg)
 
-            # Offset should be +1 (pasfmt added 1 line), NOT 0
-            assert offset == 1, (
-                f"auto_format offset should be +1 (pasfmt added 1 line), "
-                f"got: {offset}. msg: {msg}"
-            )
+            # Per-edit offset is 0 (edit itself didn't change line count)
+            assert _extract_offset(msg) == 0, f"edit offset should be 0:\n{msg}"
+            # auto_format warning line shows cumulative total +1
+            assert "auto_format 额外偏移: +1" in msg, f"缺少 format 偏移行:\n{msg}"
+            assert "累计总偏移: +1" in msg, f"总偏移应为 +1:\n{msg}"
 
     @pytest.mark.asyncio
-    async def test_format_action_returns_offset(self, tmp_dir):
+    async def test_format_action_marks_dirty(self, tmp_dir):
         """
-        Format action should return offset info when file lines change.
+        Format action should mark file dirty so AI must re-read before write.
+        Offset is NOT returned — pasfmt may restructure code non-linearly.
         """
-        file_path = os.path.join(tmp_dir, "fmt_offset_return.pas")
+        file_path = os.path.join(tmp_dir, "fmt_dirty.pas")
         _make_file(file_path, "unit  Test;\ninterface\n\nimplementation\n\nend.\n")
 
         from src.tools import pasfmt as _pasfmt_mod
@@ -218,6 +218,19 @@ class TestMultiWriteOffset:
                 "backup": False,
             })
             _assert_success(r)
+            # 不应包含偏移量（已移除）
             msg = r["message"]
-            assert "\u504f\u79fb\u91cf" in msg or "offset" in msg.lower(), \
-                f"format should return offset info: {msg}"
+            assert "\u504f\u79fb\u91cf" not in msg, f"format 不应返回偏移量: {msg}"
+            # 文件内容被 mock pasfmt 改变了
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            assert "implementation" in content
+            # 验证 dirty flag：format 后直接 write 应被阻止
+            r2 = await handle_write({
+                "file_path": file_path,
+                "edits": [{"start_line": 1, "end_line": 1, "content": "unit Test;\n"}],
+                "backup": False,
+            })
+            assert r2.get("status") == "failed", f"dirty flag 应阻止 write:\n{r2}"
+            msg2 = r2.get("message", "")
+            assert "上次写入后行号可能已变化" in msg2, f"应提示脏标记:\n{r2}"

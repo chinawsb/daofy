@@ -8,6 +8,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 为用户项目提供知识库功能:
 1. 从 .dproj 文件读取三方库目录并构建知识库
 2. 为项目源码构建知识库,支持增量更新
+3. 支持 .dproj/.dpr/.dpk 项目文件类型（仅 .dproj 可提取三方库路径）
 """
 
 import os
@@ -35,7 +36,7 @@ class ProjectKnowledgeBase:
         初始化项目知识库
 
         Args:
-            project_path: 项目文件路径 (.dproj 或 .dpr)
+            project_path: 项目文件路径 (.dproj / .dpr / .dpk)
             progress_callback: 进度回调函数
         """
         self.project_path = Path(project_path)
@@ -105,7 +106,7 @@ class ProjectKnowledgeBase:
             三方库路径列表
         """
         if self.project_path.suffix.lower() != '.dproj':
-            logger.warning("项目文件不是 .dproj 格式,无法提取三方库路径")
+            logger.debug("项目文件不是 .dproj 格式（%s），跳过三方库路径提取", self.project_path.suffix)
             return []
 
         parser = DprojParser(str(self.project_path))

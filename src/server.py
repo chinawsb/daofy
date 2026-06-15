@@ -332,7 +332,7 @@ async def run_server():
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库类型"},
                         "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "set", "helper", "type", "const", "resourcestring", "variable", "property", "method", "field", "event", "operator", "string", "dfm", "attribute", "unit", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
                         "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
-                        "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj）"},
+                        "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj/.dpr/.dpk）"},
                         "version": {"type": "string", "description": "Delphi版本（构建知识库时使用）"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行（build操作时生效，默认true）"},
                         "rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（build操作时生效）"},
@@ -403,7 +403,7 @@ async def run_server():
                         "auto_format": {"type": "boolean", "default": False, "description": "[write] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
                         "backup": {"type": "boolean", "default": True, "description": "[write/uses] 写入前自动备份到 __history（建议保持 true）"},
                         "preview": {"type": "boolean", "default": False, "description": "[write] 预览模式: 只算 diff 不写盘，清除脏标记"},
-                        "force": {"type": "boolean", "default": False, "description": "[write] 跳过 AI 偏移检测(连续重复行)，默认 false"},
+                        "force": {"type": "boolean", "default": False, "description": "[write] 跳过续重行检测（默认 false 时检测到重复仅警告不阻断）"},
 
                         # ---- [format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[format] 模式: file/code/check"},
@@ -660,7 +660,7 @@ async def run_server():
                             "type": "string",
                             "enum": ["auto", "gui", "console"],
                             "default": "auto",
-                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元), console=subprocess控制台交互(无需Delphi端改造)",
+                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元, VCL: tools\\auto\\Vcl.DaofyAutomation.pas, FMX: tools\\auto\\Fmx.DaofyAutomation.pas), console=subprocess控制台交互(无需Delphi端改造)",
                         },
                         "app_path": {
                             "type": "string",
@@ -1459,7 +1459,7 @@ async def run_server():
 
             if not project_path:
                 logger.info(
-                    "未检测到项目文件（.dproj），跳过自动构建项目知识库"
+                    "未检测到项目文件（.dproj/.dpr/.dpk），跳过自动构建项目知识库"
                 )
                 return
 

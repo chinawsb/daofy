@@ -1196,8 +1196,8 @@ async def test_read_show_line_numbers_with_offset():
 # ============================================================
 
 @pytest.mark.asyncio
-async def test_format_offset_in_response():
-    """format action 返回值应包含格式化后的偏移量"""
+async def test_format_calls_pasfmt():
+    """format action 应调用 pasfmt 并返回成功"""
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "fmt_offset.pas")
     # 用稍微不规范的代码触发 pasfmt 格式化

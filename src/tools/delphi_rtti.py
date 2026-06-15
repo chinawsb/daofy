@@ -128,7 +128,7 @@ RTTI_GUIDE = """\
 通过 Delphi 的 Enhanced RTTI 发现和调用应用程序的运行时能力。
 
 ## 前提
-- Delphi 应用已链接 DaofyAutomation 单元
+- Delphi 应用已链接 DaofyAutomation 单元（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）
 - 应用已编译运行，命名管道已就绪
 
 ## 三步工作流
@@ -203,7 +203,7 @@ function CreateOrder(
 4. **参数类型匹配** — 对照类型映射表确保参数类型正确
 
 ## 故障排除
-- "pipe_unavailable" → 确认 Delphi 应用已启动并链接 DaofyAutomation
+- "pipe_unavailable" → 确认 Delphi 应用已启动并链接 DaofyAutomation（VCL: uses Vcl.DaofyAutomation; FMX: uses Fmx.DaofyAutomation）
 - 方法调用失败 → 检查参数名和类型是否与 discover 返回的 Schema 一致
 - 空结果 → 确认目标类的方法标记为 published 或 public
 """

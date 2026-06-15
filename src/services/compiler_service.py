@@ -22,6 +22,7 @@ from .args_generator import ArgsGenerator
 from .process_manager import ProcessManager
 from .config_manager import ConfigManager
 from ..utils import get_console_encoding
+from ..utils.delphi_env import get_delphi_version as _get_delphi_version_env
 from ..utils.parser import OutputParser
 from ..utils.validator import Validator
 from ..utils.dproj_parser import DprojParser
@@ -988,6 +989,16 @@ class CompilerService:
             if request.options.unit_search_paths:
                 paths = ";".join(request.options.unit_search_paths)
                 args.append(f"/p:DCC_UnitSearchPath={paths}")
+            
+            # Delphi >= XE5 (registry version >= 12.0) 时自动启用响应文件编译
+            # 解决 MSBuild 命令行过长 (>32K) 导致编译失败的问题
+            try:
+                delphi_ver = _get_delphi_version_env()
+                if delphi_ver and float(delphi_ver) >= 12.0:
+                    args.append("/p:DCC_UseMSBuildExternally=true")
+                    logger.info("检测到 Delphi %s (>=XE5)，已启用 DCC_UseMSBuildExternally", delphi_ver)
+            except Exception as e:
+                logger.warning("检测 Delphi 版本失败，不启用 DCC_UseMSBuildExternally: %s", e)
             
             # 其他参数
             args.append("/v:minimal")  # 最小输出级别

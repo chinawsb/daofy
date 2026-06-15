@@ -255,26 +255,24 @@ async def test_force_bypasses_dup_first_line():
 
 
 @pytest.mark.asyncio
-async def test_post_merge_dup_detection():
-    """编辑后产生连续重复行 → 阻止写入"""
+async def test_post_merge_dup_warning():
+    """编辑后产生连续重复行 → 仅警告不阻断，写入成功"""
     d = tempfile.mkdtemp(prefix="dup_merge_")
     try:
         f = os.path.join(d, "U.pas")
         _mf(f, "unit U;\ninterface\ntype\n  T=class\n    F1: Integer;\n    F2: String;\n  end;\nend.\n")
-        with open(f) as fh:
-            original = fh.read()
         # 两个 edit 相邻且第一个的 content 末尾与第二个的 content 开头相同 → 产生边界重复
         r = await handle_batch_write({"file_path": f, "edits": [
             {"start_line": 5, "end_line": 5, "content": "    F1: Integer;\n    Extra: Boolean;", "description": "edit F1"},
             {"start_line": 6, "end_line": 6, "content": "    Extra: Boolean;\n    F2: String;", "description": "edit F2"},
         ], "backup": False})
-        assert r.get("status") == "failed", f"应检测到重复行:\n{r}"
+        assert r.get("status") == "success", f"应写入成功（带警告）:\n{r}"
         msg = r.get("message", "")
-        assert "连续重复" in msg, f"错误信息不匹配:\n{msg}"
-        # 文件不应被修改
+        assert "连续重复" in msg, f"应含续重行警告:\n{msg}"
+        # 文件已被写入
         with open(f) as fh:
             c = fh.read()
-        assert c == original, f"文件被意外修改:\n原内容:\n{original}\n当前:\n{c}"
+        assert "Extra" in c, f"文件应已写入:\n{c}"
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
