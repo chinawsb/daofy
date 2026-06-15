@@ -1,41 +1,75 @@
-# v2026.06.08 Release Notes
+# v2026.06.15.1 Release Notes
 
-自上一版本 v2026.05.14 以来的累积变更。
-
----
-
-## Added
-
-- **`delphi_file` 新增 `batch_write` action**：一次传入多个 edit，内部按 `start_line` 升序排列，以备份文件为参照系，内存中累积偏移量后一次性写出。相邻 edit 区间重叠时自动检测并拒绝，防止行号映射错误。
-  - 配套 18 个测试用例（基本功能 + 14 个边界测试）
-- **`batch_write` AI 偏移量错误自动检测**：per-edit 检查 content 首行与被替换行是否相同，post-merge 扫描新增连续重复行，检测到时阻止写入并返回明确错误信息。配套 4 个测试用例。
-  - `force` 参数（默认 false）：跳过检查强制写入
-- **`search()` 自动重建缺失向量**：`experience_service.py` 的 `search()` 在模型已加载但语义搜索无结果时，自动触发 `rebuild_embeddings()` 补全缺失向量后重试，无需手动调用。
-- **`run_verify` 异常日志嵌入 MCP 响应**：编译运行验证时检测到 `exception.log`，自动检测编码并读取内容直接嵌入 MCP 响应。
-- **CODING_RULES.mdc 补充文件编码指南**：推荐含中文 Delphi 文件使用 `utf-8-sig`（UTF-8 with BOM）避免 W1057 警告。
-- **`employee-input` 演示项目重建**：FireDAC SQLite 员工信息管理，UTF-8 BOM 编码消除 W1057 警告。
-
-## Fixed
-
-- **`ExperienceMemoryService.delete()` 方法定义缺失修复**：`delete()` 的 `def delete(...)` 方法头丢失，docstring 与方法体成为 `rebuild_embeddings()` `return` 后的死代码。已在 `prune_list()` 与 `rebuild_embeddings()` 之间补充完整的方法定义并移除死代码。
-- **`embedding_service.py` `os.environ` 线程竞态修复**：`_worker` daemon 线程与主线程 `_restore_env()` 同时操作 `os.environ`，底层的 `os.putenv`/`os.unsetenv` 非线程安全。新增 `_env_lock = threading.Lock()` 保护全部 `os.environ` 写操作。
-- **`test_is_dfm_file` 断言修正**：`.fmx` 与 `.dfm` 使用完全相同格式，函数本身已正确处理，仅修正测试断言 `is False` → `is True`。
-- **`delphi_file` 部分写入行号偏差根因消除**：文档字符串修正为"0-indexed 左闭右开"，与 Python 切片行为一致。
-- **部分写入返回偏移量信息**：每次 write/uses 操作后输出附带偏移量，AI Agent 可据此累加计算后续行号，无需重新读取文件。
-- **`compilers.json` 路径自愈**：`config_manager.py` 自动检测路径并在 `src/config/` 与项目根 `config/` 之间回退。
-- **18 处 `except Exception: pass` 添加 `logger.debug`**：原静默吞异常改为记录日志带调用栈，不改变控制流。涉及 10 个文件。
-- **`delphi_file` read/write 行号改为 0-indexed 左闭右开**：`start_line` 默认值从 `1` 改为 `0`，与 Python `list[start:end]` 语义一致。
-- **新增 17 个 file_tool 边界测试**：覆盖空区间、负值 clamp、超 EOF、单行替换、删除行、无效范围等。
-
-## Changed
-
-- **`search_knowledge` 597→37 行重构**：单函数拆为 37 行主函数 + 16 个模块级子函数，行为完全等价，pytest 727 passed。
-- **`AGENTS.md` 新增「部分写入规则」章节**：文档化 0-indexed 语义、连续编辑的行号偏移算法、uses 偏移说明。
-- **`tool_docs.py` `delphi_file` 文档补充**：write/read action 描述中添加 0-indexed 和偏移量说明。
-- **`CODING_RULES.mdc` / `AGENTS.md` 经验文档更新**：保存流程与维护规则中补充 `rebuild_embedding` 自动补全说明。
-- **`README.md` / `README_EN.md` 更新**：`experience` 工具描述补充 merge/prune/delete/rebuild_embedding；知识库存储表格新增经验知识库。
+自上一版本 v2026.06.08 以来的累积变更（包含 v2026.06.08.1 / v2026.06.12 / v2026.06.13 / v2026.06.15 / v2026.06.15.1）。
 
 ---
 
-**版本标签**: `v2026.06.08`
+## 新增功能
+
+### Delphi RTTI 桥接（v2026.06.13）
+- **`delphi_rtti` MCP 工具**：通过 Enhanced RTTI 发现和调用 Delphi 应用的 published 方法
+  - `action=guide`：返回完整使用指南
+  - `action=discover`：扫描 Delphi 应用的所有可调用能力
+  - `action=call`：调用 Delphi 应用的 published 方法
+- **`DaofyAutomation.RttiDiscovery.pas`**：TRttiDiscoverer 类，支持 15 类 Delphi 类型→JSON Schema 映射
+- **`src/services/rtti_bridge.py`**：RttiBridge 服务，5 分钟缓存，复用命名管道通信
+- **配套测试**：22 个 rtti_bridge + 16 个 delphi_rtti 测试用例
+- **Skill 分发脚本**：`scripts/build-skills.py` 支持分发到 claude-code/cursor/windsurf
+
+### 自动化测试框架重构（v2026.06.13）
+- **DaofyAutomation 三层架构拆分**：`Base.pas` / `Vcl.*.pas` / `Fmx.*.pas`，每层独立单元
+- **Overlapped I/O 管道通信**：`WaitForMultipleObjects` 零延迟推送，60 秒 TTL 自动清理
+- **全部命令标准化**：统一 reqId 回显，`rcall`/`rset`/`type`/`key` 改为异步
+- **扩展命令集**：新增 `move`/`drag`/`key`/`waitfor`/`listwnd`/`rcall`/`dlgfile`/`peekresult`
+- **FMX 截图支持**：`PaintTo`/`Context.CopyToBitmap`/`fsModal` 检测
+- **Console 模式**：`automate_delphi` 新增 `action=console`/`auto`，支持 PE 头自动检测 GUI vs Console
+- **测试项目**：VCL / FMX 2D / FMX 3D 三个测试程序 + 4 个 Python 测试脚本
+
+### 编译器与项目管理（v2026.06.15）
+- **Delphi >= XE5 自动启用响应文件编译**：`DCC_UseMSBuildExternally=true`，解决 MSBuild 命令行过长问题
+- **项目路径支持 .dpr/.dpk**：自动检测按 `.dproj` > `.dpr` > `.dpk` 优先级搜索
+- **文件路径白名单校验**：`file_tool` 集成 `PathValidator` 限制文件操作在允许目录内
+- **脏标记系统**：文件写入后标记脏，再次 write 前必须 read/preview 确认行号
+
+### 文件编辑增强（v2026.06.08.1 ~ v2026.06.15）
+- **RWLock 防并发文件损坏**：`file_tool` 所有操作引入多读单写锁，并行写入自动引导为 batch_write
+- **auto_format 偏移量重算**：formatting 后自动重读文件计算真实偏移差
+- **format action 移除偏移量计算**：pasfmt 可能非线性重构代码，format 后仅标记脏标记
+- **重复行检测降级为警告**：不再阻断写入，仅提示 AI verify 结果
+- **1-indexed 行号统一**：read/write 全部统一为 1-indexed，消除 ±1 错位历史问题
+- **读取自动清除脏标记**：read 成功后自动清除脏标记
+- **`uses_style="compact"`**：pasfmt 格式化后 uses 子句可合并回单行
+
+## Bug 修复
+
+- **批量写入 orig_e_display 导出错误**：`e` 为 None（替换到文件末尾）时偏移显示错误
+- **auto_format 后 fmt_diff 未初始化**：pasfmt 未格式化时局部变量可能未定义
+- **format action 遗留代码清理**：移除格式化前后行数计算的无用代码（~20 行）
+- **console_execute Windows pipe 读取**：`select.select` 不适用于 Windows pipe，改为 thread + Queue
+- **batch_write experimental 标记移除**：batch_write 正式作为标准接口
+- **batch_write content 首行重复检测修正**：s=0 时（文件头替换）不再误报
+- **`tool_docs.py`/`server.py` 参数同步**：delphi_rtti 注册；delphi_file 统一 edits 参数格式
+
+## 重构与改进
+
+- **`compiler_service` typing 迁移至原生泛型**（v2026.06.15.1）：移除 `typing.List`，4 处迁移至 `list[str]`/`list[Path]`
+- **`file_tool` 重构**（v2026.06.13）：统一 1-indexed 行号体系，+297 / -605 行
+- **`CODING_RULES.mdc` 规则重构**：全面重写 delphi_file 写入规则、紧凑输出格式、脏标记保护
+- **`AGENTS.md` 精简**：详细规则迁移至 `CODING_RULES.mdc`，仅保留工作流总览
+- **`project_knowledge_base` 日志降级**：非 `.dproj` 文件的三方库路径提取降为 debug
+- **tools/7z/7z.dll 打包**：补齐 7z.dll（1.9MB），确保 release 包开箱可用
+- **经验库维护规则更新**：保存前先泛化、embedding 自动补全、抽象合并
+
+## 文档
+
+- **`docs/automate_test_guide.md`**：完整 GUI 自动化测试指南
+- **`docs/delphi_file.md`**：行号规则与偏移量说明
+- **`docs/tutorial/`**：自动测试教程（含 VCL/FMX 3D 演示项目）
+- **CODING_RULES.mdc 新增章节**：§⑧ 自动化UI交互测试、§⑨ 控制台程序交互验证
+- **`tool_help` 新增 auto_unit_paths 显示**：DaofyAutomation 单元选择提示
+- **`.windsurfrules`**：Windsurf 规则配置
+
+---
+
+**版本标签**: `v2026.06.15.1`
 **完整日志**: [CHANGELOG.md](CHANGELOG.md)

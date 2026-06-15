@@ -60,6 +60,9 @@ releases/
 # Development tools (本地工具，需要自行下载)
 tools/7z/
 
+# Benchmarks (not in version control)
+benchmarks/
+
 # Temp / test files
 *.obj
 *.exe
