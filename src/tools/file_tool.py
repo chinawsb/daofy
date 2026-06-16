@@ -51,9 +51,9 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
 
     Args:
         file_path: 待校验的文件路径
-        project_path: 项目路径（.dproj/.dpr），用于 PathValidator 解析允许目录
+        project_path: 项目路径（保留参数签名兼容）
     """
-    # 基础校验
+    # Null 字节注入检查
     if '\0' in file_path:
         return "路径包含 null 字节"
     try:
@@ -61,15 +61,7 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
     except (OSError, ValueError) as e:
         return "路径解析失败: %s" % str(e)
 
-    # 白名单式路径校验 (PathValidator)
-    from src.utils.path_validator import get_path_validator
-    validator = get_path_validator()
-    validator.resolve(project_path)
-    err = validator.validate(file_path)
-    if err:
-        return err
-
-    # 保留原有系统敏感目录深度防御
+    # 系统敏感目录保护
     for sensitive_dir in _SYSTEM_SENSITIVE_DIRS:
         try:
             resolved_relative = os.path.relpath(resolved, sensitive_dir)

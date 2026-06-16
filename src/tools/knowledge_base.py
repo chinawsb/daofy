@@ -10,7 +10,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import logging
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from mcp.types import CallToolResult
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,25 @@ _thirdparty_kb_service = None
 
 # 项目知识库缓存 {project_path: ProjectKnowledgeBase instance}
 _pkb_cache = {}
+
+# 示例知识库缓存
+_example_kb_service: Optional[Any] = None
+
+
+def _get_example_kb() -> Optional[Any]:
+    """获取或创建 ExampleKnowledgeBase 实例（懒加载）"""
+    global _example_kb_service
+    if _example_kb_service is None:
+        try:
+            from src.services.knowledge_base.example_knowledge_base import (
+                ExampleKnowledgeBase,
+            )
+            _example_kb_service = ExampleKnowledgeBase()
+            logger.info("示例知识库实例已创建")
+        except Exception as e:
+            logger.warning("创建示例知识库实例失败: %s", e)
+            return None
+    return _example_kb_service
 
 
 def _format_build_info(s: dict) -> str:
@@ -79,6 +98,18 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
             )
         except Exception as e:
             logger.debug("获取 Thirdparty KB 统计失败: %s", e)
+    if kb_type in ("example",):
+        try:
+            ekb = _get_example_kb()
+            if ekb:
+                s = ekb.get_statistics()
+                bi = _format_build_info(s)
+                guide += (
+                    f"  Example KB: {s.get('files', 0)} 文件"
+                    f"{bi}\n"
+                )
+        except Exception as e:
+            logger.debug("获取 Example KB 统计失败: %s", e)
     return guide
 
 
@@ -344,6 +375,9 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     # 文档知识库 (仅 kb_type="all")
     _maybe_search_document(kb_type, query, top_k, results)
 
+    # 示例知识库 (仅 kb_type="example"，全文搜索，不走符号匹配)
+    _maybe_search_example(kb_type, query, top_k, results)
+
     # 多关键词 fallback: 原始 query 未命中时自动拆分后逐一搜索并去重聚合
     keywords: list = [query]
     if not _has_meaningful_results(results):
@@ -481,6 +515,7 @@ def _empty_query_guide(kb_type: str, search_type: str) -> str:
         '  delphi_kb(query="Create", search_type="function") — 搜索函数\n'
         '  delphi_kb(query="TForm", kb_type="delphi")  — 指定知识库\n'
         '  delphi_kb(query="TfrmMain", kb_type="project") — 搜索项目代码\n'
+        '  delphi_kb(query="frxReport.LoadFromFile", kb_type="example") — 搜索示例代码\n'
         '  delphi_kb(search_type="reference", query="TfrmMain") — 查找引用\n'
         '\n'
         f"知识库范围: {kb_type}\n"
@@ -719,6 +754,21 @@ def _maybe_search_document(kb_type: str, query: str, top_k: int, results: dict) 
         logger.debug("文档知识库搜索失败: %s", str(e))
 
 
+def _maybe_search_example(kb_type: str, query: str, top_k: int, results: dict) -> None:
+    """示例知识库搜索（仅当用户显式指定 kb_type='example' 时）"""
+    if "example" not in (kb_type if isinstance(kb_type, str) else "").split(","):
+        return
+    try:
+        ekb = _get_example_kb()
+        if not ekb:
+            return
+        example_results = ekb.search(query, top_k=top_k)
+        if example_results:
+            results["example"] = example_results
+    except Exception as e:
+        logger.debug("示例知识库搜索失败: %s", str(e))
+
+
 def _multi_keyword_search(
     keywords: list,
     kb_types: list,
@@ -748,6 +798,20 @@ def _multi_keyword_search(
                     if du and du not in seen_urls:
                         seen_urls.add(du)
                         results.setdefault("document", []).append(d)
+        except Exception:
+            continue
+        # 对每个拆分关键词也搜索示例知识库
+        try:
+            ekb = _get_example_kb()
+            if ekb:
+                kw_example_results = ekb.search(kw, top_k=top_k // len(keywords) + 1)
+                if kw_example_results:
+                    seen_paths: set = set()
+                    for d in kw_example_results:
+                        dp = d.get('path', '')
+                        if dp and dp not in seen_paths:
+                            seen_paths.add(dp)
+                            results.setdefault("example", []).append(d)
         except Exception:
             continue
 
@@ -904,6 +968,26 @@ def _format_search_output(
             output += "\n"
             has_results = True
 
+    # 示例知识库结果
+    if "example" in results and results["example"]:
+        ex_list = results["example"]
+        output += f"示例知识库 ({len(ex_list)}):\n"
+        for i, ex in enumerate(ex_list[:top_k], 1):
+            title = ex.get("title", "N/A")
+            full_path = ex.get("full_path", ex.get("path", ""))
+            source = ex.get("source", "")
+            snippet = ex.get("snippet", "")
+            output += f"  {i}. {title}\n"
+            if full_path:
+                output += f"     路径: {full_path}\n"
+            if source:
+                output += f"     来源: {source}\n"
+            if snippet:
+                output += f"     片段: {snippet}\n"
+        output += _trunc_hint(ex_list, results, None, top_k)
+        output += "\n"
+        has_results = True
+
     # 异步重建任务信息
     if "project_async_task_id" in results:
         output += (
@@ -1015,6 +1099,13 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
                 _thirdparty_kb_service.close()
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, rebuild=rebuild)
                 results["thirdparty"] = "成功" if success else "失败"
+            elif kb == "example":
+                ekb = _get_example_kb()
+                if ekb:
+                    success = ekb.build_example_knowledge_base(rebuild=rebuild)
+                    results["example"] = "成功" if success else "失败"
+                else:
+                    results["example"] = "错误: 示例知识库创建失败"
         except Exception as e:
             results[kb] = f"错误: {str(e)}"
     
@@ -1073,6 +1164,19 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 stats = _thirdparty_kb_service.get_statistics()
                 results["thirdparty"] = stats
+            elif kb == "example":
+                ekb = _get_example_kb()
+                if ekb:
+                    s = ekb.get_statistics()
+                    results["example"] = {
+                        "files": s.get("files", 0),
+                        "total_documents": s.get("files", 0),
+                        "last_build_time": s.get("last_build_time", ""),
+                        "last_build_duration": s.get("last_build_duration"),
+                        "database_size_mb": s.get("database_size_mb", 0),
+                    }
+                else:
+                    results["example"] = {"error": "示例知识库创建失败"}
         except Exception as e:
             results[kb] = {"error": str(e)}
     

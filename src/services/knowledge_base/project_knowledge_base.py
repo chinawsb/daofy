@@ -194,9 +194,10 @@ class ProjectKnowledgeBase:
                           '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
                           'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs'}
 
-        # 读取共享第三方库路径，精确跳过
-        shared_paths = self._get_shared_thirdparty_paths()
-        skip_paths_normalized = {str(Path(p).resolve()) for p in shared_paths} if shared_paths else set()
+        # 读取经过 .dproj 交叉验证的三方库路径前缀，精确跳过
+        # （仅跳过那些同时出现在共享KB和.dproj三方库路径中的目录，
+        #  避免项目源码目录因意外出现在 IDE 全局库路径中被误跳）
+        skip_paths_normalized = self._get_verified_thirdparty_prefixes()
 
         total_files = 0
         total_size = 0
@@ -260,37 +261,56 @@ class ProjectKnowledgeBase:
             logger.warning(f"读取共享第三方知识库路径失败: {e}")
             return set()
 
-    def _get_shared_exclude_prefixes(self) -> List[Path]:
+    def _get_verified_thirdparty_prefixes(self) -> Set[str]:
         """
-        获取共享知识库中属于当前项目目录的路径前缀列表。
+        获取经过验证的三方库路径前缀集合。
 
-        只返回在 self.project_dir 下的路径,用于 rglob 时的跳过判断。
+        只返回**同时满足**以下条件的路径：
+        1. 出现在共享知识库 thirdparty_paths.json 中
+        2. 在项目目录内 (self.project_dir 下)
+        3. 也被 .dproj 文件认定为三方库路径
+
+        三重校验确保项目源码目录不会因意外出现在 IDE 全局库路径中
+        而被误判为三方库跳过的 bug。
 
         Returns:
-            需要跳过的目录前缀 (Path 列表)
+            需要跳过的绝对路径集合 (已规范化)
         """
-        all_scanned = self._get_shared_thirdparty_paths()
-        prefixes = []
-        for p in all_scanned:
+        shared = self._get_shared_thirdparty_paths()
+        if not shared:
+            return set()
+
+        # 收集 .dproj 中在项目目录内的三方库路径
+        dproj_inside = set()
+        for p in self.get_thirdparty_paths_from_dproj():
             try:
                 pp = Path(p).resolve()
                 pp.relative_to(self.project_dir.resolve())
-                prefixes.append(pp)
+                dproj_inside.add(str(pp))
             except ValueError:
-                pass  # 不在项目目录内,不会出现在 rglob 结果中
-        if prefixes:
-            logger.info(f"项目源码扫描将跳过 {len(prefixes)} 个共享知识库已收录的目录")
-        return prefixes
+                pass  # 不在项目目录内，不参与排除判断
+
+        if not dproj_inside:
+            return set()
+
+        # 交集：同时出现在共享 KB 和 .dproj 三方库路径中
+        verified = set()
+        for p in shared:
+            pp_str = str(Path(p).resolve())
+            if pp_str in dproj_inside:
+                verified.add(pp_str)
+
+        if verified:
+            logger.info(f"项目源码扫描将跳过 {len(verified)} 个经验证的三方库目录")
+        return verified
 
 
-    def _should_skip_shared_path(self, file_path: Path, exclude_prefixes: List[Path]) -> bool:
+    def _should_skip_shared_path(self, file_path: Path, exclude_prefixes: Set[str]) -> bool:
         """检查文件是否在需要跳过的共享知识库路径下"""
         if not exclude_prefixes:
             return False
         file_str = str(file_path.resolve())
-        for prefix in exclude_prefixes:
-            prefix_str = str(prefix)
-            # 检查 file_path 是否以 prefix 开头 (作为目录前缀)
+        for prefix_str in exclude_prefixes:
             if file_str == prefix_str or file_str.startswith(prefix_str + os.sep):
                 return True
         return False
@@ -344,7 +364,7 @@ class ProjectKnowledgeBase:
         logger.info("开始构建项目源码知识库")
         self._report_progress(5, "扫描项目源码文件...")
         self.kb_dir.mkdir(parents=True, exist_ok=True)
-        exclude_prefixes = self._get_shared_exclude_prefixes()
+        exclude_prefixes = self._get_verified_thirdparty_prefixes()
 
         existing_files = {}
         if rebuild:

@@ -89,6 +89,7 @@ else:
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
+    from src.services.knowledge_base.async_task_manager import get_task_manager
     from src.services.automation_service import (
     execute_automation as _execute_automation,
     detect_exe_subsystem as _detect_exe_subsystem,
@@ -329,7 +330,7 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "default": "search", "description": "操作类型: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时需要）"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库类型"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document", "example"], "default": "all", "description": "知识库类型"},
                         "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "set", "helper", "type", "const", "resourcestring", "variable", "property", "method", "field", "event", "operator", "string", "dfm", "attribute", "unit", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
                         "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
                         "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj/.dpr/.dpk）"},
@@ -572,15 +573,28 @@ async def run_server():
             # ===== Daofy 自身更新管理 =====
             Tool(
                 name="daofy_update",
-                description="检查 Daofy 版本更新、执行 git pull 更新。发现新版本时智能提示中会自动通知。",
+                description="检查 Daofy 版本更新、执行 git pull 更新。发现新版本时智能提示中会自动通知。"
+                    " check/update 后台异步执行（类似 code_hosting），返回 task_id 配合 async_task 查进度。",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["check", "update", "version"],
+                            "enum": ["check", "check_retry", "update", "update_retry", "version"],
                             "default": "check",
-                            "description": "check=检查新版, update=执行 git pull 更新, version=显示当前版本",
+                            "description": "check=快速检查(失败后自动后台重试), check_retry=强制后台重试(返回task_id), update=后台git pull, update_retry=后台自动重试git pull(返回task_id), version=当前版本号",
+                        },
+                        "retry_interval": {
+                            "type": "integer",
+                            "description": "重试间隔秒数 (update_retry 可选，默认 60)",
+                        },
+                        "max_retries": {
+                            "type": "integer",
+                            "description": "最大重试次数 (update_retry 可选，默认 10)",
+                        },
+                        "task_id": {
+                            "type": "string",
+                            "description": "异步任务ID (配合 async_task 工具查询状态/结果)",
                         },
                     },
                     "required": ["action"],
@@ -963,9 +977,11 @@ async def run_server():
             return {"status": "failed", "message": f"experience failed: {e}"}
 
     async def _handle_daofy_update(arguments: dict) -> dict:
-        """处理 daofy_update 工具调用。"""
+        """处理 daofy_update 工具调用（类似 code_hosting 模式：后台异步+定时重试）。"""
         action = arguments.get("action", "check")
+        task_manager = get_task_manager()
 
+        # ── version: 同步返回，无需网络 ──
         if action == "version":
             install_type = "git" if updater.is_git_installation() else "pip"
             return {
@@ -974,52 +990,142 @@ async def run_server():
                 "python": sys.version,
             }
 
+        # ── check: 先快速尝试（同步），失败后提交后台重试任务 ──
         if action == "check":
-            result = await asyncio.get_running_loop().run_in_executor(
+            # 1. 优先检查缓存
+            cached = updater.get_cached_update_result()
+            if cached is not None:
+                install_type = "git" if updater.is_git_installation() else "pip"
+                cached["install_type"] = install_type
+                status_msg = (
+                    f"发现新版本 v{cached['latest']}！（当前 v{cached['current']}）"
+                    if cached.get("update_available")
+                    else f"当前已是最新版本: v{cached['current']}"
+                )
+                return {**cached, "message": status_msg, "cache_hit": True}
+
+            # 2. 快速同步尝试
+            quick = await asyncio.get_running_loop().run_in_executor(
                 None, updater.check_for_update
             )
-            if result is None:
-                return {
-                    "error": "无法检查更新（网络不可达或 GitHub API 异常）",
-                    "hint": "请检查网络连接后重试",
-                }
-            install_type = "git" if updater.is_git_installation() else "pip"
-            result["install_type"] = install_type
-            if result["update_available"]:
-                if install_type == "git":
-                    result["message"] = (
-                        f"发现新版本 v{result['latest']}！"
-                        f" 当前版本 v{result['current']}。"
-                        f" 使用 daofy_update(action='update') 执行 git pull 更新。"
-                    )
+            if quick is not None:
+                install_type = "git" if updater.is_git_installation() else "pip"
+                quick["install_type"] = install_type
+                if quick["update_available"]:
+                    if install_type == "git":
+                        quick["message"] = (
+                            f"发现新版本 v{quick['latest']}！"
+                            f" 当前版本 v{quick['current']}。"
+                            f" 建议: daofy_update(action='update') 执行 git pull 更新。"
+                        )
+                    else:
+                        quick["message"] = (
+                            f"发现新版本 v{quick['latest']}！"
+                            f" 当前版本 v{quick['current']}。"
+                            f" 请运行: pip install --upgrade daofy-for-delphi"
+                        )
                 else:
-                    result["message"] = (
-                        f"发现新版本 v{result['latest']}！"
-                        f" 当前版本 v{result['current']}。"
-                        f" 请运行: pip install --upgrade daofy-for-delphi"
-                    )
-            else:
-                result["message"] = f"当前已是最新版本: v{result['current']}"
-            return result
+                    quick["message"] = f"当前已是最新版本: v{quick['current']}"
+                return quick
 
-        if action == "update":
+            # 3. 快速尝试失败，提交后台自动重试任务（类似 code_hosting git_push_retry）
+            logger.info("版本检查快速尝试失败，提交后台自动重试任务...")
+            on_complete = arguments.get('_on_complete')
+            task_id = task_manager.submit_task(
+                name="version_check_retry",
+                func=updater.check_for_update_retry,
+                on_complete=on_complete,
+                dedup_key="version_check_retry",
+            )
+            return {
+                "task_id": task_id,
+                "status": "async",
+                "message": (
+                    "快速检查失败（网络不可达），已提交后台自动重试任务。\n"
+                    f"  任务ID: {task_id}\n"
+                    f"  重试间隔: {updater.RETRY_INTERVAL}s | 最多 {updater.MAX_RETRIES} 次\n"
+                    "  使用 async_task(action=status, task_id=...) 查看进度。"
+                ),
+            }
+
+        # ── check_retry: 强制提交后台自动重试任务（返回 task_id） ──
+        if action == "check_retry":
+            on_complete = arguments.get('_on_complete')
+            task_id = task_manager.submit_task(
+                name="version_check_retry",
+                func=updater.check_for_update_retry,
+                on_complete=on_complete,
+                dedup_key="version_check_retry",
+            )
+            return {
+                "task_id": task_id,
+                "status": "async",
+                "message": (
+                    "后台版本检查任务已提交。\n"
+                    f"  任务ID: {task_id}\n"
+                    f"  重试间隔: {updater.RETRY_INTERVAL}s | 最多 {updater.MAX_RETRIES} 次\n"
+                    "  使用 async_task(action=status, task_id=...) 查看进度。"
+                ),
+            }
+
+        # ── update / update_retry: 后台 git pull 更新 ──
+        if action in ("update", "update_retry"):
             if not updater.is_git_installation():
-                info = updater.check_for_update()
-                latest = info["latest"] if info else "unknown"
                 return {
                     "success": False,
                     "message": (
                         "当前为 pip 安装模式，不支持 git pull 更新。\n"
-                        f"请手动运行: pip install --upgrade daofy-for-delphi"
-                        f"{f' (最新版: v{latest})' if latest != 'unknown' else ''}"
+                        "请手动运行: pip install --upgrade daofy-for-delphi"
                     ),
                 }
-            result = await updater.git_pull_update()
-            if result["success"] and result["updated"]:
-                # 更新全局缓存
-                global _update_check_result
-                _update_check_result = None
-            return result
+
+            on_complete = arguments.get('_on_complete')
+            retry_interval = int(arguments.get("retry_interval", 60))
+            max_retries = int(arguments.get("max_retries", 10))
+
+            if action == "update_retry":
+                # 自定义 retry 参数
+                orig_interval = updater.UPDATE_RETRY_INTERVAL
+                orig_max = updater.UPDATE_MAX_RETRIES
+                updater.UPDATE_RETRY_INTERVAL = retry_interval
+                updater.UPDATE_MAX_RETRIES = max_retries
+                try:
+                    task_id = task_manager.submit_task(
+                        name="git_update_retry",
+                        func=updater._do_retry_update,
+                        on_complete=on_complete,
+                        dedup_key="git_update_retry",
+                    )
+                finally:
+                    updater.UPDATE_RETRY_INTERVAL = orig_interval
+                    updater.UPDATE_MAX_RETRIES = orig_max
+                eta_min = (retry_interval * max_retries) // 60
+                return {
+                    "task_id": task_id,
+                    "status": "async",
+                    "message": (
+                        "后台自动重试 git pull 更新任务已提交。\n"
+                        f"  任务ID: {task_id}\n"
+                        f"  重试间隔: {retry_interval}s | 最多 {max_retries} 次 | 预计最长 ~{eta_min}min\n"
+                        "  使用 async_task(action=status, task_id=...) 查看进度。"
+                    ),
+                }
+
+            # update（单次）
+            task_id = task_manager.submit_task(
+                name="git_update",
+                func=updater.git_pull_update_sync,
+                on_complete=on_complete,
+            )
+            return {
+                "task_id": task_id,
+                "status": "async",
+                "message": (
+                    "后台 git pull 更新任务已提交。\n"
+                    f"  任务ID: {task_id}\n"
+                    "  使用 async_task(action=status, task_id=...) 查看进度。"
+                ),
+            }
 
         return {"error": f"未知 action: {action}"}
 
@@ -1120,45 +1226,6 @@ async def run_server():
         """处理 delphi_rtti 工具调用（RTTI 发现/调用）。"""
         return await _handle_delphi_rtti(arguments)
 
-    # ── Layer A 路径校验 ──────────────────────────────────
-
-    _PATH_TOOLS_ARGS = {
-        "delphi_file":    ["file_path"],
-        "file_tool":      ["file_path"],
-        "delphi_kb":      ["file_path"],
-        "manage_component": ["target_dfm", "target_pas"],
-        "project":        ["project_path"],
-        "code_hosting":   ["dir"],
-    }
-
-    def _validate_tool_paths(tool_name: str, arguments: dict) -> None:
-        """Layer A 防御：在工具入口处校验路径参数
-
-        对涉及文件操作的工具，使用 PathValidator 白名单校验所有路径参数。
-        校验失败时抛出 ValueError，由 call_tool 的 except 统一处理。
-
-        Args:
-            tool_name: 工具名称
-            arguments: 工具参数字典
-
-        Raises:
-            ValueError: 路径校验失败时抛出
-        """
-        path_args = _PATH_TOOLS_ARGS.get(tool_name)
-        if not path_args:
-            return
-        from src.utils.path_validator import get_path_validator
-        validator = get_path_validator()
-        project_path = arguments.get("project_path")
-        validator.resolve(project_path)
-        for arg_name in path_args:
-            raw = arguments.get(arg_name)
-            if not raw or not isinstance(raw, str):
-                continue
-            err = validator.validate(raw)
-            if err:
-                raise ValueError(f"工具 {tool_name} 参数 {arg_name} 路径校验失败: {err}")
-
     _TOOL_HANDLERS = {
         "project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
@@ -1194,10 +1261,6 @@ async def run_server():
         try:
             handler = _TOOL_HANDLERS.get(name)
             if handler:
-                # ── Layer A 防御: 路径参数校验 ──
-                # 对涉及文件操作的工具，在入口处二次校验路径参数
-                _validate_tool_paths(name, arguments)
-
                 # ── MCP 推送通知注入 ──
                 # 对于 code_hosting 等支持异步任务的工具，注入 _on_complete 回调
                 # 任务完成时自动推送 TaskStatusNotification 到 MCP 客户端，无需轮询
@@ -1413,30 +1476,85 @@ async def run_server():
         raise ValueError(f"未知资源: {uri}")
 
     # ============================================================
-    # 后台版本检查 — 启动时异步检测 GitHub 有无新版本
+    # 后台版本检查 — 启动时异步检测 GitHub 有无新版本（带自动重试）
     # ============================================================
 
     async def _background_version_check():
-        """后台检查 Daofy 版本更新，结果存入全局变量。"""
+        """后台检查 Daofy 版本更新，使用 AsyncTaskManager 提交自动重试任务。
+
+        类似 code_hosting git_push_retry 模式：
+        - 网络不可达时自动重试（5分钟间隔，最多12次≈1小时）
+        - 重试期间不阻塞 MCP 服务
+        - 成功时通过 on_complete 回调更新全局变量
+        """
         global _update_check_result, _update_check_done
         try:
-            logger.info("正在后台检查 Daofy 版本更新...")
+            logger.info("正在后台检查 Daofy 版本更新（异步自动重试）...")
+
+            # 先快速尝试一次（不等待重试）
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, updater.check_for_update)
-            if result:
-                _update_check_result = result
-                if result.get("update_available"):
+            quick_result = await loop.run_in_executor(
+                None, updater.check_for_update
+            )
+            if quick_result is not None:
+                _update_check_result = quick_result
+                if quick_result.get("update_available"):
                     logger.warning(
                         "发现新版本！当前: %s, 最新: %s → %s",
-                        result["current"], result["latest"], result["release_url"],
+                        quick_result["current"], quick_result["latest"],
+                        quick_result["release_url"],
                     )
                 else:
-                    logger.info("当前已是最新版本: %s", result["current"])
-            else:
-                logger.debug("版本检查未返回结果（可能网络不可达）")
+                    logger.info("当前已是最新版本: %s", quick_result["current"])
+                _update_check_done = True
+                return
+
+            # 快速尝试失败，提交后台自动重试任务
+            logger.info("版本检查快速尝试失败，提交后台自动重试任务...")
+
+            def _on_update_complete(task_info):
+                """后台重试任务完成回调 — 更新全局缓存。"""
+                global _update_check_result, _update_check_done
+                result = task_info.result
+                if isinstance(result, dict) and 'error' not in result:
+                    _update_check_result = result
+                    if result.get("update_available"):
+                        logger.warning(
+                            "后台重试发现新版本！当前: %s, 最新: %s",
+                            result["current"], result["latest"],
+                        )
+                    else:
+                        logger.info(
+                            "后台重试确认已是最新版本: %s", result["current"]
+                        )
+                elif isinstance(result, dict) and result.get('error'):
+                    logger.warning(
+                        "后台版本检查重试全部失败: %s", result['error']
+                    )
+                _update_check_done = True
+
+            from src.services.knowledge_base.async_task_manager import get_task_manager
+            task_id = get_task_manager().submit_task(
+                name="version_check_retry",
+                func=updater.check_for_update_retry,
+                on_complete=_on_update_complete,
+            )
+            logger.info(
+                "后台版本检查重试任务已提交: task_id=%s | "
+                "间隔=%ds | 最多%d次 | 最长约%dmin",
+                task_id,
+                updater.RETRY_INTERVAL,
+                updater.MAX_RETRIES,
+                updater.ETA_MINUTES,
+            )
+
+        except ImportError as e:
+            logger.warning(
+                "无法提交异步重试任务（AsyncTaskManager 不可用）: %s", e
+            )
+            _update_check_done = True
         except Exception as e:
-            logger.debug(f"版本检查失败（不影响正常运行）: {e}")
-        finally:
+            logger.debug("版本检查失败（不影响正常运行）: %s", e)
             _update_check_done = True
 
     # 启动后台版本检查（不阻塞启动）

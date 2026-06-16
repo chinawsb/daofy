@@ -540,25 +540,31 @@ TOOL_HELP_DOCS: dict = {
         },
     },
     "daofy_update": {
-        "summary": "检查 Daofy 版本更新、执行 git pull 更新。",
-        "description": "Daofy 自身更新管理 — 版本检查 / git pull 更新",
+        "summary": "检查 Daofy 版本更新、执行 git pull 更新（类似 code_hosting 异步模式）。",
+        "description": "Daofy 自身更新管理 — 版本检查 / git pull 更新（后台异步+自动重试）",
         "triggers": ["更新、升级、新版本、检查更新、daofy 版本、update、upgrade"],
-        "workflow": "启动时后台自动检查 → 智能提示通知 AI → AI 询问用户 → daofy_update(action='update') → 通知重启",
+        "workflow": "启动时后台自动检查 → 智能提示通知 AI → AI 询问用户 → daofy_update(action='update') → async_task 查进度 → 通知重启",
         "actions": {
-            "check": "检查 GitHub 最新 Release，返回当前版本/最新版本/是否有更新",
-            "update": "执行 git pull 更新代码（仅 git 安装模式有效；pip 安装会提示使用 pip install --upgrade）",
+            "check": "先快速检查（缓存/同步），失败后自动提交后台重试任务（返回 task_id）",
+            "check_retry": "强制提交后台自动重试版本检查任务，返回 task_id",
+            "update": "提交后台 git pull 任务（单次），返回 task_id",
+            "update_retry": "提交后台自动重试 git pull 任务（类似 git_push_retry），返回 task_id",
             "version": "显示当前版本号和安装方式（git/pip）",
         },
         "notes": (
             "启动时服务器会自动在后台检查更新，有新版本时会通过工具响应智能提示通知 AI。\n"
-            "AI 看到提示后应主动询问用户是否需要更新。\n"
+            "check/update 返回 task_id 时，使用 async_task(action=status, task_id=...) 查看进度。\n"
+            "任务完成时会自动推送通知到 MCP 客户端。\n"
             "更新完成后需要重启 Daofy 或 AI Agent 使新版本生效。\n"
             "pip 安装用户使用: pip install --upgrade daofy-for-delphi"
         ),
         "examples": [
-            'daofy_update(action="check")      检查是否有新版本',
-            'daofy_update(action="update")     执行 git pull 更新',
-            'daofy_update(action="version")    显示当前版本',
+            'daofy_update(action="check")           检查版本（快速/后台重试）',
+            'daofy_update(action="check_retry")     强制后台重试检查',
+            'daofy_update(action="update")          后台 git pull 更新',
+            'daofy_update(action="update_retry")    后台自动重试 git pull',
+            'async_task(action=status, task_id=...) 查询异步任务进度',
+            'daofy_update(action="version")         显示当前版本',
         ],
     },
     "generate_copyright": {
@@ -688,7 +694,8 @@ TOOL_SHORT_DESC: dict = {
         "经验记忆管理: 保存/搜索 AI 经验(save自动去重)。支持 merge/prune/rebuild_embedding 维护。"
     ),
     "daofy_update": (
-        "检查 Daofy 版本更新/执行 git pull。action=check/update/version。"
+        "检查 Daofy 版本更新/执行 git pull。支持后台异步+自动重试（类似 code_hosting）。"
+        " action=check(快速/后台重试)/check_retry/update(后台git pull)/update_retry/version。"
     ),
     "automate_delphi": (
         "Delphi 自动化测试(action=gui: GUI操作+截图/action=console: 控制台交互)。"

@@ -23,11 +23,12 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
     Args:
         arguments: 包含以下参数:
-            - task_type: 任务类型 (必需)
+             - task_type: 任务类型 (必需)
                 - "build_knowledge_base": 构建Delphi知识库
                 - "build_thirdparty_knowledge_base": 构建第三方库知识库
                 - "init_project_knowledge_base": 初始化项目知识库
                 - "build_document_knowledge_base": 构建文档知识库
+                - "build_example_knowledge_base": 构建示例知识库
             - params: 任务参数 (可选, 根据任务类型不同)
                 - build_document_knowledge_base:
                     - urls: 网页URL列表
@@ -172,6 +173,19 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         task_name = f"构建 embedding 向量 ({params.get('project_path', '')})"
 
+    elif task_type == "build_example_knowledge_base":
+        from ..services.knowledge_base.example_knowledge_base import (
+            ExampleKnowledgeBase,
+        )
+
+        def build_example_task(**kwargs):
+            rebuild = kwargs.get("rebuild", False)
+            progress_callback = kwargs.get("_progress_callback")
+            ekb = ExampleKnowledgeBase(progress_callback=progress_callback)
+            return ekb.build_example_knowledge_base(rebuild=rebuild)
+
+        task_name = "构建示例知识库"
+
     elif task_type == "build_document_knowledge_base":
         from ..services.knowledge_base.scan_generic_documents import GenericDocumentScanner
         from pathlib import Path as FilePath
@@ -262,6 +276,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
                 dedup_key = f"document_rebuild:{params.get('directory', '')}"
             elif task_type == "build_embedding":
                 dedup_key = f"embedding:{params.get('project_path', '')}"
+            elif task_type == "build_example_knowledge_base":
+                dedup_key = "example_rebuild"
 
         # 提交异步任务
         task_func = (
@@ -269,6 +285,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             build_thirdparty_task if task_type == "build_thirdparty_knowledge_base" else
             init_project_task if task_type == "init_project_knowledge_base" else
             build_embedding_task if task_type == "build_embedding" else
+            build_example_task if task_type == "build_example_knowledge_base" else
             build_doc_task
         )
         

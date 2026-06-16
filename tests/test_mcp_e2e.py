@@ -102,8 +102,8 @@ class TestServerDispatch:
         end = source.find("@server.call_tool()")
         assert start != -1 and end != -1, "Cannot find list_tools/call_tool sections"
         section = source[start:end]
-        # 提取所有 name= 值
-        names = re.findall(r'name\s*=\s*"(\w+)"', section)
+        # 提取所有 Tool(name=...) 中的工具名，排除 submit_task 等内部 name= 值
+        names = re.findall(r'Tool\(\s*name\s*=\s*"(\w+)"', section)
         return set(names)
 
     @classmethod
