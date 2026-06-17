@@ -13,6 +13,7 @@ import sys
 import os
 import time
 import winreg
+import logging as _logging
 from pathlib import Path
 from typing import Any, Optional
 import io
@@ -1738,6 +1739,7 @@ def main():
         logger.info("服务器已停止")
     except Exception as e:
         logger.error(f"服务器运行失败: {str(e)}", exc_info=True)
+        _logging.shutdown()
         sys.exit(1)
     finally:
         _cleanup_resources()
