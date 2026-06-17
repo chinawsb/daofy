@@ -32,6 +32,122 @@ EXIT_FAILURE = 1
 EXIT_CANCELLED = 2
 
 
+def _encode_toml_value(value) -> str:
+    """将 Python 值编码为 TOML 内联格式。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        return f'"{escaped}"'
+    if isinstance(value, list):
+        items = ", ".join(_encode_toml_value(v) for v in value)
+        return f"[{items}]"
+    if isinstance(value, dict):
+        items = ", ".join(f'{k} = {_encode_toml_value(v)}' for k, v in value.items())
+        return "{" + items + "}"
+    return str(value)
+
+
+def _toml_dumps_section(section_name: str, entries: dict) -> str:
+    """将 {name: {fields...}} 字典序列化为 TOML [[section]] 格式。"""
+    lines: list[str] = []
+    for name, fields in entries.items():
+        lines.append(f"[{section_name}.{name}]")
+        for k, v in fields.items():
+            lines.append(f'{k} = {_encode_toml_value(v)}')
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _toml_parse(text: str) -> dict:
+    """简易 TOML 解析（仅限 mcp_servers 场景）。"""
+    import re
+    result: dict = {}
+    current_key = None
+    current_val = None
+    section_pattern = re.compile(r'^\[(\S+)\]$')
+    kv_pattern = re.compile(r'^(\w[\w_]*)\s*=\s*(.+)$')
+    inline_table_pattern = re.compile(r'^\{(.*)\}$')
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        m = section_pattern.match(line)
+        if m:
+            if current_key and current_val is not None:
+                parts = current_key.split(".", 1)
+                if len(parts) == 2:
+                    top = parts[0]
+                    sub = parts[1]
+                    if top not in result:
+                        result[top] = {}
+                    result[top][sub] = current_val
+            current_key = m.group(1)
+            current_val = None
+            continue
+        m = kv_pattern.match(line)
+        if m and current_key is not None:
+            key = m.group(1)
+            raw = m.group(2)
+            # 简单值解析
+            if raw.lower() == "true":
+                val = True
+            elif raw.lower() == "false":
+                val = False
+            elif raw.startswith('"') and raw.endswith('"'):
+                val = raw[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+            elif raw.startswith('{') and raw.endswith('}'):
+                # 内联表
+                inner = raw[1:-1].strip()
+                val = {}
+                if inner:
+                    for part in inner.split(","):
+                        part = part.strip()
+                        if "=" in part:
+                            k, v = part.split("=", 1)
+                            k = k.strip()
+                            v = v.strip()
+                            if v.startswith('"') and v.endswith('"'):
+                                val[k] = v[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+                            elif v.lower() == "true":
+                                val[k] = True
+                            elif v.lower() == "false":
+                                val[k] = False
+                            else:
+                                val[k] = v
+            elif raw.startswith('[') and raw.endswith(']'):
+                inner = raw[1:-1].strip()
+                val = []
+                if inner:
+                    for item in inner.split(","):
+                        item = item.strip()
+                        if item.startswith('"') and item.endswith('"'):
+                            val.append(item[1:-1].replace('\\"', '"').replace('\\\\', '\\'))
+                        else:
+                            val.append(item)
+            else:
+                val = raw
+            if current_val is None:
+                current_val = {}
+            current_val[key] = val
+
+    if current_key and current_val is not None:
+        parts = current_key.split(".", 1)
+        if len(parts) == 2:
+            top = parts[0]
+            sub = parts[1]
+            if top not in result:
+                result[top] = {}
+            result[top][sub] = current_val
+
+    return result
+
+
 def _enable_ansi() -> bool:
     """启用 Windows CMD ANSI 支持，返回是否成功"""
     if sys.platform != "win32":
@@ -118,7 +234,7 @@ def get_python_exe() -> str:
 
     # 从 PATH 搜索（跳过 WindowsApps）
     try:
-        r = subprocess.run(["where", "python"], capture_output=True, text=True, timeout=10)
+        r = subprocess.run(["where", "python"], capture_output=True, text=True, timeout=10, errors='replace')
         if r.returncode == 0:
             for p in r.stdout.strip().splitlines():
                 p = p.strip()
@@ -159,16 +275,46 @@ def write_json(path: str, data: dict) -> None:
         f.write("\n")
 
 
+def _is_toml_config(config_type: str) -> bool:
+    """判断是否为 TOML 格式的配置文件（如 Codex CLI）。"""
+    return config_type == "Codex"
+
+
 def _mcp_node_key(config_type: str) -> str:
-    """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键"""
-    return "mcp" if config_type == "OpenCode" else "mcpServers"
+    """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键，Codex 使用 'mcp_servers'"""
+    if config_type == "OpenCode":
+        return "mcp"
+    if _is_toml_config(config_type):
+        return "mcp_servers"
+    return "mcpServers"
+
+
+def _read_config(config_path: str, config_type: str) -> dict:
+    if _is_toml_config(config_type):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return _toml_parse(f.read())
+    return read_json(config_path)
+
+
+def _write_config(config_path: str, data: dict, config_type: str) -> None:
+    if _is_toml_config(config_type):
+        node_key = _mcp_node_key(config_type)
+        mcp_servers = data.get(node_key, {})
+        other_sections = {k: v for k, v in data.items() if k != node_key}
+        # 将其他 section 写回时保持兼容（仅保留 mcp_servers 部分的修改）
+        text = _toml_dumps_section(node_key, mcp_servers)
+        with open(config_path, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.write("\n")
+    else:
+        write_json(config_path, data)
 
 
 def is_mcp_configured(config_path: str, server_name: str, config_type: str) -> bool:
     if not os.path.exists(config_path):
         return False
     try:
-        data = read_json(config_path)
+        data = _read_config(config_path, config_type)
         node = data.get(_mcp_node_key(config_type), {})
         return server_name in node
     except Exception:
@@ -185,20 +331,20 @@ def is_mcp_configured_any(config_path: str, config_type: str) -> bool:
 def add_mcp_config(config_path: str, server_name: str, mcp_config: dict, config_type: str) -> None:
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     if os.path.exists(config_path):
-        data = read_json(config_path)
+        data = _read_config(config_path, config_type)
     else:
         data = {}
     node_key = _mcp_node_key(config_type)
     if node_key not in data:
         data[node_key] = {}
     data[node_key][server_name] = mcp_config
-    write_json(config_path, data)
+    _write_config(config_path, data, config_type)
 
 
 def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> bool:
     if not os.path.exists(config_path):
         return False
-    data = read_json(config_path)
+    data = _read_config(config_path, config_type)
     node_key = _mcp_node_key(config_type)
     node = data.get(node_key, {})
     if server_name not in node:
@@ -206,7 +352,7 @@ def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> b
     del node[server_name]
     if not node:
         del data[node_key]
-    write_json(config_path, data)
+    _write_config(config_path, data, config_type)
     return True
 
 
@@ -406,6 +552,30 @@ AGENT_DEFINITIONS = {
         "detect_paths": lambda: [],
         "detect_command": lambda: shutil.which("opencode") is not None,
     },
+    "Codex CLI": {
+        # OpenAI Codex CLI — 原生 Rust 终端编码代理
+        # 安装方式: npm install -g @openai/codex / brew install --cask codex / 直接下载二进制
+        # 配置格式: TOML，~/.codex/config.toml，[mcp_servers] 节
+        # 项目级: <project>/.codex/config.toml
+        # 文档: https://developers.openai.com/codex
+        "config_type": "Codex",
+        "modes": ["global", "project"],
+        "doc_url": "https://developers.openai.com/codex",
+        "config_path": lambda: os.path.join(_userprofile(), ".codex", "config.toml"),
+        "project_config_relpath": os.path.join(".codex", "config.toml"),
+        "detect_paths": lambda: [
+            # npm 全局安装的 codex CLI（优先 .cmd 以便 Windows 执行）
+            os.path.join(_env("APPDATA"), "npm", "codex.cmd"),
+            os.path.join(_env("LOCALAPPDATA"), "npm", "codex.cmd"),
+            os.path.join(_env("ProgramFiles"), "codex", "codex.exe"),
+            os.path.join(_userprofile(), ".codex"),
+        ],
+        "detect_command": lambda: shutil.which("codex") is not None,
+        "detect_npm": lambda: (
+            os.path.exists(os.path.join(_env("APPDATA"), "npm", "node_modules", "@openai", "codex"))
+            or os.path.exists(os.path.join(_env("LOCALAPPDATA"), "npm", "node_modules", "@openai", "codex"))
+        ),
+    },
     "Windsurf": {
         "config_type": "Standard",
         "doc_url": "https://docs.open.cx/mcp/clients/windsurf",
@@ -546,10 +716,16 @@ def detect_agents() -> list[dict]:
         if install_path:
             installed = True
 
-        # 2. 检查命令行（仅适用于 CLI 工具如 OpenCode）
+        # 2. 检查命令行（仅适用于 CLI 工具如 OpenCode / Codex）
         if not installed and defn.get("detect_command", lambda: False)():
             installed = True
-            install_path = shutil.which("opencode") or "CLI"
+            which_path = shutil.which(name.lower().split()[0])
+            install_path = which_path or "CLI"
+
+        # 2.5 检查 npm 全局安装（Codex CLI 等）
+        if not installed and defn.get("detect_npm", lambda: False)():
+            installed = True
+            install_path = shutil.which(name.lower().split()[0]) or "npm global"
 
         # 3. 检查 VS Code 扩展
         # 注意: detect_vscode_ext 是 lambda (如 "lambda: 'saoudrizwan.claude-dev'"),
@@ -572,7 +748,10 @@ def detect_agents() -> list[dict]:
         was_configured = False
         if os.path.exists(config_path):
             try:
-                data = read_json(config_path)
+                if _is_toml_config(defn["config_type"]):
+                    data = _read_config(config_path, defn["config_type"])
+                else:
+                    data = read_json(config_path)
                 node_key = _mcp_node_key(defn["config_type"])
                 node = data.get(node_key, {})
                 was_configured = MCP_SERVER_NAME in node or LEGACY_SERVER_NAME in node
@@ -604,6 +783,7 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
     """生成 MCP Server 配置字典。
 
     OpenCode 使用专用格式（mcp 键 / type: local / command 数组 / environment），
+    Codex 使用 TOML 格式（mcp_servers 节 / command + args + env），
     其他 Standard Agent 使用统一格式（mcpServers 键 / command 字符串 + args / env）。
     """
     script_dir = str(get_script_dir())
@@ -623,6 +803,22 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
         }
         # OpenCode 的 command 是数组，没有单独的 args 和 cwd
         # type 字段 Optional，local 是默认值
+        return base
+
+    if _is_toml_config(config_type):
+        # Codex CLI 格式：TOML [mcp_servers] 节，command 字符串 + args 数组 + env 内联表
+        base = {
+            "command": "daofy" if use_pip else python_exe,
+            "args": [] if use_pip else [server_script],
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+            "enabled": True,
+        }
+        if not use_pip:
+            base["cwd"] = cwd
         return base
 
     # Standard 格式（Claude / Cursor / Windsurf 等）
@@ -653,18 +849,29 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
 
 
 def _get_process_pids(exe_name: str) -> list[str]:
-    """通过 tasklist 获取指定可执行文件的所有进程 PID。"""
+    """通过 tasklist 获取指定可执行文件的所有进程 PID。
+
+    特殊处理 .cmd/.bat 包装器：实际进程可能是 cmd.exe 或 node.exe，
+    此时搜索包含 exe_name 命令行的进程作为兜底。
+    """
+    pids = _get_process_pids_by_image(exe_name)
+    if not pids and (exe_name.lower().endswith(".cmd") or exe_name.lower().endswith(".bat")):
+        # .cmd/.bat 包装器：实际进程可能是 cmd.exe / node.exe，按命令行搜索
+        pids = _get_process_pids_by_cmdline(exe_name)
+    return pids
+
+
+def _get_process_pids_by_image(exe_name: str) -> list[str]:
     try:
         result = subprocess.run(
             ["tasklist", "/FO", "CSV", "/NH", "/FI", f"IMAGENAME eq {exe_name}"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, timeout=10, errors='replace'
         )
         pids: list[str] = []
         for line in result.stdout.strip().splitlines():
             line = line.strip()
             if not line:
                 continue
-            # CSV 格式: "exe_name","pid","session","session#","mem usage"
             parts = line.strip('"').split('","')
             if len(parts) >= 2:
                 pids.append(parts[1])
@@ -673,10 +880,53 @@ def _get_process_pids(exe_name: str) -> list[str]:
         return []
 
 
-def _restart_agent(agent: dict) -> bool:
-    """重启指定 AI Agent 进程（先杀后启）。
+def _get_process_pids_by_cmdline(exe_name: str) -> list[str]:
+    """通过 WMI 按命令行包含 exe_name 搜索进程 PID。"""
+    script = (
+        f'Get-CimInstance Win32_Process -Filter "Name like \'%cmd.exe%\' or Name like \'%node.exe%\'" '
+        f'| Where-Object {{ $_.CommandLine -like \'*{exe_name}*\' }} '
+        f'| ForEach-Object {{ $_.ProcessId }}'
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, text=True, timeout=15, errors='replace'
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            return []
+        return [pid.strip() for pid in r.stdout.strip().splitlines() if pid.strip().isdigit()]
+    except Exception:
+        return []
 
-    使用 PID 精准杀进程，避免 /IM 误杀所有同名进程（多用户/多实例场景）。
+
+def _get_process_info(pid: str) -> dict | None:
+    """通过 WMI 查询进程的完整命令行。
+
+    Returns:
+        {"command_line": str} 或 None。WMI 的 WorkingDirectory 不可靠，不依赖。
+    """
+    script = (
+        f'$p = Get-CimInstance Win32_Process -Filter "ProcessId = {pid}" 2>$null; '
+        f'if ($p) {{ Write-Output $p.CommandLine }}'
+    )
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, text=True, timeout=10, errors='replace'
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            return None
+        cmdline = r.stdout.strip()
+        return {"command_line": cmdline} if cmdline else None
+    except Exception:
+        return None
+
+
+def _restart_agent(agent: dict) -> bool:
+    """重启指定 AI Agent 进程（先录参数，再杀，再按原参数启）。
+
+    通过 WMI 查询运行中进程的原始命令行和启动目录，
+    重启时恢复相同参数和目录。
     """
     exe_path = agent.get("path")
     if not exe_path or not os.path.isfile(exe_path):
@@ -684,20 +934,44 @@ def _restart_agent(agent: dict) -> bool:
 
     exe_name = os.path.basename(exe_path)
     pids = _get_process_pids(exe_name)
+    if not pids:
+        # 没有运行中的进程，直接启动
+        try:
+            subprocess.Popen([exe_path])
+            return True
+        except Exception:
+            return False
+
+    # 收集第一个匹配进程的参数和启动目录
+    proc_info = _get_process_info(pids[0])
+
+    # 杀进程
     for pid in pids:
         try:
             subprocess.run(["taskkill", "/F", "/PID", pid],
                            capture_output=True, timeout=10)
         except Exception:
-            pass  # 进程可能已结束
+            pass
 
-    time.sleep(1)  # 等待进程完全退出
+    time.sleep(1)
 
+    # 按原参数启动（不依赖 cwd，WMI 的 WorkingDirectory 不可靠）
     try:
-        subprocess.Popen([exe_path])
+        if proc_info and proc_info.get("command_line"):
+            if sys.platform == "win32":
+                subprocess.Popen(proc_info["command_line"], shell=True)
+            else:
+                import shlex
+                subprocess.Popen(shlex.split(proc_info["command_line"]))
+        else:
+            subprocess.Popen([exe_path])
         return True
     except Exception:
-        return False
+        try:
+            subprocess.Popen([exe_path])
+            return True
+        except Exception:
+            return False
 
 
 def _prompt_restart(agents: list[dict], auto_restart: bool | None = None) -> None:
@@ -768,6 +1042,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
+            "Codex": "Codex CLI",
         }
         target = filter_map.get(agent_filter, agent_filter)
         agents = [a for a in agents if a["name"] == target]
@@ -777,7 +1052,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
 
     if not installed_agents:
         warn("未检测到任何已安装的 AI Agent")
-        error("请先安装 Claude Desktop、Cursor、CodeArts Agent 等任意一个 AI Agent")
+        error("请先安装 Claude Desktop、Cursor、CodeArts Agent、Codex CLI 等任意一个 AI Agent")
         sys.exit(EXIT_FAILURE)
 
     # ================================================================
@@ -1078,6 +1353,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
+            "Codex": "Codex CLI",
         }
         target = filter_map.get(agent_filter, agent_filter)
         selected = [a for a in agents if a["name"] == target and a.get("was_configured")]
