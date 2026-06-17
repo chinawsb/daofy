@@ -658,6 +658,10 @@ async def run_server():
                             "type": "string",
                             "description": "输出目录（可选，默认 docs/copyright）",
                         },
+                        "project_path": {
+                            "type": "string",
+                            "description": "目标项目路径（config 存于 <project_path>/docs/copyright/copyright.json），不传时默认当前工作目录。",
+                        },
                     },
                     "required": ["action"],
                 }

@@ -21,11 +21,15 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-# ── 项目根路径 ──
+# ── 项目根路径（Daofy 自身） ──
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-DOCS_DIR = PROJECT_ROOT / 'docs' / 'copyright'
 MERMAID_JS_PATH = PROJECT_ROOT / 'tools' / 'mermaid' / 'mermaid.min.js'
-SOURCE_DIR = PROJECT_ROOT / 'src'
+
+# ── 运行时动态路径（可被 project_path 覆盖） ──
+_current_project_root: Path = PROJECT_ROOT
+_current_source_dir: Path = PROJECT_ROOT / 'src'
+_current_docs_dir: Path = PROJECT_ROOT / 'docs' / 'copyright'
+_current_config_file: Path = PROJECT_ROOT / 'docs' / 'copyright' / 'copyright.json'
 
 # ── 浏览器候选路径（按优先级） ──
 BROWSER_CANDIDATES = [
@@ -43,15 +47,15 @@ BROWSER_CANDIDATES = [
 _CFG = {}  # type: ignore
 
 def _load_config() -> dict:
-    """从 config/copyright.json 加载著作权配置。"""
-    cfg_path = PROJECT_ROOT / 'config' / 'copyright.json'
+    """从 _current_config_file 加载著作权配置。"""
+    cfg_path = _current_config_file
     defaults = {
-        'software_name': '左右道飞MCP服务系统',
-        'software_name_en': 'Daofy MCP Server',
-        'version': 'V2026.06.08.1',
-        'completed_date': '2026年6月8日',
-        'copyright_holder': '吉林省左右软件开发有限公司',
-        'copyright_holder_en': 'Equilibrium Software Development Co., Ltd, Jilin',
+        'software_name': '',
+        'software_name_en': '',
+        'version': '',
+        'completed_date': '',
+        'copyright_holder': '',
+        'copyright_holder_en': '',
         'unified_social_credit_code': '',
         'contact_person': '',
         'contact_phone': '',
@@ -60,30 +64,8 @@ def _load_config() -> dict:
             'front_pages': 30,
             'back_pages': 30,
             'lines_per_page': 55,
-            'front_files': [
-                'server.py',
-                'tools/file_tool.py',
-            ],
-            'back_files': [
-                'services/compiler_service.py',
-                'services/config_manager.py',
-                'services/process_manager.py',
-                'services/args_generator.py',
-                'services/knowledge_base/__init__.py',
-                'services/knowledge_base/schema.py',
-                'services/knowledge_base/embedding_service.py',
-                'services/knowledge_base/project_knowledge_base.py',
-                'services/knowledge_base/thirdparty_knowledge_base.py',
-                'services/knowledge_base/document_knowledge_base.py',
-                'services/knowledge_base/service.py',
-                'services/knowledge_base/smart_cache.py',
-                'services/knowledge_base/scan_service.py',
-                'services/knowledge_base/async_task_manager.py',
-                'utils/logger.py',
-                'utils/validator.py',
-                'utils/dproj_parser.py',
-                'utils/delphi_env.py',
-            ],
+            'front_files': [],
+            'back_files': [],
         },
     }
     try:
@@ -115,6 +97,25 @@ def _cfg_val(*keys: str, default=''):
     return val if val else default
 
 _CFG = _load_config()
+
+
+def _set_project_context(project_path: str | Path | None = None) -> None:
+    """设置当前操作的项目路径上下文。
+
+    始终以 project_path 为根（不传时默认当前工作目录）。
+    一个项目一套配置（<project_path>/docs/copyright/copyright.json）。
+    """
+    global _current_project_root, _current_source_dir, _current_docs_dir, _current_config_file, _CFG
+
+    pp = Path(project_path).resolve() if project_path else Path.cwd()
+    _current_project_root = pp
+    _current_source_dir = pp
+    _current_docs_dir = pp / 'docs' / 'copyright'
+    _current_config_file = pp / 'docs' / 'copyright' / 'copyright.json'
+
+    # 重载配置（从新的 _current_config_file 读取）
+    _CFG = _load_config()
+
 
 # ── 工具函数 ──
 
@@ -512,8 +513,8 @@ def md_to_html(content: str, base_dir: Path | None = None) -> str:
         flags=re.DOTALL,
     )
 
-    sw_name = _cfg_val('software_name', default='左右道飞MCP服务系统')
-    version = _cfg_val('version', default='V2026.06.08.1')
+    sw_name = _cfg_val('software_name', default='')
+    version = _cfg_val('version', default='')
 
     # 如果有残留的 mermaid 块（预渲染失败的），嵌入 mermaid.js 保底
     has_mermaid_fallback = '<div class="mermaid">' in html_body
@@ -556,8 +557,8 @@ def _collapse_blank_lines(code_lines: list[str], max_blank: int = 2) -> list[str
 def _render_page(html_parts: list, page_num: int, section: str,
                  file_info: str, code_lines: list[str]) -> None:
     """渲染一页代码到 html_parts。"""
-    sw_name = _cfg_val('software_name', default='左右道飞MCP服务系统')
-    holder = _cfg_val('copyright_holder', default='吉林省左右软件开发有限公司')
+    sw_name = _cfg_val('software_name', default='')
+    holder = _cfg_val('copyright_holder', default='')
     html_parts.extend([
         '<div class="page">',
         '<div class="page-header">',
@@ -600,7 +601,7 @@ def _read_source_chunks(file_entries: list[str], section_prefix: str,
     page_counter = 0
 
     for rel_path in file_entries:
-        full_path = SOURCE_DIR / rel_path
+        full_path = _current_source_dir / rel_path
         if not full_path.exists():
             print(f'    ⚠ 文件不存在: {full_path}')
             continue
@@ -637,10 +638,10 @@ def _read_source_chunks(file_entries: list[str], section_prefix: str,
 
 def generate_source_code_html() -> str:
     """生成源代码文档的完整 HTML。"""
-    sw_name = _cfg_val('software_name', default='左右道飞MCP服务系统')
-    sw_en = _cfg_val('software_name_en', default='Daofy MCP Server')
-    version = _cfg_val('version', default='V2026.06.08.1')
-    holder = _cfg_val('copyright_holder', default='吉林省左右软件开发有限公司')
+    sw_name = _cfg_val('software_name', default='')
+    sw_en = _cfg_val('software_name_en', default='')
+    version = _cfg_val('version', default='')
+    holder = _cfg_val('copyright_holder', default='')
     sc = _CFG.get('source_code', {})
     front_pages = sc.get('front_pages', 30)
     back_pages = sc.get('back_pages', 30)
@@ -691,8 +692,8 @@ def generate_source_code_html() -> str:
 # ════════════════════════════════════════════════════
 
 def _filename(doc_type: str, ext: str) -> str:
-    """生成标准文件名，如 源代码文档-左右道飞MCP服务系统.pdf"""
-    sw = _cfg_val('software_name', default='左右道飞MCP服务系统')
+    """生成标准文件名，如 源代码文档-{software_name}.pdf"""
+    sw = _cfg_val('software_name', default='')
     names = {
         'source': '源代码文档',
         'manual': '软件说明书',
@@ -730,8 +731,8 @@ REQUIRED_FIELDS = {
 }
 
 def _get_config_path() -> Path:
-    """获取 config/copyright.json 的完整路径。"""
-    return PROJECT_ROOT / 'config' / 'copyright.json'
+    """获取当前项目 copyright.json 的完整路径。"""
+    return _current_config_file
 
 
 def _validate_config() -> list[dict]:
@@ -745,7 +746,7 @@ def _validate_config() -> list[dict]:
 
 
 def _save_config(updates: dict) -> dict:
-    """将 updates 合并写入 config/copyright.json 并重载 _CFG。
+    """将 updates 合并写入 _current_config_file 并重载 _CFG。
 
     Args:
         updates: 要更新的键值对，如 {"contact_person": "张三"}
@@ -788,10 +789,14 @@ def _save_config(updates: dict) -> dict:
 # ════════════════════════════════════════════════════
 
 def _scan_project() -> dict:
-    """扫描 src/ 目录，返回结构化项目信息，用于生成文档草稿。"""
-    src = SOURCE_DIR
+    """扫描当前项目源码目录，返回结构化项目信息，用于生成文档草稿。
+
+    扫描目录由 _current_source_dir 决定（默认 Daofy 的 src/，
+    当 project_path 指定时为用户项目根目录）。
+    """
+    src = _current_source_dir
     if not src.exists():
-        return {'error': f'src/ 目录不存在: {src}'}
+        return {'error': f'源码目录不存在: {src}'}
 
     scan = {
         'total_files': 0,
@@ -829,14 +834,14 @@ def _scan_project() -> dict:
         elif module in ('utils',):
             scan['utils_count'] += 1
 
-    # 附加信息
-    cfg_path = PROJECT_ROOT / 'config'
+    # 附加信息（相对当前项目根路径）
+    cfg_path = _current_project_root / 'config'
     scan['config_files'] = [f.name for f in sorted(cfg_path.glob('*.json'))] if cfg_path.exists() else []
 
-    tests_path = PROJECT_ROOT / 'tests'
+    tests_path = _current_project_root / 'tests'
     scan['test_files'] = len(list(tests_path.rglob('*.py'))) if tests_path.exists() else 0
 
-    docs_path = PROJECT_ROOT / 'docs'
+    docs_path = _current_project_root / 'docs'
     scan['doc_files'] = len(list(docs_path.rglob('*'))) if docs_path.exists() else 0
 
     return scan
@@ -1457,18 +1462,18 @@ def _generate_content_drafts() -> dict:
     if 'error' in scan:
         return {'status': 'error', 'message': scan['error']}
 
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    _current_docs_dir.mkdir(parents=True, exist_ok=True)
 
     # 生成说明书草稿
     manual_md = _generate_manual_draft(scan)
-    manual_path = DOCS_DIR / _filename('manual', 'md')
+    manual_path = _current_docs_dir / _filename('manual', 'md')
     manual_path.write_text(manual_md, encoding='utf-8')
     manual_size = len(manual_md.encode('utf-8'))
     print(f'  → 说明书草稿: {manual_path.name} ({manual_size / 1024:.0f} KB)')
 
     # 生成汇总表草稿
     summary_md = _generate_summary_draft(scan)
-    summary_path = DOCS_DIR / _filename('summary', 'md')
+    summary_path = _current_docs_dir / _filename('summary', 'md')
     summary_path.write_text(summary_md, encoding='utf-8')
     summary_size = len(summary_md.encode('utf-8'))
     print(f'  → 汇总表草稿: {summary_path.name} ({summary_size / 1024:.0f} KB)')
@@ -1843,16 +1848,16 @@ def _audit_markdown_file(file_path: Path, doc_type: str) -> dict:
 
 def audit_generated_docs() -> dict:
     """审计已生成的 markdown 文档，检查可能被驳回的内容。"""
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    _current_docs_dir.mkdir(parents=True, exist_ok=True)
 
     results = []
 
     # 审计说明书
-    manual_path = DOCS_DIR / _filename('manual', 'md')
+    manual_path = _current_docs_dir / _filename('manual', 'md')
     results.append(_audit_markdown_file(manual_path, 'manual'))
 
     # 审计汇总表
-    summary_path = DOCS_DIR / _filename('summary', 'md')
+    summary_path = _current_docs_dir / _filename('summary', 'md')
     results.append(_audit_markdown_file(summary_path, 'summary'))
 
     # 综合结论
@@ -1900,8 +1905,9 @@ def generate_copyright(action: str = 'generate',
                        doc_type: str = 'all',
                        output_dir: str = '',
                        config: dict = None,
+                       project_path: str = '',
                        **kwargs) -> dict:
-    """著作权文档生成主入口。
+    """著作权文档生成主入口（通用工具，可对任意项目生成软著申请文档）。
 
     Args:
         action: 'generate' | 'validate' | 'update_config' | 'status' | 'list'
@@ -1916,10 +1922,16 @@ def generate_copyright(action: str = 'generate',
         doc_type: 'all' | 'source' | 'manual' | 'summary'
         output_dir: 输出目录，默认 docs/copyright
         config: [仅 update_config] 要更新的配置字典
+        project_path: 目标项目路径（config 存于
+                      <project_path>/docs/copyright/copyright.json），
+                      不传时默认当前工作目录。
 
     Returns:
         dict 包含结果。
     """
+    # ── 设置项目上下文 ──
+    _set_project_context(project_path if project_path else None)
+
     # ── validate: 检查配置完整性 ──
     if action == 'validate':
         missing = _validate_config()
@@ -1980,7 +1992,7 @@ def generate_copyright(action: str = 'generate',
         }
 
         for f in [_filename('source', 'md'), _filename('manual', 'md'), _filename('summary', 'md')]:
-            p = DOCS_DIR / f
+            p = _current_docs_dir / f
             status['docs_exist'][f] = p.exists()
 
         return status
@@ -1988,8 +2000,8 @@ def generate_copyright(action: str = 'generate',
     # ── list: 列出已生成文件 ──
     if action == 'list':
         files = []
-        if DOCS_DIR.exists():
-            for f in sorted(DOCS_DIR.iterdir()):
+        if _current_docs_dir.exists():
+            for f in sorted(_current_docs_dir.iterdir()):
                 files.append({
                     'name': f.name,
                     'size': f.stat().st_size,
@@ -2030,7 +2042,7 @@ def generate_copyright(action: str = 'generate',
     if output_dir:
         out = Path(output_dir)
     else:
-        out = DOCS_DIR
+        out = _current_docs_dir
     out.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -2060,14 +2072,14 @@ def generate_copyright(action: str = 'generate',
     # ── 软件说明书 ──
     if doc_type in ('all', 'manual'):
         md_name = _filename('manual', 'md')
-        md_path = DOCS_DIR / md_name
+        md_path = _current_docs_dir / md_name
         print(f'生成软件说明书 ({md_path.name})...')
         try:
             if not md_path.exists():
                 raise FileNotFoundError(f'markdown 文件不存在: {md_path}')
             with open(str(md_path), 'r', encoding='utf-8') as f:
                 content = f.read()
-            html = md_to_html(content, base_dir=DOCS_DIR)
+            html = md_to_html(content, base_dir=_current_docs_dir)
             pdf_path = str(out / _filename('manual', 'pdf'))
             ok, info = html_to_pdf(html, pdf_path)
             results.append({
@@ -2084,14 +2096,14 @@ def generate_copyright(action: str = 'generate',
     # ── 申请信息汇总表 ──
     if doc_type in ('all', 'summary'):
         md_name = _filename('summary', 'md')
-        md_path = DOCS_DIR / md_name
+        md_path = _current_docs_dir / md_name
         print(f'生成申请信息汇总表 ({md_path.name})...')
         try:
             if not md_path.exists():
                 raise FileNotFoundError(f'markdown 文件不存在: {md_path}')
             with open(str(md_path), 'r', encoding='utf-8') as f:
                 content = f.read()
-            html = md_to_html(content, base_dir=DOCS_DIR)
+            html = md_to_html(content, base_dir=_current_docs_dir)
             pdf_path = str(out / _filename('summary', 'pdf'))
             ok, info = html_to_pdf(html, pdf_path)
             results.append({
