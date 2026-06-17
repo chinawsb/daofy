@@ -214,15 +214,18 @@ delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end
 **解除脏标记的方式：**
 - 调用 `read`（自动清除脏标记）
 - 调用 `write(preview=True)`（预览不写盘，清除脏标记）
+- 调用 `write(allow_dirty=True)`（风险自负，仅在确保行号准确时使用）
 
 **连续编辑的行号偏移算法：**
 
 每次 `write` 会返回偏移量信息：
 ```
-wrote: Unit1.pas, 1-indexed [5, 10] → [5, 13] (offset: +3), encoding: utf-8
+wrote: Unit1.pas, 1-indexed [5, 10] → [5, 13] (offset: +3) (指定 6), encoding: utf-8
 ```
-- `[5, 10] → [5, 13] (offset: +3)`：原始行号 → 写入后行号，偏移量显式给出 `+3`
+- `[5, 10] → [5, 13] (offset: +3)`：**实际行号区间** → 写入后行号，偏移量显式给出 `+3`
+- 如果指定行号与实际行号不同，末尾标注 `(指定 N)` 以提示 AI 行号调整情况
 - 如果开启了 `auto_format=True`，返回的 offset **已包含格式化造成的行数变化**（如 uses 展开、空行调整等），无需额外叠加
+- 当此前编辑产生了累积偏移时，会在 diff 底部追加 `ℹ 偏移: 此前 +N 行偏移, 实际行号=指定行号+N` 提示
 
 Agent 根据以下规则计算后续行号：
 
@@ -239,7 +242,7 @@ Agent 根据以下规则计算后续行号：
 
 **两大致命错误（绝不能犯）：**
 1. ❌ 写操作传 `start_line=5` 以为是第 5 行开始 → 正确（1-indexed），但不要混淆为 0-indexed
-2. ❌ 脏标记阻止后强行继续 → 行号已过时，必须 read 或 preview
+2. ❌ 脏标记阻止后强行继续 → 行号已过时，必须 read、preview 或设 allow_dirty=true（仅确保行号准确时使用）
 
 **注意：`uses` action 也会标记脏和偏移行号。**
 `delphi_file(action="uses", ...)` 返回的偏移量格式与 write 一致。

@@ -406,6 +406,7 @@ async def run_server():
                         "backup": {"type": "boolean", "default": True, "description": "[write/uses] 写入前自动备份到 __history（建议保持 true）"},
                         "preview": {"type": "boolean", "default": False, "description": "[write] 预览模式: 只算 diff 不写盘，清除脏标记"},
                         "force": {"type": "boolean", "default": False, "description": "[write] 跳过续重行检测（默认 false 时检测到重复仅警告不阻断）"},
+                        "allow_dirty": {"type": "boolean", "default": False, "description": "[write] 跳过脏标记检查（默认 false）。脏标记阻止对未重新读取的文件再次写入，防止 AI 使用过期行号。设 true 可绕过（风险自负）"},
 
                         # ---- [format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[format] 模式: file/code/check"},

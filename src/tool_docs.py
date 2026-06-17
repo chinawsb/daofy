@@ -298,6 +298,7 @@ TOOL_HELP_DOCS: dict = {
                     "auto_format": "写入后自动调用 pasfmt 格式化，默认 false。返回的偏移量已包含格式化造成的行数变化",
                     "force": "跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）",
                     "preview": "预览模式，只计算 diff 不写盘（不备份、不写入、不格式化），默认 false。预览后清除脏标记，允许继续编辑",
+                    "allow_dirty": "跳过脏标记检查（默认 false）。脏标记阻止对未重新读取的文件再次写入，防止 AI 使用过期行号。设 true 可绕过（风险自负）",
                 },
                 "examples": [
                     'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"新行"},{start_line:18,end_line:21,content:"新行"}])',
