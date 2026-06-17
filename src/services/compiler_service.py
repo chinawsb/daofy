@@ -1028,8 +1028,8 @@ class CompilerService:
                     quoted_args.append('"%s"' % arg)
                 else:
                     quoted_args.append(arg)
-            # 使用控制台编码（可能为 UTF-8 或 GBK），确保 cmd.exe 正确读取中文字符
-            batch_encoding = get_console_encoding()
+            # 使用 OEM 代码页编码写 batch 文件，cmd.exe 只认 OEM 编码（不支持 UTF-8）
+            batch_encoding = get_console_encoding(oem=True)
             with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False,
                                              encoding=batch_encoding) as f:
                 f.write('@echo off\n')

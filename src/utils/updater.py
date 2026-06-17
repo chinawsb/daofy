@@ -72,17 +72,16 @@ def get_current_version() -> str:
             for line in f:
                 line_stripped = line.strip()
                 if line_stripped.startswith("version ="):
-                    # version = "X.Y.Z"
                     parts = line_stripped.split("=", 1)
                     if len(parts) == 2:
                         ver = parts[1].strip().strip('"').strip("'")
                         if ver:
                             return ver
-        logger.warning("pyproject.toml 中未找到 version 字段")
-        return "0.0.0"
+        logger.debug("pyproject.toml 中未找到 version 字段")
+        return os.environ.get("DAOFY_VERSION", "0.0.0")
     except Exception as e:
-        logger.error(f"读取版本号失败: {e}")
-        return "0.0.0"
+        logger.warning("读取版本号失败: %s", e)
+        return os.environ.get("DAOFY_VERSION", "0.0.0")
 
 
 def compare_versions(a: str, b: str) -> int:

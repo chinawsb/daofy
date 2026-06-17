@@ -135,8 +135,11 @@ class ProcessManager:
             _r = process.kill()
             if asyncio.iscoroutine(_r):
                 await _r
-            await process.wait()
+            # 带短超时的 wait，防止 communicate() 被 cancel 后 pipe 残留阻塞 wait()
+            await asyncio.wait_for(process.wait(), timeout=5)
             logger.info(f"进程已终止")
+        except asyncio.TimeoutError:
+            logger.warning(f"终止进程 wait() 超时(5秒),但进程已 kill,PID: {process.pid}")
         except ProcessLookupError:
             logger.warning(f"进程不存在,可能已终止")
         except Exception as e:
