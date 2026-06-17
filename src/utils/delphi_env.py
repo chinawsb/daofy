@@ -118,36 +118,42 @@ def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
 
 def get_delphi_library_paths(version: Optional[str] = None, platform: str = "Win32") -> List[str]:
     """
-    获取 Delphi 库搜索路径
-     
+    获取 Delphi 库搜索路径（合并 BDS + Studio 注册表配置单元）
+
     Args:
         version: Delphi 版本号，默认获取最新版本
         platform: 目标平台 (Win32/Win64)
-        
+
     Returns:
         搜索路径列表
     """
-    paths = []
-    
+    paths: list[str] = []
+    seen: set[str] = set()
+
     if not version:
         version = get_delphi_version()
         if not version:
             return paths
-    
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, 
-            rf"SOFTWARE\Embarcadero\BDS\{version}\Library\{platform}"
-        )
-        
-        search_path, _ = winreg.QueryValueEx(key, "Search Path")
-        winreg.CloseKey(key)
-        
-        if search_path:
-            paths = [p.strip() for p in search_path.split(';') if p.strip()]
-    except Exception as e:
-        logger.debug("读取Search Path失败: %s", str(e))
-    
+
+    registries = [
+        rf"SOFTWARE\Embarcadero\BDS\{version}\Library\{platform}",
+        rf"SOFTWARE\Embarcadero\Studio\{version}\Library\{platform}",
+    ]
+
+    for reg_path in registries:
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path)
+            search_path, _ = winreg.QueryValueEx(key, "Search Path")
+            winreg.CloseKey(key)
+            if search_path:
+                for p in search_path.split(';'):
+                    p = p.strip()
+                    if p and p not in seen:
+                        paths.append(p)
+                        seen.add(p)
+        except Exception as e:
+            logger.debug("读取 %s 的 Search Path 失败: %s", reg_path, str(e))
+
     return paths
 
 
