@@ -43,13 +43,27 @@ def _verify_tools_dir() -> Path:
 
 
 def _compute_verify_exe_path(dproj_path: str, target_platform: str,
-                             build_configuration: str) -> Path:
-    """计算编译后的 .exe 路径（不依赖 result.output_file）"""
-    proj_dir = Path(dproj_path).parent
+                              build_configuration: str) -> Path:
+    """计算编译后的 .exe 路径（优先从 .dproj 解析，再回退默认）。"""
+    proj = Path(dproj_path)
+    proj_dir = proj.parent
     plat_map = {"win32": "Win32", "win64": "Win64"}
     lib_dir = plat_map.get(target_platform.lower(), "Win32")
     cfg = build_configuration or "Debug"
-    exe_name = Path(dproj_path).stem + ".exe"
+    exe_name = proj.stem + ".exe"
+
+    # 优先从 .dproj 读取 DCC_ExeOutput
+    dproj_file = proj if proj.suffix.lower() == '.dproj' else proj.with_suffix('.dproj')
+    if dproj_file.exists():
+        try:
+            parser = DprojParser(str(dproj_file))
+            if parser.parse():
+                output = parser.get_output_path(config=cfg, platform=lib_dir)
+                if output:
+                    return Path(output) / exe_name
+        except Exception:
+            pass
+
     return proj_dir / lib_dir / cfg / exe_name
 
 

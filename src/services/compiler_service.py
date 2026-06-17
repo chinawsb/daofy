@@ -528,7 +528,7 @@ class CompilerService:
                     duration=int((time.time() - start_time) * 1000)
                 )
 
-            # 2. 确定输出路径 - 默认输出到 Win32 子目录
+            # 2. 确定输出路径 - 默认输出到 Win32/Debug 子目录
             project_dir = str(Path(request.project_path).parent)
             project_name = Path(request.project_path).stem
 
@@ -538,7 +538,8 @@ class CompilerService:
                 # 平台→输出目录映射，从 ArgsGenerator 复用
                 from ..services.args_generator import ArgsGenerator
                 lib_dir = ArgsGenerator._PLATFORM_LIB_DIR.get(request.options.target_platform, 'Win32')
-                output_base = str(Path(project_dir) / lib_dir)
+                cfg = request.options.build_configuration or "Debug"
+                output_base = str(Path(project_dir) / lib_dir / cfg)
 
             # 确保输出目录存在
             Path(output_base).mkdir(parents=True, exist_ok=True)
