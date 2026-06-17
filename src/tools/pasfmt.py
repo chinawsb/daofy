@@ -384,11 +384,11 @@ async def format_file(
                 effective_uses_style = uses_style if uses_style is not None else _USES_STYLE
                 if effective_uses_style == "compact":
                     try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
+                        with open(file_path, 'r', encoding=encoding) as f:
                             file_content = f.read()
                         compacted = _compact_uses_clause(file_content)
                         if compacted != file_content:
-                            with open(file_path, 'w', encoding='utf-8') as f:
+                            with open(file_path, 'w', encoding=encoding) as f:
                                 f.write(compacted)
                             logger.info(f"uses 子句已压缩: {file_path}")
                     except Exception as e:

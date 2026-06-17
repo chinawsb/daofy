@@ -531,6 +531,8 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
        在重新 read 文件或 preview 确认前，不允许对同一文件再次写入，
        防止 AI 使用过期行号导致错位改写。
        续重行检测已降级为警告，不再阻断写入。
+
+       allow_dirty=true 可绕过脏标记检查（风险自负）。
     """
     file_path = arguments.get("file_path")
     edits = arguments.get("edits")
@@ -539,17 +541,19 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     auto_format = arguments.get("auto_format", False)
     preview = arguments.get("preview", False)
     force = arguments.get("force", False)
+    allow_dirty = arguments.get("allow_dirty", False)
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
     if not edits:
         return _wrap_error("请提供 edits 参数（全量替换: [{start_line:1, content:'...'}]）")
 
-    # ── 脏标记检查 ──
-    try:
-        _check_dirty(file_path, preview=preview)
-    except RuntimeError as e:
-        return _wrap_error(str(e))
+    # ── 脏标记检查（allow_dirty=true 可绕过）──
+    if not allow_dirty:
+        try:
+            _check_dirty(file_path, preview=preview)
+        except RuntimeError as e:
+            return _wrap_error(str(e))
 
     path_err = _validate_path(file_path, arguments.get("project_path"))
     if path_err:
@@ -563,6 +567,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         auto_format=auto_format,
         preview=preview,
         force=force,
+        allow_dirty=allow_dirty,
     )
 
 
@@ -574,6 +579,7 @@ async def _handle_batch_write_internal(
     auto_format: bool = False,
     preview: bool = False,
     force: bool = False,
+    allow_dirty: bool = False,
 ) -> Dict[str, Any]:
     """
     批量写入内部实现（edits 数组，以原始文件为参照系）。
@@ -640,7 +646,11 @@ async def _handle_batch_write_internal(
         encoding_transcoded = False
     else:
         read_enc = detected_encoding
-        write_enc = encoding
+        # utf-8 家族内保留原始 BOM 状态（utf-8-sig 写出 BOM，utf-8 不写）
+        if _is_encoding_compatible(encoding, detected_encoding):
+            write_enc = detected_encoding
+        else:
+            write_enc = encoding
         encoding_transcoded = not _is_encoding_compatible(encoding, detected_encoding)
 
     # ── 校验每个 edit 并转换为内部 0-indexed ──
@@ -754,7 +764,11 @@ async def _handle_batch_write_internal(
             before_len = len(lines)  # 编辑前行数（含此前 edits 累计）
             if c == '':
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [(s_1 + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
+                    actual_lineno = adj_s + 1
+                    removed_lines_preview = [
+                        (actual_lineno + i, lines[adj_s + i].rstrip('\n\r'))
+                        for i in range(removed)
+                    ]
                 lines[adj_s:adj_e] = []
                 inserted = 0
                 c_lines = []
@@ -780,16 +794,24 @@ async def _handle_batch_write_internal(
                         )
 
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [(s_1 + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
+                    actual_lineno = adj_s + 1  # 实际 1-indexed 起始行号
+                    removed_lines_preview = [
+                        (actual_lineno + i, lines[adj_s + i].rstrip('\n\r'))
+                        for i in range(removed)
+                    ]
 
                 lines[adj_s:adj_e] = c_lines
 
             delta = inserted - removed
+            prev_cumulative_offset = cumulative_offset  # 此 edit 发生前的累计偏移
             cumulative_offset += delta
 
-            orig_e_display = e_1 if e_1 is not None else before_len
+            # 显示实际行号区间（指定行号不同时加括号标注）
+            adj_s_display = adj_s + 1
+            adj_e_display = adj_e  # 0-indexed exclusive → 1-indexed inclusive
+            range_suffix = "" if adj_s_display == s_1 else f" (指定 {s_1})"
             results.append(
-                f"  [{s_1}, {orig_e_display}] → [{s_1}, {orig_e_display + delta}] (offset: {delta:+d})  {desc}"
+                f"  [{adj_s_display}, {adj_e_display}] → [{adj_s_display}, {adj_e_display + delta}] (offset: {delta:+d}){range_suffix}  {desc}"
             )
 
             # Per-edit diff 预览（1-indexed 行号）
@@ -805,6 +827,13 @@ async def _handle_batch_write_internal(
                     results.append(f"    + {display}")
                 if len(c_lines) > max_show:
                     results.append(f"    + ...（共 {len(c_lines)} 行）")
+
+            # 此前编辑导致累积偏移时，通知 AI 实际行号偏移量
+            if prev_cumulative_offset != 0:
+                results.append(
+                    f"    ℹ 偏移: 此前 {prev_cumulative_offset:+d} 行偏移, "
+                    f"实际行号 = 指定行号{prev_cumulative_offset:+d}"
+                )
 
         new_text = ''.join(lines)
         encoding_fallback = False
@@ -924,6 +953,8 @@ async def _handle_batch_write_internal(
             f"{action_label}: {len(validated_edits)} edits, {basename}",
             f"encoding: {write_enc}",
         ]
+        if allow_dirty:
+            header_parts.append("⚠ allow_dirty: 脏标记绕过（请确保行号准确）")
         if preview:
             header_parts.append("preview: true（未写入磁盘）")
             if auto_format:
@@ -973,6 +1004,7 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         "auto_format": arguments.get("auto_format", False),
         "preview": arguments.get("preview", False),
         "force": arguments.get("force", False),
+        "allow_dirty": arguments.get("allow_dirty", False),
     }
     return await handle_write(args)
 
@@ -1289,7 +1321,10 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
             write_enc = detected_enc
         else:
             read_enc = detected_enc
-            write_enc = encoding
+            if _is_encoding_compatible(encoding, detected_enc):
+                write_enc = detected_enc
+            else:
+                write_enc = encoding
 
         with open(file_path, 'r', encoding=read_enc, newline='',
                   buffering=1048576) as f:
