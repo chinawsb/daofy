@@ -535,11 +535,28 @@ class CompilerService:
             if request.options.output_path:
                 output_base = request.options.output_path
             else:
-                # 平台→输出目录映射，从 ArgsGenerator 复用
-                from ..services.args_generator import ArgsGenerator
-                lib_dir = ArgsGenerator._PLATFORM_LIB_DIR.get(request.options.target_platform, 'Win32')
-                cfg = request.options.build_configuration or "Debug"
-                output_base = str(Path(project_dir) / lib_dir / cfg)
+                # 优先从同目录 .dproj 读取 DCC_ExeOutput
+                dproj_path = Path(request.project_path).with_suffix('.dproj')
+                dproj_output = None
+                if dproj_path.exists():
+                    try:
+                        from ..utils.dproj_parser import DprojParser
+                        parser = DprojParser(str(dproj_path))
+                        if parser.parse():
+                            plat_map = {"win32": "Win32", "win64": "Win64"}
+                            plat_dir = plat_map.get(request.options.target_platform.lower(), "Win32")
+                            cfg = request.options.build_configuration or "Debug"
+                            dproj_output = parser.get_output_path(config=cfg, platform=plat_dir)
+                    except Exception:
+                        logger.debug("读取 .dproj DCC_ExeOutput 失败，使用默认路径")
+
+                if dproj_output:
+                    output_base = dproj_output
+                else:
+                    from ..services.args_generator import ArgsGenerator
+                    lib_dir = ArgsGenerator._PLATFORM_LIB_DIR.get(request.options.target_platform, 'Win32')
+                    cfg = request.options.build_configuration or "Debug"
+                    output_base = str(Path(project_dir) / lib_dir / cfg)
 
             # 确保输出目录存在
             Path(output_base).mkdir(parents=True, exist_ok=True)
