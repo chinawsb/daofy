@@ -250,7 +250,7 @@ class DprojParser:
 
     def get_output_path(self, config: str = None, platform: str = None) -> Optional[str]:
         """
-        获取输出路径
+        获取输出路径（DCC_ExeOutput）
 
         Args:
             config: 配置名称
@@ -259,6 +259,23 @@ class DprojParser:
         Returns:
             输出路径
         """
+        return self._get_config_path("DCC_ExeOutput", config, platform)
+
+    def get_dcu_output_path(self, config: str = None, platform: str = None) -> Optional[str]:
+        """
+        获取 DCU 输出路径（DCC_DcuOutput）
+
+        Args:
+            config: 配置名称
+            platform: 平台名称
+
+        Returns:
+            DCU 输出路径
+        """
+        return self._get_config_path("DCC_DcuOutput", config, platform)
+
+    def _get_config_path(self, tag: str, config: str = None, platform: str = None) -> Optional[str]:
+        """通用：从 PropertyGroup 中读取指定标签的路径，替换变量并转为绝对路径。"""
         if self.root is None:
             return None
 
@@ -271,21 +288,17 @@ class DprojParser:
                 if platform and f"'$(Platform)'=='{platform}'" not in condition:
                     continue
 
-            output_elem = self._find_element(prop_group, "DCC_ExeOutput")
-            if output_elem is not None and output_elem.text:
-                output_path = output_elem.text.strip()
-                # 替换变量
-                if '$(Platform)' in output_path and platform:
-                    output_path = output_path.replace('$(Platform)', platform)
-                if '$(Config)' in output_path and config:
-                    output_path = output_path.replace('$(Config)', config)
-
-                # 转换为绝对路径
-                if not Path(output_path).is_absolute():
+            elem = self._find_element(prop_group, tag)
+            if elem is not None and elem.text:
+                path = elem.text.strip()
+                if '$(Platform)' in path and platform:
+                    path = path.replace('$(Platform)', platform)
+                if '$(Config)' in path and config:
+                    path = path.replace('$(Config)', config)
+                if not Path(path).is_absolute():
                     project_dir = Path(self.dproj_path).parent
-                    output_path = str((project_dir / output_path).resolve())
-
-                return output_path
+                    path = str((project_dir / path).resolve())
+                return path
 
         return None
 

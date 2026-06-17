@@ -726,7 +726,21 @@ class CompilerService:
         args.append(f'-E{output_base}')
 
         # 中间文件目录（存放 .dcu 文件）
-        dcu_dir = str(Path(output_base) / "dcu")
+        dcu_dir = None
+        dproj_path_dcu = Path(request.project_path).with_suffix('.dproj')
+        if dproj_path_dcu.exists():
+            try:
+                from ..utils.dproj_parser import DprojParser
+                parser = DprojParser(str(dproj_path_dcu))
+                if parser.parse():
+                    plat_map = {"win32": "Win32", "win64": "Win64"}
+                    plat_dir = plat_map.get(options.target_platform.lower(), "Win32")
+                    cfg = options.build_configuration or "Debug"
+                    dcu_dir = parser.get_dcu_output_path(config=cfg, platform=plat_dir)
+            except Exception:
+                logger.debug("读取 .dproj DCC_DcuOutput 失败，使用默认路径")
+        if not dcu_dir:
+            dcu_dir = output_base
         args.append(f'-N{dcu_dir}')
 
         # 条件编译符号
