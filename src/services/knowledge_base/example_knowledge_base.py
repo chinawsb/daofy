@@ -4,20 +4,19 @@
 为 Delphi 官方 Demos 和三方库 Demos 提供独立的全文检索知识库：
 1. 自动发现 Delphi 官方 Demo 目录（注册表 RootDir/Samples、公共文档路径）
 2. 从 thirdparty_paths.json 发现三方库 Demo 目录（父/祖父级兄弟目录）
-3. 按文档模式（全文 + FTS5）存储，不做 class/function 结构化提取
+3. 直接写入 ZVec 集合，不经过 SQLite
 """
 
 import hashlib
 import json
 import os
-import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from src.services.knowledge_base.schema import create_document_tables
-from src.services.knowledge_base.fts5_lazy_manager import FTS5LazyManager
+import zvec
+
 from src.utils.logger import get_logger
 from src.utils.delphi_env import get_delphi_root_dir, get_delphi_version
 
@@ -63,77 +62,8 @@ class ExampleKnowledgeBase:
         self.kb_dir = kb_dir
         self.kb_dir.mkdir(parents=True, exist_ok=True)
         self.progress_callback = progress_callback
-        self._db: Optional[sqlite3.Connection] = None
-
-        # FTS5 管理器（延迟初始化）
-        self.fts5: Optional[FTS5LazyManager] = None
 
         logger.info("示例知识库初始化完成: %s", self.kb_dir)
-
-    # ──────────────────────────────────────────────
-    # 数据库连接与初始化
-    # ──────────────────────────────────────────────
-
-    def _get_db_path(self) -> str:
-        return str(self.kb_dir / "knowledge.sqlite")
-
-    def _get_db(self) -> sqlite3.Connection:
-        """获取数据库连接（懒初始化 + 缓存）"""
-        if self._db is None:
-            db_path = self._get_db_path()
-            self._db = sqlite3.connect(db_path)
-            self._db.row_factory = sqlite3.Row
-        return self._db
-
-    def _close_db(self):
-        if self._db is not None:
-            try:
-                self._db.close()
-            except Exception:
-                pass
-            self._db = None
-
-    def _init_database(self, cursor: sqlite3.Cursor):
-        """
-        初始化数据库表结构
-
-        复用文档 KB 的 documents + metadata 表，
-        额外创建 demo_sources 表追踪来源。
-        """
-        # 复用文档 KB 的标准表（documents / document_entities / metadata）
-        create_document_tables(cursor)
-
-        # 额外：full_path 上建立唯一索引，用于 INSERT OR REPLACE
-        cursor.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_fp ON documents(full_path)"
-        )
-
-        # 来源目录记录表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS demo_sources (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                source_path  TEXT NOT NULL UNIQUE,
-                source_type  TEXT NOT NULL,
-                label        TEXT,
-                file_count   INTEGER DEFAULT 0,
-                last_scanned TEXT,
-                created_at   REAL DEFAULT (julianday('now'))
-            )
-        """)
-
-    def _init_fts5(self):
-        """初始化 FTS5 懒加载管理器"""
-        if self.fts5 is None:
-            self.fts5 = FTS5LazyManager(
-                db_path=self._get_db_path(),
-                main_table='documents',
-                fts_table='documents_fts',
-                columns=['title', 'content'],
-                tokenize='unicode61',
-            )
-            # 创建 FTS5 虚拟表（如果不存在）
-            with self._get_db() as conn:
-                self.fts5.create_fts_table(conn)
 
     # ──────────────────────────────────────────────
     # Demo 路径发现
@@ -273,53 +203,31 @@ class ExampleKnowledgeBase:
     # 文件扫描与入库
     # ──────────────────────────────────────────────
 
-    def _flush_batch(
-        self, cursor: sqlite3.Cursor, batch: List[Tuple[Any, ...]]
-    ):
-        """批量写入 documents 表"""
-        cursor.executemany("""
-            INSERT OR REPLACE INTO documents
-                (title, title_lower, title_rev, full_path, path,
-                 extension, content, size, line_count, hash,
-                 last_modified, content_type, url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, batch)
-
     def _scan_directory(
         self,
         demo_path: str,
         label: str,
         source_type: str,
-        cursor: sqlite3.Cursor,
         rebuild: bool = False,
     ) -> Dict[str, int]:
         """
-        扫描单个 Demo 目录，将文件入库。
+        扫描单个 Demo 目录，返回待入库的文档列表。
 
         Args:
             demo_path: 要扫描的目录
             label: 显示标签（如 "Delphi 12 Athens"）
             source_type: 来源类型（"delphi_official" / "thirdparty"）
-            cursor: 数据库游标
             rebuild: 是否强制重建（跳过增量检测）
 
         Returns:
-            {"files_scanned": 本次入库数, "total": 累计总数}
+            {"files_scanned": 本次入库数, "total": 累计总数, "docs": chunked ZVec docs}
         """
-        # 增量模式：加载已有文件 hash
-        existing: Dict[str, str] = {}
-        if not rebuild:
-            url_prefix = f"{source_type}:{label}"
-            cursor.execute(
-                "SELECT full_path, hash FROM documents WHERE url = ?",
-                (url_prefix,),
-            )
-            for row in cursor.fetchall():
-                existing[row[0]] = row[1]
+        url_prefix = f"{source_type}:{label}"
 
         new_files = updated_files = skipped_files = 0
-        batch: List[Tuple] = []
+        chunked_docs: List[zvec.Doc] = []
         total_in_dir = 0
+        CHUNK_LINES = 5000
 
         for root, dirs, files in os.walk(demo_path):
             dirs[:] = [d for d in dirs if d.lower() not in self.SKIP_DIR_NAMES]
@@ -334,71 +242,39 @@ class ExampleKnowledgeBase:
                     fp = Path(full_path)
                     stat = fp.stat()
                     content = fp.read_text(encoding='utf-8', errors='replace')
-                    file_hash = hashlib.md5(
-                        content.encode('utf-8')
-                    ).hexdigest()
 
-                    if not rebuild and full_path in existing:
-                        if existing[full_path] == file_hash:
-                            skipped_files += 1
-                            continue
-                        updated_files += 1
-                    else:
-                        new_files += 1
-
+                    new_files += 1
+                    title = fp.stem
                     rel_path = str(
                         Path(full_path).relative_to(Path(demo_path))
                     ).replace(os.sep, '/')
 
-                    batch.append((
-                        fp.stem,                   # title
-                        fp.stem.lower(),            # title_lower
-                        fp.stem.lower()[::-1],      # title_rev
-                        full_path,                  # full_path
-                        rel_path,                   # path
-                        ext,                        # extension
-                        content,                    # content
-                        len(content),               # size
-                        content.count('\n') + 1,    # line_count
-                        file_hash,                  # hash
-                        datetime.fromtimestamp(
-                            stat.st_mtime
-                        ).isoformat(),              # last_modified
-                        'delphi_demo',              # content_type
-                        f"{source_type}:{label}",   # url
-                    ))
-
-                    if len(batch) >= 100:
-                        self._flush_batch(cursor, batch)
-                        batch = []
+                    # 按行切块
+                    lines = content.split('\n')
+                    for ci in range(0, len(lines), CHUNK_LINES):
+                        chunk = "\n".join(lines[ci:ci + CHUNK_LINES])
+                        chunk_id = hashlib.md5(f"{full_path}#chunk{ci//CHUNK_LINES}".encode()).hexdigest()[:16]
+                        chunked_docs.append(zvec.Doc(
+                            id=chunk_id,
+                            fields={
+                                'chunk_text': (title[:200] + "\n" + chunk)[:100000],
+                                'title': title[:500],
+                                'path': full_path[:500],
+                                'extension': ext[:20],
+                                'url': url_prefix[:500],
+                            }
+                        ))
 
                     total_in_dir += 1
 
                 except (OSError, PermissionError) as e:
                     logger.debug("读取文件失败 %s: %s", full_path, e)
 
-        # 写入剩余批次
-        if batch:
-            self._flush_batch(cursor, batch)
-
-        # 记录/更新来源
-        cursor.execute("""
-            INSERT OR REPLACE INTO demo_sources
-                (source_path, source_type, label, file_count, last_scanned)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            demo_path,
-            source_type,
-            label,
-            total_in_dir,
-            datetime.now().isoformat(),
-        ))
-
         logger.info(
-            "  %s: %d 新增, %d 更新, %d 跳过 (共 %d 文件)",
-            label, new_files, updated_files, skipped_files, total_in_dir,
+            "  %s: %d 文件, %d 个段落 (共 %d 行)",
+            label, total_in_dir, len(chunked_docs),
         )
-        return {"files_scanned": total_in_dir}
+        return {"files_scanned": total_in_dir, "docs": chunked_docs}
 
     # ──────────────────────────────────────────────
     # 全量构建
@@ -411,11 +287,11 @@ class ExampleKnowledgeBase:
         全量构建示例知识库。
 
         流程：
-        1. 初始化数据库
+        1. 清理旧 ZVec 数据（若 rebuild）
         2. 发现 Delphi 官方 Demos
         3. 发现三方库 Demos
-        4. 扫描所有 Demo 文件入库
-        5. 构建 FTS5 全文索引
+        4. 扫描所有 Demo 文件，直接写入 ZVec
+        5. 构建 ZVec 全文索引
 
         Args:
             rebuild: 是否强制重建
@@ -424,16 +300,10 @@ class ExampleKnowledgeBase:
             是否构建成功
         """
         _build_start = time.time()
-        conn = self._get_db()
-        cursor = conn.cursor()
-        self._init_database(cursor)
 
         if rebuild:
-            cursor.execute("DELETE FROM documents")
-            cursor.execute("DELETE FROM demo_sources")
-            cursor.execute("DELETE FROM metadata")
-            conn.commit()
-            logger.info("强制重建，已清空旧数据")
+            self._clean_zvec_files()
+            logger.info("强制重建，已清空旧 ZVec 数据")
 
         # ── 发现 Demo 路径 ──
         self._report_progress(5, "发现 Demo 路径...")
@@ -455,8 +325,8 @@ class ExampleKnowledgeBase:
 
         logger.info("共发现 %d 个 Demo 目录", len(all_dirs))
 
-        # ── 扫描文件 ──
-        total_files = 0
+        # ── 扫描文件并直接写入 ZVec ──
+        all_chunked_docs: List[zvec.Doc] = []
         dir_count = len(all_dirs)
         for i, (demo_path, label, source_type) in enumerate(all_dirs):
             pct = 10 + (i / dir_count) * 75
@@ -466,61 +336,103 @@ class ExampleKnowledgeBase:
             logger.info("扫描 Demo 目录 [%d/%d]: %s (%s)", i + 1, dir_count, label, demo_path)
 
             info = self._scan_directory(
-                demo_path, label, source_type, cursor, rebuild=rebuild,
+                demo_path, label, source_type, rebuild=rebuild,
             )
-            total_files += info["files_scanned"]
+            if info.get("docs"):
+                all_chunked_docs.extend(info["docs"])
 
-        conn.commit()
+        if not all_chunked_docs:
+            logger.warning("未扫描到任何文件")
+            self._report_progress(100, "未扫描到文件")
+            return False
 
-        # ── FTS5 全文索引 ──
-        self._report_progress(87, "构建 FTS5 全文索引...")
-        self._init_fts5()
+        # ── 写入 ZVec（用临时子目录避免 create_and_open 路径已存在）──
+        self._report_progress(87, "写入 ZVec 集合...")
+        schema = zvec.CollectionSchema("example_kb", fields=[
+            zvec.FieldSchema("chunk_text", zvec.DataType.STRING),
+            zvec.FieldSchema("title", zvec.DataType.STRING),
+            zvec.FieldSchema("path", zvec.DataType.STRING),
+            zvec.FieldSchema("extension", zvec.DataType.STRING),
+            zvec.FieldSchema("url", zvec.DataType.STRING),
+        ])
+
+        import uuid
+        tmp_zvec_name = f".zvec_tmp_{uuid.uuid4().hex[:8]}"
+        tmp_zvec_path = self.kb_dir / tmp_zvec_name
+        col = zvec.create_and_open(str(tmp_zvec_path), schema=schema)
         try:
-            with self._get_db() as c:
-                self.fts5.create_fts_table(c)  # type: ignore[union-attr]
-            self.fts5.rebuild_full()  # type: ignore[union-attr]
-        except Exception as e:
-            logger.warning("FTS5 索引构建失败（搜索将降级为 LIKE 查询）: %s", e)
+            BATCH_SIZE = 500
+            for i in range(0, len(all_chunked_docs), BATCH_SIZE):
+                batch = all_chunked_docs[i:i + BATCH_SIZE]
+                col.insert(batch)
+            col.flush()
 
-        # ── 元数据 ──
-        current_ts = datetime.now().timestamp()
+            # 全文索引
+            self._report_progress(92, "构建全文索引...")
+            col.create_index("chunk_text", zvec.FtsIndexParam(tokenizer_name="jieba"))
+            col.optimize()
+            col.flush()
+        finally:
+            try:
+                col.close()
+            except Exception:
+                pass
+            # 合并 ZVec 文件到 kb_dir
+            self._clean_zvec_files()
+            if tmp_zvec_path.exists():
+                for item in tmp_zvec_path.iterdir():
+                    target = self.kb_dir / item.name
+                    if item.is_dir():
+                        import shutil
+                        try:
+                            shutil.copytree(str(item), str(target), dirs_exist_ok=True)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            import shutil
+                            shutil.copy2(str(item), str(target))
+                        except Exception:
+                            pass
+                import shutil
+                shutil.rmtree(str(tmp_zvec_path), ignore_errors=True)
+
         build_duration = int(time.time() - _build_start)
-        cursor.execute("DELETE FROM metadata")
-        for key, val in [
-            ('total_files', str(total_files)),
-            ('build_time', datetime.now().isoformat()),
-            ('last_build_time', datetime.now().isoformat()),
-            ('last_build_duration', str(build_duration)),
-            ('delphi_demo_dirs', str(len(official))),
-            ('thirdparty_demo_dirs', str(len(thirdparty))),
-        ]:
-            cursor.execute(
-                "INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
-                (key, val, current_ts),
-            )
-        conn.commit()
-
         logger.info(
-            "示例知识库构建完成: %d 个文件, 耗时 %d 秒",
-            total_files, build_duration,
+            "示例知识库构建完成: %d 文件, %d 个段落, 耗时 %d 秒",
+            len([d for d in all_chunked_docs if d.fields.get("path")]),
+            len(all_chunked_docs), build_duration,
         )
+
         self._report_progress(
             100,
-            f"示例 KB 构建完成: {total_files} 文件, {len(all_dirs)} 来源",
+            f"示例 KB 构建完成: {len(all_chunked_docs)} 段落, {len(all_dirs)} 来源",
         )
         return True
 
-    # ──────────────────────────────────────────────
+    def _clean_zvec_files(self):
+        """清除 kb_dir 下的 ZVec 数据文件"""
+        import shutil
+        for item in list(self.kb_dir.iterdir()):
+            name = item.name
+            if name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOCK", "LOG", "CURRENT", "IDENTITY", "OPTIONS", "zvec_tmp")):
+                if item.is_dir():
+                    shutil.rmtree(str(item), ignore_errors=True)
+                else:
+                    try:
+                        item.unlink()
+                    except Exception:
+                        pass
+
+    # ════════════════════════════════════════
     # 搜索
-    # ──────────────────────────────────────────────
+    # ════════════════════════════════════════
 
     def search(
         self, query: str, top_k: int = 20
     ) -> List[Dict[str, Any]]:
         """
-        全文搜索示例知识库。
-
-        优先使用 FTS5，失败时降级为 LIKE 模糊搜索。
+        全文搜索示例知识库（ZVec 全文搜索）。
 
         Args:
             query: 搜索关键词
@@ -530,73 +442,48 @@ class ExampleKnowledgeBase:
             [{"title": "...", "full_path": "...", "source": "...",
               "snippet": "...", "line_count": ...}, ...]
         """
-        self._init_fts5()
-        conn = self._get_db()
-        cursor = conn.cursor()
-
-        # 确保 FTS5 表存在
         try:
-            with self._get_db() as c:
-                self.fts5.create_fts_table(c)  # type: ignore[union-attr]
-        except Exception:
-            pass
+            col = zvec.open(str(self.kb_dir))
+            results = col.query(
+                zvec.Query(field_name="chunk_text", fts=zvec.Fts(match_string=query)),
+                topk=top_k * 2,
+            )
 
-        # ── FTS5 搜索 ──
-        # 对查询做简单转义：把用户输入包在双引号内做短语搜索
-        escaped = query.replace('"', '""')
-        fts_query = f'"{escaped}"'
+            zvec_list = []
+            seen_paths = set()
+            for r in results:
+                path_val = r.fields.get('path', '')
+                if path_val in seen_paths:
+                    continue
+                seen_paths.add(path_val)
 
-        try:
-            cursor.execute("""
-                SELECT d.id, d.title, d.full_path, d.url, d.line_count,
-                       snippet(documents_fts, 1, '<mark>', '</mark>', '...', 40) AS snippet
-                FROM documents_fts
-                JOIN documents d ON d.id = documents_fts.rowid
-                WHERE documents_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-            """, (fts_query, top_k))
-
-            rows = cursor.fetchall()
-            if rows:
-                results = []
-                for row in rows:
-                    results.append({
-                        "title": row["title"],
-                        "full_path": row["full_path"],
-                        "source": row["url"] or "",
-                        "line_count": row["line_count"],
-                        "snippet": row["snippet"],
-                    })
-                return results
-        except Exception as e:
-            logger.debug("FTS5 搜索失败，降级到 LIKE: %s", e)
-
-        # ── 降级：LIKE 模糊搜索 ──
-        like_pattern = f"%{query}%"
-        try:
-            cursor.execute("""
-                SELECT id, title, full_path, url, line_count,
-                       substr(content, 1, 200) AS snippet
-                FROM documents
-                WHERE content LIKE ? OR title LIKE ?
-                ORDER BY line_count ASC
-                LIMIT ?
-            """, (like_pattern, like_pattern, top_k))
-
-            results = []
-            for row in cursor.fetchall():
-                results.append({
-                    "title": row["title"],
-                    "full_path": row["full_path"],
-                    "source": row["url"] or "",
-                    "line_count": row["line_count"],
-                    "snippet": row["snippet"],
+                chunk_text = r.fields.get('chunk_text', '')
+                title = r.fields.get('title', chunk_text[:80] if chunk_text else "")
+                zvec_list.append({
+                    "title": title,
+                    "full_path": path_val,
+                    "source": r.fields.get('url', ''),
+                    "line_count": 0,
+                    "snippet": chunk_text[:200],
                 })
-            return results
+
+                if len(zvec_list) >= top_k:
+                    break
+
+            return zvec_list
         except Exception as e:
-            logger.error("LIKE 搜索也失败: %s", e)
+            logger.debug("ZVec 搜索失败: %s", e)
             return []
+
+    # ──────────────────────────────────────────────
+    # 生命周期
+    # ──────────────────────────────────────────────
+
+    def load_knowledge_base(self) -> bool:
+        """检查 ZVec 数据是否存在"""
+        if not self.kb_dir.exists():
+            return False
+        return any(f.name.startswith("manifest") for f in self.kb_dir.iterdir())
 
     # ──────────────────────────────────────────────
     # 统计
@@ -604,76 +491,41 @@ class ExampleKnowledgeBase:
 
     def get_statistics(self) -> Dict[str, Any]:
         """获取知识库统计信息"""
-        conn = self._get_db()
-        cursor = conn.cursor()
-        self._init_database(cursor)
-
         stats: Dict[str, Any] = {}
 
         try:
-            cursor.execute("SELECT COUNT(*) FROM documents")
-            stats["files"] = cursor.fetchone()[0]
+            col = zvec.open(str(self.kb_dir))
+            stats["files"] = col.stats.doc_count
 
-            cursor.execute("""
-                SELECT COALESCE(extension, '(no ext)') AS ext,
-                       COUNT(*) AS cnt
-                FROM documents
-                GROUP BY ext ORDER BY cnt DESC
-            """)
-            stats["by_extension"] = dict(cursor.fetchall())
+            # 按扩展名分布统计（需 FTS 查询，若查询失败则跳过分布）
+            if stats["files"] > 0:
+                try:
+                    all_docs = col.query(
+                        zvec.Query(field_name="chunk_text", fts=zvec.Fts(query_string="*")),
+                        topk=min(stats["files"], 2000),
+                    )
+                    ext_counts: Dict[str, int] = {}
+                    for d in all_docs:
+                        ext = d.fields.get('extension', '(no ext)')
+                        ext_counts[ext] = ext_counts.get(ext, 0) + 1
+                    stats["by_extension"] = ext_counts
+                except Exception:
+                    stats["by_extension"] = {}
+            else:
+                stats["by_extension"] = {}
 
-            # FTS5 覆盖
-            self._init_fts5()
-            if self.fts5:
-                fts_stats = self.fts5.get_statistics()
-                stats["fts_coverage"] = fts_stats.get("coverage", 0.0)
-
-            # 来源统计
-            cursor.execute(
-                "SELECT source_type, COUNT(*) AS cnt "
-                "FROM demo_sources GROUP BY source_type"
-            )
-            stats["sources"] = {
-                row["source_type"]: {
-                    "dir_count": row["cnt"],
-                    "file_count": 0,
-                }
-                for row in cursor.fetchall()
-            }
-            # 补充每个来源的文件数
-            for st in stats.get("sources", {}):
-                cursor.execute(
-                    "SELECT COUNT(*) FROM documents WHERE content_type=?",
-                    (f"delphi_demo",),
-                )
-                stats["sources"][st]["file_count"] = cursor.fetchone()[0]
-
-            # DB 大小
-            db_path = self._get_db_path()
-            if os.path.exists(db_path):
-                stats["database_size_mb"] = (
-                    os.path.getsize(db_path) / (1024 * 1024)
-                )
-
-            # 末次构建
-            try:
-                cursor.execute(
-                    "SELECT value FROM metadata WHERE key='last_build_time'"
-                )
-                row = cursor.fetchone()
-                stats["last_build_time"] = row[0] if row else None
-                cursor.execute(
-                    "SELECT value FROM metadata WHERE key='last_build_duration'"
-                )
-                row = cursor.fetchone()
-                stats["last_build_duration"] = (
-                    int(row[0]) if row else None
-                )
-            except Exception:
-                pass
+            # ZVec 文件总大小
+            total_size = 0
+            for f in self.kb_dir.iterdir():
+                if f.is_file() and not f.name.startswith('.'):
+                    total_size += f.stat().st_size
+            stats["database_size_mb"] = round(total_size / (1024 * 1024), 2)
 
         except Exception as e:
             logger.warning("获取统计信息失败: %s", e)
+            stats["files"] = 0
+            stats["by_extension"] = {}
+            stats["database_size_mb"] = 0
 
         return stats
 
@@ -682,8 +534,8 @@ class ExampleKnowledgeBase:
     # ──────────────────────────────────────────────
 
     def close(self):
-        """关闭数据库连接"""
-        self._close_db()
+        """清理资源（ZVec 无状态，无需操作）"""
+        pass
 
     def __enter__(self):
         return self

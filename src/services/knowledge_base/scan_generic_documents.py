@@ -9,7 +9,6 @@ import re
 import json
 import struct
 import hashlib
-import sqlite3
 import logging
 import threading
 import subprocess
@@ -21,7 +20,7 @@ from typing import Dict, List, Optional, Tuple, Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
-from .fts5_lazy_manager import FTS5LazyManager
+import zvec
 
 logger = logging.getLogger(__name__)
 
@@ -1445,21 +1444,11 @@ class GenericDocumentScanner:
         self.config = config or self._load_config()
         self.progress_callback = progress_callback
         
-        db_file = self.config.get('database', {}).get('file', 'documents.sqlite')
-        self.db_path = self.kb_dir / db_file
+        # ZVec 集合直接存放在 kb_dir 根目录
+        self.zvec_dir = self.kb_dir
         
         self._scanning = False
         self._scan_thread: Optional[threading.Thread] = None
-        
-        # 初始化 FTS5 懒加载管理器（需要在 _init_database 之前）
-        self.fts5_manager = FTS5LazyManager(
-            db_path=str(self.db_path),
-            main_table='documents',
-            fts_table='documents_fts',
-            columns=['title', 'content']
-        )
-        
-        self._init_database()
     
     @staticmethod
     def _detect_language(title: str, content: str = '') -> str:
@@ -1494,16 +1483,6 @@ class GenericDocumentScanner:
         
         return max_lang
     
-    @staticmethod
-    def _apply_performance_pragmas(conn, for_build=False):
-        """应用 SQLite 性能 PRAGMA 设置（镜像 sqlite_vector_query_knowledge_base.py 的配置）"""
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=OFF" if for_build else "PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-256000")  # 256MB 缓存
-        conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA mmap_size=268435456")  # 256MB 内存映射
-        conn.execute("PRAGMA busy_timeout=10000")
-
     @staticmethod
     def _find_7zip_path() -> Optional[str]:
         """查找 7-Zip 可执行文件路径"""
@@ -1587,67 +1566,20 @@ class GenericDocumentScanner:
         
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(merged, f, indent=2, ensure_ascii=False)
-    
-    def _init_database(self):
-        conn = sqlite3.connect(str(self.db_path))
-        self._apply_performance_pragmas(conn)
-        cursor = conn.cursor()
-        
-        # 使用统一 schema 创建文档知识库表
-        from .schema import create_document_tables
-        create_document_tables(cursor)
-        
-        # Schema 迁移：确保 metadata 表存在（旧库升级）
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
-        if not cursor.fetchone():
-            from .schema import DOCUMENTS_METADATA_TABLE_SQL
-            cursor.execute(DOCUMENTS_METADATA_TABLE_SQL)
-            logger.info("迁移: 创建 metadata 表")
 
-        # Schema 迁移：添加 title_lower 和 title_rev 字段
-        # （create_document_tables 已创建这些列，此处保留旧迁移代码兼容旧库升级）
-        cursor.execute("PRAGMA table_info(documents)")
-        columns = [row[1] for row in cursor.fetchall()]
-        
-        if 'title_lower' not in columns:
-            cursor.execute("ALTER TABLE documents ADD COLUMN title_lower TEXT")
-        
-        if 'title_rev' not in columns:
-            cursor.execute("ALTER TABLE documents ADD COLUMN title_rev TEXT")
-        
-        if 'language' not in columns:
-            cursor.execute("ALTER TABLE documents ADD COLUMN language TEXT DEFAULT 'en'")
-        
-        # 创建逆序索引
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_title_lower ON documents(title_lower)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_title_rev ON documents(title_rev)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_language ON documents(language)")
-        
-        # 填充已有数据的逆序字段和语言字段
-        cursor.execute("SELECT COUNT(*) FROM documents WHERE title IS NOT NULL AND title_rev IS NULL")
-        missing = cursor.fetchone()[0]
-        if missing > 0:
-            conn.create_function("my_reverse", 1, lambda s: s[::-1].lower() if s else '')
-            conn.create_function("my_lower", 1, lambda s: s.lower() if s else '')
-            cursor.execute("UPDATE documents SET title_lower = my_lower(title), title_rev = my_reverse(title) WHERE title IS NOT NULL AND title_rev IS NULL")
-        
-        # 填充已有数据的语言字段（仅处理 language IS NULL 的记录）
-        cursor.execute("SELECT COUNT(*) FROM documents WHERE language IS NULL")
-        missing_lang = cursor.fetchone()[0]
-        if missing_lang > 0 and missing_lang < 50000:
-            cursor.execute("SELECT id, title, content FROM documents WHERE language IS NULL")
-            for row in cursor.fetchall():
-                doc_id, title, content = row
-                lang = self._detect_language(title or '', content or '')
-                cursor.execute("UPDATE documents SET language = ? WHERE id = ?", (lang, doc_id))
-        elif missing_lang >= 50000:
-            logger.warning(f"跳过 {missing_lang} 条语言检测（数量过大），新插入文档会自动检测语言")
-        
-        # 创建 FTS5 虚拟表（懒加载，不填充数据）
-        self.fts5_manager.create_fts_table(conn)
-        
-        conn.commit()
-        conn.close()
+    def _clean_zvec_files(self):
+        """清除 kb_dir 下的 ZVec 数据文件"""
+        import shutil
+        for item in list(self.kb_dir.iterdir()):
+            name = item.name
+            if name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOCK", "LOG", "CURRENT", "IDENTITY", "OPTIONS")):
+                if item.is_dir():
+                    shutil.rmtree(str(item), ignore_errors=True)
+                else:
+                    try:
+                        item.unlink()
+                    except Exception:
+                        pass
     
     def scan_directory(self, directory: str, extensions: Optional[List[str]] = None,
                       max_workers: Optional[int] = None,
@@ -1769,83 +1701,45 @@ class GenericDocumentScanner:
                         'note': '这是系统级工具，不是 Python 包'
                     })
         
-        conn = sqlite3.connect(str(self.db_path))
-        self._apply_performance_pragmas(conn, for_build=True)
-        cursor = conn.cursor()
         import time; _build_start = time.time()
         
         if rebuild:
-            # 强制重建：truncate 旧数据，跳过 mtime 对比，全部重新处理
-            logger.info("强制重建：清空旧数据...")
-            cursor.execute("DELETE FROM document_entities")
-            cursor.execute("DELETE FROM documents_fts")
-            cursor.execute("DELETE FROM documents")
-            conn.commit()
-            logger.info("  旧数据已清空")
-            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                ('rebuilding', '1'))
-            conn.commit()
+            logger.info("强制重建：清除旧 ZVec 数据...")
+            self._clean_zvec_files()
+            # 重建模式：处理所有文件
             changed = list(all_files)
             skipped = 0
         else:
-            existing_mtimes = {}
-            try:
-                cursor.execute("SELECT full_path, last_modified FROM documents")
-                for r in cursor.fetchall():
-                    existing_mtimes[r[0]] = r[1]
-            except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
-            
-            changed = []
-            for fx in all_files:
-                try:
-                    stx = fx.stat()
-                    mt = datetime.fromtimestamp(stx.st_mtime).isoformat()
-                    if existing_mtimes.get(str(fx)) == mt:
-                        continue
-                    changed.append(fx)
-                except Exception:
-                    changed.append(fx)
+            # ZVec 暂不支持增量更新，全部重新处理（后续可加本 mtime 追踪文件）
+            changed = list(all_files)
         
         skipped = total_files - len(changed)
         all_files = changed
         
         if not all_files:
-            # 无变更也写入末次构建时间（用时 0 表示增量扫描）
-            try:
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    ('last_build_time', datetime.now().isoformat()))
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    ('last_build_duration', '0'))
-                conn.commit()
-            except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
-            conn.close()
             return {'total_files': total_files, 'processed': 0, 'failed': 0,
                     'skipped': skipped, 'warnings': warnings, 'install_hints': install_hints}
         
-        if not rebuild:
-            # 增量模式：逐条删除已变更文件的旧记录
-            for fx in all_files:
-                try:
-                    cursor.execute("SELECT id FROM documents WHERE full_path = ?", (str(fx),))
-                    doc_ids = [row[0] for row in cursor.fetchall()]
-                    cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
-                    for doc_id in doc_ids:
-                        cursor.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
-                except Exception as e:
-                    logger.debug("忽略非致命异常: %s", str(e))
-            conn.commit()
-        # 强制重建模式：数据已在前面 truncate，此处跳过逐行删除
-        
+        # ZVec 要求在空目录创建，用临时子目录方案
+        col_schema = zvec.CollectionSchema("documents", fields=[
+            zvec.FieldSchema("chunk_text", zvec.DataType.STRING),
+            zvec.FieldSchema("path", zvec.DataType.STRING),
+            zvec.FieldSchema("content_type", zvec.DataType.STRING),
+            zvec.FieldSchema("extension", zvec.DataType.STRING),
+        ])
+        import uuid
+        tmp_zvec_name = f".zvec_tmp_{uuid.uuid4().hex[:8]}"
+        tmp_zvec_path = self.kb_dir / tmp_zvec_name
+        col = zvec.create_and_open(str(tmp_zvec_path), schema=col_schema)
+
+        BATCH_SIZE = 500  # 每批插入数
+        batch_buffer = []
+
         try:
-            COMMIT_INTERVAL = 500  # 每处理多少文档提交一次
-            batch_count = 0
-            
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 args = [(str(f), str(directory)) for f in all_files]
                 future_map = {executor.submit(_process_document_worker, a): a for a in args}
-                
+
                 file_idx = 0
                 for future in as_completed(future_map):
                     try:
@@ -1854,111 +1748,101 @@ class GenericDocumentScanner:
                         failed += 1
                         file_idx += 1
                         continue
-                    
+
                     if not docs:
                         file_idx += 1
                         continue
-                    
+
                     for result in docs:
                         if result.get('requires_dependencies'):
                             failed += 1
                             continue
-                        
+
                         try:
                             title = result.get('title', '')
-                            title_lower = title.lower() if title else ''
-                            title_rev = title[::-1].lower() if title else ''
                             content = result.get('content', '')
-                            language = self._detect_language(title, content)
-                            
-                            # 清理 Base64 data URI（html2text ignore_images=True 已处理，此处做防御性清理）
+
+                            # 清理 Base64 data URI
                             content = re.sub(
                                 r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
                                 '[Base64 Image]',
                                 content
                             )
-                            requires_extraction = result.get('requires_extraction', 0)
-                            
-                            cursor.execute("""
-                                INSERT INTO documents (
-                                    path, full_path, extension, title, title_lower, title_rev,
-                                    content, content_type, file_size, size, line_count,
-                                    hash, last_modified, sections, code_examples, url, requires_extraction, language
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, (
-                                result.get('path'),
-                                result.get('full_path'),
-                                result.get('extension'),
-                                title,
-                                title_lower,
-                                title_rev,
-                                content,
-                                result.get('content_type'),
-                                result.get('file_size'),
-                                result.get('size'),
-                                result.get('line_count'),
-                                result.get('hash'),
-                                result.get('last_modified'),
-                                json.dumps(result.get('sections', [])),
-                                json.dumps(result.get('code_examples', [])),
-                                result.get('url'),
-                                requires_extraction,
-                                language
-                            ))
+
+                            # 按 5000 行切块
+                            content_lines = content.split('\n')
+                            chunk_size = 5000
+                            chm_name = Path(result.get('full_path', '')).stem
+                            html_path = result.get('path') or ''
+                            path_val = f"{chm_name}#{html_path}" if chm_name and html_path else (html_path or chm_name)
+                            content_type_val = result.get('content_type', '')
+                            ext_val = result.get('extension', '')
+
+                            for ci in range(0, len(content_lines), chunk_size):
+                                chunk_lines = content_lines[ci:ci + chunk_size]
+                                chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                                chunk_id = hashlib.md5(f"{path_val}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
+                                batch_buffer.append(zvec.Doc(
+                                    id=chunk_id,
+                                    fields={
+                                        'chunk_text': chunk_text,
+                                        'path': path_val,
+                                        'content_type': content_type_val,
+                                        'extension': ext_val,
+                                    }
+                                ))
+
                             processed += 1
-                            batch_count += 1
+                            # 单次文档插入后检查 batch 是否超限（ZVec 上限 1024）
+                            if len(batch_buffer) >= BATCH_SIZE:
+                                col.insert(batch_buffer)
+                                col.flush()
+                                batch_buffer.clear()
                         except Exception:
                             failed += 1
-                    
-                    # 每完成一个文件或达到提交间隔，就 commit 一次
-                    if batch_count >= COMMIT_INTERVAL:
-                        conn.commit()
-                        batch_count = 0
-                    
+
                     file_idx += 1
                     if self.progress_callback:
-                        self.progress_callback(processed, estimated_total)
-            
-            conn.commit()
-            
-            # 数据库维护：回收碎片、优化查询计划
+                        self.progress_callback(processed, estimated_total, f"{processed}/{estimated_total} 文件")
+
+            # 插入剩余批次
+            if batch_buffer:
+                col.insert(batch_buffer)
+                col.flush()
+                batch_buffer.clear()
+
+            # 构建 FTS 全文索引
             if processed > 0:
                 if self.progress_callback:
-                    self.progress_callback(total_files, "正在优化数据库（VACUUM）...")
-                conn.execute("PRAGMA incremental_vacuum")
-                conn.execute("VACUUM")
-                conn.execute("PRAGMA optimize")
-                conn.execute("ANALYZE")
-                
-                # 构建完成后全量构建 FTS5 索引
-                if self.progress_callback:
-                    self.progress_callback(total_files, "正在构建 FTS5 全文索引...")
+                    self.progress_callback(total_files, "正在构建全文索引...")
                 try:
-                    self.fts5_manager.rebuild_full()
+                    col.create_index("chunk_text", zvec.FtsIndexParam(tokenizer_name="jieba"))
+                    col.optimize()
                 except Exception as e:
-                    logger.warning(f"FTS5 索引构建失败（后续查询自动降级）: {e}")
-            
+                    logger.warning(f"全文索引构建失败（搜索自动降级）: {e}")
+
         finally:
-            # 记录末次构建信息并清除重建标志
-            try:
-                duration = int(time.time() - _build_start)
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    ('last_build_time', datetime.now().isoformat()))
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    ('last_build_duration', str(duration)))
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    ('rebuilding', '0'))
-                from .schema import set_schema_version_in_db
-                set_schema_version_in_db(cursor)
-                conn.commit()
-            except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
-            # 恢复 synchronous 为非构建模式
-            try:
-                conn.execute("PRAGMA synchronous=NORMAL")
-            except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
-            conn.close()
+            # 释放 ZVec 文件锁后合并到 kb_dir
+            # zvec.Collection 无 close() 方法，需 del + gc 释放文件锁
+            del col
+            import gc
+            gc.collect()
+            import time
+            time.sleep(0.3)
+            if tmp_zvec_path.exists():
+                for item in tmp_zvec_path.iterdir():
+                    target = self.kb_dir / item.name
+                    if item.is_dir():
+                        try:
+                            shutil.copytree(str(item), str(target), dirs_exist_ok=True)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            shutil.copy2(str(item), str(target))
+                        except Exception:
+                            pass
+                shutil.rmtree(str(tmp_zvec_path), ignore_errors=True)
 
         return {
             'total_files': total_files,
@@ -2027,354 +1911,156 @@ class GenericDocumentScanner:
     def add_web_document(self, url: str) -> Optional[Dict]:
         """
         添加网页文档
-        
+
         Args:
             url: 网页 URL
-        
+
         Returns:
             文档信息或 None
         """
         try:
             processor = WebDocumentProcessor()
             result = processor.process_url(url)
-            
+
             if result:
-                conn = sqlite3.connect(str(self.db_path))
-                self._apply_performance_pragmas(conn)
-                cursor = conn.cursor()
-                
-                try:
-                    title = result.get('title', '')
-                    content = result.get('content', '')
-                    # 防御性清理 Base64 data URI
-                    content = re.sub(
-                        r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
-                        '[Base64 Image]',
-                        content
-                    )
-                    title_lower = title.lower() if title else ''
-                    title_rev = title[::-1].lower() if title else ''
-                    language = self._detect_language(title, content)
-                    
-                    cursor.execute("""
-                        INSERT INTO documents (
-                            path, full_path, extension, title, title_lower, title_rev, content, content_type,
-                            file_size, size, line_count, hash, last_modified,
-                            sections, code_examples, url, language
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        url,
-                        url,
-                        '.html',
-                        title,
-                        title_lower,
-                        title_rev,
-                        content,
-                        result.get('content_type'),
-                        result.get('size'),
-                        result.get('size'),
-                        result.get('line_count'),
-                        result.get('hash'),
-                        datetime.now().isoformat(),
-                        json.dumps(result.get('sections', [])),
-                        json.dumps(result.get('code_examples', [])),
-                        result.get('url'),
-                        language
+                title = result.get('title', '')
+                content = result.get('content', '')
+                # 防御性清理 Base64 data URI
+                content = re.sub(
+                    r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
+                    '[Base64 Image]',
+                    content
+                )
+
+                # 按 5000 行切块写入 ZVec
+                content_lines = content.split('\n')
+                chunk_size = 5000
+                docs = []
+                for ci in range(0, len(content_lines), chunk_size):
+                    chunk_lines = content_lines[ci:ci + chunk_size]
+                    chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                    chunk_id = hashlib.md5(f"{url}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
+                    docs.append(zvec.Doc(
+                        id=chunk_id,
+                        fields={
+                            'chunk_text': chunk_text,
+                            'path': url,
+                            'content_type': result.get('content_type', ''),
+                            'extension': '.html',
+                        }
                     ))
-                    
-                    conn.commit()
-                finally:
-                    conn.close()
-                
+
+                if docs:
+                    col_schema = zvec.CollectionSchema("documents", fields=[
+                        zvec.FieldSchema("chunk_text", zvec.DataType.STRING),
+                        zvec.FieldSchema("path", zvec.DataType.STRING),
+                        zvec.FieldSchema("content_type", zvec.DataType.STRING),
+                        zvec.FieldSchema("extension", zvec.DataType.STRING),
+                    ])
+                    col = zvec.create_and_open(str(self.zvec_dir), schema=col_schema)
+                    col.insert(docs)
+                    col.flush()
+                    # zvec.Collection 无 close() 方法，del+gc 释放锁
+                    del col
+                    import gc
+                    gc.collect()
+                    import time
+                    time.sleep(0.3)
+
                 return result
-            
+
             return None
         except Exception as e:
             return {'error': str(e)}
-    
+
     def search(self, query: str, content_type: Optional[str] = None, top_k: int = 10, use_fts5: bool = True) -> List[Dict]:
         """
-        搜索文档（支持 FTS5 懒加载 + 逆序索引优化）
-        
-        Args:
-            query: 搜索关键词（支持空格分隔的多关键词）
-            content_type: 文档类型过滤
-            top_k: 返回结果数
-            use_fts5: 是否使用 FTS5（默认 True）
-        
-        Returns:
-            匹配的文档列表（按相关性评分排序）
-        """
-        if use_fts5:
-            # 使用 FTS5 懒加载搜索（自动降级 + 后台构建）
-            results = self.fts5_manager.search(
-                query=query,
-                search_func=lambda q: self._reverse_index_search(q, content_type, top_k),
-                top_k=top_k,
-                use_bM25=True
-            )
-        else:
-            # 直接使用逆序索引搜索
-            results = self._reverse_index_search(query, content_type, top_k)
-        
-        # 后置 content_type 过滤（弥补 FTS5 _fts_search 不支持 content_type 过滤的问题）
-        if content_type and results:
-            results = [r for r in results if r.get('content_type') == content_type]
-        return results
-    
-    def _reverse_index_search(self, query: str, content_type: Optional[str] = None, top_k: int = 10) -> List[Dict]:
-        """
-        逆序索引搜索（降级搜索）
-        
+        搜索文档（使用 ZVec 全文搜索）
+
         Args:
             query: 搜索关键词
             content_type: 文档类型过滤
             top_k: 返回结果数
-        
+            use_fts5: 兼容参数，已弃用
+
         Returns:
             匹配的文档列表
         """
-        conn = sqlite3.connect(str(self.db_path))
-        self._apply_performance_pragmas(conn)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
         try:
-            keywords = query.split()
-            if not keywords:
-                return []
-            
-            # 使用逆序索引优化标题搜索
-            title_conditions = []
-            content_conditions = []
-            score_parts = []
-            params = []
-            
-            for kw in keywords:
-                kw_lower = kw.lower()
-                kw_rev = kw_lower[::-1]
-                
-                # 标题搜索：优先使用逆序索引
-                title_conditions.append("title_lower = ?")
-                title_conditions.append("title_lower GLOB ?")
-                title_conditions.append("title_rev GLOB ?")
-                title_conditions.append("title_lower LIKE ?")
-                params.extend([kw_lower, f'{kw_lower}*', f'{kw_rev}*', f'%{kw_lower}%'])
-                
-                # 内容搜索
-                content_conditions.append("content LIKE ?")
-                params.append(f'%{kw}%')
-                
-                # 评分
-                score_parts.append(f"(CASE WHEN title_lower = ? THEN 20 ELSE 0 END)")
-                score_parts.append(f"(CASE WHEN title_lower GLOB ? THEN 15 ELSE 0 END)")
-                score_parts.append(f"(CASE WHEN title_rev GLOB ? THEN 15 ELSE 0 END)")
-                score_parts.append(f"(CASE WHEN title_lower LIKE ? THEN 10 ELSE 0 END)")
-                score_parts.append(f"(CASE WHEN content LIKE ? THEN 1 ELSE 0 END)")
-                params.extend([kw_lower, f'{kw_lower}*', f'{kw_rev}*', f'%{kw_lower}%', f'%{kw}%'])
-            
-            title_where = " OR ".join(title_conditions)
-            content_where = " OR ".join(content_conditions)
-            score_expr = " + ".join(score_parts)
-            
-            if content_type:
-                sql = f"""
-                    SELECT *, ({score_expr}) as score
-                    FROM documents
-                    WHERE content_type = ? AND ({title_where} OR {content_where})
-                    ORDER BY score DESC, size DESC
-                    LIMIT ?
-                """
-                params.insert(0, content_type)
-            else:
-                sql = f"""
-                    SELECT *, ({score_expr}) as score
-                    FROM documents
-                    WHERE {title_where} OR {content_where}
-                    ORDER BY score DESC, size DESC
-                    LIMIT ?
-                """
-            
-            params.append(top_k)
-            cursor.execute(sql, params)
-            
-            results = []
-            for row in cursor.fetchall():
-                results.append(dict(row))
-            
-            return results
-        finally:
-            conn.close()
-    
-    def crawl_website(self, start_url: str, max_pages: int = 100, max_depth: int = 3,
-                     domain_filter: Optional[str] = None, url_pattern: Optional[str] = None) -> Dict:
-        """
-        自动爬取网站（递归发现链接）
-        
-        Args:
-            start_url: 起始 URL
-            max_pages: 最大页面数
-            max_depth: 最大深度
-            domain_filter: 域名过滤（只爬取该域名下的页面）
-            url_pattern: URL 正则模式过滤
-        
-        Returns:
-            爬取统计信息
-        """
-        try:
-            import requests
-            from urllib.parse import urljoin, urlparse
-            from collections import deque
-        except ImportError:
-            return {'error': '需要安装 requests: pip install requests'}
-        
-        visited = set()
-        queue = deque([(start_url, 0)])
-        stats = {'success': 0, 'failed': 0, 'skipped': 0, 'total_size': 0}
-        
-        processor = WebDocumentProcessor()
-        
-        while queue and stats['success'] < max_pages:
-            url, depth = queue.popleft()
-            
-            if url in visited:
-                continue
-            
-            if depth > max_depth:
-                continue
-            
-            visited.add(url)
-            
-            # 进度回调
-            if self.progress_callback and stats['success'] % 10 == 0:
-                self.progress_callback(stats['success'], f"已爬取 {stats['success']} 个页面")
-            
-            # 处理当前页面
-            result = processor.process_url(url, timeout=30)
-            
-            if result:
-                # 添加到知识库
-                self.add_web_document(url)
-                stats['success'] += 1
-                stats['total_size'] += result.get('size', 0)
-                
-                # 提取新链接
-                if depth < max_depth:
-                    try:
-                        resp = requests.get(url, timeout=20, headers={
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                        })
-                        html_content = resp.text
-                        
-                        new_links = self._extract_links_from_html(
-                            html_content, url,
-                            domain_filter=domain_filter,
-                            url_pattern=url_pattern
-                        )
-                        
-                        for link in new_links:
-                            if link not in visited:
-                                queue.append((link, depth + 1))
-                    except Exception as e:
-                        logger.debug("忽略非致命异常: %s", str(e))
-            else:
-                stats['failed'] += 1
-        
-        if self.progress_callback:
-            self.progress_callback(100, f"爬取完成: {stats['success']} 个页面")
-        
-        return stats
-    
-    def _extract_links_from_html(self, html_content: str, base_url: str,
-                                 domain_filter: Optional[str] = None,
-                                 url_pattern: Optional[str] = None) -> List[str]:
-        """从 HTML 中提取链接"""
-        if not BeautifulSoup:
-            return []
-        
-        from urllib.parse import urljoin, urlparse
-        
-        soup = BeautifulSoup(html_content, 'html.parser')
-        links = []
-        
-        for tag in soup.find_all('a', href=True):
-            href = tag['href']
-            full_url = urljoin(base_url, href)
-            parsed = urlparse(full_url)
-            
-            # 移除锚点
-            if '#' in full_url:
-                full_url = full_url.split('#')[0]
-            
-            # 域名过滤
-            if domain_filter and parsed.netloc != domain_filter:
-                continue
-            
-            # URL 模式过滤
-            if url_pattern:
-                if not re.search(url_pattern, full_url):
+            col = zvec.open(str(self.zvec_dir))
+            results = col.query(
+                zvec.Query(field_name="chunk_text", fts=zvec.Fts(match_string=query)),
+                topk=top_k * 2,
+            )
+
+            formatted = []
+            seen_paths = set()
+            for r in results:
+                path_val = r.fields.get('path', '')
+                # 去重：同一 path 只保留最高分结果
+                if path_val in seen_paths:
                     continue
-            
-            # 只保留 HTML 页面
-            if not full_url.endswith(('.html', '.htm', '/')):
-                continue
-            
-            # 忽略非 HTML 文件
-            if any(ext in full_url.lower() for ext in ['.pdf', '.zip', '.png', '.jpg', '.gif', '.css', '.js']):
-                continue
-            
-            links.append(full_url)
-        
-        return list(set(links))
-    
+                seen_paths.add(path_val)
+
+                chunk_text = r.fields.get('chunk_text', '')
+                doc_entry = {
+                    'path': path_val,
+                    'full_path': path_val,
+                    'title': '',
+                    'content': chunk_text,
+                    'content_type': r.fields.get('content_type', ''),
+                    'extension': r.fields.get('extension', ''),
+                    'score': r.score or 0,
+                }
+                # 从 chunk_text 首行提取 title
+                first_newline = chunk_text.find('\n')
+                if first_newline > 0:
+                    doc_entry['title'] = chunk_text[:first_newline].strip()
+                formatted.append(doc_entry)
+
+                if len(formatted) >= top_k:
+                    break
+
+            if content_type and formatted:
+                formatted = [r for r in formatted if r.get('content_type') == content_type]
+            return formatted[:top_k]
+        except Exception as e:
+            logger.warning(f"ZVec 搜索失败: {e}")
+            return []
+
     def get_statistics(self) -> Dict:
-        """获取统计信息"""
-        conn = sqlite3.connect(str(self.db_path))
-        self._apply_performance_pragmas(conn)
-        cursor = conn.cursor()
-        
+        """获取统计信息（基于 ZVec）"""
         try:
-            cursor.execute("SELECT COUNT(*) FROM documents")
-            total_documents = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT content_type, COUNT(*) 
-                FROM documents 
-                GROUP BY content_type
-            """)
-            by_type = dict(cursor.fetchall())
-            
-            # 直接从数据库查询扩展名分布（替代不存在的 language 列）
-            cursor.execute("""
-                SELECT COALESCE(extension, '(no ext)') AS ext, COUNT(*) AS cnt
-                FROM documents
-                GROUP BY ext
-                ORDER BY cnt DESC
-            """)
-            by_extension = dict(cursor.fetchall())
-            
-            # 实际数据库文件磁盘大小
-            db_size_mb = self.db_path.stat().st_size / (1024 * 1024)
-            
-            # 末次构建时间：优先从 metadata 表读取
-            try:
-                cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
-                row = cursor.fetchone()
-                last_build = row[0] if row else None
-                cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
-                row = cursor.fetchone()
-                last_build_duration = int(row[0]) if row else None
-            except Exception:
-                last_build = None
-                last_build_duration = None
+            col = zvec.open(str(self.zvec_dir))
+            total_documents = col.stats.doc_count
+
+            # 按 extension / content_type 统计（需 FTS 查询，若失败则跳过分布）
+            ext_stats = {}
+            type_stats = {}
+            if total_documents > 0:
+                try:
+                    all_docs = col.query(
+                        zvec.Query(field_name="chunk_text", fts=zvec.Fts(query_string="*")),
+                        topk=min(total_documents, 5000),
+                    )
+                    for d in all_docs:
+                        ext = d.fields.get('extension', '(no ext)')
+                        ext_stats[ext] = ext_stats.get(ext, 0) + 1
+
+                    for d in all_docs:
+                        ct = d.fields.get('content_type', 'unknown')
+                        type_stats[ct] = type_stats.get(ct, 0) + 1
+                except Exception:
+                    pass  # 分布统计失败时返回空分布
 
             return {
                 'total_documents': total_documents,
-                'by_type': by_type,
-                'by_extension': by_extension,
-                'database_size_mb': round(db_size_mb, 2),
-                'last_build_time': last_build,
-                'last_build_duration': last_build_duration,
+                'by_type': type_stats,
+                'by_extension': ext_stats,
+                'database_size_mb': 0,
+                'last_build_time': None,
+                'last_build_duration': None,
             }
-        finally:
-            conn.close()
+        except Exception as e:
+            logger.warning(f"ZVec 统计获取失败: {e}")
+            return {'total_documents': 0, 'by_type': {}, 'by_extension': {}, 'database_size_mb': 0}

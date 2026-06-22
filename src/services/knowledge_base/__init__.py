@@ -1,14 +1,11 @@
 """
-Delphi 知识库服务模块
+知识库模块
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
-Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 """
 
-from .service import DelphiKnowledgeBaseService
-
-# 统一 schema 管理（实际实现在 schema.py，此处 re-export 保持兼容）
+# 统一 schema 管理
 from .schema import (
     SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
@@ -23,7 +20,6 @@ from .schema import (
 )
 
 __all__ = [
-    'DelphiKnowledgeBaseService',
     'SCHEMA_VERSION',
     'SCHEMA_VERSION_KEY',
     'get_schema_version_from_db',

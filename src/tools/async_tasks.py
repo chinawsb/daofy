@@ -53,15 +53,45 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
     # 根据任务类型创建任务函数
     if task_type == "build_knowledge_base":
-        from ..services.knowledge_base.service import DelphiKnowledgeBaseService
+        from ..services.knowledge_base.zvec_adapter import ZVecKnowledgeBaseAdapter
         from src.utils.delphi_env import get_delphi_version
+        import winreg
+        from pathlib import Path
+
+        def _get_delphi_source_dirs():
+            dirs = []
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+                i = 0
+                while True:
+                    try:
+                        vkey = winreg.EnumKey(key, i)
+                        vpath = winreg.OpenKey(key, vkey)
+                        try:
+                            root = winreg.QueryValueEx(vpath, "RootDir")[0]
+                            src = Path(root) / "source"
+                            if src.exists():
+                                dirs.append(str(src))
+                        except OSError:
+                            pass
+                        finally:
+                            winreg.CloseKey(vpath)
+                        i += 1
+                    except WindowsError:
+                        break
+                winreg.CloseKey(key)
+            except Exception:
+                pass
+            return dirs
 
         def build_kb_task(**kwargs):
-            version = kwargs.get("version")
             rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
-            service = DelphiKnowledgeBaseService(progress_callback=progress_callback)
-            return service.build_knowledge_base(version=version, rebuild=rebuild)
+            source_dirs = _get_delphi_source_dirs()
+            kb_dir = str(Path(__file__).parent.parent.parent / "data" / "delphi-knowledge-base")
+            service = ZVecKnowledgeBaseAdapter(kb_dir, source_dirs=source_dirs)
+            service.progress_callback = progress_callback
+            return service.build_knowledge_base(rebuild=rebuild)
 
         # 确定显示的版本号
         display_version = params.get("version")
@@ -237,7 +267,10 @@ async def start_async_task(arguments: Any) -> CallToolResult:
                 scan_result = scanner.scan_directory(directory, extensions=extensions, exclude=exclude,
                                                      rebuild=rebuild)
                 results["scan"] = scan_result
-            
+                # 扫描器已直接写入 ZVec，无需额外导出步骤
+                if scan_result and not scan_result.get("error"):
+                    results["zvec_built"] = True
+
             return results
         
         if params.get("start_url"):

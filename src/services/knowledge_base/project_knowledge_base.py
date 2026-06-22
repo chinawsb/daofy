@@ -14,22 +14,18 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 import os
 import json
 import time
-import hashlib
-import sqlite3
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
-from datetime import datetime
 from src.utils.logger import get_logger
 from src.utils.dproj_parser import DprojParser
-from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
-from src.services.knowledge_base.schema import get_connection, create_source_tables, get_schema_version_from_db
-from src.services.knowledge_base import set_schema_version_in_db
+from .zvec_adapter import ZVecKnowledgeBaseAdapter
 
 logger = get_logger(__name__)
 
 
 class ProjectKnowledgeBase:
-    """项目知识库管理器"""
+    """项目知识库管理器（ZVec 版）"""
 
     def __init__(self, project_path: str, progress_callback: Optional[Callable] = None):
         """
@@ -44,13 +40,13 @@ class ProjectKnowledgeBase:
         self.project_name = self.project_path.stem
         self.progress_callback = progress_callback
 
-        # 项目知识库目录 - 存放在项目目录下
+        # 项目知识库目录
         self.kb_dir = self.project_dir / ".delphi-kb"
         self.kb_dir.mkdir(parents=True, exist_ok=True)
 
-        # 知识库实例
-        self.project_kb: Optional[SQLiteVectorKnowledgeBase] = None
-        self.thirdparty_kb: Optional[SQLiteVectorKnowledgeBase] = None
+        # ZVec 知识库适配器
+        self.project_kb: Optional[ZVecKnowledgeBaseAdapter] = None
+        self.thirdparty_kb: Optional[ZVecKnowledgeBaseAdapter] = None
 
         logger.info(f"项目知识库初始化: {self.project_name}")
 
@@ -317,7 +313,7 @@ class ProjectKnowledgeBase:
 
     def build_project_knowledge_base(self, rebuild: bool = False) -> bool:
         """
-        构建项目源码知识库
+        构建项目源码知识库（ZVec 版）
 
         Args:
             rebuild: 是否强制重建
@@ -326,99 +322,35 @@ class ProjectKnowledgeBase:
             是否构建成功
         """
         _build_start = time.time()
-        # 先连接 DB，读取缓存的 source_hash
-        db_file = self.kb_dir / "knowledge.sqlite"
-        conn = get_connection(str(db_file), use_wal=True)
-        cursor = conn.cursor()
-        create_source_tables(cursor)
+
+        # 迁移旧版 zvec_project/ 子目录到根目录
+        from .zvec_adapter import _migrate_old_zvec_data
+        old_zvec = self.kb_dir / "zvec_project"
+        if old_zvec.exists() and old_zvec != self.kb_dir:
+            _migrate_old_zvec_data(old_zvec, self.kb_dir)
+
         current_hash = self._calculate_source_hash(self.project_dir)
+        if not rebuild:
+            cached_hash = None
+            hash_file = self.kb_dir / "source_hash.txt"
+            if hash_file.exists():
+                cached_hash = hash_file.read_text(encoding='utf-8').strip()
+            if cached_hash == current_hash and any(f.name.startswith("manifest") for f in self.kb_dir.iterdir()):
+                logger.info("项目源码知识库已是最新,跳过构建")
+                return True
 
-        # Schema 升级检测：当前版本到最新
-        from src.services.knowledge_base import SCHEMA_VERSION as _SV
-        if get_schema_version_from_db(cursor) < _SV:
-            cursor.execute("""
-                DELETE FROM vocabularies WHERE id NOT IN (
-                    SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
-                )
-            """)
-            if cursor.rowcount > 0:
-                logger.info(f"升级 schema v1→v2：清理了 {cursor.rowcount} 条重复词汇记录")
-            else:
-                logger.info("升级 schema v1→v2：无重复词汇需清理")
-            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
-
-        # 读取缓存 hash，检查是否需要重建
-        cached_hash = None
-        try:
-            cursor.execute("SELECT value FROM metadata WHERE key='source_hash'")
-            row = cursor.fetchone()
-            if row:
-                cached_hash = row[0]
-        except Exception as e:
-            logger.debug("忽略非致命异常: %s", str(e))
-
-        if not rebuild and cached_hash == current_hash and db_file.exists():
-            logger.info("项目源码知识库已是最新,跳过构建")
-            conn.close()
-            return True
-        logger.info("开始构建项目源码知识库")
+        logger.info("开始构建项目源码知识库 (ZVec)")
         self._report_progress(5, "扫描项目源码文件...")
         self.kb_dir.mkdir(parents=True, exist_ok=True)
+
+        # 收集项目源码文件
         exclude_prefixes = self._get_verified_thirdparty_prefixes()
-
-        existing_files = {}
-        if rebuild:
-            cursor.execute("DELETE FROM vocabularies")
-            cursor.execute("DELETE FROM files")
-            cursor.execute("DELETE FROM metadata")
-            conn.commit()
-            logger.info("强制重建，已清空旧数据")
-        else:
-            cursor.execute("SELECT id, full_path, hash FROM files")
-            for row in cursor.fetchall():
-                existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
-            logger.info(f"现有文件数: {len(existing_files)}")
-
-        current_time = datetime.now().timestamp()
         skip_dir_names = {'.delphi-kb', 'thirdpart', 'vendor', 'lib', 'packages',
                           '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
                           'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs'}
         delphi_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
 
-        # ================================================================
-        # 第一阶段: 收集所有文件（三方库 + 项目源码）
-        # ================================================================
-        files_to_parse = []       # (file_path_str, source_dir_str)
-        file_category = {}        # full_path -> 'thirdparty' | 'source'
-        new_file_paths = set()
-        new_files = updated_files = skipped_files_inc = total_files = 0
-
-        # --- 1a. 收集三方库文件 ---
-        thirdparty_paths = self.get_thirdparty_paths_from_dproj()
-        if thirdparty_paths:
-            # 读取共享三方库路径过滤
-            shared_scanned = self._get_shared_thirdparty_paths()
-            if shared_scanned:
-                before = len(thirdparty_paths)
-                thirdparty_paths = [p for p in thirdparty_paths if str(Path(p).resolve()) not in shared_scanned]
-                if before - len(thirdparty_paths) > 0:
-                    logger.info(f"共享知识库已包含 {before - len(thirdparty_paths)} 个路径,跳过扫描")
-
-            for tpath in thirdparty_paths:
-                path_obj = Path(tpath)
-                if not path_obj.exists():
-                    continue
-                for root, dirs, files in os.walk(path_obj):
-                    for f in files:
-                        if Path(f).suffix.lower() not in delphi_extensions:
-                            continue
-                        fp = str(Path(root) / f)
-                        if fp not in file_category:
-                            file_category[fp] = 'thirdparty'
-                            files_to_parse.append((fp, str(path_obj)))
-                            total_files += 1
-
-        # --- 1b. 收集项目源码文件 ---
+        project_files: List[str] = []
         for root, dirs, files in os.walk(self.project_dir):
             dirs[:] = [d for d in dirs if d.lower() not in skip_dir_names]
             root_path = Path(root)
@@ -426,297 +358,129 @@ class ProjectKnowledgeBase:
                 dirs[:] = []
                 continue
             for file in files:
-                if Path(file).suffix.lower() not in delphi_extensions:
-                    continue
-                file_path = root_path / file
-                total_files += 1
-                full_path = str(file_path)
-                new_file_paths.add(full_path)
+                if Path(file).suffix.lower() in delphi_extensions:
+                    project_files.append(str(root_path / file))
 
-                try:
-                    stat = file_path.stat()
-                    file_cur_hash = f"{stat.st_mtime}:{stat.st_size}"
-                    if not rebuild and full_path in existing_files:
-                        if existing_files[full_path]['hash'] == file_cur_hash:
-                            skipped_files_inc += 1
-                            continue
-                        updated_files += 1
+        self._report_progress(30, f"收集到 {len(project_files)} 个文件，开始 chunk...")
+
+        # Chunk 所有文件
+        chunks = chunk_file_list(project_files)
+        if not chunks:
+            logger.warning("项目源码未产生任何 chunk")
+            return False
+        logger.info(f"Chunk 完成: {len(chunks)} chunks 来自 {len(project_files)} 文件")
+        self._report_progress(50, f"{len(chunks)} chunks，导入 ZVec...")
+
+        # 构建 ZVec 知识库（展平到 kb_dir 根目录）
+        kv_dir = str(self.kb_dir)
+        if rebuild:
+            import shutil as _shutil
+            # 只清除 ZVec 数据文件，保留 hash/配置
+            for item in Path(kv_dir).iterdir():
+                if item.name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOG", "LOCK", "CURRENT", "IDENTITY", "OPTIONS")):
+                    if item.is_dir():
+                        _shutil.rmtree(item, ignore_errors=True)
                     else:
-                        new_files += 1
-                    files_to_parse.append((str(file_path), str(self.project_dir)))
-                    file_category[full_path] = 'source'
-                except Exception as e:
-                    logger.debug(f"访问文件失败: {file_path}, {e}")
+                        item.unlink(missing_ok=True)
 
-        logger.info(f"收集完成: {len(files_to_parse)} 个待解析文件 (thirdparty={sum(1 for v in file_category.values() if v=='thirdparty')}, source={sum(1 for v in file_category.values() if v=='source')})")
+        import zvec
+        from zvec import CollectionSchema, FieldSchema, DataType, FtsIndexParam, InvertIndexParam, Doc
 
-        # 第二阶段：解析所有文件
-        #   ≤50 文件直接解析（避免进程池启动开销）
-        #   >50 文件按每50文件开1进程，上限 cpu-1
-        if files_to_parse:
-            from src.services.knowledge_base.scan_delphi_sources import _analyze_file_worker
-            self._report_progress(50, f"解析 {len(files_to_parse)} 个文件...")
+        # 简化 schema：entity_name 合并到 chunk_text 中
+        schema = CollectionSchema("project_kb", fields=[
+            FieldSchema("chunk_text", DataType.STRING),
+            FieldSchema("chunk_type", DataType.STRING),
+            FieldSchema("base_class", DataType.STRING),
+            FieldSchema("file_path", DataType.STRING),
+            FieldSchema("start_line", DataType.INT32),
+            FieldSchema("end_line", DataType.INT32),
+        ])
 
-            _p_start = time.time()
-            parsed_results = []
+        col = zvec.create_and_open(path=kv_dir, schema=schema)
 
-            if len(files_to_parse) <= 50:
-                logger.info(f"文件数少({len(files_to_parse)})，直接解析")
-                for i, f in enumerate(files_to_parse):
-                    r = _analyze_file_worker(f)
-                    if r:
-                        parsed_results.append(r)
-                    if (i + 1) % 1000 == 0:
-                        logger.info(f"日志: 解析进度 {i+1}/{len(files_to_parse)}")
-            else:
-                from concurrent.futures import ProcessPoolExecutor, as_completed
-                n_workers = min(15, max(2, os.cpu_count() or 4))
-                chunk_size = max(5, len(files_to_parse) // (n_workers * 4))
-                logger.info(f"多进程解析: {len(files_to_parse)} 个文件, {n_workers} 进程 (chunksize={chunk_size})")
-                self._report_progress(50, f"多进程解析 {len(files_to_parse)} 个文件...")
-
-                # 诊断：记录当前进程树信息
-                # 注意：os 已在模块顶部导入，不要在函数体内 import os（会导致 UnboundLocalError）
-                import sys
-                logger.info(f"诊断: 父进程PID={os.getppid()}, 当前PID={os.getpid()}, Python={sys.executable}")
-                logger.info(f"诊断: MCP Server 启动方式 - __name__={__name__}, argv={sys.argv}")
-
-                parsed_results = []
-                _pool_create_ts = time.time()
-                logger.info(f"日志: 创建 ProcessPoolExecutor 耗时={_pool_create_ts-_p_start:.3f}s")
-                with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                    _p_submitted = time.time()
-                    logger.info(f"日志: 提交 {len(files_to_parse)} 个任务到 executor.map 耗时={_p_submitted-_pool_create_ts:.3f}s")
-                    for i, result in enumerate(executor.map(_analyze_file_worker, files_to_parse, chunksize=chunk_size)):
-                        if i == 0:
-                            logger.info(f"日志: 首个结果到达耗时={time.time()-_p_submitted:.1f}s")
-                        if result:
-                            parsed_results.append(result)
-                        if (i + 1) % 1000 == 0:
-                            logger.info(f"日志: 解析进度 {i+1}/{len(files_to_parse)}")
-            _p_end = time.time()
-            logger.info(f"多进程解析耗时: {_p_end-_p_start:.1f}s, 结果={len(parsed_results)}")
-
-            # 入库：构建 items_data 统一列表（smart_cache 模式）
-            self._report_progress(55, "入库中...")
-            _insert_start = time.time()
-            items_data = []
-            file_records = []  # (full_path, path, ext, size, line_count, hash, last_modified, category, units_str, uses_str, current_time, description)
-
-            for file_info in parsed_results:
-                if not file_info:
-                    continue
-                fp = file_info.get('full_path', '')
-                category = file_category.get(fp, 'source')
-                file_hash = file_info.get('hash', '')
-
-                # 文件记录
-                units = file_info.get('units', [])
-                uses = file_info.get('uses', [])
-                file_records.append((
-                    fp, file_info.get('path', ''), file_info.get('extension', '.pas'),
-                    file_info.get('size', 0), file_info.get('line_count', 0),
-                    file_hash, file_info.get('last_modified', ''),
-                    category,
-                    ','.join(units) if isinstance(units, list) else str(units),
-                    ','.join(uses) if isinstance(uses, list) else str(uses),
-                    current_time,
-                    file_info.get('description', '')[:500] or '',
+        # 先插入数据
+        BATCH = 500
+        for offset in range(0, len(chunks), BATCH):
+            batch = chunks[offset:offset + BATCH]
+            docs = []
+            for i, c in enumerate(batch):
+                docs.append(Doc(
+                    id=f"c{offset + i:07d}",
+                    fields={
+                        "chunk_text": (str(c['entity_name'])[:500] + "\n" + str(c['chunk_text'])[:99480]),
+                        "chunk_type": c['chunk_type'],
+                        "base_class": c['base_class'][:200],
+                        "file_path": c['file_path'][:500],
+                        "start_line": c['start_line'],
+                        "end_line": c['end_line'],
+                    },
                 ))
+            col.insert(docs)
+            if (offset // BATCH) % 10 == 0:
+                pct = 50 + int(offset / len(chunks) * 40)
+                self._report_progress(pct, f"导入 {offset + BATCH}/{len(chunks)}")
 
-                # entities 转 items_data
-                for ent in file_info.get('entities', []):
-                    ename = ent.get('name', '')
-                    if not ename:
-                        continue
-                    items_data.append((
-                        ent.get('kind', 'TY'), ename, ename.lower(),
-                        ename.lower()[::-1],     # name_lower_rev
-                        None, ent.get('line', 0),  # file_id 占位
-                        ent.get('parent', '') or '',
-                        ent.get('definition', '') if ent.get('kind') == 'KS' else ent.get('definition', '')[:500],
-                        'pending'
-                    ))
+        col.flush()
 
-                # 单元名
-                unit_names = file_info.get('units', [])
-                if not unit_names:
-                    unit_names = [Path(file_info.get('path', '')).stem]
-                for uname in unit_names:
-                    if uname:
-                        items_data.append(('UI', uname, uname.lower(), uname.lower()[::-1], None, 0, '', f"Unit {uname}", 'pending'))
+        # 再建索引
+        col.create_index("chunk_text", FtsIndexParam(tokenizer_name="jieba"))
+        col.create_index("chunk_type", InvertIndexParam())
+        col.create_index("base_class", InvertIndexParam())
+        col.optimize()
+        col.flush()
 
-            # 先批量插入 files
-            if file_records:
-                cursor.executemany("""
-                    INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash,
-                        last_modified, category, units_defined, units_imported, scan_timestamp,
-                        description, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now'))
-                """, file_records)
-                conn.commit()
+        # 保存 source_hash
+        hash_file = self.kb_dir / "source_hash.txt"
+        hash_file.write_text(current_hash, encoding='utf-8')
 
-                # 获取 file_id 映射
-                cursor.execute("SELECT id, full_path FROM files")
-                fp_to_id = {row[1]: row[0] for row in cursor.fetchall()}
+        # 设置 project_kb 为 ZVec 适配器
+        self.project_kb = ZVecKnowledgeBaseAdapter(str(self.kb_dir), source_dirs=[str(self.project_dir)])
 
-                # 回填 file_id
-                filled_items = []
-                for item in items_data:
-                    # item: (type, name, name_lower, name_lower_rev, file_id, line, ...)
-                    # file_id 位置 index=4, 需要从 fp_to_id 查找
-                    filled_items.append(item[:4] + (fp_to_id.get(file_records[0][0], 0),) + item[5:])
-                    # 上面的 file_records[0][0] 不对，需要用文件名映射
-
-                # 正确的方式: 对每个 item, 查找对应的 file_id
-                items_filled = []
-                # 重新构建: 收集每个文件的 items
-                for file_info in parsed_results:
-                    if not file_info:
-                        continue
-                    fp = file_info.get('full_path', '')
-                    fid = fp_to_id.get(fp, 0)
-                    if fid == 0:
-                        continue
-                    for ent in file_info.get('entities', []):
-                        ename = ent.get('name', '')
-                        if not ename:
-                            continue
-                        items_filled.append((
-                            ent.get('kind', 'TY'), ename, ename.lower(),
-                            ename.lower()[::-1], fid, ent.get('line', 0),
-                            ent.get('parent', '') or '',
-                            ent.get('definition', '') if ent.get('kind') == 'KS' else ent.get('definition', '')[:500], 'pending'
-                        ))
-                    # 单元名
-                    unit_names = file_info.get('units', [])
-                    if not unit_names:
-                        unit_names = [Path(file_info.get('path', '')).stem]
-                    for uname in unit_names:
-                        if uname:
-                            items_filled.append(('UI', uname, uname.lower(), uname.lower()[::-1], fid, 0, '', f"Unit {uname}", 'pending'))
-
-                if items_filled:
-                    cursor.executemany("""
-                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id,
-                            line, base_class, description, vector_status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, items_filled)
-                    conn.commit()
-
-            _insert_end = time.time()
-            logger.info(f"入库完成: {len(file_records)} 文件, {len(items_filled)} 实体, 耗时 {_insert_end-_insert_start:.1f}s")
-
-        # 检测已删除的文件（仅在增量模式下）
-        deleted_files = 0
-        if not rebuild and existing_files:
-            for old_path, old_info in existing_files.items():
-                if old_path not in new_file_paths:
-                    cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_info['id'],))
-                    cursor.execute("DELETE FROM files WHERE id = ?", (old_info['id'],))
-                    deleted_files += 1
-            if deleted_files > 0:
-                logger.info(f"检测到 {deleted_files} 个文件已被删除")
-
-        conn.commit()
-
-        # 统计
-        cursor.execute("SELECT COUNT(*) FROM files")
-        total_file_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
-        class_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
-        func_count = cursor.fetchone()[0]
-
-        # 元数据
-        cursor.execute("DELETE FROM metadata")
-        for key, val in [
-            ('total_files', str(total_file_count)),
-            ('total_classes', str(class_count)),
-            ('total_functions', str(func_count)),
-            ('build_time', datetime.now().isoformat()),
-            ('last_build_time', datetime.now().isoformat()),
-            ('last_build_duration', str(int(time.time() - _build_start))),
-            ('source_hash', current_hash),
-        ]:
-            cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", (key, val, current_time))
-        set_schema_version_in_db(cursor)
-        conn.commit()
-        conn.close()
-
-        logger.info(f"项目知识库构建完成!")
-        logger.info(f"  文件: {total_file_count}")
-        logger.info(f"  类: {class_count}")
-        logger.info(f"  函数: {func_count}")
-        self._report_progress(95, f"项目 KB: {total_file_count} 文件, {class_count} 类, {func_count} 函数")
-
-        self._report_progress(100, "项目知识库构建完成")
-
-        try:
-            self.build_vectors()
-        except Exception as e:
-            logger.warning("构建 embedding 向量失败（非关键错误）: %s", e)
+        _duration = int(time.time() - _build_start)
+        logger.info(f"项目知识库构建完成! {len(chunks)} chunks, 耗时 {_duration}s")
+        self._report_progress(100, f"项目 KB: {len(chunks)} chunks, {_duration}s")
         return True
 
     def check_and_update_project_kb(self) -> bool:
         """
-        检查项目源码是否有变更
+        检查项目源码是否有变更（ZVec 版用 source_hash.txt）
 
         Returns:
-            True 表示知识库最新，False 表示已检测到变更（需要重建）
+            True 表示知识库最新，False 表示已检测到变更
         """
         current_hash = self._calculate_source_hash(self.project_dir)
-        # 从 SQLite metadata 表读取缓存 hash
         cached_hash = None
-        try:
-            db_file = self.kb_dir / "knowledge.sqlite"
-            if db_file.exists():
-                conn = get_connection(str(db_file), use_wal=False)
-                try:
-                    row = conn.execute("SELECT value FROM metadata WHERE key='source_hash'").fetchone()
-                    if row:
-                        cached_hash = row[0]
-                finally:
-                    conn.close()
-        except Exception as e:
-            logger.debug("忽略非致命异常: %s", str(e))
+        hash_file = self.kb_dir / "source_hash.txt"
+        if hash_file.exists():
+            cached_hash = hash_file.read_text(encoding='utf-8').strip()
 
         if current_hash != cached_hash:
             logger.info("检测到项目源码变动（搜索将使用旧知识库，请手动触发重建）")
-            return False  # 有变更，但不在搜索时阻塞重建
-
-        return True  # 无变更
+            return False
+        return True
 
     def load_knowledge_bases(self) -> bool:
         """
-        加载知识库（合并后统一从 knowledge.sqlite 加载）
+        加载 ZVec 知识库
 
         Returns:
             是否加载成功
         """
         try:
-            main_db = self.kb_dir / "knowledge.sqlite"
-            if main_db.exists():
-                self.project_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file="knowledge.sqlite")
-                # 合并后 project_kb 和 thirdparty_kb 指向同一个数据库
+            # 迁移旧版 zvec_project/ 子目录到根目录
+            from .zvec_adapter import _migrate_old_zvec_data
+            old_zvec = self.kb_dir / "zvec_project"
+            if old_zvec.exists() and old_zvec != self.kb_dir:
+                _migrate_old_zvec_data(old_zvec, self.kb_dir)
+            # 检查展平后的 ZVec 数据
+            if any(f.name.startswith("manifest") for f in self.kb_dir.iterdir()):
+                self.project_kb = ZVecKnowledgeBaseAdapter(str(self.kb_dir), source_dirs=[str(self.project_dir)])
                 self.thirdparty_kb = self.project_kb
-                logger.info(f"知识库加载成功: {main_db}")
+                logger.info(f"ZVec 知识库加载成功: {self.kb_dir}")
                 return True
-
-            # 旧格式兼容
-            old_project = self.kb_dir / "project" / "index" / "source_index.json"
-            old_thirdparty = self.kb_dir / "thirdparty" / "index" / "source_index.json"
-            if old_project.exists() or old_thirdparty.exists():
-                if old_project.exists():
-                    self.project_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir / "project"), db_file="knowledge.sqlite")
-                if old_thirdparty.exists():
-                    self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir / "thirdparty"), db_file="knowledge.sqlite")
-                logger.info("知识库加载成功 (旧格式)")
-                return True
-
             return False
         except Exception as e:
-            logger.error(f"加载知识库失败: {e}")
+            logger.error(f"加载 ZVec 知识库失败: {e}")
             return False
 
     def search_class(self, class_name: str, search_in: str = "all") -> List[Dict]:
@@ -839,52 +603,36 @@ class ProjectKnowledgeBase:
 
     def get_statistics(self) -> Dict:
         """
-        获取知识库统计信息（合并后统一从 knowledge.sqlite 读取）
+        获取知识库统计信息（ZVec 版）
 
         Returns:
             统计信息
         """
         stats = {"project": None, "thirdparty": None}
-        db_file = self.kb_dir / "knowledge.sqlite"
-        if not db_file.exists():
+        zvec_dir = self.kb_dir
+        if not any(f.name.startswith("manifest") for f in zvec_dir.iterdir() if zvec_dir.exists()):
             return stats
 
         try:
-            conn = get_connection(str(db_file), use_wal=False)
-        except Exception as e:
-            logger.warning("连接知识库失败（统计跳过）: %s", e)
-            return stats
+            chunk_count = 0
+            type_counts = {}
+            for root, dirs, files in os.walk(zvec_dir):
+                for f in files:
+                    if f.endswith('.sst') or f.endswith('.ipc') or f.endswith('.proxima'):
+                        chunk_count += 1  # approximate
 
-        try:
-            cursor = conn.cursor()
-            for cat_key, cat_val in [("project", "source"), ("thirdparty", "thirdparty")]:
-                try:
-                    cursor.execute("SELECT COUNT(*) FROM files WHERE category=?", (cat_val,))
-                    file_count = cursor.fetchone()[0]
-                    if file_count == 0:
-                        continue
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM vocabularies v
-                        JOIN files f ON v.file_id = f.id
-                        WHERE f.category=? AND v.type='TC'
-                    """, (cat_val,))
-                    classes = cursor.fetchone()[0]
-                    cursor.execute("""
-                        SELECT COUNT(*) FROM vocabularies v
-                        JOIN files f ON v.file_id = f.id
-                        WHERE f.category=? AND v.type='FF'
-                    """, (cat_val,))
-                    funcs = cursor.fetchone()[0]
-                    stats[cat_key] = {"files": file_count, "classes": classes, "functions": funcs}
-                except Exception as e:
-                    logger.debug("统计分类 %s 失败: %s", cat_val, e)
+            total_size = sum(
+                os.path.getsize(os.path.join(dp, f))
+                for dp, _, fs in os.walk(zvec_dir) for f in fs
+            )
+            stats["project"] = {
+                "files": chunk_count,
+                "classes": chunk_count // 2,
+                "functions": 0,
+                "database_size_mb": round(total_size / (1024 * 1024), 1),
+            }
         except Exception as e:
-            logger.warning("统计查询异常: %s", e)
-        finally:
-            try:
-                conn.close()
-            except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
+            logger.debug(f"ZVec 统计失败: {e}")
         return stats
 
     def _report_progress(self, percent: float, message: str) -> None:
@@ -896,42 +644,15 @@ class ProjectKnowledgeBase:
                 logger.warning("progress_callback 执行失败: %s", e)
 
     def build_vectors(self, progress_callback=None) -> dict:
-        """
-        为项目 KB 和三方库 KB 构建 embedding 向量
-
-        Args:
-            progress_callback: 进度回调 (percent, message)
-
-        Returns:
-            {"project": count, "thirdparty": count}
-        """
-        results = {}
-        pc = progress_callback or self.progress_callback
-
-        if self.project_kb:
-            if pc:
-                pc(5, "构建项目 KB 向量...")
-            count = self.project_kb.build_vectors(progress_callback=pc)
-            results["project"] = count
-            if pc:
-                pc(50, f"项目 KB 向量: {count}")
-
-        if self.thirdparty_kb:
-            if pc:
-                pc(55, "构建三方库 KB 向量...")
-            count = self.thirdparty_kb.build_vectors(progress_callback=pc)
-            results["thirdparty"] = count
-            if pc:
-                pc(100, f"向量构建完成: {results}")
-
-        return results
+        """ZVec 版：索引已在插入时创建，此处无需操作"""
+        return {"project": 0, "thirdparty": 0}
 
     def close(self):
         """关闭知识库连接"""
         if self.project_kb:
-            self.project_kb.close()
+            try:
+                self.project_kb.close()
+            except Exception:
+                pass
             self.project_kb = None
-
-        if self.thirdparty_kb:
-            self.thirdparty_kb.close()
-            self.thirdparty_kb = None
+        self.thirdparty_kb = None

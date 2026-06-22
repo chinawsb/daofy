@@ -219,69 +219,75 @@ async def get_document_statistics(arguments: Any) -> CallToolResult:
 
 
 async def read_document(arguments: Any) -> CallToolResult:
-    """读取文档内容"""
-    import sqlite3
-    
+    """读取文档内容（基于 ZVec）"""
+    import zvec
+
     url = arguments.get("url")
     doc_id = arguments.get("doc_id")
     offset = arguments.get("offset", 0)
     limit = arguments.get("limit", 5000)
-    
+
     if not url and not doc_id:
         return CallToolResult(
             content=[{"type": "text", "text": "请提供 url 或 doc_id 参数"}],
             isError=True
         )
-    
+
     scanner = _get_scanner()
-    db_path = scanner.db_path
-    
+    kb_dir = scanner.zvec_dir
+
     try:
-        from src.services.knowledge_base.schema import use_connection
-        with use_connection(str(db_path), use_wal=False) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            if doc_id:
-                cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+        col = zvec.open(str(kb_dir))
+        search_field = "path" if not doc_id else "path"
+        search_term = doc_id if doc_id else url
+        results = col.search(search_field, search_term, zvec.FtsParams(top_k=100))
+
+        if not results:
+            # 再尝试按 url 字段搜索
+            results = col.search("path", url or "", zvec.FtsParams(top_k=100))
+
+        if not results:
+            col.close()
+            return CallToolResult(
+                content=[{"type": "text", "text": f"未找到文档: {url or doc_id}"}],
+                isError=True
+            )
+
+        # 合并同一 path 的所有块
+        title = results[0].get('chunk_text', '')[:80]
+        content_parts = []
+        for r in results:
+            chunk_text = r.get('chunk_text', '')
+            first_nl = chunk_text.find('\n')
+            if first_nl >= 0:
+                content_parts.append(chunk_text[first_nl + 1:])
             else:
-                cursor.execute("SELECT * FROM documents WHERE url = ?", (url,))
-            
-            row = cursor.fetchone()
-            
-            if not row:
-                return CallToolResult(
-                    content=[{"type": "text", "text": f"未找到文档: {url or doc_id}"}],
-                    isError=True
-                )
-            
-            doc = dict(row)
-            content = doc.get('content', '')
-            content_len = len(content)
-            
-            if offset < 0:
-                offset = 0
-            if limit > 20000:
-                limit = 20000
-            
-            content_slice = content[offset:offset + limit]
-            
-            output = f"文档: {doc.get('title', 'N/A')}\n"
-            output += f"类型: {doc.get('content_type', 'N/A')}\n"
-            if doc.get('url'):
-                output += f"URL: {doc.get('url')}\n"
-            output += f"大小: {doc.get('size', 0)} 字节\n"
-            output += f"内容长度: {content_len} 字符\n"
-            output += f"显示范围: {offset} - {offset + len(content_slice)}\n"
-            output += "=" * 60 + "\n\n"
-            output += content_slice
-            
-            if offset + limit < content_len:
-                remaining = content_len - (offset + limit)
-                output += f"\n... (还有 {remaining} 字符未显示) ...\n"
-                output += f"提示: 使用 offset={offset + limit} 继续读取\n"
-            
-            return CallToolResult(content=[{"type": "text", "text": output}])
+                content_parts.append(chunk_text)
+
+        full_content = "\n".join(content_parts)
+        col.close()
+
+        content_len = len(full_content)
+        if offset < 0:
+            offset = 0
+        if limit > 20000:
+            limit = 20000
+
+        content_slice = full_content[offset:offset + limit]
+
+        output = f"文档: {title}\n"
+        output += f"路径: {url or doc_id}\n"
+        output += f"内容长度: {content_len} 字符\n"
+        output += f"显示范围: {offset} - {offset + len(content_slice)}\n"
+        output += "=" * 60 + "\n\n"
+        output += content_slice
+
+        if offset + limit < content_len:
+            remaining = content_len - (offset + limit)
+            output += f"\n... (还有 {remaining} 字符未显示) ...\n"
+            output += f"提示: 使用 offset={offset + limit} 继续读取\n"
+
+        return CallToolResult(content=[{"type": "text", "text": output}])
     except Exception as e:
         return CallToolResult(
             content=[{"type": "text", "text": f"读取文档失败: {str(e)}"}],

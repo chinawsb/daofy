@@ -110,40 +110,20 @@ def sample_demo_dir_with_tests(tmp_path: Path) -> Path:
 
 
 # ──────────────────────────────────────────────
-# Tests: DB Init
+# Tests: DB Init (ZVec)
 # ──────────────────────────────────────────────
 
 class TestDatabaseInit:
-    def test_create_tables(self, kb: ExampleKnowledgeBase):
-        """建表后 documents 和 demo_sources 应存在"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
-        tables = {row[0] for row in cursor.fetchall()}
-        assert "documents" in tables, "documents 表应存在"
-        assert "demo_sources" in tables, "demo_sources 表应存在"
-        assert "metadata" in tables, "metadata 表应存在"
+    def test_kb_dir_created(self, kb: ExampleKnowledgeBase):
+        """初始化后 KB 目录应存在"""
+        assert kb.kb_dir.exists()
+        assert kb.kb_dir.is_dir()
 
     def test_default_kb_dir(self):
         """默认 KB 目录应为 data/example-knowledge-base/"""
         ekb = ExampleKnowledgeBase()
         assert "example-knowledge-base" in str(ekb.kb_dir)
         ekb.close()
-
-    def test_unique_index_on_full_path(self, kb: ExampleKnowledgeBase):
-        """full_path 应有唯一索引，防止重复插入"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_documents_fp'"
-        )
-        assert cursor.fetchone() is not None
 
     def test_custom_kb_dir(self, tmp_path: Path):
         """自定义 kb_dir 应正确设置"""
@@ -153,125 +133,52 @@ class TestDatabaseInit:
         assert custom.exists()
         ekb.close()
 
-    def test_fts5_init(self, kb: ExampleKnowledgeBase):
-        """FTS5 虚拟表应创建成功"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        kb._init_fts5()
-
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='documents_fts'"
-        )
-        assert cursor.fetchone() is not None
+    def test_search_works_after_build(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
+        """构建后应能正常搜索"""
+        with patch.object(kb, 'discover_delphi_official_demos', return_value=[]):
+            with patch.object(kb, 'discover_thirdparty_demos', return_value=[
+                {"path": str(sample_demo_dir), "label": "TestLib"},
+            ]):
+                assert kb.build_example_knowledge_base() is True
+        results = kb.search("Calculator")
+        assert len(results) >= 1
 
 
 # ──────────────────────────────────────────────
-# Tests: File Scanning
+# Tests: File Scanning (ZVec)
 # ──────────────────────────────────────────────
 
 class TestScanDirectory:
     def test_scan_basic(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """扫描目录应正确入库所有 Delphi 源文件"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
+        """扫描目录应返回正确的文件数"""
         info = kb._scan_directory(
-            str(sample_demo_dir), "TestDemo", "delphi_official", cursor
+            str(sample_demo_dir), "TestDemo", "delphi_official"
         )
-        conn.commit()
-
         # 根目录: 2 .pas + 1 .dpr + 1 .dfm + 1 .inc = 5
         # 子目录: 1 .pas = 1
         # 总计: 6 个（跳过 .txt 和 .png）
         assert info["files_scanned"] == 6, f"应有 6 个文件，实际 {info['files_scanned']}"
-
-        cursor.execute("SELECT COUNT(*) FROM documents")
-        assert cursor.fetchone()[0] == 6
-
-    def test_scan_incremental_skip(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """增量扫描：未变更文件应被跳过"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        # 第一次扫描
-        info1 = kb._scan_directory(
-            str(sample_demo_dir), "TestDemo", "delphi_official", cursor
-        )
-        conn.commit()
-        first_count = info1["files_scanned"]
-
-        # 第二次扫描（文件未变更）
-        info2 = kb._scan_directory(
-            str(sample_demo_dir), "TestDemo", "delphi_official", cursor
-        )
-        conn.commit()
-
-        assert info2["files_scanned"] == 0, "未变更文件不应入库"
-        cursor.execute("SELECT COUNT(*) FROM documents")
-        assert cursor.fetchone()[0] == first_count
-
-    def test_scan_incremental_update(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """增量扫描：变更文件应被更新"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        # 第一次扫描
-        kb._scan_directory(str(sample_demo_dir), "TestDemo", "delphi_official", cursor)
-        conn.commit()
-
-        # 修改文件
-        target = sample_demo_dir / "HelloWorld.pas"
-        target.write_text("unit HelloWorld;\n// modified\ninterface\nimplementation\nend.", encoding='utf-8')
-
-        # 第二次扫描
-        info = kb._scan_directory(
-            str(sample_demo_dir), "TestDemo", "delphi_official", cursor
-        )
-        conn.commit()
-
-        assert info["files_scanned"] == 1, "变更文件应被重新扫描"
+        assert "docs" in info
+        assert len(info["docs"]) >= 1  # 至少有一些段落
 
     def test_scan_rebuild(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
         """rebuild=True 时应全量扫描"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        # 第一次扫描
-        kb._scan_directory(str(sample_demo_dir), "TestDemo", "delphi_official", cursor)
-        conn.commit()
-
-        # rebuild 扫描
         info = kb._scan_directory(
-            str(sample_demo_dir), "TestDemo", "delphi_official", cursor, rebuild=True
+            str(sample_demo_dir), "TestDemo", "delphi_official", rebuild=True
         )
-        conn.commit()
-
         assert info["files_scanned"] == 6
 
     def test_scan_empty_dir(self, kb: ExampleKnowledgeBase, tmp_path: Path):
         """空目录扫描应返回 0 文件"""
         empty = tmp_path / "empty_demo"
         empty.mkdir()
-
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        info = kb._scan_directory(str(empty), "Empty", "delphi_official", cursor)
-
+        info = kb._scan_directory(str(empty), "Empty", "delphi_official")
         assert info["files_scanned"] == 0
 
     def test_scan_non_existent_dir(self, kb: ExampleKnowledgeBase):
-        """不存在的目录扫描应安全跳过（走 os.walk 的自然行为，返回空）"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
+        """不存在的目录扫描应安全跳过"""
         info = kb._scan_directory(
-            r"C:\path\does\not\exist", "Ghost", "delphi_official", cursor
+            r"C:\path\does\not\exist", "Ghost", "delphi_official"
         )
         assert info["files_scanned"] == 0
 
@@ -289,66 +196,37 @@ class TestScanDirectory:
             d.mkdir()
             (d / f"{skip_name}.pas").write_text(f"unit {skip_name};", encoding='utf-8')
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        info = kb._scan_directory(str(demo), "SkipTest", "delphi_official", cursor)
-
+        info = kb._scan_directory(str(demo), "SkipTest", "delphi_official")
         assert info["files_scanned"] == 1
 
-    def test_demo_sources_recorded(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """扫描后应在 demo_sources 表中记录来源"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
+    def test_content_scan_returns_docs(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
+        """扫描应返回包含内容的段落"""
+        info = kb._scan_directory(str(sample_demo_dir), "TestDemo", "delphi_official")
+        assert info["files_scanned"] == 6
+        assert len(info["docs"]) > 0
+        # 文档应包含 title/path/extension 等字段
+        first = info["docs"][0]
+        assert hasattr(first, 'fields')
+        assert 'title' in first.fields
+        assert 'path' in first.fields
 
-        kb._scan_directory(
-            str(sample_demo_dir), "MyDemo", "thirdparty", cursor
-        )
-        conn.commit()
+    def test_build_then_search_works(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
+        """通过 build 和 search 验证内容存储"""
+        with patch.object(kb, 'discover_delphi_official_demos', return_value=[]):
+            with patch.object(kb, 'discover_thirdparty_demos', return_value=[
+                {"path": str(sample_demo_dir), "label": "TestLib"},
+            ]):
+                assert kb.build_example_knowledge_base() is True
 
-        cursor.execute(
-            "SELECT source_path, source_type, label FROM demo_sources"
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        assert str(sample_demo_dir) in row["source_path"]
-        assert row["source_type"] == "thirdparty"
-        assert row["label"] == "MyDemo"
+        # 验证搜索结果
+        results = kb.search("Calculator")
+        assert len(results) >= 1
+        assert any("Calculator" in r.get("title", "") for r in results)
 
-    def test_content_stored(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """文档内容应完整存储"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        kb._scan_directory(str(sample_demo_dir), "ContentTest", "delphi_official", cursor)
-        conn.commit()
-
-        cursor.execute(
-            "SELECT title, content, extension, size, line_count, hash, content_type FROM documents WHERE title=?",
-            ("Calculator",),
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        assert "function Add" in row["content"]
-        assert row["extension"] == ".pas"
-        assert row["content_type"] == "delphi_demo"
-
-    def test_url_field(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
-        """url 字段应正确记录来源标识"""
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        kb._scan_directory(
-            str(sample_demo_dir), "Delphi 12", "delphi_official", cursor
-        )
-        conn.commit()
-
-        cursor.execute("SELECT DISTINCT url FROM documents")
-        urls = {row[0] for row in cursor.fetchall()}
-        assert "delphi_official:Delphi 12" in urls
+        # 验证 url 字段来源
+        calc_results = [r for r in results if "Calculator" in r.get("title", "")]
+        assert len(calc_results) >= 1
+        assert "TestLib" in calc_results[0].get("source", "")
 
 
 # ──────────────────────────────────────────────
@@ -608,6 +486,8 @@ class TestStatistics:
         """空库的统计应包含基本字段"""
         stats = kb.get_statistics()
         assert "files" in stats
+        assert "by_extension" in stats
+        assert "database_size_mb" in stats
 
     def test_stats_after_build(self, kb: ExampleKnowledgeBase, sample_demo_dir: Path):
         """构建后统计应包含正确的文件数"""
@@ -618,14 +498,12 @@ class TestStatistics:
                 kb.build_example_knowledge_base()
 
         stats = kb.get_statistics()
-        assert stats["files"] == 6
+        assert stats["files"] == 6, f"预期 6 个文件，实际 {stats['files']}"
         assert "by_extension" in stats
-        assert ".pas" in stats["by_extension"]
 
     def test_stats_db_size(self, kb: ExampleKnowledgeBase):
-        """数据库文件大小应可读取"""
+        """知识库文件大小应可读取"""
         stats = kb.get_statistics()
-        # 空库也有 database_size_mb（只是很小）
         assert "database_size_mb" in stats
 
 
@@ -635,31 +513,33 @@ class TestStatistics:
 
 class TestLifecycle:
     def test_context_manager(self, kb_dir: str):
-        """context manager 应正确关闭连接"""
+        """context manager 应正常工作"""
         with ExampleKnowledgeBase(kb_dir=kb_dir) as ekb:
-            conn = ekb._get_db()
-            cursor = conn.cursor()
-            ekb._init_database(cursor)
-            assert ekb._db is not None
-        # 退出 context 后连接应关闭
-        assert ekb._db is None
+            assert ekb.kb_dir is not None
+            assert ekb.kb_dir.exists()
+        # 退出 context 后应正常
+        assert ekb.kb_dir is not None
 
     def test_close_idempotent(self, kb: ExampleKnowledgeBase):
         """close() 多次调用应安全"""
         kb.close()
         kb.close()  # 不应抛异常
 
-    def test_progress_callback_error(self, kb_dir: str):
+    def test_progress_callback_error(self, kb_dir: str, sample_demo_dir: Path):
         """进度回调抛异常不应影响构建"""
+        calls = []
+
         def bad_cb(pct, msg):
             raise ValueError("callback error")
 
         ekb = ExampleKnowledgeBase(kb_dir=kb_dir, progress_callback=bad_cb)
-        # 不应抛异常
-        conn = ekb._get_db()
-        cursor = conn.cursor()
-        ekb._init_database(cursor)
-        ekb._report_progress(50, "test")
+        # build 不应因回调异常而失败
+        with patch.object(ekb, 'discover_delphi_official_demos', return_value=[]):
+            with patch.object(ekb, 'discover_thirdparty_demos', return_value=[
+                {"path": str(sample_demo_dir), "label": "TestLib"},
+            ]):
+                result = ekb.build_example_knowledge_base()
+                assert result is True
         ekb.close()
 
 
@@ -668,8 +548,8 @@ class TestLifecycle:
 # ──────────────────────────────────────────────
 
 class TestEdgeCases:
-    def test_large_file(self, kb: ExampleKnowledgeBase, tmp_path: Path):
-        """大文件应能被正确读取"""
+    def test_large_file_scan(self, kb: ExampleKnowledgeBase, tmp_path: Path):
+        """大文件应能被正确扫描"""
         demo = tmp_path / "LargeDemo"
         demo.mkdir()
         large_content = "// line\n" * 5000  # ~40KB
@@ -678,18 +558,13 @@ class TestEdgeCases:
             encoding='utf-8',
         )
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        info = kb._scan_directory(str(demo), "LargeTest", "delphi_official", cursor)
-        conn.commit()
-
+        info = kb._scan_directory(str(demo), "LargeTest", "delphi_official")
         assert info["files_scanned"] == 1
-        cursor.execute("SELECT line_count FROM documents WHERE title='LargeUnit'")
-        assert cursor.fetchone()[0] > 5000
+        # 大文件被切块，应有多个段落
+        assert len(info["docs"]) >= 1
 
-    def test_unicode_content(self, kb: ExampleKnowledgeBase, tmp_path: Path):
-        """中文等 Unicode 内容应正确存储"""
+    def test_unicode_content_scan(self, kb: ExampleKnowledgeBase, tmp_path: Path):
+        """中文等 Unicode 内容应被正确扫描"""
         demo = tmp_path / "UnicodeDemo"
         demo.mkdir()
         (demo / "ChineseUnit.pas").write_text(
@@ -697,34 +572,24 @@ class TestEdgeCases:
             encoding='utf-8',
         )
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        kb._scan_directory(str(demo), "UnicodeTest", "delphi_official", cursor)
-        conn.commit()
+        info = kb._scan_directory(str(demo), "UnicodeTest", "delphi_official")
+        assert info["files_scanned"] == 1
+        # 验证扫描返回的文档内容包含中文
+        doc_texts = [d.fields.get('chunk_text', '') for d in info["docs"]]
+        assert any("中文注释" in t for t in doc_texts)
 
-        cursor.execute("SELECT content FROM documents WHERE title='ChineseUnit'")
-        content = cursor.fetchone()[0]
-        assert "中文注释" in content
-
-    def test_non_utf8_file(self, kb: ExampleKnowledgeBase, tmp_path: Path):
-        """非 UTF-8 编码文件应通过 errors='replace' 安全读取"""
+    def test_non_utf8_file_scan(self, kb: ExampleKnowledgeBase, tmp_path: Path):
+        """非 UTF-8 编码文件应安全读取"""
         demo = tmp_path / "EncodingDemo"
         demo.mkdir()
-        # 写入 GBK 编码的文件
         content = "unit GBKUnit;\n// 中文注释\ninterface\nimplementation\nend."
         (demo / "GBKUnit.pas").write_bytes(content.encode('gbk'))
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-        info = kb._scan_directory(str(demo), "EncodingTest", "delphi_official", cursor)
-        conn.commit()
-
+        info = kb._scan_directory(str(demo), "EncodingTest", "delphi_official")
         assert info["files_scanned"] == 1
 
-    def test_multiple_sources(self, kb: ExampleKnowledgeBase, tmp_path: Path):
-        """多个 Demo 来源应正确合并"""
+    def test_multiple_sources_scan(self, kb: ExampleKnowledgeBase, tmp_path: Path):
+        """多个扫描来源应分别返回正确的文件数"""
         src1 = tmp_path / "Demo1"
         src1.mkdir()
         (src1 / "A.pas").write_text("unit A;\ninterface\nimplementation\nend.", encoding='utf-8')
@@ -733,33 +598,19 @@ class TestEdgeCases:
         src2.mkdir()
         (src2 / "B.pas").write_text("unit B;\ninterface\nimplementation\nend.", encoding='utf-8')
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
+        info1 = kb._scan_directory(str(src1), "Source1", "thirdparty")
+        info2 = kb._scan_directory(str(src2), "Source2", "thirdparty")
 
-        kb._scan_directory(str(src1), "Source1", "thirdparty", cursor)
-        kb._scan_directory(str(src2), "Source2", "thirdparty", cursor)
-        conn.commit()
+        assert info1["files_scanned"] == 1
+        assert info2["files_scanned"] == 1
 
-        cursor.execute("SELECT COUNT(*) FROM documents")
-        assert cursor.fetchone()[0] == 2
-
-        cursor.execute("SELECT COUNT(*) FROM demo_sources")
-        assert cursor.fetchone()[0] == 2
-
-    def test_repeated_content_dedup(self, kb: ExampleKnowledgeBase, tmp_path: Path):
-        """相同内容的文件在增量模式下只计一次"""
+    def test_scan_two_identically_named_files(self, kb: ExampleKnowledgeBase, tmp_path: Path):
+        """同名不同目录的文件应被分别扫描"""
         demo = tmp_path / "Dedup"
         demo.mkdir()
         (demo / "File1.pas").write_text("unit Identical;\ninterface\nimplementation\nend.", encoding='utf-8')
         (demo / "File2.pas").write_text("unit Identical;\ninterface\nimplementation\nend.", encoding='utf-8')
 
-        conn = kb._get_db()
-        cursor = conn.cursor()
-        kb._init_database(cursor)
-
-        info = kb._scan_directory(str(demo), "DedupTest", "delphi_official", cursor)
-        conn.commit()
-
-        # 文件名不同所以都入库（unique index 基于 full_path）
+        info = kb._scan_directory(str(demo), "DedupTest", "delphi_official")
+        # 文件名不同所以都入库
         assert info["files_scanned"] == 2

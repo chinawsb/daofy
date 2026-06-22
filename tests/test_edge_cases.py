@@ -249,31 +249,23 @@ def test_concurrent_access():
 
 
 def test_database_init():
-    """测试数据库初始化"""
-    print("\n测试 10: 数据库初始化")
+    """测试 ZVec 存储初始化"""
+    print("\n测试 10: ZVec 存储初始化")
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test.db"
+        scanner = GenericDocumentScanner(str(tmpdir))
         
-        assert not db_path.exists(), "数据库文件不应存在"
+        # 创建一个受支持的文件类型用于扫描验证
+        src = Path(tmpdir) / "src"
+        src.mkdir()
+        (src / "test.txt").write_text("This is a test document for scanner initialization.", encoding='utf-8')
         
-        scanner = GenericDocumentScanner(str(db_path.parent), config={'database': {'file': 'test.db'}})
+        result = scanner.scan_directory(str(src))
         
-        assert db_path.exists(), "数据库文件应被创建"
+        stats = scanner.get_statistics()
+        assert stats['total_documents'] >= 1
         
-        import sqlite3
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='documents'")
-        assert cursor.fetchone() is not None, "documents 表应存在"
-        
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='document_entities'")
-        assert cursor.fetchone() is not None, "document_entities 表应存在"
-        
-        conn.close()
-        
-        print("  数据库和表创建成功")
+        print("  ZVec 存储初始化成功，已写入文档")
         print("  ✓ 测试通过")
     
     pass

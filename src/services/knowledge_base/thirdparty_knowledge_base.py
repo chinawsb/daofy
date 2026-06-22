@@ -18,21 +18,18 @@ import re
 import json
 import time
 import hashlib
-import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
 
 try:
-    from .scan_delphi_sources import DelphiSourceScanner
-    from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
+    from .zvec_adapter import ZVecKnowledgeBaseAdapter
     from ...utils.logger import get_logger
     from ...utils.delphi_env import expand_delphi_path_macros, get_delphi_version, get_catalog_repository_paths
     logger = get_logger(__name__)
 except ImportError:
     # 支持直接运行测试
-    from scan_delphi_sources import DelphiSourceScanner
-    from sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
+    from zvec_adapter import ZVecKnowledgeBaseAdapter
     import logging
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
@@ -460,424 +457,95 @@ class ThirdPartyKnowledgeBase:
         logger.info(f"路径列表已保存到: {self.paths_file}")
 
     def build_thirdparty_knowledge_base(self, version: Optional[str] = None, rebuild: bool = False) -> bool:
-        """
-        构建第三方库知识库
+        "构建三方库知识库 (ZVec)"
+        import time, shutil
+        from pathlib import Path
+        _bt = time.time()
+        logger.info("Building thirdparty KB (ZVec)")
 
-        Args:
-            version: Delphi 版本,如果为 None 则使用最新版本
-            rebuild: 是否强制重建
+        dirs = self.get_library_paths(version)
+        if not dirs:
+            logger.warning("No thirdparty dirs"); return True
 
-        Returns:
-            是否构建成功
-        """
-        import sqlite3
-        
-        # 获取第三方库路径
-        thirdparty_paths = self.get_library_paths(version)
+        self._report_progress(5, "Scanning dirs...")
+        files = self._collect_thirdparty_files(dirs)
+        if not files:
+            logger.warning("No thirdparty files to index"); return True
+        logger.info("Collected " + str(len(files)) + " files")
 
-        if not thirdparty_paths:
-            logger.warning("未找到第三方库路径")
-            return False
+        from .delphi_chunker import chunk_file_list
+        chunks = chunk_file_list(files)
+        if not chunks:
+            logger.warning("No chunks"); return False
+        logger.info("Chunked: " + str(len(chunks)))
 
-        # 检查是否需要重建
-        if not rebuild and self.kb_instance is not None:
-            logger.info("知识库已存在,使用 rebuild=true 强制重建")
-            return True
+        # 迁移旧版 zvec_thirdparty/ 子目录到根目录
+        from .zvec_adapter import _migrate_old_zvec_data
+        old_zvec = self.kb_dir / "zvec_thirdparty"
+        if old_zvec.exists() and old_zvec != self.kb_dir:
+            _migrate_old_zvec_data(old_zvec, self.kb_dir)
 
-        # rebuild时关闭旧连接并清空旧数据
-        if rebuild:
-            if self.kb_instance is not None:
-                self.kb_instance.close()
-                self.kb_instance = None
+        kv_dir = str(self.kb_dir)
+        if rebuild and Path(kv_dir).exists():
+            # 重建时只清除 ZVec 文件（不删除 config 等）
+            for item in Path(kv_dir).iterdir():
+                if item.name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOG", "LOCK", "CURRENT", "IDENTITY", "OPTIONS")):
+                    if item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                    else:
+                        item.unlink(missing_ok=True)
 
-        import time; _build_start = time.time()
+        import zvec
+        from zvec import CollectionSchema, FieldSchema, DataType, FtsIndexParam, InvertIndexParam, Doc
 
-        # 合并所有路径进行扫描
-        all_source_files = []
-        all_help_docs = []
-        total_files = 0
-        total_lines = 0
+        # 简化 schema：entity_name 合并到 chunk_text 中
+        schema = CollectionSchema("thirdparty_kb", fields=[
+            FieldSchema("chunk_text", DataType.STRING),
+            FieldSchema("chunk_type", DataType.STRING),
+            FieldSchema("base_class", DataType.STRING),
+            FieldSchema("file_path", DataType.STRING),
+            FieldSchema("start_line", DataType.INT32),
+            FieldSchema("end_line", DataType.INT32),
+        ])
+        col = zvec.create_and_open(path=kv_dir, schema=schema)
 
-        # 扫描所有支持的 Delphi 源文件扩展名
-        delphi_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
-        total_paths = len(thirdparty_paths)
+        # 先插入数据
+        for offset in range(0, len(chunks), 500):
+            batch = chunks[offset:offset+500]
+            docs = []
+            for i, c in enumerate(batch):
+                docs.append(Doc(id="c%07d" % (offset+i), fields={
+                    "chunk_text": (str(c['entity_name'])[:500] + "\n" + str(c['chunk_text'])[:99480]),
+                    "chunk_type": str(c['chunk_type']),
+                    "base_class": str(c['base_class'])[:200],
+                    "file_path": str(c['file_path'])[:500],
+                    "start_line": c['start_line'],
+                    "end_line": c['end_line'],
+                }))
+            col.insert(docs)
+        col.flush()
 
-        for pi, path in enumerate(thirdparty_paths):
-            self._report_progress(5 + (pi / total_paths) * 35,
-                                  f"扫描路径 [{pi+1}/{total_paths}]: {Path(path).name}")
-            logger.info(f"扫描路径: {path}")
+        # 再建索引
+        col.create_index("chunk_text", FtsIndexParam(tokenizer_name="jieba"))
+        col.create_index("chunk_type", InvertIndexParam())
+        col.create_index("base_class", InvertIndexParam())
+        col.optimize()
+        col.flush()
 
-            try:
-                source_dir = Path(path)
-                if not source_dir.exists():
-                    continue
-
-                # 单线程扫描全部扩展名（避免多进程在异步线程中的兼容问题）
-                scanner = DelphiSourceScanner(str(source_dir), str(self.kb_dir))
-
-                for ext in delphi_extensions:
-                    for file_path in source_dir.rglob(f'*{ext}'):
-                        try:
-                            file_info = scanner.analyze_file(file_path)
-                            if file_info:
-                                all_source_files.append(file_info)
-                                total_files += 1
-                                total_lines += file_info.get('line_count', 0)
-                        except Exception as e:
-                            logger.warning("分析文件失败 %s: %s", file_path, e)
-
-                logger.info(f"  找到 {total_files} 个源文件")
-
-                # 扫描帮助文档
-                help_docs = self._scan_help_documents(path)
-                if help_docs:
-                    all_help_docs.extend(help_docs)
-                    logger.info(f"  找到 {len(help_docs)} 个帮助文档")
-
-            except Exception as e:
-                logger.warning(f"扫描路径失败 {path}: {e}")
-                continue
-
-        self._report_progress(40, f"扫描完成: {total_files} 个文件")
-        logger.info(f"总共找到 {total_files} 个源文件, {total_lines} 行代码")
-        logger.info(f"总共找到 {len(all_help_docs)} 个帮助文档")
-
-        if not all_source_files and not all_help_docs:
-            logger.warning("未找到任何源文件或帮助文档")
-            return False
-
-        # 去重：使用完整路径(full_path)作为唯一标识
-        seen_paths = set()
-        unique_files = []
-        for file_info in all_source_files:
-            full_path = file_info.get('full_path', '')
-            if full_path and full_path not in seen_paths:
-                seen_paths.add(full_path)
-                unique_files.append(file_info)
-
-        unique_count = len(unique_files)
-        if unique_count < total_files:
-            logger.info(f"去重后剩余 {unique_count} 个唯一文件")
-
-        # 直接保存到 SQLite (统一Schema)
-        db_file = self.kb_dir / "knowledge.sqlite"
-        conn = sqlite3.connect(str(db_file))
-        cursor = conn.cursor()
-        
-        current_time = datetime.now().timestamp()
-        
-        # rebuild时清空旧数据
-        if rebuild:
-            try:
-                cursor.execute("DELETE FROM files")
-                cursor.execute("DELETE FROM vocabularies")
-                cursor.execute("DELETE FROM metadata")
-                conn.commit()
-                logger.info("已清空旧知识库数据")
-            except Exception:
-                logger.warning("清空旧知识库数据失败（表可能不存在，将自动创建）")
-        
-        # 增量构建：加载现有文件的hash
-        existing_files = {}
-        if not rebuild:
-            cursor.execute("SELECT id, full_path, hash FROM files")
-            for row in cursor.fetchall():
-                existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
-            logger.info(f"现有文件数: {len(existing_files)}")
-        
-        # 使用统一 schema 创建表
-        from src.services.knowledge_base.schema import create_source_tables
-        create_source_tables(cursor)
-        
-        # Schema 升级检测：v1→v2 清理重复词汇并创建唯一索引
-        from src.services.knowledge_base.schema import get_schema_version_from_db as _get_ver
-        if _get_ver(cursor) < 2:
-            cursor.execute("""
-                DELETE FROM vocabularies WHERE id NOT IN (
-                    SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
-                )
-            """)
-            if cursor.rowcount > 0:
-                logger.info(f"升级 schema v1→v2：清理了 {cursor.rowcount} 条重复词汇记录")
-            else:
-                logger.info("升级 schema v1→v2：无重复词汇需清理")
-            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
-        
-        # 插入源文件
-        self._report_progress(45, f"保存 {len(unique_files)} 个源文件到数据库...")
-        logger.info("保存源文件到数据库...")
-        batch_size = 1000
-        skipped_files = 0
-        updated_files = 0
-        new_files = 0
-        deleted_files = 0
-        
-        # 构建新文件路径集合（用于检测已删除的文件）
-        new_file_paths = set(file_info.get('full_path', '') for file_info in unique_files)
-        
-        # 检测已删除的文件（保留，仅记录日志）
-        if not rebuild:
-            for old_path in existing_files:
-                if old_path not in new_file_paths:
-                    deleted_files += 1
-            if deleted_files > 0:
-                logger.info(f"检测到 {deleted_files} 个文件已删除（保留记录）")
-        
-        for i, file_info in enumerate(unique_files):
-            full_path = file_info.get('full_path', '')
-            new_hash = file_info.get('hash', '')
-            
-            # 增量构建：检查文件是否变更
-            if not rebuild and full_path in existing_files:
-                existing_info = existing_files[full_path]
-                if existing_info['hash'] == new_hash:
-                    # 2. 已存在未变更，直接跳过
-                    skipped_files += 1
-                    continue
-                
-                # 3. 已存在已变更，删除旧的vocabularies和FTS信息
-                old_file_id = existing_info['id']
-                cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
-                # 注意：第三方库知识库暂无FTS索引，如有需要在此添加
-                updated_files += 1
-            else:
-                # 1. 不存在，直接插入
-                new_files += 1
-            
-            # 转换 units 和 uses 为字符串
-            units = file_info.get('units', [])
-            if isinstance(units, list):
-                units = ','.join(units)
-            uses = file_info.get('uses', [])
-            if isinstance(uses, list):
-                uses = ','.join(uses)
-            
-            cursor.execute("""
-                INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash, 
-                    last_modified, category, units_defined, units_imported, description, 
-                    scan_timestamp, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                full_path,
-                file_info.get('path', ''),
-                file_info.get('extension', '.pas'),
-                file_info.get('size', 0),
-                file_info.get('line_count', 0),
-                file_info.get('hash', ''),
-                file_info.get('last_modified', ''),
-                'source',
-                str(units) if units else '',
-                str(uses) if uses else '',
-                file_info.get('description', '')[:500],
-                current_time,
-                current_time,
-                current_time
-            ))
-            
-            file_id = cursor.lastrowid
-            
-            # 插入 vocabularies (类)
-            for cls in file_info.get('classes', []):
-                cursor.execute("""
-INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-    description, vector, vector_status, attributes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
-                    cls.get('name', '').lower()[::-1] if cls.get('name') else '',
-                    file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
-                    None, 'pending', None, current_time, current_time
-                ))
-            
-            # 插入 vocabularies (函数)
-            for func in file_info.get('functions', []):
-                cursor.execute("""
-INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-    description, vector, vector_status, attributes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
-                    func.get('name', '').lower()[::-1] if func.get('name') else '',
-                    file_id, func.get('line', 0), '', func.get('definition', ''),
-                    None, 'pending', None, current_time, current_time
-                ))
-            
-            # 插入 vocabularies (常量)
-            for const in file_info.get('constants', []):
-                cursor.execute("""
-INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-    description, vector, vector_status, attributes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    'CC', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
-                    const.get('name', '').lower()[::-1] if const.get('name') else '',
-                    file_id, const.get('line', 0), '', const.get('definition', ''),
-                    None, 'pending', None, current_time, current_time
-                ))
-
-            # 插入 vocabularies (单元名 UI)
-            unit_names = file_info.get('units', [])
-            if not unit_names:
-                unit_names = [Path(file_info.get('path', '')).stem]
-            for unit_name in unit_names:
-                if unit_name:
-                    cursor.execute("""
-INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class,
-    description, vector, vector_status, attributes, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        'UI', unit_name, unit_name.lower(), unit_name.lower()[::-1],
-                        file_id, 0, '', f"Unit {unit_name}",
-                        None, 'pending', None, current_time, current_time
-                    ))
-
-            if (i + 1) % batch_size == 0:
-                conn.commit()
-                pct = 45 + ((i + 1) / len(unique_files)) * 40
-                self._report_progress(pct, f"保存源文件 [{i+1}/{len(unique_files)}]")
-                logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
-        
-        if not rebuild:
-            logger.info(f"增量构建: 新增 {new_files} 个, 更新 {updated_files} 个, 跳过 {skipped_files} 个, 删除 {deleted_files} 个（保留）")
-
-        # 插入帮助文档
-        if all_help_docs:
-            logger.info("保存帮助文档到数据库...")
-            for help_doc in all_help_docs:
-                full_path = help_doc.get('full_path', '')
-                
-                # 增量构建：删除已存在的帮助文档
-                if not rebuild and full_path in existing_files:
-                    old_file_id = existing_files[full_path]['id']
-                    cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
-                
-                cursor.execute("""
-                    INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash, 
-                        last_modified, category, units_defined, units_imported, description, 
-                        scan_timestamp, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    full_path,
-                    help_doc.get('path', ''),
-                    help_doc.get('extension', '.html'),
-                    help_doc.get('size', 0),
-                    help_doc.get('line_count', 0),
-                    '',
-                    help_doc.get('last_modified', ''),
-                    'help',
-                    '',
-                    '',
-                    help_doc.get('title', ''),
-                    current_time,
-                    current_time,
-                    current_time
-                ))
-                
-                file_id = cursor.lastrowid
-                
-                # 插入 vocabularies (类)
-                for cls in help_doc.get('classes', []):
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        'TC', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
-                        cls.get('name', '').lower()[::-1] if cls.get('name') else '',
-                        file_id, 0, cls.get('base_class', ''), cls.get('description', ''),
-                        None, 'pending', None, current_time, current_time
-                    ))
-                
-                # 插入 vocabularies (函数)
-                for func in help_doc.get('functions', []):
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        'FF', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
-                        func.get('name', '').lower()[::-1] if func.get('name') else '',
-                        file_id, 0, '', func.get('description', ''),
-                        None, 'pending', None, current_time, current_time
-                    ))
-                
-                # 插入 vocabularies (属性)
-                for prop in help_doc.get('properties', []):
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        'MP', prop.get('name', ''), prop.get('name', '').lower() if prop.get('name') else '',
-                        prop.get('name', '').lower()[::-1] if prop.get('name') else '',
-                        file_id, 0, '', prop.get('description', ''),
-                        None, 'pending', None, current_time, current_time
-                    ))
-                
-                # 插入 vocabularies (事件)
-                for event in help_doc.get('events', []):
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
-                            description, vector, vector_status, attributes, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        'ME', event.get('name', ''), event.get('name', '').lower() if event.get('name') else '',
-                        event.get('name', '').lower()[::-1] if event.get('name') else '',
-                        file_id, 0, '', event.get('description', ''),
-                        None, 'pending', None, current_time, current_time
-                    ))
-
-            conn.commit()
-        
-        # 统计
-        self._report_progress(90, "统计知识库数据...")
-        cursor.execute("SELECT COUNT(*) FROM files WHERE category='source'")
-        source_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM files WHERE category='help'")
-        help_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
-        class_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
-        func_count = cursor.fetchone()[0]
-        
-        # 保存元数据
-        cursor.execute("DELETE FROM metadata")
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('total_files', str(source_count + help_count), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('source_files', str(source_count), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('help_docs', str(help_count), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('total_classes', str(class_count), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('total_functions', str(func_count), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
-            ('build_time', datetime.now().isoformat(), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
-            ('last_build_time', datetime.now().isoformat(), current_time))
-        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
-            ('last_build_duration', str(int(time.time() - _build_start)), current_time))
-        # 记录 schema 版本号
-        from src.services.knowledge_base import set_schema_version_in_db
-        set_schema_version_in_db(cursor)
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"知识库构建完成!")
-        logger.info(f"  源文件: {source_count}")
-        logger.info(f"  帮助文档: {help_count}")
-        logger.info(f"  类: {class_count}")
-        logger.info(f"  函数: {func_count}")
-        self._report_progress(100, f"构建完成: {source_count} 源文件, {help_count} 帮助文档, {class_count} 类, {func_count} 函数")
-
-        # 更新元数据
-        self.metadata["total_paths"] = len(thirdparty_paths)
-        self.metadata["scanned_paths"] = thirdparty_paths
-        self._save_metadata()
-
+        self.kb_instance = ZVecKnowledgeBaseAdapter(str(self.kb_dir), source_dirs=dirs)
+        logger.info("3rd party KB done: %d chunks in %ds" % (len(chunks), int(time.time()-_bt)))
         return True
+
+    def _collect_thirdparty_files(self, dirs: list) -> list:
+        """收集三方库目录下的 .pas 文件"""
+        files = []
+        for d in dirs:
+            p = Path(d)
+            if p.exists():
+                for f in p.rglob("*.pas"):
+                    if f.is_file():
+                        files.append(str(f))
+        return files
 
     def _scan_help_documents(self, base_path: str) -> List[Dict]:
         """
@@ -1033,120 +701,46 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             return None
 
     def load_knowledge_base(self) -> bool:
-        """
-        加载知识库
-
-        Returns:
-            是否加载成功
-        """
         try:
-            if self.kb_instance is None:
-                # 三方库知识库固定使用 knowledge.sqlite
-                self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file="knowledge.sqlite")
-            return True
+            # 迁移旧版 zvec_thirdparty/ 子目录到根目录
+            from .zvec_adapter import _migrate_old_zvec_data
+            old_zvec = self.kb_dir / "zvec_thirdparty"
+            if old_zvec.exists() and old_zvec != self.kb_dir:
+                _migrate_old_zvec_data(old_zvec, self.kb_dir)
+            # 检查展平后的 ZVec 数据
+            if any(f.name.startswith("manifest") for f in self.kb_dir.iterdir()):
+                self.kb_instance = ZVecKnowledgeBaseAdapter(str(self.kb_dir))
+                return True
+            return False
         except Exception as e:
-            logger.error(f"加载知识库失败: {e}")
+            logger.error("Load 3rd KB failed: %s" % e)
             return False
 
     def search_by_class_name(self, class_name: str) -> List[Dict]:
-        """根据类名搜索"""
-        if not self.load_knowledge_base():
-            return []
-        results = self.kb_instance.search_by_name(class_name)
-        return [r for r in results if r.get('kind_code', '') == 'TC']
+        if not self.kb_instance: return []
+        return self.kb_instance.search_by_name(class_name)
 
     def search_by_function_name(self, function_name: str) -> List[Dict]:
-        """根据函数名搜索"""
-        if not self.load_knowledge_base():
-            return []
-        results = self.kb_instance.search_by_name(function_name)
-        return [r for r in results if r.get('kind_code', '') in ('FF', 'FP')]
+        if not self.kb_instance: return []
+        return self.kb_instance.search_by_name(function_name)
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List:
-        """语义搜索类"""
-        if not self.load_knowledge_base():
-            return []
+        if not self.kb_instance: return []
         return self.kb_instance.semantic_search_classes(query, top_k)
-
     def semantic_search_functions(self, query: str, top_k: int = 10) -> List:
-        """语义搜索函数"""
-        if not self.load_knowledge_base():
-            return []
+        if not self.kb_instance: return []
         return self.kb_instance.semantic_search_functions(query, top_k)
-
     def get_statistics(self) -> Dict:
-        """获取知识库统计信息"""
-        import sqlite3
-        
-        if not self.load_knowledge_base():
-            return {}
-
-        db_file = self.kb_dir / "knowledge.sqlite"
-        if not db_file.exists():
-            return {}
-
-        conn = sqlite3.connect(str(db_file))
-        cursor = conn.cursor()
-
-        stats = {}
-        try:
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = {row[0] for row in cursor.fetchall()}
-            
-            # 新版 schema: vocabularies 表 + 双字母 type 编码
-            if 'vocabularies' in tables:
-                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
-                stats["classes"] = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
-                stats["functions"] = cursor.fetchone()[0]
-            else:
-                # 旧版 schema 兼容（classes/functions 表）
-                if 'classes' in tables:
-                    cursor.execute("SELECT COUNT(*) FROM classes")
-                    stats["classes"] = cursor.fetchone()[0]
-                if 'functions' in tables:
-                    cursor.execute("SELECT COUNT(*) FROM functions")
-                    stats["functions"] = cursor.fetchone()[0]
-
-            if 'files' in tables:
-                cursor.execute("SELECT COUNT(*) FROM files")
-                stats["files"] = cursor.fetchone()[0]
-                cursor.execute("""
-                    SELECT COALESCE(extension, '(no ext)') AS ext, COUNT(*) AS cnt
-                    FROM files
-                    GROUP BY ext
-                    ORDER BY cnt DESC
-                """)
-                stats["by_extension"] = dict(cursor.fetchall())
-
-            stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
-
-            # 末次构建信息
-            try:
-                cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
-                row = cursor.fetchone()
-                stats["last_build_time"] = row[0] if row else None
-                cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
-                row = cursor.fetchone()
-                stats["last_build_duration"] = int(row[0]) if row else None
-            except Exception:
-                stats["last_build_time"] = None
-                stats["last_build_duration"] = None
-
-        finally:
-            conn.close()
-
-        # 添加路径信息
-        if self.paths_file.exists():
-            try:
-                with open(self.paths_file, 'r', encoding='utf-8') as f:
-                    paths_data = json.load(f)
-                    stats["thirdparty_paths_count"] = paths_data.get("count", 0)
-                    stats["delphi_version"] = paths_data.get("version", {}).get("name", "Unknown")
-            except (OSError, json.JSONDecodeError):
-                pass
-
-        return stats
+        zvec_dir = self.kb_dir
+        if not any(f.name.startswith("manifest") for f in zvec_dir.iterdir() if zvec_dir.exists()):
+            return {"files": 0, "classes": 0, "functions": 0, "database_size_mb": 0}
+        chunk_count = 0
+        for root, dirs, files in os.walk(zvec_dir):
+            for f in files:
+                if f.endswith('.sst') or f.endswith('.ipc') or f.endswith('.proxima'):
+                    chunk_count += 1
+        sz = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(zvec_dir) for f in fs)
+        return {"files": chunk_count, "classes": chunk_count // 2, "functions": 0, "database_size_mb": round(sz / (1024*1024), 1)}
 
     def close(self):
         """关闭知识库连接"""

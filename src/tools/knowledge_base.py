@@ -38,8 +38,39 @@ def _get_example_kb() -> Optional[Any]:
             logger.info("示例知识库实例已创建")
         except Exception as e:
             logger.warning("创建示例知识库实例失败: %s", e)
-            return None
     return _example_kb_service
+
+
+def _auto_detect_delphi_help_dir() -> Optional[str]:
+    """自动检测最新安装的 Delphi 帮助文档目录"""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        versions = []
+        i = 0
+        while True:
+            try:
+                versions.append(winreg.EnumKey(key, i))
+                i += 1
+            except OSError:
+                break
+        winreg.CloseKey(key)
+
+        versions.sort(key=lambda x: float(x) if x.replace('.', '').isdigit() else 0, reverse=True)
+        for ver in versions:
+            try:
+                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Embarcadero\BDS\{ver}")
+                root_dir = winreg.QueryValueEx(vk, "RootDir")[0]
+                winreg.CloseKey(vk)
+                help_dir = Path(root_dir) / "Help" / "Doc"
+                if help_dir.exists():
+                    logger.info(f"自动检测到 Delphi 帮助目录 (版本 {ver}): {help_dir}")
+                    return str(help_dir)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 def _format_build_info(s: dict) -> str:
@@ -235,24 +266,77 @@ def _cleanup_pkb_cache():
     _pkb_cache.clear()
 
 
-def _search_document_kb(query: str, top_k: int = 20) -> Optional[List[dict]]:
-    """搜索文档知识库（全文搜索），返回文档结果列表。
-
-    文档 KB 使用全文搜索（FTS），对多关键词查询效果远好于符号名称匹配。
-    如果文档知识库不存在或搜索失败，返回 None。
+def _migrate_zvec_subdir(parent_dir: Path, old_subdir_name: str):
     """
+    将旧版子目录中的 ZVec 数据迁移到父目录（展平）。
+    类似 zvec_adapter._migrate_old_zvec_data，但独立函数避免跨模块耦合。
+
+    旧结构: parent_dir/{old_subdir_name}/{zvec_data}
+    新结构: parent_dir/{zvec_data}
+    """
+    old_dir = parent_dir / old_subdir_name
+    if not old_dir.exists() or old_dir == parent_dir:
+        return
+    import shutil
+    logger.info("迁移 ZVec 数据: %s → %s (展平子目录)", old_dir, parent_dir)
+    for item in list(old_dir.iterdir()):
+        target = parent_dir / item.name
+        try:
+            if item.is_dir():
+                if target.exists():
+                    shutil.rmtree(target, ignore_errors=True)
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, target)
+        except Exception as e:
+            logger.warning("迁移文件失败 %s: %s", item.name, e)
+    shutil.rmtree(old_dir, ignore_errors=True)
+    logger.info("ZVec 数据迁移完成，已删除旧目录 %s", old_dir)
+
+
+def _migrate_doc_kb_subdir(kb_dir: Path):
+    """展平文档知识库: doc_kb/ → kb_dir/"""
+    _migrate_zvec_subdir(kb_dir, "doc_kb")
+
+
+def _search_document_kb(query: str, top_k: int = 20) -> Optional[List[dict]]:
+    """搜索文档知识库（ZVec 版），返回文档结果列表。"""
     try:
-        from ..services.knowledge_base.scan_generic_documents import (
-            GenericDocumentScanner,
-        )
+        import zvec
+        from zvec import Query, Fts
+
         server_root = Path(__file__).parent.parent.parent
-        kb_dir = str(server_root / "data" / "document-knowledge-base")
-        kb_path = Path(kb_dir)
-        if not kb_path.exists():
+        doc_kb_dir = server_root / "data" / "document-knowledge-base"
+        _migrate_doc_kb_subdir(doc_kb_dir)
+        zvec_dir = str(doc_kb_dir)
+        if not _kb_dir_has_zvec_data(Path(zvec_dir)):
             return None
-        scanner = GenericDocumentScanner(kb_dir)
-        results = scanner.search(query, top_k=top_k)
-        return results if results else None
+
+        col = zvec.open(zvec_dir)
+        results = col.query(
+            Query(field_name="chunk_text", fts=Fts(match_string=query)),
+            topk=top_k,
+            output_fields=["chunk_text", "path", "content_type", "extension"],
+        )
+
+        doc_list = []
+        for r in results:
+            fields = r.fields
+            chunk_text = fields.get("chunk_text", "") if fields else ""
+            lines = chunk_text.split("\n", 1)
+            title = lines[0].strip() if lines else ""
+            content = lines[1].strip() if len(lines) > 1 else ""
+
+            doc_list.append({
+                "id": r.id,
+                "title": title[:500],
+                "content": content[:5000],
+                "content_type": fields.get("content_type", "") if fields else "",
+                "path": fields.get("path", "") if fields else "",
+                "size": len(content),
+            })
+
+        return doc_list if doc_list else None
     except Exception as e:
         logger.debug("文档知识库搜索失败: %s", str(e))
         return None
@@ -346,6 +430,220 @@ def _normalize_query(query: str) -> str:
     return q
 
 
+def _kb_needs_rebuild() -> List[str]:
+    """检查各 KB 的 ZVec 数据是否存在，返回需要重建的 KB 提示列表
+
+    用户升级到 ZVec 版后，旧 SQLite 数据不再可用，必须执行一次
+    delphi_kb(action='build', kb_type='delphi') 重建。
+    """
+    hints = []
+
+    # Delphi KB: ZVecAdapter.load_knowledge_base() 检查 delphi_kb/ 目录
+    if _delphi_kb_service:
+        try:
+            if not _delphi_kb_service.load_knowledge_base():
+                hints.append(
+                    "【需要重建】Delphi 源码知识库（ZVec 数据缺失）。请执行:\n"
+                    "  delphi_kb(action='build', kb_type='delphi')"
+                )
+        except Exception as e:
+            logger.debug("Delphi KB 健康检查异常: %s", e)
+
+    # Thirdparty KB: ThirdPartyKnowledgeBase.load_knowledge_base() 检查 zvec_thirdparty/
+    if _thirdparty_kb_service:
+        try:
+            if not _thirdparty_kb_service.load_knowledge_base():
+                # 检查是否有三方库路径（无三方库时跳过提示）
+                has_paths = bool(_thirdparty_kb_service.get_library_paths())
+                if has_paths:
+                    hints.append(
+                        "【需要重建】三方库知识库。请执行:\n"
+                        "  delphi_kb(action='build', kb_type='thirdparty')"
+                    )
+        except Exception as e:
+            logger.debug("Thirdparty KB 健康检查异常: %s", e)
+
+    return hints
+
+
+def _format_rebuild_hints(hints: List[str]) -> str:
+    """格式化重建提示为字符串"""
+    if not hints:
+        return ""
+    return (
+        "═══════════════════════════════════════\n"
+        "⚠ 知识库需要重建\n"
+        "═══════════════════════════════════════\n"
+        + "\n\n".join(hints)
+        + "\n═══════════════════════════════════════\n"
+    )
+
+
+def _kb_dir_has_zvec_data(dir_path: Path) -> bool:
+    """检查目录中是否有 ZVec 集合（manifest.* 文件）"""
+    if not dir_path.exists():
+        return False
+    try:
+        for f in dir_path.iterdir():
+            if f.name.startswith("manifest"):
+                return True
+    except (PermissionError, OSError):
+        pass
+    return False
+
+
+def _cleanup_old_kb_data(kb_type: str, dry_run: bool = False) -> dict:
+    """清理指定类型的旧知识库残留文件
+
+    当 ZVec 数据已存在时，删除 KB 目录下不再使用的旧文件。
+    安全性约束:
+    - 只在 ZVec 数据目录（或 doc_kb/）存在时才删除（确保迁移已完成）
+    - 只删除已知的旧文件模式，不碰其他文件
+
+    Args:
+        kb_type: "delphi" / "thirdparty" / "project" / "document" / "example"
+        dry_run: True=仅扫描列出不删除
+
+    Returns:
+        {"deleted": [文件列表], "freed_mb": float, "skipped": [原因]}
+    """
+    import os
+    import shutil
+
+    result: dict = {"deleted": [], "freed_mb": 0.0, "skipped": []}
+
+    def _del_one(path: Path, label: str):
+        """安全删除一个文件"""
+        if not path.exists():
+            return
+        size_mb = path.stat().st_size / (1024 * 1024)
+        if dry_run:
+            result["deleted"].append(f"{label}: {path.name} ({size_mb:.1f} MB)")
+            result["freed_mb"] += size_mb
+        else:
+            try:
+                path.unlink()
+                result["deleted"].append(f"{label}: {path.name} ({size_mb:.1f} MB)")
+                result["freed_mb"] += size_mb
+                logger.info("清理旧 KB 文件: %s (%.1f MB)", path, size_mb)
+            except Exception as e:
+                result["skipped"].append(f"{label}: {path.name} — {e}")
+
+    # ── Delphi KB ──
+    if kb_type in ("delphi", "all") and _delphi_kb_service:
+        kb_dir = Path(_delphi_kb_service.kb_dir)
+        # ZVec 数据现在直接存在 kb_dir 中（不再有 delphi_kb/ 子目录）
+        zvec_ok = _kb_dir_has_zvec_data(kb_dir)
+        if not zvec_ok:
+            result["skipped"].append("delphi: ZVec 数据不存在，跳过清理")
+        else:
+            old_patterns = [
+                ("knowledge_base.sqlite", "旧 Delphi KB"),
+                ("documents.sqlite", "旧 Delphi 文档"),
+                ("config.json", "废弃的 Delphi KB 配置"),
+            ]
+            for fname, label in old_patterns:
+                _del_one(kb_dir / fname, label)
+                _del_one(kb_dir / f"{fname}-wal", label)
+                _del_one(kb_dir / f"{fname}-shm", label)
+
+    # ── Thirdparty KB ──
+    if kb_type in ("thirdparty", "all") and _thirdparty_kb_service:
+        kb_dir = Path(_thirdparty_kb_service.kb_dir)
+        _migrate_zvec_subdir(kb_dir, "zvec_thirdparty")
+        zvec_ok = _kb_dir_has_zvec_data(kb_dir)
+        if not zvec_ok:
+            result["skipped"].append("thirdparty: ZVec 数据不存在，跳过清理")
+        else:
+            old_patterns = [
+                ("knowledge_base.sqlite", "旧 Thirdparty KB"),
+                ("knowledge.sqlite", "旧 Thirdparty KB"),
+                ("documents.sqlite", "旧 Thirdparty 文档"),
+            ]
+            for fname, label in old_patterns:
+                _del_one(kb_dir / fname, label)
+                _del_one(kb_dir / f"{fname}-wal", label)
+                _del_one(kb_dir / f"{fname}-shm", label)
+
+    # ── Project KB ──
+    if kb_type == "project" or kb_type == "all":
+        # 遍历所有已缓存的 project KB
+        for proj_path, pkb in _pkb_cache.items():
+            kb_dir = pkb.kb_dir
+            _migrate_zvec_subdir(kb_dir, "zvec_project")
+            zvec_ok = _kb_dir_has_zvec_data(kb_dir)
+            if not zvec_ok:
+                result["skipped"].append(f"project({proj_path}): ZVec 数据不存在，跳过清理")
+                continue
+            old_patterns = [
+                ("knowledge.sqlite", f"旧项目 KB ({proj_path})"),
+                ("knowledge_base.sqlite", f"旧项目 KB ({proj_path})"),
+                ("documents.sqlite", f"旧项目文档 ({proj_path})"),
+            ]
+            for fname, label in old_patterns:
+                _del_one(kb_dir / fname, label)
+                _del_one(kb_dir / f"{fname}-wal", label)
+                _del_one(kb_dir / f"{fname}-shm", label)
+
+    # ── Document KB ──
+    if kb_type in ("document", "all"):
+        server_root = Path(__file__).parent.parent.parent
+        kb_dir = server_root / "data" / "document-knowledge-base"
+        _migrate_doc_kb_subdir(kb_dir)
+        zvec_ok = _kb_dir_has_zvec_data(kb_dir)
+        if not zvec_ok:
+            result["skipped"].append("document: ZVec 数据不存在，跳过清理")
+        else:
+            old_patterns = [
+                ("documents.sqlite", "旧文档 KB"),
+                ("knowledge.sqlite", "旧文档 KB"),
+                ("knowledge_base.sqlite", "旧文档 KB"),
+            ]
+            for fname, label in old_patterns:
+                _del_one(kb_dir / fname, label)
+                _del_one(kb_dir / f"{fname}-wal", label)
+                _del_one(kb_dir / f"{fname}-shm", label)
+
+    # ── Example KB ──
+    if kb_type in ("example", "all"):
+        server_root = Path(__file__).parent.parent.parent
+        kb_dir = server_root / "data" / "example-knowledge-base"
+        _migrate_zvec_subdir(kb_dir, "zvec_example")
+        zvec_ok = _kb_dir_has_zvec_data(kb_dir)
+        if not zvec_ok:
+            result["skipped"].append("example: ZVec 数据不存在，跳过清理")
+        else:
+            # 示例 KB 的 knowledge.sqlite 是数据源（扫描 Demo 目录而来），
+            # ZVec 是建于其上的搜索索引，不删除 SQLite
+            old_patterns = [
+                ("knowledge_base.sqlite", "旧示例 KB"),
+                ("documents.sqlite", "旧示例 KB"),
+            ]
+            for fname, label in old_patterns:
+                _del_one(kb_dir / fname, label)
+                _del_one(kb_dir / f"{fname}-wal", label)
+                _del_one(kb_dir / f"{fname}-shm", label)
+
+    result["freed_mb"] = round(result["freed_mb"], 1)
+    return result
+
+
+def _format_cleanup_result(info: dict) -> str:
+    """格式化清理结果"""
+    if not info["deleted"] and not info["skipped"]:
+        return "无需清理，无旧 SQLite 文件。\n"
+    lines = []
+    if info["deleted"]:
+        lines.append(f"已清理 {len(info['deleted'])} 个旧文件，释放 {info['freed_mb']} MB:")
+        for d in info["deleted"]:
+            lines.append(f"  ✔ {d}")
+    if info["skipped"]:
+        lines.append(f"\n跳过 {len(info['skipped'])} 项:")
+        for s in info["skipped"]:
+            lines.append(f"  ⚠ {s}")
+    return "\n".join(lines) + "\n"
+
+
 async def search_knowledge(arguments: Any) -> CallToolResult:
     """统一搜索知识库（thin orchestrator: 路由 + 调度）"""
     kb_type = arguments.get("kb_type", "all")
@@ -355,7 +653,11 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     # 空 query: 返回知识库状态 + 使用指引
     if not query:
-        return CallToolResult(content=[{"type": "text", "text": _empty_query_guide(kb_type, search_type)}])
+        base = _empty_query_guide(kb_type, search_type)
+        rebuild_hints = _kb_needs_rebuild()
+        if rebuild_hints:
+            base += "\n" + _format_rebuild_hints(rebuild_hints)
+        return CallToolResult(content=[{"type": "text", "text": base}])
 
     # 路由: 根据 kb_type 决定要搜索的 KB 列表
     results: dict = {}
@@ -388,6 +690,11 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     # 格式化输出
     output = _format_search_output(query, kb_type, search_type, results, top_k, keywords)
+    # 追加重建提示（无搜索结果时才显示，避免每次输出都带 banner）
+    if not _has_meaningful_results(results):
+        rebuild_hints = _kb_needs_rebuild()
+        if rebuild_hints:
+            output += "\n" + _format_rebuild_hints(rebuild_hints)
     return CallToolResult(content=[{"type": "text", "text": output}])
 
 
@@ -1106,6 +1413,40 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
                     results["example"] = "成功" if success else "失败"
                 else:
                     results["example"] = "错误: 示例知识库创建失败"
+            elif kb == "document":
+                from pathlib import Path as _Path
+                server_root = _Path(__file__).parent.parent.parent
+                doc_kb_dir = server_root / "data" / "document-knowledge-base"
+                doc_kb_dir.mkdir(parents=True, exist_ok=True)
+
+                # 自动检测 Delphi 帮助目录
+                directory = arguments.get("directory")
+                if not directory:
+                    detected = _auto_detect_delphi_help_dir()
+                    if detected:
+                        directory = detected
+                        logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
+                if not directory:
+                    results["document"] = "跳过: 未指定 directory 且未检测到 Delphi 帮助目录"
+                    continue
+
+                extensions = arguments.get("extensions", [".chm"])
+                exclude = arguments.get("exclude")
+
+                from ..services.knowledge_base.scan_generic_documents import GenericDocumentScanner
+                scanner = GenericDocumentScanner(str(doc_kb_dir))
+                scan_result = scanner.scan_directory(
+                    directory, extensions=extensions,
+                    exclude=exclude, rebuild=rebuild
+                )
+                if scan_result.get("error"):
+                    results["document"] = f"扫描失败: {scan_result['error']}"
+                    continue
+
+                total = scan_result.get("total_files", 0) or scan_result.get("processed", 0)
+
+                # 扫描器已直接写入 ZVec，无需再导出
+                results["document"] = f"成功 ({total} 文件, ZVec 已构建)"
         except Exception as e:
             results[kb] = f"错误: {str(e)}"
     
@@ -1113,6 +1454,19 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
     output = f"构建知识库 ({kb_type}):\n\n"
     for kb, status in results.items():
         output += f"- {kb}: {status}\n"
+    
+    # 构建成功后自动清理旧 SQLite 文件
+    cleanup_parts = []
+    for kb in kb_types:
+        if results.get(kb) in ("成功",):
+            clean_info = _cleanup_old_kb_data(kb)
+            if clean_info["deleted"]:
+                cleanup_parts.append(
+                    f"  {kb}: 已清理 {len(clean_info['deleted'])} 个旧文件"
+                    f"（释放 {clean_info['freed_mb']} MB）"
+                )
+    if cleanup_parts:
+        output += "\n旧文件清理:\n" + "\n".join(cleanup_parts) + "\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])
 
@@ -1155,7 +1509,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                         pkb = _get_or_create_pkb(project_path)
                         ok = pkb.load_knowledge_bases()
                         if not ok or not pkb.project_kb:
-                            results["project"] = {"error": "项目知识库加载失败，请先构建或检查 .delphi-kb/knowledge.sqlite 是否存在"}
+                            results["project"] = {"error": "项目知识库加载失败，请先构建（.delphi-kb/zvec_project/ 不存在）"}
                         else:
                             full_stats = pkb.get_statistics()
                             results["project"] = full_stats.get("project") or {"error": "项目统计信息为空"}
@@ -1186,7 +1540,8 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
         try:
             from src.services.knowledge_base.schema import use_connection
             server_root = Path(__file__).parent.parent.parent
-            db_path = server_root / "data" / "document-knowledge-base" / "documents.sqlite"
+            doc_kb_dir = server_root / "data" / "document-knowledge-base"
+            db_path = doc_kb_dir / "documents.sqlite"
             if db_path.exists():
                 with use_connection(str(db_path), use_wal=False) as conn:
                     cursor = conn.cursor()
@@ -1196,7 +1551,6 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                     by_ext = dict(cursor.fetchall())
                     cursor.execute("SELECT content_type, COUNT(*) FROM documents GROUP BY content_type ORDER BY COUNT(*) DESC")
                     by_type = dict(cursor.fetchall())
-                # 实际数据库文件大小
                 db_stat = db_path.stat()
                 db_size_mb = round(db_stat.st_size / (1024 * 1024), 2)
                 from datetime import datetime
@@ -1208,8 +1562,23 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                     "database_size_mb": db_size_mb,
                     "last_build_time": last_build,
                 }
+            elif _kb_dir_has_zvec_data(doc_kb_dir):
+                # documents.sqlite 已被清理，从 ZVec 读取统计
+                try:
+                    import zvec
+                    col = zvec.open(str(doc_kb_dir))
+                    stats = col.stats
+                    doc_count = getattr(stats, "doc_count", 0) if stats else 0
+                    results["document"] = {
+                        "total_documents": doc_count,
+                        "database_size_mb": "ZVec",
+                        "last_build_time": "迁移后（documents.sqlite 已清理）",
+                        "note": "统计来源: ZVec（展平到根目录）",
+                    }
+                except Exception as zve:
+                    results["document"] = {"error": f"doc_kb/ 存在但 ZVec 读取失败: {zve}"}
             else:
-                results["document"] = {"error": f"文档知识库不存在: {db_path}"}
+                results["document"] = {"error": f"文档知识库不存在: {doc_kb_dir}"}
         except Exception as e:
             results["document"] = {"error": str(e)}
     
