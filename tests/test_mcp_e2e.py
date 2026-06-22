@@ -29,7 +29,7 @@ class TestToolRegistrationConsistency:
     # server.py 中 list_tools() 注册的工具名（人工维护的引用列表）
     # 必须与 TOOL_NAMES 完全一致
     LIST_TOOLS_EXPECTED = {
-        "project", "delphi_kb", "delphi_file", "manage_component",
+        "delphi_project", "delphi_kb", "delphi_file", "manage_component",
         "check_environment", "async_task", "package", "get_coding_rules",
         "code_hosting", "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
@@ -39,7 +39,7 @@ class TestToolRegistrationConsistency:
     # _TOOL_HANDLERS 中已注册的 handler 名（含别名）
     # "file_tool" 是 "delphi_file" 的向后兼容别名
     HANDLER_NAMES_EXPECTED = {
-        "project", "delphi_kb", "delphi_file", "file_tool",
+        "delphi_project", "delphi_kb", "delphi_file", "file_tool",
         "manage_component", "check_environment", "async_task",
         "package", "get_coding_rules", "code_hosting",
         "tool_help", "experience", "daofy_update",
@@ -211,7 +211,7 @@ class TestCallToolResult:
         """TOOL_NAMES 可 JSON 序列化（供 tool_help 的 enum 字段使用）"""
         serialized = json.dumps(TOOL_NAMES, ensure_ascii=False)
         assert isinstance(serialized, str)
-        assert "project" in serialized
+        assert "delphi_project" in serialized
 
     @pytest.mark.asyncio
     async def test_project_tool_missing_action_returns_error(self):

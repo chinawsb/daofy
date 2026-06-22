@@ -57,7 +57,7 @@ else:
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
-    from src.services.knowledge_base import DelphiKnowledgeBaseService
+    from src.services.knowledge_base.zvec_adapter import ZVecKnowledgeBaseAdapter
     from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
     from src.tools.project import handle_project as _handle_project
     # project 模块统一管理编译器服务，保留别名供初始化用
@@ -248,9 +248,35 @@ async def run_server():
     compiler_service = CompilerService(config_manager)
     logger.info("编译服务初始化完成")
 
-    # 初始化知识库服务
-    kb_service = DelphiKnowledgeBaseService()
-    logger.info("知识库服务初始化完成")
+    # 初始化知识库服务（ZVec 引擎）
+    import winreg
+    delphi_source_dirs = []
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        i = 0
+        while True:
+            try:
+                vkey = winreg.EnumKey(key, i)
+                vpath = winreg.OpenKey(key, vkey)
+                try:
+                    root = winreg.QueryValueEx(vpath, "RootDir")[0]
+                    src = Path(root) / "source"
+                    if src.exists():
+                        delphi_source_dirs.append(str(src))
+                except OSError:
+                    pass
+                finally:
+                    winreg.CloseKey(vpath)
+                i += 1
+            except WindowsError:
+                break
+        winreg.CloseKey(key)
+    except Exception as e:
+        logger.warning(f"检测 Delphi 版本失败: {e}")
+
+    kb_dir = str(Path(__file__).parent.parent / "data" / "delphi-knowledge-base")
+    kb_service = ZVecKnowledgeBaseAdapter(kb_dir, source_dirs=delphi_source_dirs)
+    logger.info(f"ZVec 知识库初始化完成 (源码目录: {delphi_source_dirs})")
 
     # 初始化第三方库知识库服务
     thirdparty_kb_service = ThirdPartyKnowledgeBase()
@@ -301,10 +327,10 @@ async def run_server():
     async def list_tools():
         """列出所有可用工具"""
         return [
-            # ===== 项目全生命周期管理 ⭐⭐⭐ =====
+            # ===== Delphi 项目全生命周期管理 ⭐⭐⭐ =====
             Tool(
-                name="project",
-                description=TOOL_SHORT_DESC["project"],
+                name="delphi_project",
+                description=TOOL_SHORT_DESC["delphi_project"],
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -313,7 +339,7 @@ async def run_server():
                             "enum": ["compile", "compile_file", "dry_run", "info", "create",
                                      "set", "add_config", "remove_config", "add_source",
                                      "remove_source", "audit", "ast", "runtime"],
-                            "description": "操作类型。先 tool_help('project') 查看各 action 的参数说明。"
+                            "description": "操作类型。先 tool_help('delphi_project') 查看各 action 的参数说明。"
                         },
                         "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk/.pas)"},
                         "dry_run": {"type": "boolean", "default": False, "description": "仅预览编译参数不实际执行"},
@@ -1338,7 +1364,7 @@ async def run_server():
         return await asyncio.to_thread(_ocr_handler, arguments)
 
     _TOOL_HANDLERS = {
-        "project": _handle_project_tool,
+            "delphi_project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
         "delphi_file": _handle_file_tool,
         "file_tool": _handle_file_tool,  # 旧名兼容别名

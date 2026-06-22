@@ -61,7 +61,7 @@ _DISABLED_WARNINGS = {"W1000"}  # 默认禁用的警告
 async def handle_project(**kwargs) -> Any:
     """统一的 project 工具入口，按 action 路由到子功能。
 
-    前一步可调用 tool_help(tool_name="project") 查看各 action 的详细参数。
+    前一步可调用 tool_help(tool_name="delphi_project") 查看各 action 的详细参数。
     """
     action = kwargs.get("action", "")
 
@@ -87,7 +87,7 @@ async def handle_project(**kwargs) -> Any:
 
         else:
             return {"status": "failed", "message": f"未知 action: {action}。"
-                    f"运行 tool_help(tool_name='project') 查看所有可用 action 及其参数。"}
+                    f"运行 tool_help(tool_name='delphi_project') 查看所有可用 action 及其参数。"}
     except Exception as e:
         logger.exception("project 执行失败")
         return {"status": "failed", "message": str(e)}
