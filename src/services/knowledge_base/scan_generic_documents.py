@@ -1372,12 +1372,12 @@ def _has_lxml() -> bool:
         return False
 
 
-def _process_document_worker(args: Tuple) -> List[Dict]:
+def _producer_worker(file_path_str: str, directory_str: str, queue):
     """
-    处理单个文档的工作函数（用于多进程）
-    返回文档信息字典列表（HLP 等格式可能返回多个文档）
+    生产者 worker：处理单个文档文件，逐条将结果放入队列。
+    CHM 类文件会将每个 HTML 页作为单独结果放入队列。
+    完成后放入 None 作为哨兵。
     """
-    file_path_str, directory_str = args
     file_path = Path(file_path_str)
     directory = Path(directory_str)
     
@@ -1398,8 +1398,8 @@ def _process_document_worker(args: Tuple) -> List[Dict]:
         
         for processor in processors:
             if processor.can_process(file_path):
-                result = processor.process(file_path)
-                if result:
+                results = processor.process(file_path)
+                if results:
                     rel_path = str(file_path.relative_to(directory)).replace('\\', '/')
                     common_meta = {
                         'full_path': str(file_path),
@@ -1408,24 +1408,22 @@ def _process_document_worker(args: Tuple) -> List[Dict]:
                         'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
                     }
                     
-                    if isinstance(result, list):
-                        docs = []
-                        for item in result:
+                    if isinstance(results, list):
+                        for item in results:
                             item.setdefault('path', rel_path)
                             item.update(common_meta)
                             if not item.get('path') or item['path'] == rel_path:
                                 item['path'] = f"{rel_path}#{item.get('title', 'untitled')}"
-                            docs.append(item)
-                        return docs
+                            queue.put(item)
                     else:
-                        result['path'] = rel_path
-                        result.update(common_meta)
-                        return [result]
-        
-        return []
-        
+                        results['path'] = rel_path
+                        results.update(common_meta)
+                        queue.put(results)
+                break
     except Exception:
-        return []
+        pass
+    finally:
+        queue.put(None)
 
 
 class GenericDocumentScanner:
@@ -1736,74 +1734,92 @@ class GenericDocumentScanner:
         batch_buffer = []
 
         try:
-            with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                args = [(str(f), str(directory)) for f in all_files]
-                future_map = {executor.submit(_process_document_worker, a): a for a in args}
+            import multiprocessing as mp
+            ctx = mp.get_context('spawn')
+            # 有界队列：生产超过 200 条时背压，防止内存暴涨
+            work_queue = ctx.Queue(maxsize=200)
 
-                file_idx = 0
-                for future in as_completed(future_map):
-                    try:
-                        docs = future.result()
-                    except Exception:
-                        failed += 1
-                        file_idx += 1
-                        continue
+            # 启动生产者进程
+            processes = []
+            for f in all_files:
+                p = ctx.Process(
+                    target=_producer_worker,
+                    args=(str(f), str(directory), work_queue),
+                )
+                p.start()
+                processes.append(p)
 
-                    if not docs:
-                        file_idx += 1
-                        continue
+            # 消费者循环：持续从队列读取结果，批量写入 ZVec
+            files_remaining = len(processes)
+            seen_sentinels = 0
 
-                    for result in docs:
-                        if result.get('requires_dependencies'):
-                            failed += 1
-                            continue
+            while files_remaining > 0:
+                try:
+                    item = work_queue.get(timeout=5.0)
+                except mp.queues.Empty:
+                    alive = sum(1 for p in processes if p.is_alive())
+                    if alive == 0:
+                        break
+                    continue
 
-                        try:
-                            title = result.get('title', '')
-                            content = result.get('content', '')
+                if item is None:
+                    seen_sentinels += 1
+                    files_remaining = len(processes) - seen_sentinels
+                    continue
 
-                            # 清理 Base64 data URI
-                            content = re.sub(
-                                r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
-                                '[Base64 Image]',
-                                content
-                            )
+                result = item
+                if result.get('requires_dependencies'):
+                    failed += 1
+                    continue
 
-                            # 按 5000 行切块
-                            content_lines = content.split('\n')
-                            chunk_size = 5000
-                            chm_name = Path(result.get('full_path', '')).stem
-                            html_path = result.get('path') or ''
-                            path_val = f"{chm_name}#{html_path}" if chm_name and html_path else (html_path or chm_name)
-                            content_type_val = result.get('content_type', '')
-                            ext_val = result.get('extension', '')
+                try:
+                    title = result.get('title', '')
+                    content = result.get('content', '')
 
-                            for ci in range(0, len(content_lines), chunk_size):
-                                chunk_lines = content_lines[ci:ci + chunk_size]
-                                chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
-                                chunk_id = hashlib.md5(f"{path_val}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
-                                batch_buffer.append(zvec.Doc(
-                                    id=chunk_id,
-                                    fields={
-                                        'chunk_text': chunk_text,
-                                        'path': path_val,
-                                        'content_type': content_type_val,
-                                        'extension': ext_val,
-                                    }
-                                ))
+                    content = re.sub(
+                        r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
+                        '[Base64 Image]',
+                        content
+                    )
 
-                            processed += 1
-                            # 单次文档插入后检查 batch 是否超限（ZVec 上限 1024）
-                            if len(batch_buffer) >= BATCH_SIZE:
-                                col.insert(batch_buffer)
-                                col.flush()
-                                batch_buffer.clear()
-                        except Exception:
-                            failed += 1
+                    content_lines = content.split('\n')
+                    chunk_sz = 5000
+                    chm_name = Path(result.get('full_path', '')).stem
+                    html_path = result.get('path') or ''
+                    path_val = f"{chm_name}#{html_path}" if chm_name and html_path else (html_path or chm_name)
+                    content_type_val = result.get('content_type', '')
+                    ext_val = result.get('extension', '')
 
-                    file_idx += 1
-                    if self.progress_callback:
-                        self.progress_callback(processed, estimated_total, f"{processed}/{estimated_total} 文件")
+                    for ci in range(0, len(content_lines), chunk_sz):
+                        chunk_lines = content_lines[ci:ci + chunk_sz]
+                        chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                        chunk_id = hashlib.md5(f"{path_val}#chunk{ci//chunk_sz}".encode()).hexdigest()[:16]
+                        batch_buffer.append(zvec.Doc(
+                            id=chunk_id,
+                            fields={
+                                'chunk_text': chunk_text,
+                                'path': path_val,
+                                'content_type': content_type_val,
+                                'extension': ext_val,
+                            }
+                        ))
+
+                    processed += 1
+                    if len(batch_buffer) >= BATCH_SIZE:
+                        col.insert(batch_buffer)
+                        col.flush()
+                        batch_buffer.clear()
+                except Exception:
+                    failed += 1
+
+                if self.progress_callback and processed % 50 == 0:
+                    self.progress_callback(processed, estimated_total, f"{processed}/{estimated_total} 文件")
+
+            # 等待所有进程退出
+            for p in processes:
+                p.join(timeout=30)
+                if p.is_alive():
+                    p.terminate()
 
             # 插入剩余批次
             if batch_buffer:
