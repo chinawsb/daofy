@@ -128,65 +128,45 @@ class MarkdownProcessor(DocumentProcessor):
 
 
 class HTMLProcessor(DocumentProcessor):
-    """HTML 处理器 (.htm, .html)"""
+    """HTML 处理器 (.htm, .html) — 用 html2text 转换，无需 BeautifulSoup"""
     
     def __init__(self):
         self.supported_extensions = ['.htm', '.html']
-        if html2text:
-            self.converter = html2text.HTML2Text()
+        self.converter = html2text.HTML2Text() if html2text else None
+        if self.converter:
             self.converter.ignore_links = False
             self.converter.ignore_images = True
             self.converter.body_width = 0
-        else:
-            self.converter = None
     
     def process(self, file_path: Path) -> Optional[Dict]:
-        if not BeautifulSoup:
+        if not self.converter:
             return None
         
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 html_content = f.read()
             
-            soup = BeautifulSoup(html_content, 'lxml' if _has_lxml() else 'html.parser')
+            # 正则提取 <title>（首次匹配即可）
+            title_match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+            title = title_match.group(1).strip() if title_match else Path(file_path).stem
             
-            for tag in soup(['script', 'style', 'nav', 'footer']):
-                tag.decompose()
+            # html2text 将 HTML 转为 Markdown（自带跳过 script/style）
+            markdown = self.converter.handle(html_content)
             
-            title = soup.title.get_text(strip=True) if soup.title else file_path.stem
-            text_content = soup.get_text(separator='\n', strip=True)
-            
-            if self.converter:
-                markdown = self.converter.handle(html_content)
-            else:
-                markdown = text_content
-            
-            sections = self._extract_sections(soup)
-            code_examples = self._extract_code_blocks(soup)
+            hash_val = hashlib.md5(markdown.encode()).hexdigest()
             
             return {
                 'title': title,
                 'content': markdown,
                 'content_type': 'html',
-                'size': len(text_content),
-                'line_count': text_content.count('\n') + 1,
-                'hash': hashlib.md5(text_content.encode()).hexdigest(),
-                'sections': sections,
-                'code_examples': code_examples
+                'size': len(markdown),
+                'line_count': markdown.count('\n') + 1,
+                'hash': hash_val,
+                'sections': [],
+                'code_examples': []
             }
         except Exception:
             return None
-    
-    def _extract_sections(self, soup) -> List[Dict]:
-        sections = []
-        for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            level = int(tag.name[1])
-            title = tag.get_text(strip=True)
-            sections.append({'level': level, 'title': title})
-        return sections
-    
-    def _extract_code_blocks(self, soup) -> List[str]:
-        return [tag.get_text(strip=True) for tag in soup.find_all(['pre', 'code'])]
 
 
 class DocxProcessor(DocumentProcessor):
@@ -1305,11 +1285,9 @@ class HlpProcessor(DocumentProcessor):
 
 
 class WebDocumentProcessor:
-    """网页文档处理器（在线文档）"""
+    """网页文档处理器（在线文档）— 用 html2text 转换，无需 BeautifulSoup"""
     
     def __init__(self):
-        if not BeautifulSoup:
-            raise ImportError("需要 beautifulsoup4: pip install beautifulsoup4")
         if not html2text:
             raise ImportError("需要 html2text: pip install html2text")
         
@@ -1329,39 +1307,27 @@ class WebDocumentProcessor:
             response.encoding = response.apparent_encoding or 'utf-8'
             
             html_content = response.text
-            soup = BeautifulSoup(html_content, 'lxml' if _has_lxml() else 'html.parser')
             
-            for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
-                tag.decompose()
+            # 正则提取 <title>（首次匹配即可）
+            title_match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
+            title = title_match.group(1).strip() if title_match else url
             
-            title = soup.title.get_text(strip=True) if soup.title else url
+            # html2text 将 HTML 转为 Markdown
             markdown = self.converter.handle(html_content)
-            text_content = soup.get_text(separator='\n', strip=True)
             
             return {
                 'title': title,
                 'content': markdown,
                 'content_type': 'web',
                 'url': url,
-                'size': len(text_content),
-                'line_count': text_content.count('\n') + 1,
-                'hash': hashlib.md5(text_content.encode()).hexdigest(),
-                'sections': self._extract_sections(soup),
-                'code_examples': self._extract_code_blocks(soup)
+                'size': len(markdown),
+                'line_count': markdown.count('\n') + 1,
+                'hash': hashlib.md5(markdown.encode()).hexdigest(),
+                'sections': [],
+                'code_examples': []
             }
         except Exception:
             return None
-    
-    def _extract_sections(self, soup) -> List[Dict]:
-        sections = []
-        for tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-            level = int(tag.name[1])
-            title = tag.get_text(strip=True)
-            sections.append({'level': level, 'title': title})
-        return sections
-    
-    def _extract_code_blocks(self, soup) -> List[str]:
-        return [tag.get_text(strip=True) for tag in soup.find_all(['pre', 'code'])]
 
 
 def _has_lxml() -> bool:
