@@ -155,6 +155,7 @@ class TestMultiWriteOffset:
 
         async def mock_fmt_add_line(**kw):
             fp = kw.get("file_path")
+            assert kw.get("in_place") is False
             if fp and os.path.isfile(fp):
                 with open(fp, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -162,9 +163,12 @@ class TestMultiWriteOffset:
                     "implementation\n\n",
                     "implementation\n\n\n"
                 )
-                with open(fp, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                return {"status": "success", "formatted": True, "message": "ok"}
+                return {
+                    "status": "success",
+                    "formatted": True,
+                    "content": content,
+                    "message": "ok",
+                }
             return {"formatted": False}
 
         from unittest.mock import patch
@@ -198,6 +202,7 @@ class TestMultiWriteOffset:
         from src.tools import pasfmt as _pasfmt_mod
 
         async def mock_fmt_add_lines(**kw):
+            assert kw.get("in_place") is False
             fp = kw.get("file_path")
             if fp and os.path.isfile(fp):
                 with open(fp, 'r', encoding='utf-8') as f:
@@ -205,9 +210,12 @@ class TestMultiWriteOffset:
                 content = content.replace(
                     "implementation", "\n\nimplementation"
                 )
-                with open(fp, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                return {"status": "success", "formatted": True, "message": "ok"}
+                return {
+                    "status": "success",
+                    "formatted": True,
+                    "content": content,
+                    "message": "ok",
+                }
             return {"formatted": False}
 
         from unittest.mock import patch

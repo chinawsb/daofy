@@ -241,6 +241,62 @@ class TestExecuteAutomation:
         assert callable(execute_script)
 
 
+class TestGuiScriptResultHandling:
+    """GUI 脚本结果合成逻辑。"""
+
+    def test_capture_does_not_hide_command_failure(self, tmp_path):
+        """附加截图成功时，主命令失败仍应报告失败并保留主响应。"""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "err", "data": "NF:MissingButton"}),
+            json.dumps({"reqId": "cap_step_0", "status": "ok", "data": "shot.jpg"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "click", "target": "MissingButton", "capture": "after_click"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["status"] == "err"
+        assert step["capture_response"]["status"] == "ok"
+        assert result["report"]["failed"] == 1
+
+    def test_capture_failure_marks_step_failed(self, tmp_path):
+        """主命令成功但附加截图失败时，步骤整体应失败。"""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ack", "data": "ACK"}),
+            json.dumps({"reqId": "cap_step_0", "status": "err", "data": "capture failed"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "click", "target": "BtnSave", "capture": "after_click"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["status"] == "ack"
+        assert step["capture_response"]["status"] == "err"
+        assert result["report"]["failed"] == 1
+
+
 # ═══════════════════════════════════════════════════════════════
 # PE 检测边界
 # ═══════════════════════════════════════════════════════════════

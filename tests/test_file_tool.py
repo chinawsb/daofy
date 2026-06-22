@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 测试 file_tool 集成 — src/tools/file_tool.py
@@ -22,8 +22,8 @@ if str(project_root) not in sys.path:
 
 from src.tools.file_tool import (
     handle_file_tool, handle_read, handle_write,
-    handle_backup, handle_format, handle_batch_write,
-    _is_delphi_file, _is_dfm_file, _check_dirty, _clear_dirty,
+    handle_backup, handle_format,
+    _is_delphi_file, _is_dfm_file, _check_dirty, _clear_dirty, _mark_dirty,
 )
 from src.tools.pasfmt import format_code as _pasfmt_format_code
 
@@ -98,6 +98,31 @@ async def test_read_search_type_function():
         "function_name": "Create",
     })
     assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_read_search_type_project_passes_project_path():
+    """read 搜索模式应把 project_path 传给项目 KB 查询"""
+    project_path = r"C:\Project\App.dproj"
+    fake_inner_kb = type("FakeInnerProjectKb", (), {
+        "search_by_name": lambda self, name: [],
+    })()
+    fake_kb = type("FakeProjectKb", (), {
+        "project_kb": fake_inner_kb,
+        "load_knowledge_bases": lambda self: None,
+    })()
+
+    with patch("src.tools.read_source_file.get_project_kb", return_value=fake_kb) as mock_get:
+        result = await handle_read({
+            "search_type": "class",
+            "search_in": "project",
+            "project_path": project_path,
+            "type_name": "TMainForm",
+        })
+
+    mock_get.assert_called_once_with(project_path)
+    _assert_error(result)
+    assert "未找到" in result["message"]
 
 
 # ============================================================
@@ -216,6 +241,7 @@ async def test_write_format_after():
                    new_callable=AsyncMock) as mock_fmt:
             mock_fmt.return_value = {
                 "status": "success", "formatted": True,
+                "content": "unit TestUnit;\nbegin\nend.\n",
                 "message": "ok"
             }
             result = await handle_write({
@@ -226,6 +252,62 @@ async def test_write_format_after():
             })
             _assert_success(result)
             mock_fmt.assert_called_once()
+            assert mock_fmt.call_args.kwargs.get("in_place") is False
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_auto_format_uses_stdout_content_for_atomic_replace():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "AutoFormatAtomic.pas")
+    _make_file(file_path, "unit AutoFormatAtomic;\nbegin\nend.\n")
+    try:
+        with patch("src.tools.file_tool.pasfmt.format_file",
+                   new_callable=AsyncMock) as mock_fmt:
+            mock_fmt.return_value = {
+                "status": "success",
+                "formatted": True,
+                "content": "unit AutoFormatAtomic;\n\nbegin\nend.\n",
+                "message": "ok",
+            }
+            result = await handle_write({
+                "file_path": file_path,
+                "edits": [{"start_line": 2, "end_line": 2, "content": "begin\n"}],
+                "backup": False,
+                "auto_format": True,
+            })
+            _assert_success(result)
+            assert mock_fmt.call_args.kwargs.get("in_place") is False
+            with open(file_path, "r", encoding="utf-8") as f:
+                assert f.read() == "unit AutoFormatAtomic;\n\nbegin\nend.\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_auto_format_failure_reports_warning():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "AutoFormatWarning.pas")
+    _make_file(file_path, "unit AutoFormatWarning;\nbegin\nend.\n")
+    try:
+        with patch("src.tools.file_tool.pasfmt.format_file",
+                   new_callable=AsyncMock) as mock_fmt:
+            mock_fmt.return_value = {
+                "status": "failed",
+                "formatted": False,
+                "message": "pasfmt failed",
+            }
+            result = await handle_write({
+                "file_path": file_path,
+                "edits": [{"start_line": 2, "end_line": 2, "content": "begin\n"}],
+                "backup": False,
+                "auto_format": True,
+            })
+            _assert_success(result)
+            assert "auto_format failed: pasfmt failed" in result["message"]
+            with open(file_path, "r", encoding="utf-8") as f:
+                assert f.read() == "unit AutoFormatWarning;\nbegin\nend.\n"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -647,6 +729,744 @@ async def test_write_backup_disabled():
 
 
 @pytest.mark.asyncio
+async def test_read_negative_start_line_numbers_are_clamped():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "negative_read.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": -2,
+            "end_line": 1,
+            "show_line_numbers": True,
+        })
+        assert result.get("status") == "failed", "expected failed for negative start_line"
+        assert "不能小于 1" in result.get("message", "")
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_empty_range_reports_empty_without_truncation():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "empty_read.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 3,
+            "end_line": 2,
+            "show_line_numbers": True,
+        })
+        _assert_success(result)
+        msg = result["message"]
+        assert "1-indexed empty" in msg
+        assert "requested [3, 2]" in msg
+        assert "truncated" not in msg
+        assert "A\n" not in msg and "B\n" not in msg and "C\n" not in msg
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_partial_failure_does_not_modify_file():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "partial_failure.pas")
+    original = "L1\nL2\nL3\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [
+                {"start_line": 2, "end_line": 2, "content": "X\n"},
+                {"start_line": 99, "end_line": 99, "content": "Y\n"},
+            ],
+        })
+        _assert_error(result)
+        assert "\u5df2\u53d6\u6d88\u5199\u5165\u78c1\u76d8" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_failed_preview_keeps_dirty_guard():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "failed_preview_dirty.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        first = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 2, "end_line": 2, "content": "X\n"}],
+        })
+        _assert_success(first)
+
+        preview = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "preview": True,
+            "edits": [{"start_line": 99, "end_line": 99, "content": "Y\n"}],
+        })
+        _assert_error(preview)
+
+        second = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 1, "end_line": 1, "content": "Z\n"}],
+        })
+        _assert_error(second)
+        assert "\u4e0a\u6b21\u5199\u5165\u540e\u884c\u53f7\u53ef\u80fd\u5df2\u53d8\u5316" in second["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_successful_preview_keeps_dirty_guard():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "successful_preview_dirty.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        first = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 2, "end_line": 2, "content": "X\n"}],
+        })
+        _assert_success(first)
+
+        preview = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "preview": True,
+            "edits": [{"start_line": 1, "end_line": 1, "content": "Z\n"}],
+        })
+        _assert_success(preview)
+        assert "preview 不清除脏标记" in preview["message"]
+
+        second = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 1, "end_line": 1, "content": "Z\n"}],
+        })
+        _assert_error(second)
+        assert "上次写入后行号可能已变化" in second["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_rechecks_dirty_after_acquiring_lock():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "dirty_recheck.pas")
+    original = "A\nB\n"
+    _make_file(file_path, original)
+    try:
+        original_acquire = __import__(
+            "src.tools.file_tool", fromlist=["_acquire_write_lock"]
+        )._acquire_write_lock
+
+        def mark_dirty_after_lock(path):
+            result = original_acquire(path)
+            if result is None:
+                _mark_dirty(path)
+            return result
+
+        with patch("src.tools.file_tool._acquire_write_lock", side_effect=mark_dirty_after_lock):
+            result = await handle_write({
+                "file_path": file_path,
+                "backup": False,
+                "edits": [{"start_line": 2, "end_line": 2, "content": "C\n"}],
+            })
+
+        _assert_error(result)
+        assert "上次写入后行号可能已变化" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        _clear_dirty(file_path)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_warning_reports_actual_second_line():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "duplicate_line.pas")
+    _make_file(file_path, "a\nb\nc\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 2, "end_line": 2, "content": "a\n"}],
+        })
+        _assert_success(result)
+        assert "\u7b2c 2 \u884c" in result["message"]
+        assert "\u7b2c 1 \u884c" not in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_read_returns_range_without_hash_metadata():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "read_range.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        result = await handle_read({
+            "file_path": file_path,
+            "start_line": 2,
+            "end_line": 3,
+        })
+        _assert_success(result)
+        assert result["range"] == [2, 3]
+        assert "range_sha256" not in result
+        assert "file_sha256" not in result
+        assert "sha256" not in result["message"]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_with_old_content_allows_dirty_followup():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_dirty_followup.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        first = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 2, "end_line": 2, "content": "BB\n"}],
+        })
+        _assert_success(first)
+
+        second = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 3,
+                "end_line": 3,
+                "old_content": "C\n",
+                "content": "CC\n",
+            }],
+        })
+        _assert_success(second)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\nBB\nCC\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_empty_old_content_does_not_bypass_dirty():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "empty_old_content_dirty.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        first = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{"start_line": 2, "end_line": 2, "content": "BB\n"}],
+        })
+        _assert_success(first)
+
+        second = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 3,
+                "end_line": 3,
+                "old_content": "",
+                "content": "CC\n",
+            }],
+        })
+        _assert_error(second)
+        assert "old_content" in second["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\nBB\nC\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_short_old_content_warns_without_blocking():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_short_warning.pas")
+    _make_file(file_path, "begin\nend.\n")
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 1,
+                "end_line": 1,
+                "old_content": "begin",
+                "content": "begin\n  DoWork;\n",
+            }],
+        })
+        _assert_success(result)
+        assert "old_content 很短" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "begin\n  DoWork;\nend.\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_old_content_mismatch_does_not_modify_file():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_mismatch.pas")
+    original = "A\nB\nC\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "not B\n",
+                "content": "BB\n",
+            }],
+        })
+        _assert_error(result)
+        assert "old_content mismatch" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_old_content_ignores_whitespace_outside_strings():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_whitespace.pas")
+    original = "begin\n  Value := 'a b';\nend.\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "Value:='a b';",
+                "content": "  Value := 'c d';\n",
+            }],
+        })
+        _assert_success(result)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "begin\n  Value := 'c d';\nend.\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_old_content_preserves_string_whitespace_semantics():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_string_space.pas")
+    original = "begin\n  Value := 'a b';\nend.\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "Value := 'ab';",
+                "content": "  Value := 'c d';\n",
+            }],
+        })
+        _assert_error(result)
+        assert "old_content mismatch" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_old_content_preserves_token_boundaries():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_token_boundary.pas")
+    original = "Foo Bar\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 1,
+                "end_line": 1,
+                "old_content": "FooBar",
+                "content": "Changed\n",
+            }],
+        })
+        _assert_error(result)
+        assert "old_content mismatch" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_old_content_preserves_line_comment_boundaries():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "old_content_line_comment.pas")
+    original = "// one\ntwo\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_write({
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 1,
+                "end_line": 2,
+                "old_content": "// one two\n",
+                "content": "// changed\n",
+            }],
+        })
+        _assert_error(result)
+        assert "old_content mismatch" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_replace_action_requires_old_content_for_existing_file():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "replace_requires_old_content.pas")
+    original = "A\nB\nC\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_file_tool({
+            "action": "replace",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "content": "BB\n",
+            }],
+        })
+        _assert_error(result)
+        assert "非空 old_content" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_replace_action_rechecks_file_exists_after_acquiring_lock():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "replace_race_created.pas")
+    try:
+        original_acquire = __import__(
+            "src.tools.file_tool", fromlist=["_acquire_write_lock"]
+        )._acquire_write_lock
+
+        def create_file_after_lock(path):
+            result = original_acquire(path)
+            if result is None and os.path.abspath(path) == os.path.abspath(file_path):
+                if not os.path.exists(file_path):
+                    _make_file(file_path, "A\n")
+            return result
+
+        with patch("src.tools.file_tool._acquire_write_lock", side_effect=create_file_after_lock):
+            result = await handle_file_tool({
+                "action": "replace",
+                "file_path": file_path,
+                "backup": False,
+                "edits": [{
+                    "start_line": 1,
+                    "end_line": 1,
+                    "content": "B\n",
+                }],
+            })
+
+        _assert_error(result)
+        assert "非空 old_content" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_replace_action_uses_old_content_guard():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "replace_action.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        result = await handle_file_tool({
+            "action": "replace",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "B\n",
+                "content": "BB\n",
+            }],
+        })
+        _assert_success(result)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\nBB\nC\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_insert_action_before_and_after_anchor_without_copying_anchor():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "insert_action.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        before = await handle_file_tool({
+            "action": "insert",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "position": "before",
+                "old_content": "B\n",
+                "content": "X\n",
+            }],
+        })
+        _assert_success(before)
+        await handle_read({"file_path": file_path})
+
+        after = await handle_file_tool({
+            "action": "insert",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 3,
+                "position": "after",
+                "old_content": "B\n",
+                "content": "Y\n",
+            }],
+        })
+        _assert_success(after)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\nX\nB\nY\nC\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_insert_action_rejects_anchor_mismatch():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "insert_anchor_mismatch.pas")
+    original = "A\nB\nC\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_file_tool({
+            "action": "insert",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "old_content": "not B\n",
+                "content": "X\n",
+            }],
+        })
+        _assert_error(result)
+        assert "old_content mismatch" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_delete_action_does_not_require_content():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "delete_action.pas")
+    _make_file(file_path, "A\nB\nC\n")
+    try:
+        result = await handle_file_tool({
+            "action": "delete",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "B\n",
+            }],
+        })
+        _assert_success(result)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "A\nC\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_delete_action_rejects_non_empty_content():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "delete_action_content.pas")
+    original = "A\nB\nC\n"
+    _make_file(file_path, original)
+    try:
+        result = await handle_file_tool({
+            "action": "delete",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [{
+                "start_line": 2,
+                "end_line": 2,
+                "old_content": "B\n",
+                "content": "should not be used\n",
+            }],
+        })
+        _assert_error(result)
+        assert "不接受非空 content" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_backup_failure_does_not_replace_original():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "backup_failure.pas")
+    original = "A\nB\n"
+    _make_file(file_path, original)
+    try:
+        with patch("src.tools.file_tool.create_backup", return_value=None):
+            result = await handle_write({
+                "file_path": file_path,
+                "backup": True,
+                "edits": [{"start_line": 2, "end_line": 2, "content": "C\n"}],
+            })
+
+        _assert_error(result)
+        assert "创建备份失败" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+        history_dir = os.path.join(tmp_dir, "__history")
+        if os.path.isdir(history_dir):
+            assert not [name for name in os.listdir(history_dir) if name.startswith(".__daofy_tmp_")]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_binary_dfm_convert_back_failure_does_not_replace_original():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "Form1.dfm")
+    original = "binary original\n"
+    _make_file(file_path, original)
+
+    async def fake_convert(in_file, out_file, to_text=True):
+        if to_text:
+            with open(out_file, "w", encoding="utf-8", newline="") as f:
+                f.write("object Form1: TForm1\n  Caption = 'Old'\nend\n")
+            return {"success": True, "message": "ok"}
+        return {"success": False, "message": "convert back failed"}
+
+    try:
+        with patch("src.tools.file_tool.dfm_utils._detect_dfm_format", return_value="binary"):
+            with patch("src.tools.file_tool.dfm_utils.convert_dfm", side_effect=fake_convert):
+                result = await handle_write({
+                    "file_path": file_path,
+                    "backup": False,
+                    "edits": [{
+                        "start_line": 2,
+                        "end_line": 2,
+                        "content": "  Caption = 'New'\n",
+                    }],
+                })
+
+        _assert_error(result)
+        assert "二进制 DFM 转换失败" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
+        assert not [name for name in os.listdir(tmp_dir) if name.startswith(".__daofy_tmp_")]
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_insert_action_supports_binary_dfm_anchor_conversion():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "InsertForm.dfm")
+    _make_file(file_path, "binary original\n")
+    converted_text = {}
+
+    async def fake_convert(in_file, out_file, to_text=True):
+        if to_text:
+            with open(out_file, "w", encoding="utf-8", newline="") as f:
+                f.write("object Form1: TForm1\n  Caption = 'Old'\nend\n")
+            return {"success": True, "message": "ok"}
+        with open(in_file, "r", encoding="utf-8") as f:
+            converted_text["value"] = f.read()
+        with open(out_file, "w", encoding="utf-8", newline="") as f:
+            f.write("binary converted\n")
+        return {"success": True, "message": "ok"}
+
+    try:
+        with patch("src.tools.file_tool.dfm_utils._detect_dfm_format", return_value="binary"):
+            with patch("src.tools.file_tool.dfm_utils.convert_dfm", side_effect=fake_convert):
+                result = await handle_file_tool({
+                    "action": "insert",
+                    "file_path": file_path,
+                    "backup": False,
+                    "edits": [{
+                        "start_line": 2,
+                        "position": "before",
+                        "old_content": "  Caption = 'Old'\n",
+                        "content": "  Left = 0\n",
+                    }],
+                })
+
+        _assert_success(result)
+        assert "binary DFM converted" in result["message"]
+        assert "  Left = 0\n  Caption = 'Old'\n" in converted_text["value"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "binary converted\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_edits_preserves_project_path_validation():
+    """write edits 兼容入口必须保留 write 的 project_path 安全边界"""
+    root = tempfile.mkdtemp()
+    try:
+        project_dir = os.path.join(root, "project")
+        outside_dir = os.path.join(root, "outside")
+        os.makedirs(project_dir)
+        os.makedirs(outside_dir)
+
+        project_path = os.path.join(project_dir, "App.dproj")
+        file_path = os.path.join(outside_dir, "Unit1.pas")
+        _make_file(project_path, "<Project/>")
+        _make_file(file_path, "line1\nline2\n")
+
+        result = await handle_write({
+            "file_path": file_path,
+            "project_path": project_path,
+            "edits": [{"start_line": 1, "end_line": 1, "content": "changed"}],
+            "backup": False,
+        })
+
+        _assert_error(result)
+        assert "路径不在项目目录内" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == "line1\nline2\n"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_write_existing_dfm_text_preserved():
     """文本 DFM 写入后应保持文本格式（非二进制 DFM 不转换）"""
     tmp_dir = tempfile.mkdtemp()
@@ -866,8 +1686,8 @@ async def test_read_1indexed_negative_start_clamped():
             "start_line": -5,
             "end_line": 1,
         })
-        _assert_success(result)
-        assert "only" in result["message"]
+        assert result.get("status") == "failed", "expected failed for negative start_line"
+        assert "不能小于 1" in result.get("message", "")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1210,6 +2030,7 @@ async def test_format_calls_pasfmt():
                    new_callable=AsyncMock) as mock_fmt:
             mock_fmt.return_value = {
                 "status": "success", "formatted": True,
+                "content": "unit TestUnit;\ninterface\nimplementation\nend.\n",
                 "message": "代码格式化成功",
             }
             result = await handle_format({
@@ -1220,6 +2041,39 @@ async def test_format_calls_pasfmt():
             _assert_success(result)
             # format_file 被调用了一次
             mock_fmt.assert_called_once()
+            assert mock_fmt.call_args.kwargs.get("in_place") is False
+            with open(file_path, "r", encoding="utf-8") as f:
+                assert f.read() == "unit TestUnit;\ninterface\nimplementation\nend.\n"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_format_backup_failure_does_not_replace_original():
+    tmp_dir = tempfile.mkdtemp()
+    file_path = os.path.join(tmp_dir, "fmt_backup_failure.pas")
+    original = "unit  TestUnit ;\ninterface\nimplementation\nend.\n"
+    _make_file(file_path, original)
+    try:
+        with patch("src.tools.file_tool.pasfmt.format_file",
+                   new_callable=AsyncMock) as mock_fmt:
+            mock_fmt.return_value = {
+                "status": "success",
+                "formatted": True,
+                "content": "unit TestUnit;\ninterface\nimplementation\nend.\n",
+                "message": "代码格式化成功",
+            }
+            with patch("src.tools.file_tool.create_backup", return_value=None):
+                result = await handle_format({
+                    "file_path": file_path,
+                    "mode": "file",
+                    "backup": True,
+                })
+
+        _assert_error(result)
+        assert "创建备份失败" in result["message"]
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert f.read() == original
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1250,8 +2104,8 @@ async def test_read_0indexed_limit_after_truncation():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_basic():
-    """batch_write: 按升序替换两处，互不干扰"""
+async def test_write_edits_basic():
+    """write edits: 按升序替换两处，互不干扰"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Unit1.pas")
@@ -1282,7 +2136,7 @@ async def test_batch_write_basic():
         _make_file(file_path, original)
 
         # Replace A body (lines 8-10 -> [8,10]) and C body (lines 19-21 -> [19,21))
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 8, "end_line": 10, "content": "  // A updated", "description": "更新 A"},
@@ -1306,8 +2160,8 @@ async def test_batch_write_basic():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_desc_order():
-    """batch_write: 即使传入顺序是降序，内部也正确按升序处理"""
+async def test_write_edits_desc_order():
+    """write edits: 即使传入顺序是降序，内部也正确按升序处理"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Unit2.pas")
@@ -1331,7 +2185,7 @@ async def test_batch_write_desc_order():
         _make_file(file_path, original)
 
         # 传入降序: Second 在前, First 在后
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 11, "end_line": 13, "content": "  // Second updated", "description": "更新 Second"},
@@ -1352,15 +2206,15 @@ async def test_batch_write_desc_order():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_validation():
-    """batch_write: 参数校验"""
-    result1 = await handle_batch_write({"file_path": "", "edits": []})
+async def test_write_edits_validation():
+    """write edits: 参数校验"""
+    result1 = await handle_write({"file_path": "", "edits": []})
     assert result1.get("status") == "failed"
 
-    result2 = await handle_batch_write({"file_path": "/nonexistent/test.pas", "edits": [{"start_line": 1, "content": ""}]})
+    result2 = await handle_write({"file_path": "/nonexistent/test.pas", "edits": [{"start_line": 1, "content": ""}]})
     assert result2.get("status") == "failed"
 
-    result3 = await handle_batch_write({
+    result3 = await handle_write({
         "file_path": "test.pas",
         "edits": [{"start_line": 5, "end_line": 3, "content": "x"}],
     })
@@ -1368,8 +2222,8 @@ async def test_batch_write_validation():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_delete_lines():
-    """batch_write: 空 content = 删除行"""
+async def test_write_edits_delete_lines():
+    """write edits: 空 content = 删除行"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Unit3.pas")
@@ -1389,7 +2243,7 @@ async def test_batch_write_delete_lines():
         )
         _make_file(file_path, original)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "", "description": "删除空行2"},
@@ -1408,19 +2262,19 @@ async def test_batch_write_delete_lines():
 
 
 # ============================================================
-# batch_write 边界测试
+# write edits 边界测试
 # ============================================================
 
 
 @pytest.mark.asyncio
-async def test_batch_write_overlap():
+async def test_write_edits_overlap():
     """边界: 重叠区间应拒绝"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Overlap.pas")
         _make_file(file_path)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 10, "end_line": 20, "content": "x", "description": "A"},
@@ -1434,14 +2288,14 @@ async def test_batch_write_overlap():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_overlap_none_end():
+async def test_write_edits_overlap_none_end():
     """边界: edit 覆盖到末尾 + 后续 edit 重叠"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "OverlapNone.pas")
         _make_file(file_path)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 5, "content": "x", "description": "到末尾"},
@@ -1454,14 +2308,14 @@ async def test_batch_write_overlap_none_end():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_same_range_overlap():
+async def test_write_edits_same_range_overlap():
     """边界: 完全相同范围应拒绝"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "SameRange.pas")
         _make_file(file_path)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 10, "end_line": 20, "content": "a", "description": "A"},
@@ -1474,7 +2328,7 @@ async def test_batch_write_same_range_overlap():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_adjacent():
+async def test_write_edits_adjacent():
     """边界: 恰好相邻 [1,5]+[6,10] 应正常"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1482,7 +2336,7 @@ async def test_batch_write_adjacent():
         data = "\n".join(f"line{i}" for i in range(10)) + "\n"
         _make_file(file_path, data)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 5, "content": "AAA\nBBB\n", "description": "前半"},
@@ -1500,14 +2354,14 @@ async def test_batch_write_adjacent():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_start_boundary():
+async def test_write_edits_start_boundary():
     """边界: 从文件头部(start_line=1)编辑"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "StartBound.pas")
         _make_file(file_path, "header\n---\nbody\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 1, "content": "HEADER", "description": "改首行"},
@@ -1524,14 +2378,14 @@ async def test_batch_write_start_boundary():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_to_eof():
+async def test_write_edits_to_eof():
     """边界: end_line=None 覆盖到末尾"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "ToEof.pas")
         _make_file(file_path, "a\nb\nc\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "content": "B\nC\nD\n", "description": "第2行到末尾"},
@@ -1548,7 +2402,7 @@ async def test_batch_write_to_eof():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_large_insert():
+async def test_write_edits_large_insert():
     """边界: 大插入(1行->50行)后续edit偏移正确"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1557,7 +2411,7 @@ async def test_batch_write_large_insert():
         _make_file(file_path, "\n".join(lines) + "\n")
 
         many = "\n".join(f"inserted{j}" for j in range(50)) + "\n"
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": many, "description": "大插入"},
@@ -1577,7 +2431,7 @@ async def test_batch_write_large_insert():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_large_delete():
+async def test_write_edits_large_delete():
     """边界: 大删除(100行)前后edit偏移正确"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1585,7 +2439,7 @@ async def test_batch_write_large_delete():
         lines = [f"line{i}" for i in range(120)]
         _make_file(file_path, "\n".join(lines) + "\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 11, "end_line": 110, "content": "", "description": "大删除"},
@@ -1609,7 +2463,7 @@ async def test_batch_write_large_delete():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_many_edits():
+async def test_write_edits_many_edits():
     """边界: 10个edit交替增删累积偏移准确"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1628,7 +2482,7 @@ async def test_batch_write_many_edits():
             {"start_line": 17, "end_line": 17,  "content": "sixteen",    "description": "#8"},
             {"start_line": 19, "end_line": 20,  "content": "eighteen\neighteen2\n", "description": "#9"},
         ]
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": edits,
             "backup": False,
@@ -1657,7 +2511,7 @@ async def test_batch_write_many_edits():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_crlf():
+async def test_write_edits_crlf():
     """边界: CRLF文件的换行符统一"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1666,7 +2520,7 @@ async def test_batch_write_crlf():
         with open(file_path, "wb") as f:
             f.write(b"a\r\nb\r\nc\r\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "B\nBB\n", "description": "LF内容写入CRLF文件"},
@@ -1684,14 +2538,14 @@ async def test_batch_write_crlf():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_single_edit():
+async def test_write_edits_single_edit():
     """边界: 只有一个edit"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Single.pas")
         _make_file(file_path, "aaa\nbbb\nccc\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "BBB", "description": "单edit"},
@@ -1710,14 +2564,14 @@ async def test_batch_write_single_edit():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_trailing_newline():
+async def test_write_edits_trailing_newline():
     """边界: content末尾无换行时自动补齐"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Trail.pas")
         _make_file(file_path, "a\nb\nc\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "no_newline_at_end", "description": "补换行"},
@@ -1736,14 +2590,14 @@ async def test_batch_write_trailing_newline():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_fully_replace():
+async def test_write_edits_fully_replace():
     """边界: 替换整个文件"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "FullReplace.pas")
         _make_file(file_path, "old\ncontent\nhere\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 3, "content": "brand\nnew\nfile\n", "description": "全量替换"},
@@ -1760,14 +2614,14 @@ async def test_batch_write_fully_replace():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_multiline_content():
+async def test_write_edits_multiline_content():
     """边界: content含多行文本保留换行"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Multi.pas")
         _make_file(file_path, "a\nb\nc\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "B1\nB2\nB3\n", "description": "3行替换1行"},
@@ -1891,7 +2745,7 @@ async def test_write_partial_preview_no_backup():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_preview_no_file_change():
+async def test_write_edits_preview_no_file_change():
     """preview=True 时不应修改文件内容"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1899,7 +2753,7 @@ async def test_batch_write_preview_no_file_change():
         original = "line1\nline2\nline3\nline4\nline5\n"
         _make_file(file_path, original)
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 3, "content": "replaced\nnewline\n", "description": "替换中间"},
@@ -1916,14 +2770,14 @@ async def test_batch_write_preview_no_file_change():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_preview_diff_in_message():
+async def test_write_edits_preview_diff_in_message():
     """preview=True 时消息中应包含 diff 预览 ( - / + 行)"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Demo.pas")
         _make_file(file_path, "aaa\nbbb\nccc\n")
 
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 2, "content": "BBB\n", "description": "改 bbb"},
@@ -1942,7 +2796,7 @@ async def test_batch_write_preview_diff_in_message():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_preview_no_backup():
+async def test_write_edits_preview_no_backup():
     """preview=True 时不应创建备份文件"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1951,7 +2805,7 @@ async def test_batch_write_preview_no_backup():
 
         # 先确认有没有 __history 目录
         history_dir = os.path.join(tmp_dir, "__history")
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 1, "content": "X\n", "description": "改首行"},
@@ -1967,7 +2821,7 @@ async def test_batch_write_preview_no_backup():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_preview_same_result_as_actual_write():
+async def test_write_edits_preview_same_result_as_actual_write():
     """preview 输出的 diff 应与实际写入内容一致"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -1975,7 +2829,7 @@ async def test_batch_write_preview_same_result_as_actual_write():
         _make_file(file_path, "a\nb\nc\nd\ne\n")
 
         # 先 preview
-        preview = await handle_batch_write({
+        preview = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
@@ -1990,7 +2844,7 @@ async def test_batch_write_preview_same_result_as_actual_write():
             assert f.read() == "a\nb\nc\nd\ne\n", "preview 不应改文件"
 
         # 实际写入
-        actual = await handle_batch_write({
+        actual = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
@@ -2008,7 +2862,7 @@ async def test_batch_write_preview_same_result_as_actual_write():
 
 
 @pytest.mark.asyncio
-async def test_batch_write_preview_with_force():
+async def test_write_edits_preview_with_force():
     """preview 与 force 可同时使用: 预览时跳过重复行检测"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
@@ -2016,7 +2870,7 @@ async def test_batch_write_preview_with_force():
         _make_file(file_path, "aaa\nbbb\nccc\n")
 
         # 故意产生 content 首行与被替换行相同的情况
-        result = await handle_batch_write({
+        result = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 1, "end_line": 1, "content": "aaa\n", "description": "内容首行与 old 相同"},
@@ -2031,3 +2885,5 @@ async def test_batch_write_preview_with_force():
             assert f.read() == "aaa\nbbb\nccc\n", "force+preview 也不应改文件"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+

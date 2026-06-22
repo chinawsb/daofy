@@ -760,40 +760,40 @@ async def _compile_dpk_package(
         )
     
     # 返回编译结果
-        output_text = f"编译{'成功' if success else '失败'}\n"
-        output_text += f"输出文件: {output_file}\n"
-        output_text += f"包类型: {'设计期包' if is_design_package else '运行期包'}\n"
+    output_text = f"编译{'成功' if success else '失败'}\n"
+    output_text += f"输出文件: {output_file}\n"
+    output_text += f"包类型: {'设计期包' if is_design_package else '运行期包'}\n"
 
-        # 显示所有输出产物路径（对 AI Agent 后续操作至关重要）
-        if success:
-            # 尝试扫描输出产物
-            try:
-                of = CompilerService._collect_output_files(
-                    project_path,
-                    target_platform,
-                    build_configuration,
-                )
-                if of:
-                    output_text += "\n[Output Files]\n"
-                    for f in of:
-                        output_text += f"  {f}\n"
-            except Exception as e:
-                logger.debug("收集输出文件列表失败: %s", e)
+    # 显示所有输出产物路径（对 AI Agent 后续操作至关重要）
+    if success:
+        # 尝试扫描输出产物
+        try:
+            of = CompilerService._collect_output_files(
+                project_path,
+                target_platform,
+                build_configuration,
+            )
+            if of:
+                output_text += "\n[Output Files]\n"
+                for f in of:
+                    output_text += f"  {f}\n"
+        except Exception as e:
+            logger.debug("收集输出文件列表失败: %s", e)
         
-        if errors:
-            output_text += f"\n错误:\n"
-            for err in errors:
-                output_text += f"  {err}\n"
+    if errors:
+        output_text += f"\n错误:\n"
+        for err in errors:
+            output_text += f"  {err}\n"
         
-        if warnings:
-            output_text += f"\n警告:\n"
-            for warn in warnings:
-                output_text += f"  {warn}\n"
+    if warnings:
+        output_text += f"\n警告:\n"
+        for warn in warnings:
+            output_text += f"  {warn}\n"
         
-        return CallToolResult(
-            content=[{"type": "text", "text": output_text}],
-            isError=not success
-        )
+    return CallToolResult(
+        content=[{"type": "text", "text": output_text}],
+        isError=not success
+    )
 
 
 def _is_design_package_simple(package_path: str) -> bool:

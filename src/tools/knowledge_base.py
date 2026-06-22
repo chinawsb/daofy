@@ -741,8 +741,8 @@ def _start_async_project_rebuild(project_path: str, results: dict) -> None:
 
 
 def _maybe_search_document(kb_type: str, query: str, top_k: int, results: dict) -> None:
-    """文档知识库搜索 (仅 kb_type='all' 时)"""
-    if kb_type != "all":
+    """文档知识库搜索 (kb_type='all' 或 'document' 时)"""
+    if kb_type not in ("all", "document"):
         return
     _is_multiword = bool(_split_multikeywords(query) and len(_split_multikeywords(query)) > 1)
     try:
@@ -755,8 +755,8 @@ def _maybe_search_document(kb_type: str, query: str, top_k: int, results: dict) 
 
 
 def _maybe_search_example(kb_type: str, query: str, top_k: int, results: dict) -> None:
-    """示例知识库搜索（仅当用户显式指定 kb_type='example' 时）"""
-    if "example" not in (kb_type if isinstance(kb_type, str) else "").split(","):
+    """示例知识库搜索（kb_type='all' 或 'example' 时）"""
+    if kb_type not in ("all", "example"):
         return
     try:
         ekb = _get_example_kb()

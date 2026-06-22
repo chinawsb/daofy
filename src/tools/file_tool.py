@@ -1,4 +1,4 @@
-﻿"""
+"""
 delphi_file — Delphi 文件专用操作工具（MCP 注册名 delphi_file，原 file_tool）
 
 整合读取/写入/格式化/备份管理，覆盖 Delphi 文件操作完整生命周期。
@@ -6,10 +6,13 @@ MCP 客户端以 delphi_file 名注册，旧名 file_tool 仍作为别名兼容�
 
 Action 模式:
   read        读取文件内容（继承 read_source_file，支持按路径/类名/函数名搜索）
-  write       写入文件内容（自动备份到 __history，支持 DFM 透明转换）
-  batch_write 批量写入（edits 数组，内部自动按 start_line 排序后依次替换，以备份文件为参照系）
+  write       兼容写入入口（自动备份到 __history，支持 DFM 透明转换）
+  replace     按行范围替换（现有文件要求 old_content 校验）
+  insert      按锚点插入（现有文件要求 old_content 校验，支持 before/after）
+  delete      按行范围删除（现有文件要求 old_content 校验）
   format      格式化 Delphi 源码（继承 format_delphi，pasfmt 驱动）
   backup      备份管理（创建/恢复/列表/对比）
+  encode      文件编码转换（自动检测源编码，支持 BOM 处理，自动备份）
   uses        增删 uses 子句中的单元（命名空间冲突检测 + 自动排序）
 
 返回值统一为 dict，遵循项目规范:
@@ -17,12 +20,14 @@ Action 模式:
   error:   {"status": "failed", "message": "..."}
 """
 
-import os
+import codecs
 import locale
+import os
+import re
 import shutil
 import tempfile
-import re
 import threading
+import uuid
 from typing import Any, Optional, Dict, List, Set
 from mcp.types import CallToolResult
 from ..utils.logger import get_logger
@@ -46,12 +51,23 @@ else:
     _SYSTEM_SENSITIVE_DIRS = ['/etc/shadow', '/etc/ssh']
 
 
+def _coerce_positive_int(value: Any, default: int, name: str) -> tuple[Optional[int], Optional[str]]:
+    """Return a 1-indexed positive integer value, or an error message."""
+    if value is None:
+        value = default
+    if not isinstance(value, int):
+        return None, f"{name} 必须是整数"
+    if value < 1:
+        return None, f"{name} 不能小于 1（实际值: {value}）"
+    return value, None
+
+
 def _validate_path(file_path: str, project_path: Optional[str] = None) -> Optional[str]:
     """校验文件路径安全性，返回 None 表示安全，否则返回错误信息
 
     Args:
         file_path: 待校验的文件路径
-        project_path: 项目路径（保留参数签名兼容）
+        project_path: 项目路径（可选，提供时限制 file_path 必须在项目目录内）
     """
     # Null 字节注入检查
     if '\0' in file_path:
@@ -69,6 +85,20 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
                 return "路径位于系统敏感目录中: %s" % sensitive_dir
         except ValueError:
             pass
+
+    # 项目目录限制：当传入了 project_path 时，确保文件在项目目录内
+    if project_path:
+        try:
+            proj_resolved = os.path.abspath(os.path.realpath(project_path))
+            # project_path 可能是 .dproj 文件，取其目录作为项目根
+            proj_dir = proj_resolved if os.path.isdir(proj_resolved) else os.path.dirname(proj_resolved)
+            rel = os.path.relpath(resolved, proj_dir)
+            if rel.startswith('..'):
+                return "路径不在项目目录内: %s (项目: %s)" % (file_path, project_path)
+        except (OSError, ValueError):
+            # project_path 解析失败时不阻断，由调用方处理
+            pass
+
     return None
 
 
@@ -87,6 +117,281 @@ def _is_dfm_file(file_path: str) -> bool:
 def _wrap_error(msg: str) -> Dict[str, Any]:
     """构造错误 dict"""
     return {"status": "failed", "message": msg}
+
+
+def _is_pascal_word_char(ch: str) -> bool:
+    """Return True for identifier/number token characters."""
+    return ch == "_" or ch.isalnum()
+
+
+def _next_non_space(text: str, start: int) -> str:
+    """Return the next non-whitespace character after start, or empty string."""
+    for idx in range(start, len(text)):
+        if not text[idx].isspace():
+            return text[idx]
+    return ""
+
+
+def _append_word_boundary_if_needed(result: List[str], next_ch: str) -> None:
+    """Preserve token boundaries while ignoring formatting whitespace."""
+    if result and next_ch and _is_pascal_word_char(result[-1]) and _is_pascal_word_char(next_ch):
+        result.append(" ")
+
+
+def _normalize_code_for_compare(text: str) -> str:
+    """Ignore whitespace outside Pascal string literals for old_content checks.
+
+    规则:
+      - 代码区: 删除空白词，只在需要防止 token 粘连时加单空格
+      - 注释区: 连续空白折叠为单空格，不全部删除
+      - 字符串区: 原样保留
+    """
+    result: List[str] = []
+    i = 0
+    state = "code"
+    # 注释区内跟踪上个字符是否为空白（用于折叠）
+    prev_was_space = False
+
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if state == "string":
+            result.append(ch)
+            if ch == "'":
+                if nxt == "'":
+                    result.append(nxt)
+                    i += 1
+                else:
+                    state = "code"
+        elif state in ("line_comment", "brace_comment", "paren_comment"):
+            # ── 注释内: 空白折叠为单空格 ──
+            if state == "line_comment" and ch in "\r\n":
+                result.append(ch)
+                state = "code"
+                prev_was_space = False
+            elif state == "brace_comment" and ch == "}":
+                result.append(ch)
+                state = "code"
+                prev_was_space = False
+            elif state == "paren_comment" and ch == "*" and nxt == ")":
+                result.append(ch)
+                result.append(nxt)
+                i += 1
+                state = "code"
+                prev_was_space = False
+            elif ch.isspace():
+                if not prev_was_space:
+                    result.append(" ")
+                    prev_was_space = True
+            else:
+                result.append(ch)
+                prev_was_space = False
+        else:
+            # ── 代码区: 原逻辑不变 ──
+            if ch == "'":
+                state = "string"
+                result.append(ch)
+            elif ch == "/" and nxt == "/":
+                result.append(ch)
+                result.append(nxt)
+                i += 1
+                state = "line_comment"
+                prev_was_space = False
+            elif ch == "{":
+                result.append(ch)
+                state = "brace_comment"
+                prev_was_space = False
+            elif ch == "(" and nxt == "*":
+                result.append(ch)
+                result.append(nxt)
+                i += 1
+                state = "paren_comment"
+                prev_was_space = False
+            elif not ch.isspace():
+                result.append(ch)
+            else:
+                _append_word_boundary_if_needed(result, _next_non_space(text, i + 1))
+        i += 1
+    return ''.join(result)
+
+
+def _get_old_content(edit: Dict[str, Any]) -> Optional[str]:
+    """Read the old_content guard from an edit."""
+    value = edit.get("old_content")
+    return value if isinstance(value, str) else None
+
+
+def _all_edits_have_old_content(edits: Any) -> bool:
+    """Return True when every edit can be guarded by old_content."""
+    if not isinstance(edits, (list, tuple)) or not edits:
+        return False
+    return all(
+        isinstance(edit, dict) and _edit_has_non_empty_old_content(edit)
+        for edit in edits
+    )
+
+
+def _edit_has_non_empty_old_content(edit: Dict[str, Any]) -> bool:
+    """Return True when an edit contains a usable old_content guard."""
+    old_content = _get_old_content(edit)
+    return old_content is not None and bool(_normalize_code_for_compare(old_content))
+
+
+def _prepare_insert_content(content: str, has_crlf: bool) -> str:
+    """Normalize inserted text and make it occupy complete lines."""
+    if has_crlf:
+        content = content.replace('\r\n', '\n').replace('\n', '\r\n')
+        newline = '\r\n'
+    else:
+        content = content.replace('\r\n', '\n')
+        newline = '\n'
+    if content and not content.endswith(('\n', '\r\n')):
+        content += newline
+    return content
+
+
+async def _read_structured_anchor_lines(file_path: str) -> tuple[List[str], Optional[str]]:
+    """Read text lines for insert anchors, converting binary DFM/FMX first."""
+    read_path = file_path
+    tmp_cleanup = None
+    try:
+        if _is_dfm_file(file_path):
+            try:
+                fmt = dfm_utils._detect_dfm_format(file_path)
+            except (FileNotFoundError, PermissionError) as e:
+                raise RuntimeError(str(e)) from e
+            if fmt == "binary":
+                tmp_cleanup = tempfile.mkdtemp(prefix="filetool_anchor_")
+                read_path = os.path.join(tmp_cleanup, os.path.basename(file_path) + ".txt")
+                conv_result = await dfm_utils.convert_dfm(file_path, read_path, to_text=True)
+                if not conv_result.get("success"):
+                    raise RuntimeError(
+                        f"二进制 DFM 转换失败: {conv_result.get('message', '未知错误')}"
+                    )
+
+        read_enc = detect_encoding(read_path)
+        with open(read_path, 'r', encoding=read_enc, newline='',
+                  buffering=1048576) as f:
+            return f.readlines(), tmp_cleanup
+    except Exception as exc:
+        if tmp_cleanup:
+            shutil.rmtree(tmp_cleanup, ignore_errors=True)
+        raise RuntimeError(str(exc)) from exc
+
+
+def _format_line_snippet(lines: List[str], start_idx: int, end_idx: int, context: int = 2) -> List[str]:
+    """Return compact 1-indexed snippet lines around a conflict range."""
+    if not lines:
+        return ["    <empty file>"]
+    lo = max(0, start_idx - context)
+    hi = min(len(lines), max(end_idx, start_idx + 1) + context)
+    snippet = []
+    for idx in range(lo, hi):
+        text = lines[idx].rstrip("\r\n")
+        if len(text) > 120:
+            text = text[:117] + "..."
+        snippet.append(f"    L{idx + 1}: {text}")
+    return snippet
+
+
+def _get_history_dir(file_path: str) -> str:
+    """Return the __history directory used for backups and temporary writes."""
+    return os.path.join(os.path.dirname(os.path.abspath(file_path)), "__history")
+
+
+def _make_temp_write_path(file_path: str) -> str:
+    """Create a unique temporary path on the same volume as the target file."""
+    target_dir = os.path.dirname(os.path.abspath(file_path))
+    basename = os.path.basename(file_path)
+    return os.path.join(target_dir, f".__daofy_tmp_{basename}_{uuid.uuid4().hex}")
+
+
+def _write_text_temp(temp_path: str, content: str, encoding: str) -> None:
+    """Write text to a temp file and flush it before replacement."""
+    with open(temp_path, 'w', encoding=encoding, newline='', buffering=1048576) as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _replace_with_temp(temp_path: str, file_path: str) -> None:
+    """Atomically replace file_path with temp_path."""
+    os.replace(temp_path, file_path)
+
+
+async def _apply_auto_format_atomically(
+    file_path: str,
+    encoding: str,
+    has_crlf: bool,
+    backup: bool = False,
+    config_path: Optional[str] = None,
+    uses_style: Optional[str] = None,
+) -> tuple[bool, str, bool, Optional[str]]:
+    """Run pasfmt in stdout mode and atomically replace the formatted file."""
+    fmt_result = await pasfmt.format_file(
+        file_path=file_path,
+        backup=False,
+        in_place=False,
+        config_path=config_path,
+        uses_style=uses_style,
+    )
+    if fmt_result.get("status") == "failed":
+        raise RuntimeError(fmt_result.get("message", "pasfmt 格式化失败"))
+    if not fmt_result.get("formatted") or not isinstance(fmt_result.get("content"), str):
+        return False, encoding, False, None
+
+    formatted_text = fmt_result["content"]
+    if has_crlf:
+        formatted_text = formatted_text.replace('\r\n', '\n').replace('\n', '\r\n')
+    else:
+        formatted_text = formatted_text.replace('\r\n', '\n')
+    if formatted_text and not formatted_text.endswith(('\n', '\r\n')):
+        formatted_text += '\r\n' if has_crlf else '\n'
+
+    temp_write_path = _make_temp_write_path(file_path)
+    encoding_fallback = False
+    backup_path = None
+    try:
+        try:
+            _write_text_temp(temp_write_path, formatted_text, encoding)
+        except UnicodeEncodeError:
+            logger.warning(f"编码 {encoding} 写出格式化结果失败，回退到 utf-8")
+            _write_text_temp(temp_write_path, formatted_text, "utf-8")
+            encoding = "utf-8"
+            encoding_fallback = True
+        if backup:
+            backup_path = create_backup(file_path)
+            if not backup_path:
+                raise RuntimeError("创建备份失败，已取消格式化")
+        _replace_with_temp(temp_write_path, file_path)
+    finally:
+        if os.path.exists(temp_write_path):
+            try:
+                os.remove(temp_write_path)
+            except OSError:
+                pass
+
+    return True, encoding, encoding_fallback, backup_path
+
+
+def _warn_if_old_content_too_short(old_content: str) -> Optional[str]:
+    """Return a non-blocking warning for weak old_content guards."""
+    normalized = _normalize_code_for_compare(old_content)
+    line_count = len([line for line in old_content.splitlines() if line.strip()])
+    common_tokens = {
+        "begin",
+        "end",
+        "end;",
+        "inherited",
+        "inherited;",
+        "try",
+        "finally",
+        "except",
+    }
+    if len(normalized) < 12 or (line_count <= 1 and normalized.lower() in common_tokens):
+        return "old_content 很短，若行号偏移到相同短片段仍可能误命中；建议包含更多上下文行"
+    return None
 
 
 def _normalize_encoding_name(enc: str) -> str:
@@ -147,6 +452,7 @@ async def _read_content(
     project_path: Optional[str] = None,
     end_line: Optional[int] = None,
     show_line_numbers: bool = False,
+    encoding: str = "auto",
 ) -> Dict[str, Any]:
     """
     读取文件内容的内部实现。
@@ -163,15 +469,25 @@ async def _read_content(
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
-        # 构建编码降级链：检测编码 → UTF-8 → CP_ACP（系统 ANSI 代码页）
+        effective_start = max(1, start_line)
+        target_end = end_line if end_line is not None else (effective_start + limit - 1)
+
+        # 构建编码降级链
         detected = detect_encoding(file_path)
-        fallback_encodings = [detected]
+
+        if encoding != "auto":
+            # 用户显式指定编码 → 作为首选，自动检测结果作为回退
+            fallback_encodings = [encoding]
+            if encoding.lower() != detected.lower():
+                fallback_encodings.append(detected)
+        else:
+            fallback_encodings = [detected]
 
         # UTF-8 无 BOM（与检测编码不同时补充）
-        if detected not in ('utf-8', 'utf-8-sig'):
+        if 'utf-8' not in (e.lower() for e in fallback_encodings) and 'utf-8-sig' not in (e.lower() for e in fallback_encodings):
             fallback_encodings.append('utf-8')
 
-        # CP_ACP — 系统 ANSI 代码页（中文 Windows 通常是 GBK）
+        # CP_ACP — 系统 ANSI 代码页
         try:
             ansi = locale.getpreferredencoding()
             if ansi.lower() not in (e.lower() for e in fallback_encodings):
@@ -179,14 +495,29 @@ async def _read_content(
         except Exception:
             logger.debug("获取系统默认编码失败，跳过ANSI回退")
 
+        # CJK 编码回退（无论系统 locale 如何，都尝试通用 CJK 编码）
+        cjk_fallbacks = ['gbk', 'gb18030', 'big5', 'shift_jis', 'euc-kr', 'euc-jp']
+        for cjk_enc in cjk_fallbacks:
+            if cjk_enc not in (e.lower() for e in fallback_encodings):
+                fallback_encodings.append(cjk_enc)
+
         last_error = None
         for enc in fallback_encodings:
             try:
+                if target_end < effective_start:
+                    return {
+                        "status": "success",
+                        "message": (
+                            f"# encoding: {enc}, 1-indexed empty, "
+                            f"requested [{effective_start}, {target_end}]\n"
+                        ),
+                        "range": [effective_start, target_end],
+                    }
+
                 # 流式读取：只读取需要的行，避免大文件全量读入内存
                 # 对于读取开头 N 行或指定行范围的场景，线性扫描比 readlines() 更省内存
                 # target_start/target_end 是内部 1-indexed inclusive 表示
-                target_start = start_line
-                target_end = end_line if end_line is not None else (start_line + limit - 1)
+                target_start = effective_start
                 selected = []
                 reached_eof = True  # 跟踪是否读到文件末尾
                 line_no = 0  # 空文件时 for 循环体不会执行，需初始化
@@ -204,11 +535,12 @@ async def _read_content(
                 else:
                     total_lines = None  # 被 target_end 截断，未知实际总行数
 
-                text = ''.join(selected)
+                raw_selected_text = ''.join(selected)
+                text = raw_selected_text
 
                 # show_line_numbers: 为每行添加 1-indexed 绝对行号前缀
                 if show_line_numbers and selected:
-                    line_offset = start_line  # 1-indexed start
+                    line_offset = target_start  # 1-indexed start
                     numbered_lines = []
                     for i, line in enumerate(selected):
                         lineno = line_offset + i  # 1-indexed 绝对行号
@@ -219,17 +551,29 @@ async def _read_content(
                     text += '\n'
 
                 lines_shown = len(selected)
-                actual_end_line = start_line + lines_shown - 1  # 1-indexed inclusive end
+                actual_end_line = target_start + lines_shown - 1  # 1-indexed inclusive end
 
                 # 单行 meta: 编码 + 1-indexed 行号范围
                 # 所有行号都是 1-indexed，可直接用于 write 的 start_line/edits。
                 # 截断时仅追加 (truncated) 标记。
-                meta = f"# encoding: {enc}, 1-indexed [{start_line}, {actual_end_line}]"
+                if lines_shown == 0:
+                    total_hint = f", total_lines: {total_lines}" if total_lines is not None else ""
+                    meta = (
+                        f"# encoding: {enc}, 1-indexed empty, "
+                        f"requested [{target_start}, {target_end}]{total_hint}"
+                    )
+                else:
+                    meta = f"# encoding: {enc}, 1-indexed [{target_start}, {actual_end_line}]"
                 if not reached_eof:
                     meta += " (truncated)"
                 meta += "\n"
 
-                return {"status": "success", "message": meta + text}
+                return {
+                    "status": "success",
+                    "message": meta + text,
+                    "range": [target_start, actual_end_line] if lines_shown else [target_start, target_end],
+                    "encoding": enc,
+                }
             except UnicodeDecodeError:
                 last_error = f"编码 {enc} 解码失败"
                 continue
@@ -265,6 +609,7 @@ async def _search_and_read(
     search_in: str = "all",
     start_line: int = 1,
     limit: int = 100,
+    project_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """按类名/函数名搜索并读取文件"""
     args = {
@@ -274,6 +619,7 @@ async def _search_and_read(
         "search_in": search_in,
         "start_line": start_line,
         "max_lines": limit,  # read_source_file 内部仍用 max_lines
+        "project_path": project_path,
     }
     result = await _search_read_file(args)
     if result.isError:
@@ -293,15 +639,23 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_path = arguments.get("file_path")
     search_type = arguments.get("search_type", "path")
-    start_line = arguments.get("start_line", 1)
+    start_line, start_err = _coerce_positive_int(arguments.get("start_line"), 1, "start_line")
+    if start_err:
+        return _wrap_error(start_err)
     end_line = arguments.get("end_line")
+    if end_line is not None and not isinstance(end_line, int):
+        return _wrap_error("end_line 必须是整数")
     if end_line is not None:
         limit = min(end_line - start_line + 1, 1000)
     else:
-        limit = min(arguments.get("limit", 500), 1000)
+        limit_value = arguments.get("limit", 500)
+        if not isinstance(limit_value, int):
+            return _wrap_error("limit 必须是整数")
+        limit = min(max(1, limit_value), 1000)
     search_in = arguments.get("search_in", "all")
     project_path = arguments.get("project_path")
     show_line_numbers = arguments.get("show_line_numbers", False)
+    encoding = arguments.get("encoding", "auto")
 
     # --- 搜索模式 ---
     if search_type != "path":
@@ -313,6 +667,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             search_in=search_in,
             start_line=start_line,
             limit=limit,
+            project_path=project_path,
         )
 
     # --- 路径模式 ---
@@ -322,9 +677,6 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     path_err = _validate_path(file_path, project_path)
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
-
-    # 读取清除脏标记：AI 重新读到了最新行号
-    _clear_dirty(file_path)
 
     # 获取读取许可（多读单写：多个读取可并发，写入时不可读）
     # 必须在 DFM 检测/转换之前获取，防止并发写入干扰
@@ -357,7 +709,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
                         "请检查 Delphi 编译器(dcc32)是否可用"
                     )
 
-        return await _read_content(
+        result = await _read_content(
             file_path=file_path,
             start_line=start_line,
             limit=limit,
@@ -365,7 +717,11 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             project_path=project_path,
             end_line=end_line,
             show_line_numbers=show_line_numbers,
+            encoding=encoding,
         )
+        if result.get("status") == "success":
+            _clear_dirty(lock_file_path)
+        return result
     finally:
         _release_read_lock(lock_file_path)
         if tmp_cleanup:
@@ -374,7 +730,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ── 文件级写入锁：防止对同一个文件并行写入 ──────────────────────────────
-# 同一个文件同时被多个 agent write/batch_write 会导致内容错乱。
+# 同一个文件同时被多个 agent write 会导致内容错乱。
 # 用 in-process dict 做简单互斥：第二个并发写直接拒绝，让 agent 合并后重试。
 # 多读单写 (RWLock) — 每个文件路径一个锁条目
 # 结构: { normalized_path: {"lock": threading.Lock(), "readers": int, "writer": bool} }
@@ -420,11 +776,7 @@ def _acquire_read_lock(file_path: str) -> Optional[str]:
 
 def _release_read_lock(file_path: str) -> None:
     """释放文件的读取许可"""
-    normalized = os.path.abspath(file_path)
-    with _file_rw_dict_lock:
-        entry = _file_rw_locks.get(normalized)
-        if entry is None:
-            return
+    entry = _get_rw_entry(file_path)
     with entry["lock"]:
         entry["readers"] = max(0, entry["readers"] - 1)
 
@@ -447,8 +799,8 @@ def _acquire_write_lock(file_path: str) -> Optional[str]:
             return (
                 f"文件 {os.path.basename(normalized)} 正在被其他操作占用"
                 f"（读取中: {rc}, 写入中: {wc}）。"
-                "同一个文件的所有修改必须合并为一次 batch_write 完成，"
-                "请重新 read 文件后规划全部 edits，用 batch_write 一次性写入。"
+                "同一个文件的所有修改必须合并为一次 write(edits=[...]) 完成，"
+                "请重新 read 文件后规划全部 edits，再一次性写入。"
             )
         entry["writer"] = True
     return None
@@ -456,17 +808,13 @@ def _acquire_write_lock(file_path: str) -> Optional[str]:
 
 def _release_write_lock(file_path: str) -> None:
     """释放文件的写入许可"""
-    normalized = os.path.abspath(file_path)
-    with _file_rw_dict_lock:
-        entry = _file_rw_locks.get(normalized)
-        if entry is None:
-            return
+    entry = _get_rw_entry(file_path)
     with entry["lock"]:
         entry["writer"] = False
 
 
 # ── 脏写入标记：防止 AI 未重读/预览就再次写入同一文件 ──────────────────
-# 文件修改后（write/format/uses）行号变化，AI 必须 re-read 或 preview 确认后才能再次写入。
+# 文件修改后（write/format/uses）行号变化，AI 必须 re-read 或用 old_content 校验后才能再次写入。
 _dirty_files: Set[str] = set()
 _dirty_lock = threading.Lock()
 
@@ -479,7 +827,7 @@ def _mark_dirty(file_path: str) -> None:
 
 
 def _clear_dirty(file_path: str) -> None:
-    """清除脏标记（re-read 或 preview 后标记清除）。"""
+    """清除脏标记（成功 read 后标记清除）。"""
     normalized = os.path.abspath(file_path)
     with _dirty_lock:
         _dirty_files.discard(normalized)
@@ -491,21 +839,21 @@ def _check_dirty(file_path: str, preview: bool = False) -> None:
     如果 dirty 且不是 preview 模式，抛异常阻止写入。
     """
     if preview:
-        _clear_dirty(file_path)
         return
     normalized = os.path.abspath(file_path)
     with _dirty_lock:
         if normalized in _dirty_files:
             raise RuntimeError(
                 f"文件 {os.path.basename(normalized)} 上次写入后行号可能已变化。"
-                "请先调用 read 获取最新行号，或使用 preview=true 预览本次修改。"
+                "请先调用 read 获取最新行号，或为每个 edit 提供 old_content 原文校验，"
+                "或使用 preview=true 预览本次修改。"
                 "基于最新行号规划 edits 后重新发起 write。"
             )
 
 
 async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    处理 write action（合并原 write + batch_write）。
+    处理 write action。
 
     统一使用 edits 参数：
       - 全量替换：edits=[{start_line:1, content:"完整文件内容"}]
@@ -519,7 +867,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - 自动检测并保持原始编码
       - DFM 文件自动处理：二进制 DFM 自动转文本→编辑→转回二进制
       - 支持 auto_format 写入后自动格式化代码
-      - 支持 preview 预览 diff 不写盘
+      - 支持 dry_run 预览 diff 不写盘（preview 已废弃，作为别名临时保留）
 
     行号均为 1-indexed 左闭右闭:
       edits=[{start_line:5, end_line:10}]  → 替换第 5~10 行
@@ -532,6 +880,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
        防止 AI 使用过期行号导致错位改写。
        续重行检测已降级为警告，不再阻断写入。
 
+       old_content + 每个 edit 的原文校验通过时，可安全跳过脏标记。
        allow_dirty=true 可绕过脏标记检查（风险自负）。
     """
     file_path = arguments.get("file_path")
@@ -539,27 +888,21 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
     auto_format = arguments.get("auto_format", False)
-    preview = arguments.get("preview", False)
+    preview = arguments.get("preview", False) or arguments.get("dry_run", False)
+    if arguments.get("preview", False):
+        logger.warning("delphi_file: preview 参数已废弃，请使用 dry_run 替代")
     force = arguments.get("force", False)
     allow_dirty = arguments.get("allow_dirty", False)
-
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
     if not edits:
         return _wrap_error("请提供 edits 参数（全量替换: [{start_line:1, content:'...'}]）")
 
-    # ── 脏标记检查（allow_dirty=true 可绕过）──
-    if not allow_dirty:
-        try:
-            _check_dirty(file_path, preview=preview)
-        except RuntimeError as e:
-            return _wrap_error(str(e))
-
     path_err = _validate_path(file_path, arguments.get("project_path"))
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
-    return await _handle_batch_write_internal(
+    return await _handle_write_edits(
         file_path=file_path,
         edits=edits,
         backup=backup,
@@ -571,7 +914,179 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
-async def _handle_batch_write_internal(
+async def handle_replace(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle action=replace with mandatory old_content for existing files."""
+    return await _handle_structured_write_action(arguments, "replace")
+
+
+async def handle_insert(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle action=insert using old_content as an anchor line guard."""
+    return await _handle_structured_write_action(arguments, "insert")
+
+
+async def handle_delete(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle action=delete with mandatory old_content for existing files."""
+    return await _handle_structured_write_action(arguments, "delete")
+
+
+async def _handle_structured_write_action(arguments: Dict[str, Any], action: str) -> Dict[str, Any]:
+    """Normalize replace/insert/delete actions to the existing edit engine."""
+    file_path = arguments.get("file_path")
+    edits = arguments.get("edits")
+    backup = arguments.get("backup", True)
+    encoding = arguments.get("encoding", "auto")
+    auto_format = arguments.get("auto_format", False)
+    preview = arguments.get("preview", False) or arguments.get("dry_run", False)
+    if arguments.get("preview", False):
+        logger.warning("delphi_file: preview 参数已废弃，请使用 dry_run 替代")
+    force = arguments.get("force", False)
+    allow_dirty = arguments.get("allow_dirty", False)
+
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+    if not edits:
+        return _wrap_error(f"请提供 edits 参数（action={action}）")
+    if not isinstance(edits, (list, tuple)):
+        return _wrap_error("edits 必须是一个列表")
+
+    path_err = _validate_path(file_path, arguments.get("project_path"))
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+
+    if preview:
+        lock_err = _acquire_read_lock(file_path)
+    else:
+        lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
+
+    anchor_tmp_cleanup = None
+    try:
+        file_exists = os.path.isfile(file_path)
+        if not file_exists:
+            if action != "replace":
+                return _wrap_error(f"新文件不支持 action={action}，请使用 action=replace 或兼容 action=write 创建完整文件")
+            return await _handle_write_edits(
+                file_path=file_path,
+                edits=edits,
+                backup=backup,
+                encoding=encoding,
+                auto_format=auto_format,
+                preview=preview,
+                force=force,
+                allow_dirty=allow_dirty,
+                lock_already_held=True,
+            )
+
+        if not allow_dirty and not _all_edits_have_old_content(edits):
+            try:
+                _check_dirty(file_path, preview=preview)
+            except RuntimeError as e:
+                return _wrap_error(str(e))
+
+        lines: List[str] = []
+        has_crlf = False
+        if action == "insert":
+            try:
+                lines, anchor_tmp_cleanup = await _read_structured_anchor_lines(file_path)
+            except RuntimeError as e:
+                return _wrap_error(str(e))
+            has_crlf = any('\r\n' in line for line in lines)
+
+        normalized_edits: List[Dict[str, Any]] = []
+        for i, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                return _wrap_error(f"edits[{i}] 必须是 dict")
+            desc = edit.get("description", f"{action} #{i}")
+            s_1 = edit.get("start_line")
+            e_1 = edit.get("end_line")
+            content = edit.get("content")
+            old_content = _get_old_content(edit)
+
+            if s_1 is None:
+                return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 start_line")
+            if not isinstance(s_1, int):
+                return _wrap_error(f"edits[{i}] ({desc}): start_line 必须是整数")
+            if s_1 < 1:
+                return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) 不能小于 1")
+            if e_1 is not None and not isinstance(e_1, int):
+                return _wrap_error(f"edits[{i}] ({desc}): end_line 必须是整数")
+            if action in ("replace", "delete") and e_1 is not None and s_1 > e_1:
+                return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) > end_line ({e_1})，需满足 start_line ≤ end_line")
+            if not _edit_has_non_empty_old_content(edit):
+                return _wrap_error(f"edits[{i}] ({desc}): action={action} 必须提供非空 old_content")
+
+            if action == "replace":
+                if content is None:
+                    return _wrap_error(f"edits[{i}] ({desc}): action=replace 必须提供 content")
+                new_edit = dict(edit)
+            elif action == "delete":
+                if content not in (None, ""):
+                    return _wrap_error(f"edits[{i}] ({desc}): action=delete 不接受非空 content")
+                new_edit = dict(edit)
+                new_edit["content"] = ""
+            else:
+                if content is None:
+                    return _wrap_error(f"edits[{i}] ({desc}): action=insert 必须提供 content")
+                if content == "":
+                    return _wrap_error(f"edits[{i}] ({desc}): action=insert 的 content 不能为空")
+                if e_1 is not None and e_1 != s_1:
+                    return _wrap_error(f"edits[{i}] ({desc}): action=insert 不支持 end_line 跨行，锚点只能是 start_line")
+                position = edit.get("position", "before")
+                if position not in ("before", "after"):
+                    return _wrap_error(f"edits[{i}] ({desc}): position 必须是 before 或 after")
+                anchor_idx = s_1 - 1
+                if anchor_idx < 0 or anchor_idx >= len(lines):
+                    return _wrap_error(f"edits[{i}] ({desc}): start_line {s_1} 超出当前总行数 {len(lines)}")
+                anchor_text = lines[anchor_idx]
+                if _normalize_code_for_compare(old_content or "") != _normalize_code_for_compare(anchor_text):
+                    expected_lines = (old_content or "").splitlines(keepends=True)
+                    msg = [
+                        f"edits[{i}] ({desc}): old_content mismatch for insert anchor [{s_1}, {s_1}]",
+                        "expected:",
+                    ]
+                    msg.extend(_format_line_snippet(expected_lines, 0, len(expected_lines)))
+                    msg.append("actual:")
+                    msg.extend(_format_line_snippet(lines, anchor_idx, anchor_idx + 1))
+                    return _wrap_error("\n".join(msg))
+                insert_text = _prepare_insert_content(content, has_crlf)
+                if position == "before":
+                    replacement = insert_text + anchor_text
+                else:
+                    anchor_for_replace = anchor_text
+                    if not anchor_for_replace.endswith(('\n', '\r\n')):
+                        anchor_for_replace += '\r\n' if has_crlf else '\n'
+                    replacement = anchor_for_replace + insert_text
+                new_edit = {
+                    "start_line": s_1,
+                    "end_line": s_1,
+                    "content": replacement,
+                    "old_content": old_content,
+                    "description": desc,
+                }
+            normalized_edits.append(new_edit)
+
+        return await _handle_write_edits(
+            file_path=file_path,
+            edits=normalized_edits,
+            backup=backup,
+            encoding=encoding,
+            auto_format=auto_format,
+            preview=preview,
+            force=force,
+            allow_dirty=True,  # 安全: old_content 校验已保障行号正确性，无需脏标记
+            lock_already_held=True,
+        )
+    finally:
+        if anchor_tmp_cleanup:
+            shutil.rmtree(anchor_tmp_cleanup, ignore_errors=True)
+        if preview:
+            _release_read_lock(file_path)
+        else:
+            _release_write_lock(file_path)
+
+
+async def _handle_write_edits(
     file_path: str,
     edits: List[Dict],
     backup: bool = True,
@@ -580,146 +1095,134 @@ async def _handle_batch_write_internal(
     preview: bool = False,
     force: bool = False,
     allow_dirty: bool = False,
+    lock_already_held: bool = False,
 ) -> Dict[str, Any]:
-    """
-    批量写入内部实现（edits 数组，以原始文件为参照系）。
-
-    edits 元素:
-      start_line: 1-indexed inclusive（替换起始行）
-      end_line:   1-indexed inclusive（替换结束行，不传则到文件末尾）
-      content:    替换内容（空字符串=删除行）
-      description: 描述（可选）
-
-    force: true 时跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）。
-    """
+    """批量写入内部实现（edits 数组，以原始文件为参照系）。"""
     if not edits:
         return _wrap_error("请提供 edits 列表")
     if not isinstance(edits, (list, tuple)):
         return _wrap_error("edits 必须是一个列表")
 
-    file_exists = os.path.isfile(file_path)
-    if not file_exists:
-        # 新文件：必须只有 1 个 edit，start_line=1
-        if len(edits) != 1:
-            return _wrap_error("新文件只能有一个 edit")
-        e0 = edits[0]
-        if e0.get("start_line", 0) != 1:
-            return _wrap_error("新文件必须从 start_line=1 开始")
-        if not e0.get("content"):
-            return _wrap_error("新文件必须提供 content")
-        # 直接走全量写入
-        content = e0["content"]
-        original_encoding = encoding if encoding != "auto" else "utf-8-sig"
-
-        # 预览模式
+    if not lock_already_held:
         if preview:
-            return {"status": "success", "message":
-                f"[preview] would create new file: {os.path.basename(file_path)}, "
-                f"{len(content.encode('utf-8'))} bytes"}
-
-        # 写入新文件
-        try:
-            with open(file_path, 'w', encoding=original_encoding, newline='',
-                      buffering=1048576) as f:
-                f.write(content)
-        except Exception as e:
-            return _wrap_error(f"创建文件失败: {e}")
-
-        _mark_dirty(file_path)
-        return {"status": "success", "message":
-            f"wrote: {os.path.basename(file_path)}, encoding: {original_encoding}"}
-
-    # ── 已有文件：批量编辑 ──
-    # ── 检测文件编码 / DFM 状态 ──
-    is_dfm_binary = False
-    if _is_dfm_file(file_path):
-        try:
-            fmt = dfm_utils._detect_dfm_format(file_path)
-            is_dfm_binary = (fmt == "binary")
-        except (FileNotFoundError, PermissionError) as e:
-            return _wrap_error(str(e))
-
-    detected_encoding = detect_encoding(file_path)
-    if encoding == "auto":
-        read_enc = detected_encoding
-        write_enc = detected_encoding
-        encoding_transcoded = False
-    else:
-        read_enc = detected_encoding
-        # utf-8 家族内保留原始 BOM 状态（utf-8-sig 写出 BOM，utf-8 不写）
-        if _is_encoding_compatible(encoding, detected_encoding):
-            write_enc = detected_encoding
+            lock_err = _acquire_read_lock(file_path)
         else:
-            write_enc = encoding
-        encoding_transcoded = not _is_encoding_compatible(encoding, detected_encoding)
+            lock_err = _acquire_write_lock(file_path)
+        if lock_err:
+            return _wrap_error(lock_err)
 
-    # ── 校验每个 edit 并转换为内部 0-indexed ──
-    validated_edits = []
-    for i, edit in enumerate(edits):
-        if not isinstance(edit, dict):
-            return _wrap_error(f"edits[{i}] 必须是 dict")
-        s_1 = edit.get("start_line")  # 1-indexed
-        e_1 = edit.get("end_line")    # 1-indexed inclusive
-        c = edit.get("content")
-        desc = edit.get("description", f"edit #{i}")
-        if s_1 is None:
-            return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 start_line")
-        if c is None:
-            return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 content")
-        if not isinstance(s_1, int):
-            return _wrap_error(f"edits[{i}] ({desc}): start_line 必须是整数")
-        if e_1 is not None and not isinstance(e_1, int):
-            return _wrap_error(f"edits[{i}] ({desc}): end_line 必须是整数")
-        if s_1 < 1:
-            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) 不能小于 1")
-        if e_1 is not None and s_1 > e_1:
-            return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) > end_line ({e_1})，需满足 start_line ≤ end_line")
-
-        # 转换为内部 0-indexed
-        s_0 = s_1 - 1
-        e_0 = e_1  # 1-indexed inclusive = 0-indexed exclusive
-        validated_edits.append((s_0, e_0, c, desc, s_1, e_1))
-
-    # ── 按 start_line 升序排列 ──
-    validated_edits.sort(key=lambda x: x[0])
-
-    # ── 重叠区间检测（内部 0-indexed） ──
-    for i in range(len(validated_edits) - 1):
-        s0_1, e0_1, _, _, _, _ = validated_edits[i]
-        s1_0, _, _, _, _, _ = validated_edits[i + 1]
-        if e0_1 is None:
-            return _wrap_error(
-                f"edits 区间重叠: \"{validated_edits[i][3]}\" (start={validated_edits[i][4]}) 覆盖到文件末尾，"
-                f"与 \"{validated_edits[i+1][3]}\" (start={validated_edits[i+1][4]}) 重叠"
-            )
-        if s1_0 < e0_1:
-            return _wrap_error(
-                f"edits 区间重叠: \"{validated_edits[i][3]}\" [{validated_edits[i][4]},{validated_edits[i][5]}] "
-                f"与 \"{validated_edits[i+1][3]}\" [{validated_edits[i+1][4]},...) 重叠"
-            )
-
-    # ── 备份 ──
     bak_path = None
-    if backup and not preview:
-        bak_path = create_backup(file_path)
-
-    # ── 加锁 ──
-    if preview:
-        lock_err = _acquire_read_lock(file_path)
-    else:
-        lock_err = _acquire_write_lock(file_path)
-    if lock_err:
-        if bak_path and os.path.exists(bak_path):
-            try:
-                os.remove(bak_path)
-            except OSError:
-                pass
-        return _wrap_error(lock_err)
-
     read_path = file_path
     tmp_cleanup = None
     try:
-        # ── 读文件 ──
+        if not allow_dirty and not _all_edits_have_old_content(edits):
+            try:
+                _check_dirty(file_path, preview=preview)
+            except RuntimeError as e:
+                return _wrap_error(str(e))
+
+        file_exists = os.path.isfile(file_path)
+        if not file_exists:
+            if len(edits) != 1:
+                return _wrap_error("新文件只能有一个 edit")
+            e0 = edits[0]
+            if e0.get("start_line", 0) != 1:
+                return _wrap_error("新文件必须从 start_line=1 开始")
+            if not e0.get("content"):
+                return _wrap_error("新文件必须提供 content")
+            # 直接走全量写入
+            content = e0["content"]
+            original_encoding = encoding if encoding != "auto" else "utf-8-sig"
+
+            # 预览模式
+            if preview:
+                return {
+                    "status": "success",
+                    "message": (
+                        f"[preview] would create new file: {os.path.basename(file_path)}, "
+                        f"{len(content.encode('utf-8'))} bytes"
+                    ),
+                }
+
+            # 写入新文件：先写同卷临时文件，成功后再替换目标。
+            temp_write_path = _make_temp_write_path(file_path)
+            try:
+                _write_text_temp(temp_write_path, content, original_encoding)
+                _replace_with_temp(temp_write_path, file_path)
+            except Exception as e:
+                if os.path.exists(temp_write_path):
+                    try:
+                        os.remove(temp_write_path)
+                    except OSError:
+                        pass
+                return _wrap_error(f"创建文件失败: {e}")
+
+            _mark_dirty(file_path)
+            return {
+                "status": "success",
+                "message": f"wrote: {os.path.basename(file_path)}, encoding: {original_encoding}",
+            }
+
+        is_dfm_binary = False
+        if _is_dfm_file(file_path):
+            try:
+                fmt = dfm_utils._detect_dfm_format(file_path)
+                is_dfm_binary = (fmt == "binary")
+            except (FileNotFoundError, PermissionError) as e:
+                return _wrap_error(str(e))
+
+        detected_encoding = detect_encoding(file_path)
+        if encoding == "auto":
+            read_enc = detected_encoding
+            write_enc = detected_encoding
+            encoding_transcoded = False
+        else:
+            read_enc = detected_encoding
+            if _is_encoding_compatible(encoding, detected_encoding):
+                write_enc = detected_encoding
+            else:
+                write_enc = encoding
+            encoding_transcoded = not _is_encoding_compatible(encoding, detected_encoding)
+
+        validated_edits = []
+        for i, edit in enumerate(edits):
+            if not isinstance(edit, dict):
+                return _wrap_error(f"edits[{i}] 必须是 dict")
+            s_1 = edit.get("start_line")
+            e_1 = edit.get("end_line")
+            c = edit.get("content")
+            desc = edit.get("description", f"edit #{i}")
+            old_content = _get_old_content(edit)
+            if s_1 is None:
+                return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 start_line")
+            if c is None:
+                return _wrap_error(f"edits[{i}] ({desc}): 缺少必需的 content")
+            if not isinstance(s_1, int):
+                return _wrap_error(f"edits[{i}] ({desc}): start_line 必须是整数")
+            if e_1 is not None and not isinstance(e_1, int):
+                return _wrap_error(f"edits[{i}] ({desc}): end_line 必须是整数")
+            if s_1 < 1:
+                return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) 不能小于 1")
+            if e_1 is not None and s_1 > e_1:
+                return _wrap_error(f"edits[{i}] ({desc}): start_line ({s_1}) > end_line ({e_1})，需满足 start_line ≤ end_line")
+            validated_edits.append((s_1 - 1, e_1, c, desc, s_1, e_1, old_content))
+
+        validated_edits.sort(key=lambda x: x[0])
+
+        for i in range(len(validated_edits) - 1):
+            curr_s_0, curr_e_0, _, _, _, _, _ = validated_edits[i]
+            next_s_0, _, _, _, _, _, _ = validated_edits[i + 1]
+            if curr_e_0 is None:
+                return _wrap_error(
+                    f"edits 区间重叠: \"{validated_edits[i][3]}\" (start={validated_edits[i][4]}) 覆盖到文件末尾，"
+                    f"与 \"{validated_edits[i+1][3]}\" (start={validated_edits[i+1][4]}) 重叠"
+                )
+            if next_s_0 < curr_e_0:
+                return _wrap_error(
+                    f"edits 区间重叠: \"{validated_edits[i][3]}\" [{validated_edits[i][4]},{validated_edits[i][5]}] "
+                    f"与 \"{validated_edits[i+1][3]}\" [{validated_edits[i+1][4]},...) 重叠"
+                )
+
         if is_dfm_binary:
             tmp_dir = tempfile.mkdtemp(prefix="filetool_")
             text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
@@ -728,20 +1231,20 @@ async def _handle_batch_write_internal(
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 return _wrap_error(f"二进制 DFM 转换失败: {conv_result.get('message', '未知错误')}")
             read_path = text_path
+            read_enc = detect_encoding(read_path)
             tmp_cleanup = tmp_dir
         with open(read_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
             lines = f.readlines()
 
         total = len(lines)
         original_lines = lines[:]
-
         has_crlf = any('\r\n' in line for line in lines)
 
         cumulative_offset = 0
         results = []
         all_success = True
 
-        for s_0, e_0, c, desc, s_1, e_1 in validated_edits:
+        for s_0, e_0, c, desc, s_1, e_1, old_content in validated_edits:
             adj_s = s_0 + cumulative_offset
             adj_e = (e_0 + cumulative_offset) if e_0 is not None else len(lines)
 
@@ -757,6 +1260,25 @@ async def _handle_batch_write_internal(
                 results.append(f"  ❌ {desc}: 调整后范围为空 [{adj_s}, {adj_e})")
                 all_success = False
                 continue
+
+            old_text = ''.join(lines[adj_s:adj_e])
+            if old_content is not None:
+                short_warning = _warn_if_old_content_too_short(old_content)
+                if short_warning:
+                    results.append(f"  ⚠️ {desc}: {short_warning}")
+                expected_norm = _normalize_code_for_compare(old_content)
+                actual_norm = _normalize_code_for_compare(old_text)
+                if expected_norm != actual_norm:
+                    expected_lines = old_content.splitlines(keepends=True)
+                    results.append(
+                        f"  ❌ {desc}: old_content mismatch for [{adj_s + 1}, {adj_e}]"
+                    )
+                    results.append("    expected:")
+                    results.extend(_format_line_snippet(expected_lines, 0, len(expected_lines)))
+                    results.append("    actual:")
+                    results.extend(_format_line_snippet(lines, adj_s, adj_e))
+                    all_success = False
+                    continue
 
             removed = adj_e - adj_s
             removed_lines_preview = []
@@ -784,7 +1306,7 @@ async def _handle_batch_write_internal(
                 inserted = len(c_lines)
 
                 # AI 偏移检查：s_1 > 1 时检查（非文件头替换）
-                if s_1 > 1 and removed > 0 and adj_s < len(lines):
+                if not force and s_1 > 1 and removed > 0 and adj_s < len(lines):
                     first_new = c_lines[0].rstrip('\n\r')
                     first_old = lines[adj_s].rstrip('\n\r')
                     if first_old and first_old == first_new:
@@ -810,9 +1332,16 @@ async def _handle_batch_write_internal(
             adj_s_display = adj_s + 1
             adj_e_display = adj_e  # 0-indexed exclusive → 1-indexed inclusive
             range_suffix = "" if adj_s_display == s_1 else f" (指定 {s_1})"
-            results.append(
-                f"  [{adj_s_display}, {adj_e_display}] → [{adj_s_display}, {adj_e_display + delta}] (offset: {delta:+d}){range_suffix}  {desc}"
-            )
+            if inserted == 0:
+                results.append(
+                    f"  [{adj_s_display}, {adj_e_display}] → deleted before line {adj_s_display} "
+                    f"(offset: {delta:+d}){range_suffix}  {desc}"
+                )
+            else:
+                results.append(
+                    f"  [{adj_s_display}, {adj_e_display}] → [{adj_s_display}, {adj_e_display + delta}] "
+                    f"(offset: {delta:+d}){range_suffix}  {desc}"
+                )
 
             # Per-edit diff 预览（1-indexed 行号）
             if removed_lines_preview:
@@ -850,6 +1379,20 @@ async def _handle_batch_write_internal(
             )
             all_success = False
 
+        if not all_success and not preview:
+            if bak_path and os.path.exists(bak_path):
+                try:
+                    os.remove(bak_path)
+                except OSError:
+                    pass
+            summary = [
+                "部分 edit 执行失败，已取消写入磁盘",
+                f"failed: {len(validated_edits)} edits, {os.path.basename(file_path)}, encoding: {write_enc}",
+                "",
+            ]
+            summary.extend(results)
+            return {"status": "failed", "message": "\n".join(summary)}
+
         # AI 偏移错误检测
         if not force:
             orig_dup_contents = set()
@@ -864,7 +1407,7 @@ async def _handle_batch_write_internal(
                 prev = lines[i - 1].rstrip('\r\n')
                 curr = lines[i].rstrip('\r\n')
                 if prev and curr and prev == curr and prev not in orig_dup_contents:
-                    new_dup_lines.append((i, prev))
+                    new_dup_lines.append((i + 1, prev))
 
             if new_dup_lines:
                 dup_msgs = [f"    第 {i} 行: {txt}" for i, txt in new_dup_lines[:10]]
@@ -882,40 +1425,58 @@ async def _handle_batch_write_internal(
 
         # 写入磁盘
         if not preview:
-            if is_dfm_binary:
-                text_tmp = file_path + ".txt"
-                with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
-                    f.write(new_text)
-                try:
-                    conv_result = await dfm_utils.convert_dfm(text_tmp, file_path, to_text=False)
+            temp_write_path = _make_temp_write_path(file_path)
+            text_tmp = None
+            try:
+                if is_dfm_binary:
+                    text_tmp = temp_write_path + ".txt"
+                    _write_text_temp(text_tmp, new_text, write_enc)
+                    conv_result = await dfm_utils.convert_dfm(text_tmp, temp_write_path, to_text=False)
                     if not conv_result.get("success"):
-                        os.rename(text_tmp, file_path)
-                        logger.warning(f"DFM 二进制转换失败，已保留文本: {conv_result.get('message')}")
-                    else:
-                        os.remove(text_tmp)
-                except Exception as ex:
-                    if os.path.exists(text_tmp):
-                        os.rename(text_tmp, file_path)
-                    logger.warning(f"DFM 转换异常，已保留文本: {ex}")
-            else:
-                try:
-                    with open(file_path, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
-                        f.write(new_text)
-                except UnicodeEncodeError:
-                    logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
-                    with open(file_path, 'w', encoding="utf-8", newline='', buffering=1048576) as f:
-                        f.write(new_text)
-                    write_enc = "utf-8"
-                    encoding_fallback = True
+                        if bak_path and os.path.exists(bak_path):
+                            try:
+                                os.remove(bak_path)
+                            except OSError:
+                                pass
+                        return _wrap_error(f"二进制 DFM 转换失败，已取消写入: {conv_result.get('message', '未知错误')}")
+                else:
+                    try:
+                        _write_text_temp(temp_write_path, new_text, write_enc)
+                    except UnicodeEncodeError:
+                        logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
+                        _write_text_temp(temp_write_path, new_text, "utf-8")
+                        write_enc = "utf-8"
+                        encoding_fallback = True
+
+                if backup:
+                    bak_path = create_backup(file_path)
+                    if not bak_path:
+                        return _wrap_error("创建备份失败，已取消写入")
+
+                _replace_with_temp(temp_write_path, file_path)
+            except Exception as ex:
+                return _wrap_error(f"写入文件失败，已取消写入: {ex}")
+            finally:
+                for cleanup_path in (text_tmp, temp_write_path):
+                    if cleanup_path and os.path.exists(cleanup_path):
+                        try:
+                            os.remove(cleanup_path)
+                        except OSError:
+                            pass
 
             # 写入后自动格式化
             if auto_format and _is_delphi_file(file_path):
                 try:
-                    fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-                    if fmt_result.get("formatted"):
+                    formatted, write_enc, fmt_encoding_fallback, _ = await _apply_auto_format_atomically(
+                        file_path, write_enc, has_crlf
+                    )
+                    if formatted:
                         fmt_msg = "，写入后已格式化"
+                    if fmt_encoding_fallback:
+                        encoding_fallback = True
                 except Exception as ex:
                     logger.warning(f"写入后自动格式化失败: {ex}")
+                    results.append(f"  ⚠ auto_format failed: {ex}")
 
             # auto_format 可能额外改变行数（展开 uses、调整空行等），重算真实偏移
             fmt_diff = 0
@@ -935,15 +1496,10 @@ async def _handle_batch_write_internal(
                     f"  ⚠ auto_format 额外偏移: {fmt_diff:+d}，累计总偏移: {cumulative_offset:+d}"
                 )
 
-            # 清理备份
-            if not backup and bak_path and os.path.exists(bak_path):
-                try:
-                    os.remove(bak_path)
-                except OSError:
-                    pass
-
             # 标记脏
             _mark_dirty(file_path)
+        elif all_success:
+            results.append("  ℹ preview 不清除脏标记；后续 write 仍需 read 或 old_content 校验")
 
         # 汇总输出
         summary = []
@@ -975,38 +1531,22 @@ async def _handle_batch_write_internal(
         summary.extend(results)
 
         if all_success:
-            return {"status": "success", "message": "\n".join(summary)}
+            return {
+                "status": "success",
+                "message": "\n".join(summary),
+            }
         else:
             summary.insert(0, "部分 edit 执行失败，请检查上述结果")
             return {"status": "failed", "message": "\n".join(summary)}
 
     finally:
-        if preview:
-            _release_read_lock(file_path)
-        else:
-            _release_write_lock(file_path)
+        if not lock_already_held:
+            if preview:
+                _release_read_lock(file_path)
+            else:
+                _release_write_lock(file_path)
         if tmp_cleanup:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
-
-
-async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    处理 batch_write action（已弃用，请使用 write action + edits 参数代替）。
-
-    此函数保留以兼容旧调用，内部委托给 handle_write。
-    """
-    # 转换参数：batch_write 的 edits 和 force 映射到 write
-    args = {
-        "file_path": arguments.get("file_path"),
-        "edits": arguments.get("edits", []),
-        "backup": arguments.get("backup", True),
-        "encoding": arguments.get("encoding", "auto"),
-        "auto_format": arguments.get("auto_format", False),
-        "preview": arguments.get("preview", False),
-        "force": arguments.get("force", False),
-        "allow_dirty": arguments.get("allow_dirty", False),
-    }
-    return await handle_write(args)
 
 
 async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1057,28 +1597,253 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 _release_read_lock(file_path)
         else:
-            lock_err = _acquire_write_lock(file_path)
-            if lock_err:
-                return _wrap_error(lock_err)
-            try:
-                result = await pasfmt.format_file(
-                    file_path=file_path,
-                    config_path=arguments.get("config_path"),
-                    backup=backup_flag,
-                    in_place=True,
-                    uses_style=uses_style,
-                )
-
-                # 格式化成功 → 标记脏（行号已变，强制 re-read）
-                # ⚠ 不计算偏移量：pasfmt 可能重构代码结构（展开 uses、调整 begin/end 等），
-                #   格式化前后的行号无线性对应关系。AI 须通过 dirty flag 触发 re-read。 
-                if result.get("status") == "success" and result.get("formatted"):
-                    _mark_dirty(file_path)
-            finally:
-                _release_write_lock(file_path)
+            if dry_run:
+                lock_err = _acquire_read_lock(file_path)
+                if lock_err:
+                    return _wrap_error(lock_err)
+                try:
+                    result = await pasfmt.format_file(
+                        file_path=file_path,
+                        dry_run=True,
+                    )
+                finally:
+                    _release_read_lock(file_path)
+            else:
+                lock_err = _acquire_write_lock(file_path)
+                if lock_err:
+                    return _wrap_error(lock_err)
+                try:
+                    try:
+                        detected_enc = detect_encoding(file_path)
+                        with open(file_path, 'r', encoding=detected_enc, newline='',
+                                  buffering=1048576) as f:
+                            original_text = f.read()
+                        formatted, write_enc, encoding_fallback, backup_path = await _apply_auto_format_atomically(
+                            file_path=file_path,
+                            encoding=detected_enc,
+                            has_crlf='\r\n' in original_text,
+                            backup=backup_flag,
+                            config_path=arguments.get("config_path"),
+                            uses_style=uses_style,
+                        )
+                        result = {
+                            "status": "success",
+                            "formatted": formatted,
+                            "message": "代码格式化成功" if formatted else "代码已是格式化状态",
+                            "backup_file": backup_path,
+                        }
+                        if encoding_fallback:
+                            result["message"] += f"，编码回退: {detected_enc} → {write_enc}"
+                    except Exception as ex:
+                        result = _wrap_error(f"格式化失败: {ex}")
+                    else:
+                        # 格式化成功 → 标记脏（行号已变，强制 re-read）
+                        # ⚠ 不计算偏移量：pasfmt 可能重构代码结构（展开 uses、调整 begin/end 等），
+                        #   格式化前后的行号无线性对应关系。AI 须通过 dirty flag 触发 re-read。
+                        if result.get("status") == "success" and result.get("formatted"):
+                            _mark_dirty(file_path)
+                finally:
+                    _release_write_lock(file_path)
 
     # pasfmt.format_file / format_code 结果已统一为 dict
     return result
+
+
+async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    处理 encode action — 文件编码转换。
+
+    将文件从一种编码转换为另一种编码。
+    自动检测源编码（from_encoding="auto"），写入目标编码（to_encoding 必需）。
+
+    参数:
+      file_path: 文件路径
+      from_encoding: 源编码（"auto"=自动检测，默认 "auto"）
+      to_encoding: 目标编码（必需），如 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be
+      backup: 转换前是否备份到 __history（默认 true）
+      preview: 预览模式（默认 false）
+    """
+    file_path = arguments.get("file_path")
+    from_encoding = arguments.get("from_encoding", "auto")
+    to_encoding = arguments.get("to_encoding")
+    backup = arguments.get("backup", True)
+    preview = arguments.get("preview", False)
+
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+    if not to_encoding:
+        return _wrap_error("请提供 to_encoding 参数（目标编码）")
+
+    path_err = _validate_path(file_path, arguments.get("project_path"))
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+
+    if not os.path.isfile(file_path):
+        return _wrap_error(f"文件不存在: {file_path}")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in _DELPHI_EXTENSIONS:
+        return _wrap_error(f"不支持的文件类型: {ext}，仅支持 Delphi 源文件")
+
+    # 获取写入锁（读+写互斥），预览模式下用读锁
+    if preview:
+        lock_err = _acquire_read_lock(file_path)
+    else:
+        lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
+
+    try:
+        # 检测源编码
+        detected_enc = detect_encoding(file_path)
+        read_enc = detected_enc if from_encoding == "auto" else from_encoding
+
+        # 解析目标编码（支持 "ansi" 别名 → 系统 ANSI 代码页）
+        target_enc = to_encoding.lower()
+        if target_enc == "ansi":
+            try:
+                target_enc = locale.getpreferredencoding()
+            except Exception:
+                target_enc = "utf-8"
+        else:
+            target_enc = to_encoding
+
+        # 校验编码合法性
+        try:
+            codecs.lookup(read_enc)
+        except LookupError:
+            return _wrap_error(f"源编码 '{read_enc}' 不可识别")
+        try:
+            codecs.lookup(target_enc)
+        except LookupError:
+            return _wrap_error(f"目标编码 '{target_enc}' 不可识别")
+
+        # 预览模式
+        if preview:
+            read_size = os.path.getsize(file_path)
+            return {
+                "status": "success",
+                "message": (
+                    f"[preview] would convert: {os.path.basename(file_path)}\n"
+                    f"  from: {detected_enc} (检测) / {read_enc} (指定)\n"
+                    f"  to:   {target_enc}\n"
+                    f"  size: {read_size} bytes"
+                ),
+            }
+
+        # 读取文件内容
+        try:
+            with open(file_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
+                text = f.read()
+        except UnicodeDecodeError:
+            # 用户显式指定 from_encoding 解码失败时，自动回退到自动检测结果
+            if from_encoding != "auto":
+                logger.warning(
+                    f"用户指定编码 '{read_enc}' 解码失败，回退到自动检测 '{detected_enc}'"
+                )
+                try:
+                    with open(file_path, 'r', encoding=detected_enc, newline='', buffering=1048576) as f:
+                        text = f.read()
+                    read_enc = detected_enc
+                except UnicodeDecodeError:
+                    return _wrap_error(
+                        f"指定编码 '{from_encoding}' 与自动检测 '{detected_enc}' 均无法解码。"
+                        "请确认文件编码后显式指定正确的 from_encoding"
+                    )
+            else:
+                return _wrap_error(f"自动检测编码 '{detected_enc}' 解码失败。请尝试显式指定 from_encoding")
+        except Exception as e:
+            return _wrap_error(f"读取文件失败: {e}")
+
+        original_size = len(text.encode(read_enc, errors='replace'))
+        new_size = len(text.encode(target_enc, errors='replace'))
+
+        # BOM 处理：读入时剥离现有 BOM，由输出编码决定是否重新添加
+        text_stripped = text.lstrip('\ufeff')
+
+        # 校验：先用目标编码回读，确保转换可逆
+        try:
+            encoded_bytes = text_stripped.encode(target_enc, errors='strict')
+            decoded_back = encoded_bytes.decode(target_enc)
+            if decoded_back != text_stripped:
+                logger.warning(f"编码转换存在不可逆字符")
+        except (UnicodeEncodeError, UnicodeDecodeError) as e:
+            return _wrap_error(f"编码转换失败：目标编码 '{target_enc}' 无法表示文件中的某些字符: {e}")
+
+        # 创建备份
+        bak_path = None
+        if backup:
+            bak_path = create_backup(file_path)
+            if not bak_path:
+                return _wrap_error("创建备份失败，已取消转换")
+
+        # 写入新编码（使用已剥离 BOM 的文本，输出编码决定是否加 BOM）
+        temp_write_path = _make_temp_write_path(file_path)
+        try:
+            _write_text_temp(temp_write_path, text_stripped, target_enc)
+            _replace_with_temp(temp_write_path, file_path)
+        except UnicodeEncodeError:
+            if os.path.exists(temp_write_path):
+                try:
+                    os.remove(temp_write_path)
+                except OSError:
+                    pass
+            # 回退备份取消转换
+            if bak_path:
+                try:
+                    os.remove(bak_path)
+                except OSError:
+                    pass
+            return _wrap_error(f"写入编码 '{target_enc}' 失败：存在无法编码的字符")
+        except Exception as e:
+            if os.path.exists(temp_write_path):
+                try:
+                    os.remove(temp_write_path)
+                except OSError:
+                    pass
+            if bak_path:
+                try:
+                    os.remove(bak_path)
+                except OSError:
+                    pass
+            return _wrap_error(f"写入文件失败: {e}")
+        finally:
+            if os.path.exists(temp_write_path):
+                try:
+                    os.remove(temp_write_path)
+                except OSError:
+                    pass
+
+        # 标记脏（行号无变化但内容字节已变，防止 AI 基于旧内容继续操作）
+        _mark_dirty(file_path)
+
+        # 构造返回消息
+        is_bom = target_enc == "utf-8-sig" or "utf-16" in target_enc
+        parts = [
+            f"converted: {os.path.basename(file_path)}",
+            f"from: {read_enc} → to: {target_enc}",
+            f"size: {original_size} bytes → {new_size} bytes",
+        ]
+        if is_bom:
+            parts.append("BOM: yes")
+        if bak_path:
+            parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
+        if read_enc != detected_enc:
+            parts.append(f"note: detected encoding was {detected_enc}")
+
+        return {
+            "status": "success",
+            "message": ", ".join(parts),
+            "original_encoding": read_enc,
+            "new_encoding": target_enc,
+            "original_size": original_size,
+            "new_size": new_size,
+        }
+    finally:
+        if preview:
+            _release_read_lock(file_path)
+        else:
+            _release_write_lock(file_path)
 
 
 async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1400,35 +2165,52 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # 替换原 uses 子句
         new_text = text[:uses_start] + new_uses_clause + text[uses_end:]
 
-        # 备份
-        backup_path = None
-        backup = arguments.get("backup", True)
-        if backup:
-            backup_path = create_backup(file_path)
-
         # 写出（用 write_enc 编码，与读取编码可能不同 = 透明转码）
         encoding_fallback = False
+        backup_path = None
+        backup = arguments.get("backup", True)
+        temp_write_path = _make_temp_write_path(file_path)
         try:
-            with open(file_path, 'w', encoding=write_enc, newline='',
-                      buffering=1048576) as f:
-                f.write(new_text)
+            try:
+                _write_text_temp(temp_write_path, new_text, write_enc)
+            except UnicodeEncodeError:
+                logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
+                _write_text_temp(temp_write_path, new_text, "utf-8")
+                write_enc = "utf-8"
+                encoding_fallback = True
+
+            if backup:
+                backup_path = create_backup(file_path)
+                if not backup_path:
+                    return _wrap_error("创建备份失败，已取消写入")
+
+            _replace_with_temp(temp_write_path, file_path)
         except UnicodeEncodeError:
-            logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
-            with open(file_path, 'w', encoding="utf-8", newline='',
-                      buffering=1048576) as f:
-                f.write(new_text)
-            write_enc = "utf-8"
-            encoding_fallback = True
+            return _wrap_error("写入文件失败，已取消写入: 编码转换失败")
+        except Exception as ex:
+            return _wrap_error(f"写入文件失败，已取消写入: {ex}")
+        finally:
+            if os.path.exists(temp_write_path):
+                try:
+                    os.remove(temp_write_path)
+                except OSError:
+                    pass
 
         # 自动格式化
         fmt_msg = ""
+        fmt_warning = ""
         if arguments.get("auto_format", False):
             try:
-                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-                if fmt_result.get("formatted"):
+                formatted, write_enc, fmt_encoding_fallback, _ = await _apply_auto_format_atomically(
+                    file_path, write_enc, '\r\n' in text
+                )
+                if formatted:
                     fmt_msg = "，已格式化"
+                if fmt_encoding_fallback:
+                    encoding_fallback = True
             except Exception as ex:
                 logger.warning(f"uses 操作后格式化失败: {ex}")
+                fmt_warning = f"⚠ auto_format failed: {ex}"
 
         # 计算偏移量（uses 修改也会影响行号）
         s_0 = text[:uses_start].count('\n')          # 0-indexed: uses 关键字所在行
@@ -1454,6 +2236,8 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
             parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
         if fmt_msg:
             parts.append("formatted: yes")
+        if fmt_warning:
+            parts.append(fmt_warning)
         if encoding_fallback:
             parts.append(f"⚠ fallback: {detected_enc} → utf-8")
         if write_enc != detected_enc and not encoding_fallback:
@@ -1474,7 +2258,7 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_tool 主入口。
-    write 和 batch_write 已合并，batch_write 保留为别名。
+    write 使用 edits 数组处理单处或多处修改。
     """
     action = arguments.get("action", "read")
 
@@ -1482,13 +2266,19 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await handle_read(arguments)
     elif action == "write":
         return await handle_write(arguments)
-    elif action == "batch_write":
-        return await handle_batch_write(arguments)
+    elif action == "replace":
+        return await handle_replace(arguments)
+    elif action == "insert":
+        return await handle_insert(arguments)
+    elif action == "delete":
+        return await handle_delete(arguments)
     elif action == "format":
         return await handle_format(arguments)
     elif action == "backup":
         return await handle_backup(arguments)
+    elif action == "encode":
+        return await handle_encode(arguments)
     elif action == "uses":
         return await handle_uses(arguments)
     else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write(format=批量替换), format, backup, uses")
+        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses")

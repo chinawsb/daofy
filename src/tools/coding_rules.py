@@ -30,6 +30,7 @@ SECTION_KEYS: Dict[str, str] = {
     "human_collab": "⑧ 人机协同 — 异常诊断与人工介入",
     "experience": "⑨ 经验保存 — 将知识沉淀到经验知识库",
     "maintenance": "⑩ 规则维护",
+    "automation": "⚙ 自动化测试架构 — 感知·规划·执行·反馈循环",
     # ③ 写 Delphi 代码 内的子章节
     "delphi_file_write_rule": "delphi_file 写入规则",
     "delphi_file_dirty_flag": "连续编辑与脏标记保护（v2026.06.12+）",
@@ -165,7 +166,7 @@ def _list_available_sections(content: str) -> str:
     lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
     lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
     lines_out.append("                 delphi_file_usage_tips")
-    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance")
+    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation")
     lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
     lines_out.append("")
     lines_out.append("不传 section 则返回全部内容（向后兼容）。")
@@ -315,7 +316,8 @@ async def get_coding_rules(
              "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
              "| `section=\"human_collab\"` | ⑧ 人机协同 — 异常诊断与人工介入 | 异常诊断或需要人工介入时 |",
              "| `section=\"experience\"` | ⑨ 经验保存 — 知识沉淀到经验库 | 问题解决后保存经验时 |",
-             "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
+            "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
+             "| `section=\"automation\"` | ⚙ 自动化测试架构（含提示词模板F + 经验优化闭环G） | 执行自动化 UI 测试前，规划测试计划/恢复策略 |",
              "| `section=\"coding\"` | 组合：writing + format + compile | 完整编码流程 |",
              "| `section=\"delphi_file_write_rule\"` | delphi_file 写入规则（1-indexed/edits 参数） | 编辑 Delphi 文件需了解行号规则时 |",
              "",

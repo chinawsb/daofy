@@ -141,7 +141,6 @@ type
     function IsAsyncCmd(const Cmd: string): Boolean;
     function GetJSONStr(const J: TJSONObject; const K, Def: string): string;
     function WriteResp(const ReqId, Status, Data: string): string;
-    procedure WriteAsyncJSON(const ReqId: string; Obj: TJSONObject);
     procedure WriteJSON(Obj: TJSONObject);
 
     // ── RTTI 辅助（纯 RTL，框架无关）──
@@ -692,21 +691,6 @@ begin
   end;
 end;
 
-procedure TAutomationProcessorBase.WriteAsyncJSON(const ReqId: string;
-  Obj: TJSONObject);
-var F: string; Raw: TBytes; SS: TFileStream;
-begin
-  if FSSDir = '' then Exit;
-  F := FSSDir + '\_async_' + ReqId + '.json';
-  Raw := TEncoding.UTF8.GetBytes(Obj.ToJSON);
-  SS := TFileStream.Create(F, fmCreate);
-  try
-    SS.Write(Raw[0], Length(Raw));
-  finally
-    SS.Free;
-  end;
-end;
-
 procedure TAutomationProcessorBase.WriteJSON(Obj: TJSONObject);
 var F: string; Raw: TBytes; SS: TFileStream;
 begin
@@ -759,14 +743,14 @@ const
     'Action', 'Align', 'AlignWithMargins', 'Anchors',
     'BiDiMode', 'BorderSpacing', 'Brush', 'Canvas',
     'ClientHeight', 'ClientWidth', 'Color', 'Constraints',
-    'Cursor', 'CustomHint', 'Font', 'Handle', 'Height',
+    'Cursor', 'CustomHint', 'Font', 'Handle',
     'HelpContext', 'HelpKeyword', 'HelpType', 'Hint',
-    'ImeMode', 'ImeName', 'Left', 'Top', 'Width',
+    'ImeMode', 'ImeName',
     'Margins', 'Name', 'Owner', 'Padding', 'Parent',
     'ParentBackground', 'ParentBiDiMode', 'ParentColor',
     'ParentCtl3D', 'ParentCustomHint', 'ParentDoubleBuffered',
     'ParentFont', 'ParentShowHint', 'PopupMenu', 'ScrollBar',
-    'Showing', 'StyleElements', 'TabOrder', 'Tag', 'Touch',
+    'Showing', 'StyleElements', 'Tag', 'Touch',
     'WindowHandle', 'WindowProc',
     'OnActivate', 'OnClick', 'OnChange', 'OnClose', 'OnCreate',
     'OnDblClick', 'OnDeactivate', 'OnDestroy', 'OnEnter',

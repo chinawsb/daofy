@@ -1,446 +1,249 @@
 # Delphi File — Delphi 文件专用操作
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 最后更新：2026-06-18
 
----
+`delphi_file` 是 Daofy 中用于读写 Delphi 源文件和表单文件的专用工具。支持 `.pas`、`.dpr`、`.dpk`、`.dfm`、`.fmx`、`.inc`、`.dproj`，自动处理编码检测、`__history` 备份、DFM/FMX 二进制转换和同文件读写互斥。
 
-## 目录
-
-1. [概述](#1-概述)
-2. [Action 速查](#2-action-速查)
-3. [Read — 读取文件](#3-read--读取文件)
-4. [Write — 写入文件](#4-write--写入文件)
-5. [Batch Write — 批量写入](#5-batch-write--批量写入)
-6. [Format — 格式化](#6-format--格式化)
-7. [Backup — 备份管理](#7-backup--备份管理)
-8. [Uses — 单元引用管理](#8-uses--单元引用管理)
-9. [核心概念](#9-核心概念)
-10. [技术架构](#10-技术架构)
-11. [故障排除](#11-故障排除)
-
----
-
-## 1. 概述
-
-`delphi_file` 是 Daofy 中专用于操作 Delphi 源文件的工具，支持 `.pas`/`.dfm`/`.dproj`/`.dpk`/`.fmx`/`.inc` 格式。提供读、写、批量写入、格式化、备份管理和单元引用（uses）增删功能。
-
-**核心特性**：
-- 自动编码检测（UTF-8 / GBK / UTF-16）
-- 自动备份到 `__history` 目录（与 Delphi IDE 兼容）
-- DFM 二进制 ↔ 文本透明转换
-- 按类名/函数名搜索定位代码
-
-### 硬约束
-
-> ❌ 严禁使用原生 `read`/`write`/`edit`/`bash echo` 直接修改 `.pas`/`.dfm` 文件（会绕过备份 + 编码检测）
-
-### 标准工作流
-
-```
-get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(format) → project(compile)
-```
-
----
-
-## 2. Action 速查
+## Action 速查
 
 | Action | 用途 |
 |--------|------|
-| `read` | 读取文件，支持分段、按类名/函数名定位 |
-| `write` | 写入文件，支持全文替换或部分写入 |
-| `batch_write` | ⭐ 批量写入多处（推荐） |
-| `format` | 使用 pasfmt 格式化代码 |
-| `backup` | 备份管理（创建/列表/恢复） |
-| `uses` | 增删 uses 子句中的单元 |
+| `read` | 按路径读取，或按类名/函数名/record 定位后读取 |
+| `replace` | ⭐ 推荐替换，按行范围替换（需 `old_content` 校验） |
+| `insert` | ⭐ 推荐插入，按锚点行插入（需 `old_content` 校验） |
+| `delete` | ⭐ 推荐删除，按行范围删除（需 `old_content` 校验） |
+| `write` | 兼容写入接口，使用 `edits=[...]`（新调用优先用 `replace`/`insert`/`delete`） |
+| `format` | 使用 pasfmt 格式化 |
+| `backup` | 创建、列出、恢复 `__history` 备份 |
+| `uses` | 增删 uses 子句单元 |
 
----
+## 行号规则
 
-## 3. Read — 读取文件
+所有 `read`/`write`/`uses` 的行号参数和输出均为 **1-indexed inclusive**。
 
-### 3.1 读取模式
+| 示例 | 含义 |
+|------|------|
+| `start_line=1` | 从第 1 行开始 |
+| `start_line=5, end_line=10` | 第 5 到第 10 行，包含两端 |
+| `write` 不传 `end_line` | 从 `start_line` 替换到文件末尾 |
 
-| search_type | 说明 | 参数 |
-|------------|------|------|
-| `path`（默认） | 按文件路径分段读取 | `start_line`, `end_line`, `limit` |
-| `class` | 按类名/接口名/枚举名定位 | `type_name` / `class_name` |
-| `function` | 按函数/过程名定位 | `function_name` |
-| `record` | 按 record 类型名定位 | `record_name` |
-
-### 3.2 按路径读取
+## Read
 
 ```python
-# 读前 500 行
 delphi_file(action="read", file_path="Unit1.pas")
-
-# 分段读取（0-indexed [100, 300) 行）
-delphi_file(action="read", file_path="Unit1.pas", start_line=100, limit=200)
-
-# 显示行号
+delphi_file(action="read", file_path="Unit1.pas", start_line=5, end_line=15)
 delphi_file(action="read", file_path="Unit1.pas", show_line_numbers=True)
 ```
 
-### 3.3 按类名/函数名定位
+按类型搜索：
 
 ```python
-# 搜索类定义
-delphi_file(action="read", search_type="class", type_name="TForm1")
-
-# 搜索函数
+delphi_file(action="read", search_type="class", type_name="TButton")
 delphi_file(action="read", search_type="function", function_name="Create")
-
-# 搜索项目代码中的类
-delphi_file(action="read", search_type="class",
-    type_name="TfrmMain", search_in="project", project_path="Project.dproj")
+delphi_file(action="read", search_type="record", record_name="TPoint")
 ```
 
-### 3.4 输出格式
-
-`read` 输出紧凑格式示例：
-```
-# encoding: utf-8, 0-indexed [0, 200) (truncated)
-```
-
-- `encoding:` 文件编码
-- `0-indexed [s, e)` 本次返回的 0-indexed 左闭右开区间
-- `(truncated)` 文件被截断时标记
-
-### 3.5 参数说明
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `start_line` | 0 | 起始行号（0-indexed） |
-| `end_line` | — | 结束行号（不包含，左闭右开），不传则到文件末尾 |
-| `limit` | 500 | 最大返回行数（上限 1000） |
-| `show_line_numbers` | false | 是否显示行号前缀（0-indexed） |
-| `search_in` | all | 搜索范围：all/delphi/thirdparty |
-| `project_path` | — | 项目路径（搜索项目代码时使用） |
-
----
-
-## 4. Write — 写入文件
-
-### 4.1 全文替换
+项目源码搜索需要项目路径：
 
 ```python
-delphi_file(action="write", file_path="Unit1.pas", content="unit Unit1;\n...")
+delphi_file(
+    action="read",
+    search_type="class",
+    type_name="TMainForm",
+    search_in="project",
+    project_path="Project.dproj")
 ```
 
-`content` 必须包含完整的文件内容。如需预览（不实际写入），加 `preview=true`：
+`search_in` 可选值：`all`、`delphi`、`project`、`thirdparty`。`project` 必须提供 `project_path`。
+
+读取输出首行示例：
+
+```text
+# encoding: utf-8, 1-indexed [5, 15]
+```
+
+如果后续还要修改同一区间，可把读取到的原文放进 `edit.old_content`。写入前工具会用“行号 + 旧内容”一起校验命中的范围。
+
+## Structured Write
+
+推荐新调用使用 `replace` / `insert` / `delete`，都使用 `edits` 数组。
+
+替换行范围：
 
 ```python
-# 预览效果（返回文件大小变化），不写盘
-delphi_file(action="write", file_path="Unit1.pas", content="新内容", preview=true)
+delphi_file(
+    action="replace",
+    file_path="Unit1.pas",
+    edits=[{
+        "start_line": 5,
+        "end_line": 10,
+        "old_content": "  OldCall;\n",
+        "content": "  NewCall;\n"
+    }])
 ```
 
-### 4.2 部分写入
+按锚点插入，不需要在 `content` 中复制锚点行：
 
 ```python
-# 替换第 6~10 行（0-indexed [5, 10)）
-delphi_file(action="write",
-    file_path="src/Unit1.pas",
-    content="替换后的内容",
-    start_line=5,
-    end_line=10)
-
-# 预览 diff（显示 - / + 行，含行号），不写盘
-delphi_file(action="write",
-    file_path="src/Unit1.pas",
-    content="新内容",
-    start_line=5,
-    end_line=10,
-    preview=true)
+delphi_file(
+    action="insert",
+    file_path="Unit1.pas",
+    edits=[{
+        "start_line": 10,
+        "position": "before",
+        "old_content": "  OldCall;\n",
+        "content": "  NewCall;\n"
+    }])
 ```
 
-### 4.3 行号规则（⚠️ 易错）
-
-`start_line`/`end_line` 是 **0-indexed 左闭右开** 区间：
-
-| 参数 | 含义 |
-|------|------|
-| `start_line=0` | 从文件第 **1** 行开始 |
-| `start_line=5, end_line=10` | 替换第 **6~10** 行（`[5, 10)`） |
-| `start_line=4, end_line=5` | 只替换第 **5** 行（`[4, 5)`） |
-
-> **为什么不是 1-indexed？** 内部用 Python 切片 `lines[s:e]` 处理，Python 切片是 0-indexed。
-
-### 4.4 连续编辑的偏移量计算
-
-每次 `write` 返回偏移量信息：
-
-```
-wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
-```
-
-`[5, 10) → [5, 13)` 表示：原 5-10 行被替换为 5-13 行，**偏移量 = 13 - 10 = +3**。
-
-后续编辑需累加偏移：
-
-```
-设某次 write 返回: s=start_line, e=end_line, offset=净偏移
-则后续用原行号 L 计算新行号:
-  L < s  → 新行号 = L           (在编辑区域前，不变)
-  L ≥ e  → 新行号 = L + offset  (在编辑区域后，累加偏移)
-  s ≤ L < e → 该行已被替换/删除，不能再用作后续编辑目标
-```
-
-有多次 write 时，每次独立计算、依次累加。如果累计后不确定，重新 `read`。
-
-### 4.5 参数说明
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `content` | — | 写入内容（全文或部分替换） |
-| `start_line` | — | 起始行号（0-indexed，部分写入） |
-| `end_line` | — | 结束行号（不包含，左闭右开） |
-| `encoding` | auto | 写入编码：auto/utf-8/gbk/utf-16 |
-| `auto_format` | false | 写入后自动调用 pasfmt 格式化 |
-| `backup` | true | 写入前自动备份到 `__history` |
-| `preview` | false | 预览模式：只计算 diff 不写盘（不备份、不写入、不格式化） |
-
-**预览输出示例**：
-```
-wrote: Demo.pas (preview), 0-indexed [6, 8) → [6, 7), encoding: utf-8, preview: true（未写入磁盘）
-
-    - L6: procedure Foo;
-    - L7: begin
-    +   // new body
-```
-
----
-
-## 5. Batch Write — 批量写入
-
-> ⭐ **推荐使用**：所有对同一文件的多处修改应合并为一次 `batch_write`。edits 以原始文件为参照系，内部自动处理行号偏移，无需手动累加。
-
-### 5.1 基本用法
+删除行范围：
 
 ```python
-delphi_file(action="batch_write",
+delphi_file(
+    action="delete",
+    file_path="Unit1.pas",
+    edits=[{
+        "start_line": 10,
+        "end_line": 12,
+        "old_content": "  OldCall;\n  OtherCall;\n"
+    }])
+```
+
+`replace` / `insert` / `delete` 对现有文件要求每个 edit 都提供非空 `old_content`。`insert` 的 `old_content` 是锚点行原文，`position` 可为 `before` 或 `after`。
+
+## Write
+
+`write` 是兼容写入入口。新调用优先使用 `replace` / `insert` / `delete`。不要再使用旧的顶层 `content/start_line/end_line` 参数。
+
+全文替换：
+
+```python
+delphi_file(
+    action="write",
+    file_path="Unit1.pas",
+    edits=[{"start_line": 1, "content": "unit Unit1;\n\ninterface\n\nimplementation\n\nend.\n"}])
+```
+
+部分替换：
+
+```python
+delphi_file(
+    action="write",
+    file_path="Unit1.pas",
+    edits=[{"start_line": 5, "end_line": 10, "content": "  // new code\n"}])
+```
+
+多处修改应合并到一次 `write`：
+
+```python
+delphi_file(
+    action="write",
     file_path="Unit1.pas",
     edits=[
-        {"start_line": 5, "end_line": 10, "content": "新代码段1"},
-        {"start_line": 20, "end_line": 22, "content": "新代码段2"},
+        {"start_line": 5, "end_line": 7, "content": "  // first block\n"},
+        {"start_line": 18, "end_line": 21, "content": "  // second block\n"},
     ])
 ```
 
-### 5.2 edits 参数结构
+预览不写盘、不备份，也不清除脏标记：
 
-| 字段 | 必需 | 说明 |
+```python
+delphi_file(
+    action="write",
+    file_path="Unit1.pas",
+    edits=[{"start_line": 5, "end_line": 10, "content": "  // new code\n"}],
+    preview=True)
+```
+
+常用参数：
+
+| 参数 | 默认 | 说明 |
 |------|------|------|
-| `start_line` | ✅ | 起始行号（0-indexed inclusive） |
-| `end_line` | ❌ | 结束行号（0-indexed exclusive），不传则到文件末尾 |
-| `content` | ✅ | 替换内容（空串=删除行） |
-| `description` | ❌ | 文字描述，仅用于返回消息标记 |
+| `backup` | `True` | 写入前备份到 `__history` |
+| `encoding` | `auto` | 保持原编码；可显式指定 `utf-8`/`gbk`/`utf-16` |
+| `auto_format` | `False` | 写入后自动 pasfmt |
+| `preview` | `False` | 仅计算 diff，不写盘，不清除脏标记 |
+| `force` | `False` | 跳过连续重复行检测 |
+| `old_content` | 空 | 写在每个 edit 内，表示将被替换区间的非空旧内容 |
+| `allow_dirty` | `False` | 跳过脏标记检查，需确认行号准确 |
+| `project_path` | 空 | 限制 `file_path` 必须位于项目目录内 |
 
-### 5.3 使用建议
+带 `old_content` 的后续写入：
 
-| 场景 | 推荐 |
+```python
+delphi_file(
+    action="write",
+    file_path="Unit1.pas",
+    edits=[{
+        "start_line": 5,
+        "end_line": 10,
+        "old_content": "  OldCall;\n",
+        "content": "  // new code\n"
+    }])
+```
+
+当每个 edit 都提供非空 `old_content`，且都与当前命中的行范围匹配时，即使文件处于脏标记状态，工具也允许继续写入。不匹配时返回冲突范围附近的小片段且不写盘。比较时会移除换行和字符串外空白，但保留字符串字面量内部空白，因此格式化造成的缩进差异不会误阻断，字符串语义变化仍会阻断。
+
+替换输出示例：
+
+```text
+wrote: 1 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
+
+  [5, 10] -> [5, 8] (offset: -2)  edit #0
+```
+
+删除输出示例：
+
+```text
+wrote: 1 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
+
+  [5, 10] -> deleted before line 5 (offset: -6)  edit #0
+```
+
+## 脏标记
+
+`write`、`format`、`uses` 成功后会把文件标记为脏。再次写入同一文件前需要：
+
+- 先 `delphi_file(action="read", file_path=...)` 重新获取行号；
+- 或在每个 edit 内提供非空 `old_content`，由工具校验行号命中的旧内容；
+- 或使用 `preview=True` 预览 diff 后重新 `read` / 携带 `old_content`；
+- 或在确认行号无误时设置 `allow_dirty=True`。
+
+## Format
+
+```python
+delphi_file(action="format", file_path="Unit1.pas")
+delphi_file(action="format", mode="check", file_path="Unit1.pas")
+delphi_file(action="format", mode="code", code="procedure Test; begin end;")
+```
+
+## Backup
+
+```python
+delphi_file(action="backup", file_path="Unit1.pas")
+delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")
+delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)
+```
+
+## Uses
+
+```python
+delphi_file(
+    action="uses",
+    file_path="Unit1.pas",
+    uses_action="add",
+    unit_name="System.SysUtils",
+    uses_section="interface")
+```
+
+`uses` 支持 `add` / `remove`，成功后同样会标记文件脏。
+
+## 故障排除
+
+| 现象 | 处理 |
 |------|------|
-| 同一文件 N 处修改（任意数量） | `read` → `batch_write`（首选） |
-| 改 1 个完整方法/过程 | `write` + 完整 content（也可用 `batch_write` 单 edit） |
-| 涉及 uses 变更 | `uses` action |
-
-### 5.4 注意事项
-
-- edits 顺序不限，内部自动排序
-- 相邻 edit 区间不能重叠（自动检测并拒绝）
-- content 应包含替换区间 `[start_line, end_line)` 的**完整**新内容；不要包含区间外已存在的行，否则实际写入后可能重复
-- `force=true` 可跳过结果中连续重复行的检测（确认无误时使用）
-- `preview=true` 可以预览 diff 效果而不实际写入：
-
-```python
-# 预览批量修改效果，不写盘
-delphi_file(action="batch_write",
-    file_path="Unit1.pas",
-    edits=[
-        {"start_line": 5, "end_line": 10, "content": "新代码段1"},
-        {"start_line": 20, "end_line": 22, "content": "新代码段2"},
-    ],
-    preview=true)
-```
-
-**预览输出示例**：
-```
-batch_preview: 2 edits, Demo.pas, encoding: utf-8, preview: true（未写入磁盘）
-
-  [2, 3) → [2, 4)  add uses
-    - L2: interface
-    + uses
-    +   SysUtils;
-  [6, 8) → [6, 7)  update
-    - L6: procedure Foo;
-    - L7: begin
-    +   // new
-```
-
----
-
-## 6. Format — 格式化
-
-使用 **pasfmt** 工具格式化 Delphi 代码。
-
-```python
-# 格式化文件
-delphi_file(action="format", file_path="src/Unit1.pas")
-
-# 格式化代码段
-delphi_file(action="format", mode="code",
-    code="procedure Test; begin end;")
-
-# 仅检查格式，不修改
-delphi_file(action="format", file_path="Unit1.pas", dry_run=True)
-
-# 控制 uses 子句风格
-delphi_file(action="format",
-    file_path="Unit1.pas",
-    uses_style="compact")  # compact=合并为一行 / pasfmt_default=每行一个
-```
-
-**参数说明**：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `mode` | file | file=格式化文件, code=格式化代码段, check=仅检查 |
-| `code` | — | 待格式化的代码文本（mode=code 时使用） |
-| `config_path` | — | pasfmt 配置文件路径（高级用法） |
-| `uses_style` | — | uses 子句风格：compact/pasfmt_default |
-| `dry_run` | false | true=仅检查不修改 |
-
----
-
-## 7. Backup — 备份管理
-
-自动备份到文件所在目录的 `__history` 子目录，命名格式 `文件名.~版本号~`（与 Delphi IDE 兼容）。二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原。
-
-```python
-# 手动创建备份
-delphi_file(action="backup", file_path="src/Unit1.pas")
-
-# 列出所有备份版本
-delphi_file(action="backup", backup_action="list", file_path="src/Unit1.pas")
-
-# 恢复指定版本
-delphi_file(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)
-
-# 恢复最新版本
-delphi_file(action="backup", backup_action="restore", file_path="src/Unit1.pas")
-```
-
-> `action="write"` 默认 `backup=True`，写入前自动备份，通常情况下无需手动调用 `backup`。
-
----
-
-## 8. Uses — 单元引用管理
-
-增删 `uses` 子句中的单元，自动处理行号和偏移量。
-
-```python
-# 添加单元到 interface uses
-delphi_file(action="uses", uses_action="add",
-    unit_name="System.SysUtils", file_path="Unit1.pas")
-
-# 添加到 implementation uses
-delphi_file(action="uses", uses_action="add",
-    unit_name="Vcl.Dialogs", file_path="Unit1.pas",
-    uses_section="implementation")
-
-# 删除单元
-delphi_file(action="uses", uses_action="remove",
-    unit_name="System.SysUtils", file_path="Unit1.pas")
-```
-
-**参数说明**：
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `uses_action` | — | add=添加, remove=删除 |
-| `unit_name` | — | 单元名，如 Vcl.Dialogs、System.SysUtils |
-| `uses_section` | interface | interface/implementation |
-
----
-
-## 9. 核心概念
-
-### 9.1 编码处理
-
-| 编码 | 检测方式 | 说明 |
-|------|---------|------|
-| UTF-8 | 无 BOM 时尝试 UTF-8 解码 | 含中文时推荐 `utf-8-sig`（BOM） |
-| UTF-16 LE/BE | BOM 检测 | 保留 BOM 不删除 |
-| GBK | UTF-8 失败后自动回退 | 中文 Windows 上常见 |
-
-**新建文件含中文**：推荐用 `encoding="utf-8-sig"`（UTF-8 with BOM），避免编译器将中文字符串视为 AnsiString 触发 `W1057` 警告。
-
-### 9.2 DFM 二进制 ↔ 文本转换
-
-- `read` 时自动检测 DFM 编码，二进制 DFM 自动转换为文本
-- `write` 时透明转换回二进制（如需）
-- 备份始终为原始格式，恢复时 100% 还原
-
-### 9.3 紧凑输出格式
-
-```
-# 读文件
-encoding: utf-8, 0-indexed [0, 200) (truncated)
-
-# 写文件（全文替换）
-wrote: Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
-
-# 写文件（部分替换）
-wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
-
-# batch_write
-batch_wrote: 2 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
-  [5, 10) → [5, 13)  edit #0
-    - L5_old
-    + L5_new
-```
-
----
-
-## 10. 技术架构
-
-```
-AI Agent
-    │
-    ▼
-delphi_file(action="read"|"write"|"format"|...)
-    │
-    ▼
-┌─────────────────────────────────────────────┐
-│           src/tools/file_tool.py              │
-│  action 分派 + 编码检测 + 备份 + DFM 转换     │
-└──────┬──────────┬──────────┬─────────────────┘
-       │          │          │
-       ▼          ▼          ▼
-┌──────────┐ ┌──────────┐ ┌──────────┐
-│  编码    │ │  备份    │ │  DFM     │
-│  检测    │ │  管理    │ │  转换    │
-├──────────┤ ├──────────┤ ├──────────┤
-│· UTF-8   │ │· __history│ │· 二进制→│
-│· UTF-16  │ │· 版本号   │ │  文本   │
-│· GBK     │ │· 恢复    │ │· 文本→  │
-│· BOM保留 │ │          │ │  二进制 │
-└──────────┘ └──────────┘ └──────────┘
-       │
-       ▼
-┌──────────────────────┐
-│   pasfmt (格式化器)   │
-│  · 缩进/空格/换行     │
-│  · uses 风格控制     │
-│  · 泛型/运算符格式   │
-└──────────────────────┘
-```
-
----
-
-## 11. 故障排除
-
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| 写入后中文乱码 | 编码不对 | 指定 `encoding="gbk"` 或 `encoding="utf-8-sig"` |
-| 部分替换到错误位置 | 行号偏移未累加 | `read` 文件重新确认行号 |
-| `batch_write` 提示重复行 | AI 偏移量误算 | 传 `force=true` 跳过检查 |
-| `format` 提示 pasfmt 未安装 | 格式化工具缺失 | `check_environment(action="install")` 安装 |
-| 备份恢复后文件不对 | 选错版本号 | `backup_action="list"` 列出所有版本确认 |
-| 读取 DFM 报错 | 二进制 DFM 损坏 | 用 `delphi_file` 自动转换 |
+| `请提供 edits 参数` | 使用 `write(edits=[...])`，不要传旧的顶层 `content` |
+| `上次写入后行号可能已变化` | 先重新 `read`，或为每个 edit 提供 `old_content`，确认无误才 `allow_dirty=True` |
+| `search_in='project' 需要提供 project_path` | 传入 `.dproj/.dpr/.dpk` 路径 |
+| `路径不在项目目录内` | `project_path` 启用了路径限制，改用项目目录内文件 |
+| 二进制 DFM 转换失败 | 检查 Delphi 编译器/dcc32 是否可用 |

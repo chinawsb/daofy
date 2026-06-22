@@ -346,17 +346,17 @@ class ThirdPartyKnowledgeBase:
         # 展开环境变量并过滤
         thirdparty_paths = []
         for path in unique_paths:
-            # 跳过 Delphi 系统路径
-            if self._is_delphi_system_path(path):
-                logger.debug(f"跳过 Delphi 系统路径: {path}")
-                continue
-
-            # 展开环境变量（使用 delphi_env 工具，支持更多宏）
+            # 先展开环境变量，再用展开后的路径判断是否系统路径
             try:
                 expanded_path = expand_delphi_path_macros(path, version=version_key)
             except Exception:
                 # 回退到原有的展开方法
                 expanded_path = self._expand_path_variables(path, env_vars)
+
+            # 跳过 Delphi 系统路径（展开后判断，避免 $(BDS) 宏误杀所有路径）
+            if self._is_delphi_system_path(expanded_path):
+                logger.debug(f"跳过 Delphi 系统路径: {expanded_path}")
+                continue
 
             # 检查路径是否存在
             path_obj = Path(expanded_path)

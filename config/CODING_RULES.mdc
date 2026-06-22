@@ -28,6 +28,1292 @@
 
 ---
 
+## ⚙ 自动化测试架构 — 感知·规划·执行·反馈循环
+
+### 核心理念
+
+```
+大模型（脑）:  感知 → 规划 → 执行指令 → 分析反馈 → 调整策略
+                   ↕           ↕
+MCP 服务器（手脚）:  提供工具感知 UI 状态 + 执行 UI 操作
+```
+
+大模型负责**决策和规划**，MCP 工具负责**感知和执行**。二者形成闭环。
+
+---
+
+### A0. RTTI 与 OCR 决策矩阵 — 功能性验证 vs 视觉完整性验证
+
+```
+RTTI = 功能性验证（数据是否正确？）   ⭐ 精确、微秒级
+OCR  = 视觉完整性验证（显示是否正确？） △ 百毫秒级，反映用户真实所见
+capture = 证据留存                          ★ 截图，人工可回溯
+```
+
+两者互补，不是替代。一个完整的自动化测试应该**交替使用** RTTI 和 OCR：
+- 操作前/后用 `rget` 确认数据状态（快、准）
+- 关键节点用 `capture + OCR` 截屏验证视觉完整性（确保看到的就是要呈现的）
+
+> ⚠ 当前版本 OCR（PP-OCRv6）仅支持**文字识别**，不支持颜色/字体/格式检测。
+> 以下「△ OCR」均指识别截图中**可见的文本内容**及其位置，不含样式分析。
+
+| 场景 | 推荐工具 | 原因 |
+|------|---------|------|
+| 读取 Edit 的输入值 | ⭐ `rget(Text)` | 精确、微秒级，不依赖渲染 |
+| 按钮是否可用 | ⭐ `rget(Enabled)` | 直接读属性值，100% 准确 |
+| 标签/按钮的标题 | ⭐ `rget(Caption)` | 精确，不受字体/分辨率影响 |
+| **文本被截断/省略号** | ⭐ `rget` + △ `OCR` | **RTTI 读完整值 → OCR 确认视觉截断** |
+| **HDPI/缩放测试** | △ `capture` + `OCR` | **RTTI 不知道渲染后控件文字是否错位/截断/重叠** |
+| **Placeholder 水印文字** | △ `OCR` | RTTI 返回空 Text，OCR 看到提示文字 |
+| **文字换行/折行位置** | △ `OCR` | RTTI 不知道视觉换行结果 |
+| 错误弹窗内容 | ★ `msgscan` | 精确获取弹窗标题+文本 |
+| **Grid/List/Tree 单元格** | △ `OCR` | RTTI 知道 Items/DataSource，但不知道每格显示值、截断、对齐 |
+| **WebView/浏览器内容** | △ `OCR` | RTTI 完全看不见 HTML 渲染结果 |
+| **Tooltip 提示** | △ `OCR` | RTTI 只能读 Hint 字面值，不知道实际弹出位置/内容 |
+| **国际化/本地化验证** | △ `OCR` | RTTI 读不到翻译后文字是否被截断、CJK 是否显示为方框 □ |
+| **报表/打印预览** | △ `OCR` | RTTI 看不到报表引擎的渲染输出 |
+| **动画/过渡状态** | △ `capture` + `OCR` | RTTI 不知道视觉动画进度，OCR 可检测文本是否已变化 |
+| **多显示器布局** | △ `capture` + `OCR` | RTTI 不知道窗口在哪个显示器、是否正确跨屏 |
+| **自定义绘制（Grid/Chart）** | △ `OCR` | 仅提取其中的文字标注，不含图表本身 |
+| **第三方控件（ActiveX/PDF/Map）** | △ `OCR` | 非 Delphi 控件，无 RTTI；仅提取可见文字 |
+| 整体 UI 快照 | ★ `capture` | 截图留存，人工可回溯 |
+| UI 结构分析 | ⭐ `dumpstate` / `formsum` | 精确的控件树 + 属性 |
+
+**决策树**（⚠ OCR 仅识别可见文本，不支持颜色/字体/图标分析）:
+```
+验证目标是什么？
+  ├─ 功能性验证（数据/状态是否正确？）
+  │   ├─ 该值/状态通过 published 属性暴露？
+  │   │   ├─ 是 → ⭐ rget（精确、微秒级）
+  │   │   └─ 否 → △ OCR（仅文本内容）
+  │   └─ 弹窗内容？ → ★ msgscan
+  │
+  ├─ 视觉完整性验证（用户看到文字是否正确？）
+  │   ├─ 文本截断/省略/换行 → ⭐ rget + △ OCR 双重验证
+  │   ├─ HDPI/缩放测试 → △ capture + OCR（不同 DPI 下截图对比）
+  │   ├─ 布局错位/控件重叠 → △ capture + OCR
+  │   └─ CJK 显示异常（方框 □） → △ OCR
+  │
+  ├─ 复杂控件内容（RTTI 够不到的显示层文本）
+  │   ├─ Grid/List/Tree 单元格值 → △ OCR
+  │   ├─ WebView/浏览器渲染 → △ OCR
+  │   ├─ 报表/打印预览 → △ OCR
+  │   ├─ Tooltip 弹出内容 → △ OCR
+  │   ├─ ActiveX/PDF/Map → △ OCR
+  │   └─ 自定义绘制（Chart）文字标注 → △ OCR
+  │
+  ├─ 运行时文字变化
+  │   ├─ 动画/进度文本 → △ capture + OCR
+  │   ├─ Placeholder/水印 → △ OCR
+  │   └─ 国际化翻译后文字截断 → ⭐ rget + △ OCR
+  │
+  └─ 证据留存 → ★ capture
+```
+
+**典型 HDPI 测试流程**:
+```
+1. 在 100% 缩放下 capture 基线截图
+2. 切换到 150% / 200% 缩放
+3. 同样的操作后 capture + OCR
+4. 对比基线：文字是否截断？按钮文案是否完整？布局是否完整？
+5. RTTI 辅助：rget Left/Top/Width/Height 确认控件尺寸正确缩放
+```
+
+---
+
+### A. 工具分类
+
+#### 感知工具（Perception）— 获取 UI 当前状态
+
+| 优先级 | MCP 工具/命令 | 作用 | 典型场景 |
+|--------|---------------|------|---------|
+| ⭐ | `automate_delphi cmd="rget"` | RTTI 读取控件属性值 | 精确读取 Text/Caption/Enabled/TabOrder 等（微秒级） |
+| ⭐ | `automate_delphi cmd="rinspect"` | RTTI 成员发现：列出控件的所有属性名+类型、方法 | 了解控件 RTTI 结构（非属性值） |
+| ⭐ | `automate_delphi cmd="dumpstate"` | 导出完整控件树（含属性） | 了解 UI 结构、定位控件路径 |
+| ⭐ | `automate_delphi cmd="formsum"` | 窗体摘要（dumpstate 的紧凑版） | 快速了解当前窗体关键控件和状态 |
+| ★ | `automate_delphi cmd="msgscan"` | 扫描 MessageBox | 每步执行后必做：检测弹窗 |
+| ★ | `automate_delphi cmd="listwnd"` | 枚举所有顶层窗口 | 弹出新窗口时获取句柄 |
+| ★ | `automate_delphi cmd="dlgscan"` | 扫描文件对话框 | 文件保存/打开对话 |
+| ★ | `automate_delphi cmd="capture"` | 截取窗口截图 | 开局快照、操作后视觉留存 |
+| ☆ | `delphi_rtti action="discover"` | 扫描 RTTI 暴露的方法 | 了解应用运行时能力 |
+| △ | `ocr action="recognize"` | 文字识别（兜底方案） | RTTI 不可用时从截图提取文本 |
+
+#### 执行工具（Execution）— 对 UI 进行操作
+
+| 优先级 | MCP 工具/命令 | 作用 | 异步？ | 说明 |
+|--------|---------------|------|--------|------|
+| ⭐ | `automate_delphi cmd="rcall"` | RTTI 调用方法 | ✅ | 直接执行业务逻辑（首选） |
+| ⭐ | `automate_delphi cmd="rset"` | RTTI 设置属性 | ✅ | 直接修改运行态属性 |
+| ⭐ | `delphi_rtti action="call"` | RTTI 桥接调用 | 否 | 无需 UI 的业务调用 |
+| ★ | `automate_delphi cmd="goto"` | 导航到目标控件 | 否 | 先定位再操作 |
+| ★ | `automate_delphi cmd="click"` | 单击 | ✅ | 按钮、菜单项 |
+| ★ | `automate_delphi cmd="rclick"` | 右键单击 | ✅ | 上下文菜单 |
+| ★ | `automate_delphi cmd="dblclick"` | 双击 | ✅ | 编辑、打开 |
+| ★ | `automate_delphi cmd="type"` | 输入文本 | ✅ | Edit、Memo |
+| ★ | `automate_delphi cmd="key"` | 按键 | ✅ | Tab/Enter/Esc |
+| ★ | `automate_delphi cmd="hover"` | 悬停 | ✅ | Tooltip 触发 |
+| ★ | `automate_delphi cmd="move"` | 移动鼠标 | ✅ | 精确坐标 |
+| ★ | `automate_delphi cmd="drag"` | 拖拽 | ✅ | DnD |
+| ★ | `automate_delphi cmd="msgclick"` | 点 MessageBox 按钮 | ✅ | 确认/取消弹窗 |
+| ★ | `automate_delphi cmd="dlgclick"` | 点文件对话框按钮 | ✅ | 文件打开/保存 |
+| ★ | `automate_delphi cmd="dlgfile"` | 文件对话框输入路径 | 否 | 文件选择 |
+
+#### 验证工具（Verification）— 确认结果是否符合预期
+
+| 优先级 | MCP 工具/命令 | 作用 |
+|--------|---------------|------|
+| ⭐ | `automate_delphi cmd="rget"` | 验证控件属性值（精确、首选） |
+| ☆ | `automate_delphi cmd="rinspect"` | 检查控件 RTTI 结构（属性名/类型/方法） |
+| ★ | `automate_delphi cmd="waitfor"` | 等待条件满足（控件可见/消失） |
+| ★ | `automate_delphi cmd="wait"` | 固定时间等待（ms） |
+| ★ | `automate_delphi cmd="capture"` | 操作后截图对比（视觉留存） |
+| △ | `ocr action="recognize"` | 验证屏幕上文字（兜底） |
+
+---
+
+### B. 感知-规划-执行-反馈循环
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  ① 感知                                                         │
+│     ├─ dumpstate/formsum 获取控件树+属性（⭐首选 RTTI）        │
+│     ├─ msgscan 检查是否有弹窗（★每步必做）                     │
+│     ├─ listwnd 确认窗口列表                                     │
+│     ├─ capture 截取当前 UI 快照（★视觉留存）                   │
+│     └─ ocr 识别屏幕上文字（△仅当 RTTI 不可用时）               │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ② 规划                                                         │
+│     ├─ 分析当前状态 → 对比预期状态 → 确定差距                   │
+│     ├─ 查经验库 (experience/search) 获取同类场景处理方式          │
+│     ├─ 确定下一步动作（什么工具 + 什么参数 + 期望结果）          │
+│     └─ 设置超时和失败处理策略                                    │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ③ 执行                                                         │
+│     ├─ goto 定位目标控件                                         │
+│     ├─ click/type/key 执行操作                                   │
+│     ├─ msgclick/dlgclick 处理弹窗                                │
+│     ├─ rcall/rset RTTI 直接调用                                  │
+│     └─ wait/waitfor 等待操作生效                                 │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ④ 反馈                                                         │
+│     ├─ capture 截图 → ocr 提取文字 → 对比预期                    │
+│     ├─ waitfor 等待预期状态                                     │
+│     ├─ rget 检查控件属性值                                   │
+│     │                                                            │
+│     ├─ 一致？ → 进入下一轮 ① 感知，或标记完成                    │
+│     └─ 不一致？ → 分析差异原因 → 回到 ② 规划调整策略             │
+│             ├─ 重试（操作没生效？网络慢？）                       │
+│             ├─ 绕过（用 RTTI 替代 GUI 操作）                     │
+│             └─ 上报（确定性失败）                                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**关键规则**：
+1. **先感知，后规划** — 每步执行前 capture/dumpstate，不假设 UI 状态
+2. **一步一验证** — 每步执行后验证结果，失败即停，不继续后续操作
+3. **弹窗优先** — 执行操作后立即 msgscan，弹窗是自动化最大干扰源
+4. **合理超时** — 所有 `waitfor` 设超时（默认 10s），超时后 capture 当前状态分析
+
+---
+
+### C. 规划方法论
+
+大模型在规划自动化操作时，应遵循以下原则：
+
+#### 1. 分层降级策略
+
+全流程（感知 → 执行 → 验证）各有优先级：
+
+**感知优先级** — 获取信息越精确、越快越好：
+```
+首选: RTTI 直接读取（最稳定、最准确）
+    ├─ rget(TControl, "Text") — 读单个属性值（⭐首选）
+    ├─ rinspect(TControl) — 查看属性名列表+类型（结构发现）
+    └─ dumpstate/formsum — 批量获取控件结构+属性
+    → 微秒级响应，100% 精确，不受 UI 渲染影响
+    → 适合：所有通过 published 属性暴露的信息
+
+次选: 结构化 UI 扫描
+    ├─ msgscan — 检测弹窗
+    ├─ listwnd — 枚举窗口
+    └─ dlgscan — 文件对话框
+    → 毫秒级，针对特定 UI 元素精确检测
+
+末选: 视觉识别（兜底）
+    ├─ capture — 截图留存
+    └─ ocr — 从截图提取文字
+    → 百毫秒级，精度受字体/分辨率/背景影响
+    → 仅当：RTTI 无法获取（自定义绘图、跨平台控件、图形）
+```
+
+**执行优先级** — 操作越直接越稳定：
+```
+首选: RTTI 直接调用（最稳定）
+    ├─ delphi_rtti(action="call") — 跨进程 RTTI 桥接
+    └─ automate_delphi cmd="rcall" — 同进程命名管道
+    → 优点: 不依赖 UI 渲染，不受分辨率/主题影响
+    → 缺点: 需要 Delphi 端暴露 RTTI
+
+次选（最常用）: 控件级操作
+    ├─ goto("TEdit1") + type("hello")
+    └─ goto("TButton1") + click()
+    → 优点: 模拟真实用户操作，兼容性好
+    → 缺点: 依赖控件名称和状态
+
+末选（兼容模式）: 坐标级操作
+    ├─ move(x,y) + click()
+    └─ 需要先 capture 分析坐标
+    → 优点: 无控件依赖
+    → 缺点: 分辨率/DPI 敏感，维护成本高
+```
+
+**验证优先级** — 确认结果首选精确属性检查：
+```
+首选: RTTI 属性验证（最精确）
+    ├─ rget(TControl, "Text") — 检查属性值（⭐首选）
+    ├─ rget(TControl, "Enabled") — 检查状态
+    └─ rinspect(TControl) — 查看可用属性列表（辅助）
+    → 精确到字段值，无需图像处理
+
+次选: 结构化等待
+    ├─ waitfor(TControl, 5000) — 等待 UI 状态
+    └─ wait(ms) — 固定时间等待
+
+末选: 视觉验证（兜底）
+    ├─ capture + ocr — 从截图验证文字
+    └─ 人工检查（仅当自动化无法确定时）
+    → 仅当：验证对象不是 RTTI 暴露的属性
+```
+
+#### 2. 动作序列规划模式
+
+每个步骤明确标注阶段（感知/执行/验证）、工具、目标、期望结果、失败处理：
+
+```json
+{
+  "steps": [
+    {
+      "phase": "perceive",
+      "tool": "capture | dumpstate | msgscan | ocr",
+      "target": "感知对象",
+      "expected": "感知到的预期内容",
+      "on_timeout": "超时处理策略"
+    },
+    {
+      "phase": "execute",
+      "tool": "goto+click | type | rcall | ...",
+      "target": "操作目标",
+      "params": "操作参数",
+      "expected": "操作后的预期结果",
+      "on_failure": "失败处理策略"
+    },
+    {
+      "phase": "verify",
+      "tool": "capture | waitfor | rget",
+      "target": "验证对象",
+      "expected": "验证标准",
+      "on_mismatch": "不匹配处理策略"
+    }
+  ]
+}
+```
+
+#### 3. 失败处理模式
+
+| 失败信号 | 可能原因 | 恢复动作 |
+|----------|---------|---------|
+| `waitfor` 超时 | 控件未出现或操作未生效 | capture 当前状态 → 分析 → 重试或上报 |
+| click 返回 error | 控件被遮挡/Disabled | dumpstate 查 Enabled/Visible → 降级 RTTI 或上报 |
+| 意外弹窗 | 业务逻辑异常/确认提示 | msgscan → msgclick(OK/Cancel) → capture 新状态 |
+| OCR 结果与预期不符 | OCR 精度不够 / 值实际不同 | 先用 `rget` 读属性精确值确认 → 确实不同则更新预期 → 相同则弃用 OCR 改用 RTTI |
+| RTTI 调用异常 | 对象不存在/方法签名变化 | 降级到 goto+click 操作 |
+
+---
+
+### D. 端到端测试编排 — 完整工作流参考
+
+以下展示一个完整的测试会话，从角色注入到代码分析到执行到收尾，覆盖全部新增能力。
+
+#### D1. 完整会话流程
+
+```
+┌─ 阶段 0: 角色注入 ──────────────────────────────────┐
+│  MCP prompt: automate-expert-primer                  │
+│  → "你是 Delphi UI 自动化测试专家"                    │
+│  → 加载三层递进思考模型                               │
+└──────────────────────────────────────────────────────┘
+                          ↓
+┌─ 阶段 1: 代码分析 ────────────────────────────────────┐
+│  MCP prompt: automate-code-analysis                   │
+│  → 读 DFM + PAS → 控件映射表 → 事件分析               │
+│  → 推导测试路径（见 §H）                              │
+└──────────────────────────────────────────────────────┘
+                          ↓
+┌─ 阶段 2: 检索经验 ────────────────────────────────────┐
+│  experience(search, query="新建客户 成功路径", top_k=3) │
+│  → 检查 tests/scripts/ 是否有缓存（见 §I）            │
+└──────────────────────────────────────────────────────┘
+                          ↓
+┌─ 阶段 3: 感知-执行-验证循环 ──────────────────────────┐
+│  每步严格按 formsum/dumpstate → rget → capture + OCR 交替 │
+│  ⭐ 先 RTTI，△ OCR 兜底                               │
+└──────────────────────────────────────────────────────┘
+                          ↓
+┌─ 阶段 4: 收尾 ────────────────────────────────────────┐
+│  MCP prompt: automate-session-end                     │
+│  → 保存经验到 experience KB                           │
+│  → 导出脚本到 tests/scripts/{name}.json               │
+│  → 角色切回 Delphi 开发专家                            │
+└──────────────────────────────────────────────────────┘
+```
+
+#### D2. 完整交互示例（"新建客户-成功路径"）
+
+```python
+# ═══════════════════════════════════════════════════════
+# 阶段 0：角色注入
+# ═══════════════════════════════════════════════════════
+# 调用 prompts/get automate-expert-primer
+# 参数: app_name="CustomerApp.exe"
+
+# ═══════════════════════════════════════════════════════
+# 阶段 1：代码感知分析
+# ═══════════════════════════════════════════════════════
+# 调用 prompts/get automate-code-analysis
+# 参数: form_name="TNewCustomerForm", project_path="C:/App"
+
+# 实际操作：
+# ① 定位目标单元
+delphi_kb(query="TNewCustomerForm", search_type="class",
+          kb_type="project", project_path="C:/App")
+
+# ② 读 DFM 获取控件结构
+# ③ 读 PAS 分析事件处理程序
+delphi_file(action="read", search_type="class",
+            type_name="TNewCustomerForm", search_in="project",
+            project_path="C:/App")
+
+# ④ 输出代码分析报告：
+#    btnSaveClick → 验证→保存→关闭
+#    btnCancelClick → 直接关闭
+#    推导路径：成功路径 / 名称为空 / 年龄无效 / 取消操作
+
+# ═══════════════════════════════════════════════════════
+# 阶段 2：检索经验 + 检查缓存
+# ═══════════════════════════════════════════════════════
+experience(action="search", query="新建客户 成功路径", top_k=3)
+
+# 检查 tests/scripts/ 下是否有缓存脚本
+delphi_file(action="read", file_path="tests/scripts/")
+
+# → 命中缓存 → 加载并验证 hash → 直接跳阶段 3 执行
+# → 未命中 → 执行后续规划
+
+# ═══════════════════════════════════════════════════════
+# 阶段 3：感知-执行-验证循环
+# ═══════════════════════════════════════════════════════
+
+# ── 步骤 1: 感知初始状态 ──
+listwnd                                 # 确认窗口列表
+formsum                                 # ⭐ 窗体摘要（紧凑 JSON）
+rget(target="edtName.Text")             # ⭐ RTTI 读取输入框值
+capture(capture="before_test")          # ★ 截图留存
+
+# ── 步骤 2: 输入客户名称 ──
+type(target="edtName", text="张三")
+rget(target="edtName.Text",
+     assert="actual == '张三'")          # ⭐ RTTI 验证输入成功
+
+# ── 步骤 3: 输入年龄 ──
+type(target="edtAge", text="25")
+rget(target="edtAge.Text",
+     assert="actual == '25'")            # ⭐ RTTI 验证
+
+# ── 步骤 4: 验证保存按钮状态 ──
+rget(target="btnSave.Enabled",
+     assert="actual == 'True'")          # ⭐ RTTI 验证按钮可用
+
+# ── 步骤 5: 点击保存 ──
+click(target="btnSave")
+msgscan                                 # ★ 检查弹窗
+waitfor(target="TMainForm", timeout=5000) # ★ 等待返回
+
+# ── 步骤 6: 结果验证 ──
+rget(target="lblStatus.Caption",
+     assert="actual == '保存成功'")        # ⭐ RTTI 验证状态栏文本
+capture(capture="after_save")           # ★ 截图留存
+
+# ── 步骤 7（可选）: 视觉完整性验证 ──
+ocr(action="diff",
+    baseline="docs/copyright/snapshots/before_test.jpg",
+    current="docs/copyright/snapshots/after_save.jpg",
+    threshold=10)                        # △ 截图差异对比
+# 预期：返回 changed=True，差异区域为状态栏变化
+
+# ═══════════════════════════════════════════════════════
+# 阶段 4：收尾
+# ═══════════════════════════════════════════════════════
+# 调用 prompts/get automate-session-end
+# 参数: save_experience=true, export_script=true
+
+# ① 保存经验
+experience(action="save",
+    problem="新建客户-成功路径",
+    solution="RTTI 验证输入 + 控件操作 + RTTI 验证结果",
+    tools_used=["rinspect", "formsum", "type", "click",
+                "waitfor", "msgscan", "capture"],
+    tags=["automation", "CustomerApp", "新建客户"])
+
+# ② 导出可复用脚本到 tests/scripts/
+#    内容见 tests/scripts/新建客户-成功路径.json
+
+# ③ 角色自动切回 Delphi 开发专家
+get_coding_rules(section="coding")  # 加载编码规范
+```
+
+#### D3. HDPI/视觉回归测试示例
+
+```python
+# ═══════════════════════════════════════════════════════
+# HDPI 缩放回归验证
+# ═══════════════════════════════════════════════════════
+
+# ── 基线采集（100% 缩放）──
+capture(capture="baseline_100pct")      # 留存基线
+formsum                                 # 控件基线
+rget(target="btnSave.Width",
+     assert="int(actual) == 75")         # 按钮基线尺寸
+
+# ── 切换到 150% 缩放 ──
+# (通过 Windows 缩放设置或应用内缩放)
+
+# ── 对比检测 ──
+ocr(action="diff",
+    baseline="docs/copyright/snapshots/baseline_100pct.jpg",
+    current="docs/copyright/snapshots/check_150pct.jpg",
+    threshold=10)
+# 若 diff_percent > 5% → 可能存在布局问题
+
+# ── 颜色验证 ──
+ocr(action="color",
+    image_path="docs/copyright/snapshots/check_150pct.jpg",
+    region=[180, 170, 75, 25])          # 分析保存按钮区域颜色
+# 验证：按钮背景是否为预期颜色
+
+# ── RTTI 辅助验证 ──
+rget(target="btnSave.Left")   # 位置是否合理变化
+rget(target="btnSave.Width")  # 尺寸是否按 DPI 缩放
+```
+
+---
+
+### E. 快速参考：各阶段工具速查（按优先级排列）
+
+```
+感知阶段:   ⭐=首选  ★=常用  ☆=辅助  △=兜底
+  ⭐ rget      → RTTI 属性值读取（最精确，微秒级）
+  ☆ rinspect  → RTTI 成员发现（列属性名/类型/方法，非值）
+  ⭐ dumpstate → 导出控件树（批量获取结构+属性）
+  ⭐ formsum   → 窗体摘要（dumpstate 紧凑版）
+  ★ msgscan   → 弹窗检测（每步执行后必做）
+  ★ listwnd   → 窗口枚举（新窗口出现时）
+  ★ capture   → 截图留存
+  ☆ discover  → RTTI 能力发现
+  △ ocr       → 文字识别（仅当 RTTI 不可用时）
+
+执行阶段:   ⭐=首选  ★=常用
+  ⭐ rcall/rset→ RTTI 方法/属性操作（首选，不依赖 UI）
+  ★ goto      → 定位（先定位后操作）
+  ★ click/dblclick/rclick → 点击
+  ★ type/key  → 输入/按键
+  ★ hover/move→ 鼠标
+  ★ drag      → 拖拽
+  ★ msgclick  → 弹窗按钮
+  ★ dlgclick/file → 文件对话框
+
+验证阶段:   ⭐=首选  ★=常用  △=兜底
+  ⭐ rget      → 属性值检查（最精确）
+  ☆ rinspect  → RTTI 结构检查（辅助）
+  ★ waitfor   → 等待条件
+  ★ capture   → 截图对比（视觉留存）
+  △ ocr       → 文字验证（兜底）
+```
+
+---
+
+### F. 提示词模板 — 可复用的自动化测试引导块
+
+以下模板供大模型在自动化测试各阶段直接套用。将 `{变量}` 替换为实际值即可。
+
+#### F0. 系统角色与思维框架 — 你是谁，如何思考
+
+---
+**角色定义**: 你是 **Delphi UI 自动化测试专家**。
+**核心方法论**: 感知 → 规划 → 执行 → 反馈（循环）
+
+执行自动化测试时，按以下**三层递进**思考：
+
+**第一层：理解被测对象（代码感知）**
+在操作任何控件之前，先读源码理解它：
+- 读 `.dfm` → 了解控件布局、类型、名称、事件绑定
+- 读 `.pas` → 了解事件处理程序、验证逻辑、数据流
+- 用 `delphi_kb` 查 API → 理解框架行为和组件用法
+- **输出**: 控件映射表 + 事件处理程序分析 + 代码分支路径表
+
+**第二层：生成测试策略（规划）**
+根据源码理解，确定：
+- 覆盖哪些路径 — 每个事件处理程序 + 每个代码分支
+- 用什么工具 — RTTI(`rcall`) > 控件级(`goto+click`) > 坐标级(`move+click`)
+- 预期结果 — 从代码逻辑推导演出的断言（见 §H4）
+- 边界条件 — 从验证代码中提取（`if edtName.Text='' then` → 测试空值）
+
+**第三层：执行-验证循环（执行）**
+严格按感知→执行→验证每步循环：
+- 先感知（`capture`/`dumpstate`/`msgscan`），不假设 UI 状态
+- 一步一验证，失败即停，不继续后续操作
+- 弹窗优先处理 — 执行操作后立即 `msgscan`
+- 失败时诊断→决策→恢复→学习（见 §F3）
+
+**角色边界**: 本角色仅用于**自动化测试阶段**。
+测试完成后（保存经验 / 导出脚本到 `tests/scripts/` 后），
+角色自动切回 **Delphi 开发专家**，思维框架切换为编码规范：
+`get_coding_rules(section="coding")` 或 `get_coding_rules(section="writing")`。
+
+---
+
+#### F1. 测试规划模板 — 从目标到结构化步骤序列
+
+```
+== 测试规划 ==
+
+**目标**: {测试目标描述}
+**前置条件**: {当前应用状态}
+
+**① 检索经验**
+experience(action="search", query="{测试场景关键词}", top_k=3)
+- 若有匹配经验 → 参考其工具选择、失败模式、恢复策略
+- 若无匹配经验 → 按默认策略规划
+
+**② 感知当前状态**
+- listwnd → 确认窗口列表
+- dumpstate / capture → 获取当前 UI 结构和截图
+- msgscan → 检查是否有残留弹窗
+
+**③ 规划步骤序列**
+
+| # | 阶段 | 工具 | 目标 | 预期结果 | 超时 | 失败处理 |
+|---|------|------|------|---------|------|---------|
+| 1 | perceive | listwnd+dumpstate | 获取初始状态 | 主窗口已打开 | 5s | 上报 |
+| 2 | execute | goto+click | 点击按钮X | 对话框打开 | 10s | capture→msgscan→分析 |
+| 3 | verify | waitfor+capture | 确认对话框 | 控件Y可见 | 5s | 降级RTTI |
+| ... | ... | ... | ... | ... | ... | ... |
+
+**④ 执行循环**
+严格按 感知→执行→验证 每步循环，失败即停不继续后续。
+```
+
+#### F2. 单步执行协议 — 原子操作的四段式
+
+每步自动化操作严格按以下协议执行：
+
+```
+┌─ ① 前置感知 ──────────────────────────────────┐
+│  • msgscan：检查弹窗（每步前必做）               │
+│  • capture/dumpstate：确认当前状态（可选）      │
+│  • 确认上一步验证已通过                          │
+└─────────────────────────────────────────────────┘
+                        ↓
+┌─ ② 执行 ───────────────────────────────────────┐
+│  • 调用目标工具/命令                             │
+│  • 同步命令 → 检查返回码和结果                   │
+│  • 异步命令 → 记录操作已发起                    │
+└─────────────────────────────────────────────────┘
+                        ↓
+┌─ ③ 等待 ───────────────────────────────────────┐
+│  • 异步命令 → wait(500~2000ms) 或               │
+│    waitfor(控件名, 超时=10000)                   │
+│  • 同步命令 → 跳过等待                          │
+└─────────────────────────────────────────────────┘
+                        ↓
+┌─ ④ 验证 ───────────────────────────────────────┐
+│  • msgscan：确认无意外弹窗                       │
+│  • capture/rget/ocr：确认结果符合预期        │
+│  • 一致 → 标记完成，继续下一步                   │
+│  • 不一致 → 转入失败恢复模板(F3)                 │
+└─────────────────────────────────────────────────┘
+```
+
+**模板化提示**:
+```
+[步骤{N}] 阶段={perceive|execute|verify}
+工具={tool_name} 参数={params}
+预期={expected}
+前置感知: {msgscan/dumpstate/capture 结果}
+执行结果: {工具返回}
+等待结果: {waitfor/wait 结果}
+验证结果: {一致/不一致 → 差异描述}
+```
+
+#### F3. 失败恢复模板 — 诊断→决策→恢复→学习
+
+当验证结果与预期不一致时，按以下流程处理：
+
+```
+**失败恢复 — 步骤{N}**
+
+**失败信号**: {超时/返回值错误/弹窗/OCR不匹配/...}
+**预期**: {expected}
+**实际**: {actual}
+
+**① 诊断**
+- capture 当前状态（截图留存）
+- dumpstate 获取当前控件树
+- msgscan 检测弹窗
+- 分析差异原因：
+  - 操作未生效？→ 控件不可见/被遮挡/未就绪
+  - 弹窗干扰？→ 确认框/错误提示/消息框
+  - 时序问题？→ 操作太快/等待不够
+  - 控件变化？→ 名称/路径/状态变更
+
+**② 决策**
+| 条件 | 恢复策略 |
+|------|---------|
+| 弹窗干扰 | msgclick(OK/Cancel) → 重试原操作 |
+| 控件不可见 | dumpstate 查替代路径 → 修正 goto |
+| 超时但无错误 | 增加 waitfor 时间 → 重试 |
+| RTTI 可用 | degrade 到 rcall/rset 绕过 GUI |
+| 确定性失败 | 上报（记录到经验库） |
+
+**③ 恢复执行**
+{选择的恢复策略 + 具体操作}
+
+**④ 学习记录**
+**保存到经验库**:
+- problem: "{场景描述} — {失败原因}"
+- solution: "{恢复策略} 在 {应用/版本} 上有效"
+- tools_used: ["{用到的工具列表}"]
+- tags: ["automation", "{app_name}", "{failure_type}"]
+```
+
+#### F4. 经验保存模板 — 将测试成果沉淀为可复用的知识
+
+测试完成后（无论成功还是失败），保存结构化经验：
+
+```
+**经验保存**
+
+**场景**: {测试用例名称}
+**应用**: {Delphi 应用名/版本}
+**日期**: {日期}
+
+**执行概况**:
+- 总步骤数: {N}
+- 成功: {N}
+- 失败+恢复: {N}
+- 不可恢复失败: {N}
+- 总耗时: {秒}
+
+**成功模式**（哪些工具/命令组合效果好）:
+- 工具组合: {如 "goto+click 配合 waitfor 稳定"}
+- RTTI 使用: {如 "rcall 替代了 3 步 GUI 操作"}
+- 关键时序: {如 "type 后需要 wait(500) 再 click"}
+
+**失败模式**（哪些操作容易出问题，如何恢复）:
+- {失败描述}: {原因} → {恢复方式} → {是否可自动化恢复}
+
+**优化建议**（下次如何做得更好）:
+1. {建议1}
+2. {建议2}
+
+**保存**:
+experience(action="save",
+    problem="{场景关键词}",
+    solution="{核心做法 + 关键参数}",
+    tools_used=["{工具列表}"],
+    tags=["automation", "{app_name}"])
+```
+
+---
+
+### G. 经验驱动优化闭环 — 让大模型从历史中自我进化
+
+测试经验不是一次性消耗品。通过 `experience` 工具的检索、保存、合并能力，大模型可以持续从过去的测试会话中学习，不断提升自动化测试的效率和稳定性。
+
+#### G1. 优化循环
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  ① 检索经验 ←──┐                                                │
+│     ├─ 每次测试前搜索历史经验                                     │
+│     ├─ query 包含：应用名/场景/控件类型                           │
+│     └─ 筛选 top_k=3 最相关的经验                                 │
+│                     ↑                                            │
+│         ↓            │                                            │
+│                     │                                            │
+│  ② 规划测试 ───────┘                                            │
+│     ├─ 参考历史成功模式：优先使用验证过的工具组合                  │
+│     ├─ 避免历史失败模式：调整时序/降级策略                        │
+│     └─ 设定合理的超时和恢复策略                                  │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ③ 执行测试                                                     │
+│     ├─ 按规划步骤执行                                            │
+│     ├─ 遇到失败 → 恢复模板(F3) → 记录学习                       │
+│     └─ 完成所有步骤                                              │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ④ 保存经验                                                     │
+│     ├─ 按 F4 模板保存本次测试经验                                │
+│     ├─ experience(action="save", ...)                            │
+│     └─ 自动去重：相似度 >0.85 合并到旧记录                       │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│         ┌─────────────────────────────────────────────┐          │
+│  ⑤ 定期融合 ← 经验积累到一定数量后                     │          │
+│     ├─ 每周/每月执行一次                               │          │
+│     ├─ experience(action="search", query="{大类场景}")  │          │
+│     ├─ 找出描述同一类问题的多条经验                     │          │
+│     ├─ experience(action="merge", ids=[...])            │          │
+│     │  → 合并为抽象经验，tags 覆盖各类场景              │          │
+│     └─ experience(action="prune")                       │          │
+│        → 删除低价值（低 hit_count、长期未更新）的记录    │          │
+│        └────────────────────────────────────────────┘          │
+│                                                                  │
+│         ↓                                                        │
+│                                                                  │
+│  ⑥ 回到 ① — 下次测试时融合后的经验直接可用                      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**关键收益**：
+- 同样的错误不会犯第二次（失败模式 → 直接规避）
+- 成功的工具组合在同类场景中复用（无需从零规划）
+- 多人的测试经验汇聚为团队知识（共享经验库）
+- 过时的经验自动淘汰（prune 低价值条目）
+
+#### G2. 经验检索策略
+
+设计经验检索的 query 以获取最相关的历史记录：
+
+| 场景 | 推荐 query | 说明 |
+|------|-----------|------|
+| 新测试用例规划 | `"{应用名} {功能模块名} 自动化测试"` | 获取同类功能的测试模式 |
+| 执行失败后 | `"{应用名} {失败的操作} 失败恢复"` | 搜索同类失败的处理方式 |
+| 特定控件操作 | `"{控件类型} {操作} {应用名}"` | 如 "TStringGrid 双击 客户管理" |
+| 弹窗处理 | `"{弹窗标题} {应用名}"` | 获取已知弹窗的处理策略 |
+| 通用模式 | `"{场景大类} 自动化测试"` | 跨应用的抽象模式 |
+
+**检索流程**:
+```
+1. 精确查询: experience(search, query="应用名+场景", top_k=3)
+2. 若结果 < 2 条 → 放宽 query（去掉应用名，只保留场景）
+3. 若仍 < 2 条 → 使用默认策略（分层降级）
+4. 若 ≥ 2 条 → 合并参考：取 hit_count 最高的作为主要参考
+```
+
+#### G3. 经验融合与抽象
+
+当经验积累到一定数量后，需要将具体的单次经验融合为抽象的通用模式：
+
+**融合时机**：
+- 同一功能的测试经验达到 5+ 条
+- 同一失败模式出现 3+ 次（说明该模式稳定，值得抽象）
+- 定期（每月或每 20 次测试后）
+
+**融合方法**:
+```
+1. 搜索同类经验:
+   experience(search, query="{场景大类}", top_k=20)
+
+2. 找出可合并的条目:
+   - 相同应用 + 相同功能模块
+   - 相同失败模式 + 不同恢复策略
+   - 同一测试用例的不同版本
+
+3. 合并:
+   experience(merge,
+       ids=["id1", "id2", "id3"],
+       keep="id_of_most_complete")
+
+4. 更新合并后的记录:
+   experience(update,
+       id="merged_id",
+       tags=["automation", "{app_name}", "{通用标签}"],
+       solution="{抽象后的通用做法}")
+
+5. 删除不再需要的源记录:
+   experience(delete, id="old_id")  # 对每个源记录
+```
+
+**抽象原则**：
+- 不要保存「在 X 应用上点击 Y 按钮后等待 2 秒」这种具体记录
+- 而是抽象为「按钮点击后如果有弹窗 → msgclick 处理 → waitfor 目标控件」
+- tags 要覆盖各细分场景（如同时含 grid、edit、button 等）
+- hit_count 高的经验优先保留，低的优先合并/删除
+
+---
+
+### H. 代码感知测试 — 从源码理解到自动化测试路径
+
+#### H1. 核心理念
+
+AI 最大的优势不是模拟点击，而是能**读懂代码**。在自动化测试中，源码就是最好的测试规范。
+
+```
+传统自动化:  观察 UI → 猜测逻辑 → 点击 → 观察结果
+代码感知AI:  读源码 → 理解逻辑 → 推导预期 → 用代码作断言
+```
+
+代码感知测试不是替代现有的感知-规划-执行-验证循环，而是在其**上游**新增一个「代码分析」阶段，让后续的规划和验证有据可依。
+
+#### H2. 代码分析工作流
+
+测试一个 Delphi 功能前，用以下流程分析源码：
+
+##### 步骤 1：定位目标代码
+
+```python
+# 搜索目标类
+delphi_kb(query="TNewCustomerForm", search_type="class", kb_type="project", project_path="...")
+# 或按文件路径直接读
+delphi_file(action="read", file_path="UnitNewCustomer.pas")  # 先读全貌
+delphi_file(action="read", search_type="class", type_name="TNewCustomerForm", search_in="project", project_path="...")
+```
+
+##### 步骤 2：分析 DFM（控件结构）
+
+从 `.dfm` 文件中提取控件的名称、类型、事件绑定、关键属性：
+
+```
+输出格式（供规划阶段使用）:
+
+控件名       | 类型         | 事件绑定              | 默认值
+edtName      | TEdit        | —                     | Text=''
+edtAge       | TEdit        | OnExit=edtAgeExit     | Text=''
+cmbType      | TComboBox    | —                     | Items=[企业,个人]
+btnSave      | TButton      | OnClick=btnSaveClick  | Caption='保存'
+btnCancel    | TButton      | OnClick=btnCancelClick| Caption='取消'
+lblError     | TLabel       | —                     | Visible=False
+```
+
+##### 步骤 3：分析 PAS（事件处理程序与业务逻辑）
+
+从 `.pas` 文件中提取每个事件处理程序的代码逻辑，标注关键模式：
+
+| 代码模式 | 测试含义 | 测试动作 |
+|---------|---------|---------|
+| `if edtName.Text = '' then` | 名称不能为空 | 测试空值路径 → 弹窗验证 |
+| `if StrToInt(edtAge.Text) <= 0 then` | 年龄必须 > 0 | 边界值测试 → 验证 lblError |
+| `try ... except ... end` | 异常处理 | 触发异常 → 验证降级行为 |
+| `ShowMessage('...')` | 预期弹窗 | 操作后 `msgscan` 验证 |
+| `ModalResult := mrOk` | 窗口应关闭 | `waitfor` 窗口消失 |
+| `Insert/Post` | 数据写入 DB | `rcall` 查询验证数据 |
+| `Enabled := False` | 按钮禁用 | `rget` 验证 Enabled |
+| `SetFocus` | 焦点转移 | `rget` 验证 Focused |
+
+##### 步骤 4：输出代码分析报告
+
+```
+== 代码分析报告 — TNewCustomerForm ==
+
+=== 控件结构 ===
+| 控件名 | 类型 | 事件 |
+|--------|------|------|
+| edtName | TEdit | — |
+| edtAge | TEdit | OnExit → edtAgeExit |
+| btnSave | TButton | OnClick → btnSaveClick |
+| btnCancel | TButton | OnClick → btnCancelClick |
+| lblError | TLabel | —（默认隐藏）|
+
+=== 事件处理程序分析 ===
+
+**btnSaveClick**
+1. 验证 edtName.Text 非空 → 空则 ShowMessage('名称不能为空') + Exit
+2. 验证 edtAge 输入为数字且 > 0 → 无效则 lblError.Visible:=True + Exit
+3. 创建 TCustomer 对象 → 从控件取值 → Insert 到 DB → ShowMessage('保存成功')
+4. ModalResult := mrOk
+
+**btnCancelClick**
+→ ModalResult := mrCancel
+
+**edtAgeExit**
+1. try StrToInt(edtAge.Text) → 失败则 ShowMessage('请输入有效数字')
+2. 若值 ≤ 0 → lblError.Caption:='年龄必须大于0'; lblError.Visible:=True
+
+=== 推导的测试路径 ===
+| # | 路径 | 前置条件 | 操作 | 代码派生的断言 |
+|---|------|---------|------|--------------|
+| 1 | 成功路径 | 输入有效数据 | 点 Save | 弹窗"保存成功" → 窗口关闭 |
+| 2 | 名称为空 | edtName=''，其他有效 | 点 Save | 弹窗"名称不能为空" |
+| 3 | 年龄为空 | edtAge='' | 点 Save | lblError 可见 |
+| 4 | 年龄<=0 | edtAge='-1' 或 '0' | 点 Save | lblError 可见，Caption 含"大于0" |
+| 5 | 年龄非数字 | edtAge='abc' | Tab 离开 | 弹窗"请输入有效数字" |
+| 6 | 取消操作 | 任意数据 | 点 Cancel | 窗口关闭，DB 无新增 |
+```
+
+#### H3. 从代码路径到测试路径的映射规则
+
+每条代码分支映射为至少一条测试路径：
+
+| 代码结构 | 映射规则 | 测试路径数 |
+|---------|---------|-----------|
+| 顺序代码（无分支） | 1 条成功路径 | 1 |
+| `if ... then` | 条件为真 + 条件为假 | 2 |
+| `if ... then ... else ...` | if 分支 + else 分支 | 2 |
+| `case X of ... end` | 每个 case 值 + else/default | N+1 |
+| `try ... except ... end` | 正常路径 + 异常路径 | 2 |
+| `for/while` 循环 | 至少 2 条（执行 0 次 + 执行 1+ 次） | 2 |
+| `Assigned(Sender)` 检查 | 对象存在 + 不存在 | 2 |
+| 嵌套条件 | 组合所有分支（M × N） | M×N |
+
+**原则**：每个 `if`/`case`/`try` 至少对应一条自动化测试中的操作和断言，不遗漏任何分支。
+
+#### H4. 代码派生的断言（Code-Derived Assertions）
+
+从源码逻辑推导"正确"的标准，而不是靠猜测：
+
+| 源码模式 | 自动化断言策略 |
+|---------|---------------|
+| `ModalResult := mrOk/mrCancel` | `waitfor` 窗口消失，或 `listwnd` 确认窗口已关闭 |
+| `ShowMessage('xxx')` | 操作后 `msgscan` → 验证弹窗文本含 `xxx` |
+| `lblError.Visible := True` | `rget` 检查 `lblError.Visible = True` |
+| `Enabled := False` | `rget` 检查控件 `Enabled = False` |
+| `SetFocus` | `rget` 检查控件的 `Focused` 属性 |
+| `Insert/Post` 数据操作 | 用 `rcall` 调用查询方法验证数据持久化 |
+| `Close` / `Release` | `listwnd` 确认窗口不再存在 |
+| `Color := clRed` | `capture` 截图 + OCR 验证视觉变化，或 `rget` 检查颜色值 |
+| `PopupMenu.Popup` | `capture` 截图检测弹窗，或 `dumpstate` 检查菜单控件 |
+| 变量赋值（如 `edtName.Text := ''`） | 操作后 `rget` 检查 `edtName.Text` 值 |
+
+**断言优先级**：
+1. ⭐ `rget` 直接检查属性值 — 最精确、最稳定
+2. ⭐ `waitfor` + `msgscan` — 检查弹窗内容
+3. ⭐ `capture` + `ocr` — 视觉验证（兜底）
+4. ⭐ `rcall` 调用业务方法 — 验证数据层状态
+
+#### H5. 与自动化流程的融合
+
+在现有的感知→规划→执行→验证循环前，插入代码分析阶段：
+
+```
+┌──────────────────────────────────────────────┐
+│  阶段 0: 代码分析（新增）                      │
+│                                               │
+│  ① 定位目标单元                               │
+│     ├─ delphi_kb(search_type="class") 搜索     │
+│     └─ delphi_file 读取 .pas/.dfm             │
+│                                               │
+│  ② 分析 DFM 结构                              │
+│     ├─ 提取控件名 + 类型 + 事件绑定             │
+│     └─ 输出控件映射表                          │
+│                                               │
+│  ③ 分析 PAS 逻辑                              │
+│     ├─ 提取事件处理程序代码                     │
+│     ├─ 标注关键模式（if/try/case/赋值/调用）    │
+│     └─ 输出事件处理程序分析表                   │
+│                                               │
+│  ④ 推导测试路径                                │
+│     ├─ 每个代码分支 → 一条测试路径               │
+│     ├─ 每个验证条件 → 代码派生的断言            │
+│     └─ 输出测试路径 + 断言表                    │
+│                                               │
+│         ↓                                     │
+└──────────────────────────────────────────────┘
+                                               │
+┌──────────────────────────────────────────────┐
+│  阶段 1-N: 感知→规划→执行→验证（现有）         │
+│                                               │
+│  感知: capture/dumpstate/msgscan 了解状态      │
+│  规划: 用 H2 输出的路径表指导步骤选择           │
+│  执行: 按规划操作，优先 RTTI                   │
+│  验证: 用 H4 的代码派生断言做验证               │
+└──────────────────────────────────────────────┘
+```
+
+---
+
+### I. 测试脚本缓存与管理 — 避免重复规划，实现一键重跑
+
+测试规划（代码分析 + 路径推导 + 步骤序列生成）占每次执行约 70% 的 token 和时间。
+对于需要反复执行的用例（回归测试、调试），缓存脚本可跳过规划阶段，直接进入执行。
+
+#### I1. 存储约定
+
+```
+tests/scripts/
+├── 新建客户-成功路径.json
+├── 新建客户-名称为空.json
+├── 客户查询-按名称.json
+└── ...
+```
+
+- **目录**: 项目根下的 `tests/scripts/`
+- **命名**: `{测试用例名称}.json`（简明、无歧义）
+- **管理**: 直接用 `delphi_file` 读写，不进 git（`.gitignore` 可选）
+
+#### I2. 脚本 JSON 格式
+
+```json
+{
+  "test_name": "新建客户-成功路径",
+  "app_path": "C:/App/CustomerApp.exe",
+  "target_form": "TNewCustomerForm",
+  "version": 1,
+  "created": "2026-06-18T10:30:00",
+  "updated": "2026-06-18T10:35:00",
+  "run_count": 3,
+  "source_hash": "a1b2c3d4...",
+  "source_files": ["UnitCustomer.pas", "UnitCustomer.dfm"],
+  "steps": [
+    {
+      "phase": "perceive",
+      "cmd": "listwnd",
+      "note": "确认主窗口已打开"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "dumpstate"
+    },
+    {
+      "phase": "execute",
+      "cmd": "type",
+      "target": "edtName",
+      "text": "张三",
+      "assert": "msgscan 无弹窗"
+    },
+    {
+      "phase": "execute",
+      "cmd": "click",
+      "target": "btnSave",
+      "assert": "waitfor 窗口关闭"
+    },
+    {
+      "phase": "verify",
+      "cmd": "waitfor",
+      "target": "TMainForm",
+      "timeout": 5000
+    },
+    {
+      "phase": "verify",
+      "cmd": "capture",
+      "capture": "after_save"
+    }
+  ]
+}
+```
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `test_name` | ✅ | 用例名称，也是文件名 |
+| `app_path` | ✅ | Delphi 应用 exe 路径 |
+| `target_form` | ✅ | 被测窗体类名 |
+| `version` | ✅ | 版本号，每次更新 +1 |
+| `created` | ✅ | ISO 8601 创建时间 |
+| `updated` | ✅ | ISO 8601 最后更新时间 |
+| `run_count` | — | 成功执行次数 |
+| `source_hash` | ✅ | 被测源码文件的 SHA256 指纹 |
+| `source_files` | ✅ | 指纹来源文件列表 |
+| `steps[]` | ✅ | 可执行步骤序列 |
+
+**steps[].phase** — `perceive` / `execute` / `verify`，与架构 §A 对应。
+**steps[].assert** — 可选的人工可读断言描述，辅助验证。
+
+#### I3. 源码指纹（source_hash）
+
+每次保存脚本时，计算被测 `.pas` + `.dfm` 文件的 SHA256：
+
+```python
+import hashlib
+h = hashlib.sha256()
+for f in ["UnitCustomer.pas", "UnitCustomer.dfm"]:
+    with open(f, "rb") as fh:
+        h.update(fh.read())
+source_hash = h.hexdigest()[:16]  # 截取前 16 位足够
+```
+
+**用途**: 重新执行前对比 hash，判断 UI 是否变化：
+- hash 一致 → 脚本仍有效，直接执行
+- hash 不一致 → UI 已变，需重新规划后更新脚本
+
+#### I4. 生命周期
+
+```
+  创建（首次）
+  ┌──────────────────────────────┐
+  │ 代码分析(H) → 规划 → 执行   │
+  │ 验证通过 → script/save      │
+  └──────────┬───────────────────┘
+             │
+      ┌──────┴──────┐
+      ▼              ▼
+  hash 一致      hash 不一致
+      │              │
+      ▼              ▼
+  直接执行      重新规划
+      │              │
+      ▼              ▼
+  成功→count++   更新脚本
+  失败→分析      保存新版
+```
+
+**阶段详解**:
+
+| 阶段 | LLM 操作 | 工具 |
+|------|---------|------|
+| **① 检查缓存** | 查询 `tests/scripts/{name}.json` 是否存在 | `delphi_file(action="read")` |
+| **② 验证有效性** | 读 `source_files` → 重新计算 hash → 对比 | `hashlib`（Python）或 `certutil` |
+| **③ hash 匹配** | 提取 `steps[]` → 组装 `automate_delphi script` → 执行 | `automate_delphi(action="gui")` |
+| **④ hash 不匹配** | 按 §H 做代码分析 → 重新规划 → 更新 `steps[]` | `delphi_kb` + `delphi_file` |
+| **⑤ 执行成功** | 更新 `run_count` + `updated` 时间 → 写回 | `delphi_file(action="write")` |
+| **⑥ 执行失败** | 分析失败原因 → 按 §F3 恢复 → 更新 steps → 写回 | — |
+
+#### I5. LLM 操作指南
+
+**首次创建测试脚本**：
+```python
+# 1. 执行测试通过后
+# 2. 计算源码指纹
+import hashlib
+h = hashlib.sha256()
+for f in ["UnitCustomer.pas", "UnitCustomer.dfm"]:
+    with open(f, "rb") as fh:
+        h.update(fh.read())
+# 3. 构建脚本 JSON（steps 用刚执行成功的步骤）
+# 4. 保存
+script = { "test_name": "...", "steps": [...], "source_hash": h.hexdigest()[:16] }
+# 用 delphi_file 写到 tests/scripts/{name}.json
+```
+
+**重新执行已有脚本**：
+```python
+# 1. 读缓存
+script = json.loads(open("tests/scripts/新建客户-成功路径.json").read())
+# 2. 验证 hash
+h = hashlib.sha256()
+for f in script["source_files"]:
+    with open(f, "rb") as fh:
+        h.update(fh.read())
+if h.hexdigest()[:16] != script["source_hash"]:
+    # UI 已变，需要重新规划
+    # ... 执行代码分析 + 重新规划 ...
+else:
+    # 直接执行
+    automate_delphi(action="gui", app_path=script["app_path"],
+                    script=script["steps"])
+```
+
+**列出所有可用脚本**：
+```python
+# 直接读 tests/scripts/ 目录
+import os
+scripts = [f.replace(".json", "") for f in os.listdir("tests/scripts/") if f.endswith(".json")]
+# 或
+delphi_file(action="read", file_path="tests/scripts/")  # 获取文件列表
+```
+
+#### I6. 何时缓存，何时不缓存
+
+| 应缓存 | 不应缓存 |
+|--------|---------|
+| 回归测试用例 | 一次性探索性测试 |
+| CI/CD 自动化执行 | 调试中频繁变动的步骤 |
+| 跨版本兼容测试 | 临时验证某个 hypothesis |
+| 每日构建验证 | Session 内一次性操作 |
+
+**经验法则**：同一测试执行 2 次以上 → 立刻缓存。
+
+---
+
+### J. 断言系统 — Python 表达式驱动的后置验证
+
+自动化测试需要验证"执行结果是否符合预期"。Daofy 采用 **Python 表达式断言**，在步骤执行后由 Python 端评估，不依赖 Delphi 端做判断。
+
+#### J1. 断言表达式
+
+每个步骤可加 `assert` 字段，值为 Python 表达式。可用变量：
+
+| 变量 | 说明 |
+|------|------|
+| `actual` | 从步骤响应提取的实际值（字符串） |
+| `re` | `re` 正则模块 |
+| `len`/`str`/`int`/`float`/`bool` | Python 内置函数 |
+
+```json
+{"cmd": "rget", "target": "btnSave.Caption", "assert": "actual == '保存'"}
+{"cmd": "rget", "target": "edtAge.Text",    "assert": "0 < float(actual) < 150"}
+{"cmd": "rget", "target": "lblStatus.Caption",
+ "assert": "'保存' in actual and '成功' in actual"}
+{"cmd": "rget", "target": "edtPhone.Text",
+ "assert": "re.search(r'^1\\\\d{10}$', actual)"}
+{"cmd": "click", "target": "btnSave",        "assert": "actual == 'ack'"}
+```
+
+**推荐用于值验证的命令**：
+- `rget` → 读取控件属性值（如 `EditName.Text`、`btnSave.Enabled`）
+- `click`/`type` → 返回 `ack` 表示操作已提交
+- `waitfor` → 返回 `ok` 表示条件满足
+
+> ⚠ `rinspect` 返回的是 RTTI 类型名（如 `TCaption`），**不是属性值**。要拿实际值必须用 `rget`。
+
+#### J2. 断言结果
+
+断言失败不影响步骤执行（步骤已执行完毕），但会：
+1. 步骤状态标记为 `assert_fail`（而非 `error`）
+2. 响应中包含 `assert_result` 字段：`{passed, expression, actual, message?}`
+3. `execute_script` 整体状态为 `partial`（部分通过）
+
+测试报告（`result['report']`）汇总所有断言结果：
+```json
+{
+  "total": 9,
+  "passed": 8,
+  "failed": 1,
+  "success_rate": "89%",
+  "duration_seconds": 6.2,
+  "steps": [
+    {"cmd": "type", "target": "EditName", "status": "pass"},
+    {"cmd": "rget", "target": "btnSave.Caption", "status": "fail",
+     "error": "assert failed: actual == '保存'  (actual='取消')"}
+  ]
+}
+```
+
+#### J3. 批量运行器
+
+`tests/scripts/run_all.py` 可批量执行 `tests/scripts/` 下所有脚本：
+
+```bash
+# 运行全部脚本
+python tests/scripts/run_all.py --app CustomerApp.exe
+
+# 按名称过滤
+python tests/scripts/run_all.py --app CustomerApp.exe --filter 新建客户
+
+# 只输出报告
+python tests/scripts/run_all.py --app CustomerApp.exe --report-only report.json
+```
+
+输出汇总：
+```
+[运行] 新建客户-成功路径 (8 步)... ✅ 8/8  100%  6.2s
+[运行] 新建客户-名称为空 (5 步)... ✅ 5/5  100%  4.1s
+[运行] HDPI-缩放回归测试 (9 步)... ❌ 7/9  78%  8.5s
+==================================================
+汇总: 3 脚本, 20/22 通过 (91%)
+报告已保存: tests/scripts/_report.json
+```<｜end▁of▁thinking｜>
+
+---
+
 ## ① 环境检查
 ```python
 check_environment(action="check")       # 确认编译器状态
@@ -199,7 +1485,7 @@ delphi_file(action="write", file_path="Unit1.pas", edits=[
     {"start_line": 5, "end_line": 7, "content": "..."},
 ])
 
-# 预览模式（不写盘，清除脏标记）
+# 预览模式（不写盘，不清除脏标记）
 delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end_line": 10, "content": "新内容"}], preview=True)
 ```
 
@@ -211,9 +1497,10 @@ delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end
 请先调用 read 获取最新行号，或使用 preview=true 预览本次修改。
 ```
 
-**解除脏标记的方式：**
+**继续写入的方式：**
 - 调用 `read`（自动清除脏标记）
-- 调用 `write(preview=True)`（预览不写盘，清除脏标记）
+- 在每个 edit 中提供非空 `old_content`（写入前校验当前命中范围）
+- 调用 `write(preview=True)` 仅预览 diff；preview 不清除脏标记
 - 调用 `write(allow_dirty=True)`（风险自负，仅在确保行号准确时使用）
 
 **连续编辑的行号偏移算法：**
@@ -614,9 +1901,10 @@ Python (automation_service.py)              Delphi (TAutomationProcessorBase)
 | `capture` | 截图（JPEG，保存到 snapshots_dir） | 同步 |
 | `listwnd` | 枚举所有窗口 | 同步 |
 | `dumpstate` | 获取控件树状态快照 | 同步 |
-| `dlgscan` / `dlgclick` | 扫描弹出菜单/点击菜单项 | 异步 |
-| `msgscan` / `msgclick` | 扫描消息对话框 / 点击对话框按钮 | 异步 |
-| `rget` / `rset` / `rcall` / `rinspect` | RTTI 读写属性 / 调用方法 / 检查组件 | 异步 |
+| `dlgscan` / `msgscan` / `msgclose` | 扫描文件/消息对话框 / 关闭消息框 | 同步 |
+| `dlgclick` / `msgclick` | 点击文件/消息对话框按钮 | 异步 |
+| `rget` / `rinspect` | RTTI 读属性值 / 成员发现 | 同步 |
+| `rset` / `rcall` | RTTI 写属性 / 调用方法 | 异步 |
 | `dlgfile` | 文件对话框操作（输入路径） | 同步 |
 | `snapdir` | 设置截图输出目录 | 同步 |
 | `exit` | 退出被测进程 | 同步 |
@@ -628,7 +1916,8 @@ Python (automation_service.py)              Delphi (TAutomationProcessorBase)
 - 新建进程首次调用自动设置 `snapdir` 到截图目录
 
 ### 协议细节
-- 异步命令（click/rclick/dlgclick/msgclick/hover/rinspect 等）立即返回 ACK，结果写入 `_async_{reqId}.json` 文件供后续读取
+- 同步命令（goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect）阻塞等待返回
+- 异步命令（click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type）立即返回 ACK，结果在后续步骤中通过 peekresult 获取（内存结果，无文件落盘）
 - 响应格式：`{"reqId":"step_0","status":"ok","data":"OK"}`
 - 消息大于 64KB 时自动分块（`ERROR_MORE_DATA` 循环读取）
 - 超时支持：`waitfor` 命令内置 `timeout` / `interval` 参数（单位 ms）

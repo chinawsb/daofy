@@ -78,15 +78,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`CODING_RULES.mdc` §⑧ 自动化UI交互测试**: 新增完整的 GUI 自动化测试规则（单元链接、命令示例、验证流程）。
 - **`CODING_RULES.mdc` §⑨ 控制台程序交互验证**: 新增 Console 模式工具调用、测试模式、基础用法、分步交互、进程池复用规则。
 - **`CODING_RULES.mdc` delphi_file 规则重构**: 全面重写 delphi_file 写入规则、紧凑输出格式、脏标记保护、行号规则，迁移 AGENTS.md 中详细规则到此统一文档。
-- **`src/config/tool_docs.py`**: 注册 `delphi_rtti` 工具；精简 write 文档为 edits 唯一参数格式；移除 0-indexed 行号说明。
+- **`src/tool_docs.py`**: 注册 `delphi_rtti` 工具；精简 write 文档为 edits 唯一参数格式；移除 0-indexed 行号说明。
 - **`src/server.py` tool 描述更新**: 注册 `delphi_rtti` 和 automation 工具；delphi_file 参数统一至 1-indexed 描述；移除 `batch_write` 独立路由。
 - **delphi_rtti 技能分发脚本**: `scripts/build-skills.py` 支持自动分发到 claude-code/cursor/windsurf。
 
 ### Fixed
 
 - **`console_execute` Windows pipe 读取**: `select.select` 不适用于 Windows 上的 subprocess pipe（仅支持 socket）。改为 thread + Queue 实现非阻塞 expect 读取，无 expect 时退回 `proc.communicate()`。
-- **`batch_write` experimental 标记移除**: 删除 server.py 和 file_tool.py 中的 experimental 标注，`batch_write`（通过 `write(edits=[...])`）正式作为标准接口。
-- **`batch_write` content 首行重复检测修正**: s=0 时（文件头替换）content 首行与原文件首行重复属于正常场景，不再误报 `⚠️` 警告。
+- **`batch_write` 独立 action 清理**: 写入统一为 `write(edits=[...])`，不再暴露独立 `batch_write` action。
+- **content 首行重复检测修正**: 文件头替换时 content 首行与原文件首行重复属于正常场景，不再误报 `⚠️` 警告。
 
 ### Changed
 
@@ -123,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`delphi_file` 全操作 RWLock 防并发文件损坏**: 所有 `file_tool` 操作（read/write/batch_write/format/backup/uses）引入多读单写锁 `_file_rw_locks`。`_acquire_read_lock` / `_release_read_lock` 用于共享读取，`_acquire_write_lock` / `_release_write_lock` 用于排他写入。多个 agent 同时对同一文件写入时，后到者直接返回明确错误，引导合并为一次 `batch_write`。配套修复 `handle_read` 中 DFM 转换后 `file_path` 重新赋值导致锁释放在错误路径的 bug。
-- **`tool_docs.py` 约束强化**: `delphi_file` 文档中新增 `"🚫 禁止对同一个文件并行写入"` 和 `"🚫 同一个文件不要分多次 write"` 约束，`batch_write` 标注为 `"⭐ 优先使用"`。
+- **`tool_docs.py` 约束强化**: `delphi_file` 文档中新增 `"🚫 禁止对同一个文件并行写入"` 和 `"🚫 同一个文件不要分多次 write"` 约束，推荐使用 `replace`/`insert`/`delete` 替代顶层 `content/start_line/end_line` 参数。
 - **`tools/7z/7z.dll` 打包**: 补齐 7z.exe 运行所需的 7z.dll（1.9MB），确保 release 包解压后开箱可用，无需单独安装 7-Zip。
 
 ### Changed

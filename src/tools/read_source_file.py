@@ -17,6 +17,7 @@ import logging
 import locale
 from mcp.types import CallToolResult
 from ..utils.file_backup import detect_encoding
+from .project_knowledge_base import get_project_kb
 
 logger = logging.getLogger(__name__)
 
@@ -314,6 +315,7 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
             - search_in: 搜索范围（可选）
                 - "all": 所有知识库（默认）
                 - "delphi": 仅 Delphi 官方源码
+                - "project": 仅项目源码（需要 project_path）
                 - "thirdparty": 仅第三方库
             - start_line: 起始行号（可选，默认1）
             - max_lines: 最大返回行数（可选，默认100）
@@ -327,6 +329,7 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
     search_in = arguments.get("search_in", "all")
     start_line = arguments.get("start_line", 1)
     max_lines = arguments.get("max_lines", 100)
+    project_path = arguments.get("project_path")
     
     # 兼容旧参数名 class_name
     if not type_name and arguments.get("class_name"):
@@ -337,6 +340,12 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
             content=[{"type": "text", "text": "请提供类型名（type_name/record_name）或函数名"}],
             isError=True
         )
+
+    if search_in == "project" and not project_path:
+        return CallToolResult(
+            content=[{"type": "text", "text": "search_in='project' 需要提供 project_path 参数"}],
+            isError=True
+        )
     
     try:
         results = []
@@ -344,6 +353,40 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
         # 确定搜索名称
         search_name = type_name or record_name
         is_record_search = record_name is not None
+
+        # 在项目知识库中搜索（需要 project_path）。search_in=all 时只有显式
+        # 提供项目路径才包含项目结果，避免无上下文时意外扫描当前目录。
+        if search_in in ["all", "project"] and project_path:
+            try:
+                project_kb = get_project_kb(project_path)
+                project_kb.load_knowledge_bases()
+                if search_name:
+                    if project_kb.project_kb is None:
+                        project_results = []
+                    else:
+                        project_results = project_kb.project_kb.search_by_name(search_name)
+                    if is_record_search:
+                        project_results = [
+                            r for r in project_results
+                            if r.get('kind_code', '') == 'TR'
+                            or r.get('kind') == 'record'
+                        ]
+                    elif type_name:
+                        project_results = [
+                            r for r in project_results
+                            if r.get('kind_code', '') in ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')
+                        ]
+                    results.extend(project_results)
+                if function_name:
+                    if project_kb.project_kb is not None:
+                        func_results = project_kb.project_kb.search_by_name(function_name)
+                        func_results = [
+                            r for r in func_results
+                            if r.get('kind_code', '') in ('FF', 'FP')
+                        ]
+                        results.extend(func_results)
+            except Exception as e:
+                logger.debug("项目KB搜索失败: %s", str(e))
         
         # 在 Delphi 官方源码中搜索
         if search_in in ["all", "delphi"] and delphi_kb_service:
@@ -433,7 +476,8 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
         read_args = {
             "file_path": file_path,
             "start_line": start_line,
-            "max_lines": max_lines
+            "max_lines": max_lines,
+            "project_path": project_path,
         }
         
         return await read_source_file(read_args)

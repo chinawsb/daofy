@@ -7,8 +7,9 @@ r"""
 协议：JSON 请求/响应 (REST-style)
   请求: {"reqId":"step_0","cmd":"goto","target":"TForm1"}
   响应: {"reqId":"step_0","status":"ok","data":"OK"}
-  (async 命令: click/rclick/msgclick/dlgclick/hover/rinspect 返回 ACK，
-   rinspect 结果写入 FSSDir\_async_{reqId}.json 文件)
+    (async 命令: click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type 返回 ACK，
+    同步命令: goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect 阻塞等待返回。
+    异步结果通过后续 peekresult 命令或 waitfor/rget/capture 验证获取，无文件落盘。)
 
 进程池复用：
   通过 keep_alive 参数让 Delphi 进程常驻，后续调用直接复用。
@@ -274,6 +275,224 @@ def _cleanup_stale_processes():
                 entry['proc'].kill()
             except Exception:
                 pass
+
+
+# ═════════════════════════════════════════════════════════════
+# Assert 系统 — Python 端后置断言
+# ═════════════════════════════════════════════════════════════
+
+def _extract_actual(cmd: str, resp: dict) -> str:
+    """从步骤响应中提取可断言的实际值。"""
+    if cmd == 'rget':
+        return str(resp.get('data', ''))
+    if cmd == 'rinspect':
+        raw = resp.get('data', '')
+        if isinstance(raw, str) and raw.startswith('{'):
+            try:
+                import json
+                parsed = json.loads(raw)
+                for p in parsed.get('props', []):
+                    if not p.get('name', '').startswith('On'):
+                        return str(p.get('type', ''))
+            except json.JSONDecodeError:
+                pass
+        return str(raw)
+    if cmd == 'msgscan':
+        state = resp.get('state') or resp.get('data', '')
+        return str(state) if state else ''
+    if cmd == 'waitfor':
+        return 'ok' if resp.get('status') in ('ok', 'ack') else 'err'
+    if cmd in ('click', 'type', 'key', 'goto', 'rcall', 'rset'):
+        return resp.get('status', '')
+    return str(resp.get('data', ''))
+
+
+def _decode_response(resp_raw: str) -> dict:
+    """Decode a pipe response, preserving raw text on JSON failure."""
+    try:
+        return json.loads(resp_raw) if resp_raw else {}
+    except json.JSONDecodeError:
+        return {'status': 'err', 'data': resp_raw}
+
+
+def _check_assert(step: dict, resp: dict) -> dict:
+    """评估 Python 断言表达式。
+
+    step['assert'] 为 Python 表达式字符串，可用变量:
+      actual  — 从步骤响应中提取的实际值
+      re      — re 模块
+      len/str/int/float/bool — 内置函数
+
+    注意: 此接口由前端 LLM 调用，LLM 已可执行任意 Python 脚本，
+    因此 eval 不做沙箱限制，仅需清晰说明可用的命名空间。
+
+    示例:
+      {"assert": "actual == True"}
+      {"assert": "0 < float(actual) < 100"}
+      {"assert": "'保存' in actual"}
+      {"assert": "'保存' in actual and '成功' in actual"}
+      {"assert": "len(actual) > 0"}
+      {"assert": "re.search(r'\\\\d+', actual)"}
+
+    Returns:
+        {passed: bool, expression: str, actual: str, message?: str}
+    """
+    expression = step.get('assert', '')
+    if not expression:
+        return {'passed': True}
+
+    cmd = step.get('cmd', '')
+    actual = _extract_actual(cmd, resp)
+
+    try:
+        loc = {
+            'actual': actual,
+            're': __import__('re'),
+            'len': len, 'str': str, 'int': int,
+            'float': float, 'bool': bool,
+        }
+        result = bool(eval(expression, {"__builtins__": {}}, loc))
+    except Exception as e:
+        return {
+            'passed': False,
+            'expression': expression,
+            'actual': str(actual)[:200],
+            'message': f"assert error: {e}",
+        }
+
+    out = {
+        'passed': result,
+        'expression': expression,
+        'actual': str(actual)[:200],
+    }
+    if not result:
+        out['message'] = f"assert failed: {expression}  (actual={actual!r})"
+    return out
+
+
+def _make_report(results: list, total_steps: int) -> dict:
+    """从执行结果生成结构化测试报告。"""
+    import time
+    passed = 0
+    failed = 0
+    steps_detail = []
+    start = time.time()
+
+    for r in results:
+        step = r.get('step', {})
+        ast = r.get('assert_result', {})
+        status = 'pass' if (r['status'] == 'ok' and ast.get('passed', True)) else 'fail'
+        passed += status == 'pass'
+        failed += status == 'fail'
+        d = {'cmd': step.get('cmd', ''), 'target': step.get('target', ''), 'status': status}
+        if ast.get('message'):
+            d['error'] = ast['message']
+        steps_detail.append(d)
+
+    dur = time.time() - start
+    return {
+        'total': total_steps, 'passed': passed, 'failed': failed,
+        'duration_seconds': round(dur, 2),
+        'success_rate': f'{passed/total_steps*100:.0f}%' if total_steps > 0 else '0%',
+        'steps': steps_detail,
+    }
+
+
+# ═════════════════════════════════════════════════════════════
+# Form Summary — 从 dumpstate JSON 生成紧凑的窗体摘要
+# ═════════════════════════════════════════════════════════════
+
+def _curated_control(ctrl: dict) -> dict:
+    """从 dumpstate 的 control dict 中提取关键字段，展平到顶层。
+
+    Args:
+        ctrl: dumpstate 返回的单个控件 dict（含 name/class/props/children）
+
+    Returns:
+        精简后的 dict：关键字段直接展平，props 不嵌套，children → Controls。
+    """
+    out = {}
+    out['Name'] = ctrl.get('name', '?')
+    out['Class'] = ctrl.get('class', '?')
+
+    p = ctrl.get('props', {})
+
+    # 文本值：优先 Text，其次 Caption
+    if 'Text' in p:
+        out['Text'] = p['Text']
+    elif 'Caption' in p:
+        out['Caption'] = p['Caption']
+
+    # 状态
+    for k in ('Enabled', 'Visible'):
+        v = p.get(k)
+        if v is not None:
+            out[k] = v
+
+    # 布局
+    for k in ('TabOrder', 'Left', 'Top', 'Width', 'Height'):
+        v = p.get(k)
+        if v is not None:
+            out[k] = v
+
+    # 递归子控件
+    raw_children = ctrl.get('children', [])
+    if raw_children:
+        out['Controls'] = [_curated_control(c) for c in raw_children]
+
+    return out
+
+
+def _format_form_summary(state: dict) -> dict:
+    """将 dumpstate JSON 提炼为纯净的窗体摘要 JSON。
+
+    输出格式与 dumpstate 的关键区别：
+    - 只保留关键业务+布局字段（Name/Class/Text/Caption/Enabled/Visible/
+      TabOrder/Left/Top/Width/Height），摒弃数百个 RTTI 属性
+    - 字段展平到对象顶层，无 props 嵌套
+    - 子控件用 Controls（大写 C，匹配用户习惯）
+    - 窗体级属性（WindowState/BorderStyle 等）展平到根
+
+    Returns:
+        dict: {
+            "name": "MainForm", "class": "TMainForm", "caption": "...",
+            "WindowState": "wsNormal", "Width": 800, "Height": 600,
+            "Controls": [ { "name": "...", "class": "...", ... }, ... ]
+        }
+    """
+    out = {}
+    out['Name'] = state.get('form', '?')
+    out['Class'] = state.get('class', '?')
+    cap = state.get('caption', '')
+    if cap:
+        out['Caption'] = cap
+
+    # 窗体级属性（展平）
+    p = state.get('props', {})
+    for k in ('WindowState', 'BorderStyle', 'Position', 'Width', 'Height'):
+        v = p.get(k)
+        if v is not None:
+            out[k] = v
+
+    # 控件列表
+    raw_controls = state.get('controls', [])
+    # 跳过非可视化组件（菜单/Timer/ImageList 等）
+    non_ctrl = {'TMainMenu', 'TPopupMenu', 'TTimer',
+                'TImageList', 'TActionList', 'TrayIcon'}
+    vis_ctrl = [c for c in raw_controls if c.get('class') not in non_ctrl]
+    comp_ctrl = [c for c in raw_controls if c.get('class') in non_ctrl]
+
+    if vis_ctrl:
+        out['Controls'] = [_curated_control(c) for c in vis_ctrl]
+
+    # 非可视化组件单独列出
+    if comp_ctrl:
+        out['Components'] = [
+            {'Name': c.get('name', '?'), 'Class': c.get('class', '?')}
+            for c in comp_ctrl
+        ]
+
+    return out
 
 
 def _ensure_process(app_path: str, wait_for_pipe: float) -> tuple[bool, str]:
@@ -624,6 +843,7 @@ def execute_script(app_path: str, script,
         capture_name = step.get('capture', '')
         req_id = f'step_{req_index}'
         req_index += 1
+        _is_formsum = False
 
         # 构造 JSON 请求
         req = {'reqId': req_id, 'cmd': cmd}
@@ -665,6 +885,12 @@ def execute_script(app_path: str, script,
                 req['target'] = step.get('name', '')
         elif cmd == 'dumpstate':
             req['target'] = step.get('name', target)
+        elif cmd == 'formsum':
+            # formsum = dumpstate → Python 端格式化摘要
+            cmd = 'dumpstate'  # 实际发往 Delphi 的是 dumpstate
+            req['cmd'] = 'dumpstate'
+            req['target'] = step.get('name', target)
+            _is_formsum = True
         elif cmd == 'waitfor':
             req['prop'] = step.get('prop', '')
             req['value'] = str(step.get('value', ''))
@@ -696,14 +922,12 @@ def execute_script(app_path: str, script,
         resp_raw = _send_command(cmd_str)
 
         # 解析 JSON 响应
-        try:
-            resp_json = json.loads(resp_raw) if resp_raw else {}
-            resp_status = resp_json.get('status', 'err')
-        except json.JSONDecodeError:
-            resp_json = {'status': 'err', 'data': resp_raw}
-            resp_status = 'err'
+        resp_json = _decode_response(resp_raw)
+        resp_status = resp_json.get('status', 'err')
 
         ok = resp_status in ('ok', 'ack')
+        capture_resp_json = None
+        capture_ok = True
 
         # dumpstate/dlgscan 返回的就是 JSON 字符串，存到响应的 state 字段
         if cmd in ('dumpstate', 'dlgscan') and ok and resp_json.get('data'):
@@ -713,19 +937,38 @@ def execute_script(app_path: str, script,
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        if capture_name and cmd != 'capture':
-            _send_command(json.dumps({"reqId": f"cap_{req_id}", "cmd": "capture", "target": capture_name}, ensure_ascii=False))
-            results.append({
-                'step': step, 'command': cmd_str,
-                'capture': capture_name, 'status': 'ok',
-            })
-        else:
-            results.append({
-                'step': step, 'command': cmd_str,
-                'response': resp_json, 'status': 'ok' if ok else 'error',
-            })
+        # formsum：将 dumpstate JSON 格式化为紧凑摘要
+        if _is_formsum and ok and resp_json.get('state'):
+            try:
+                resp_json['summary'] = _format_form_summary(resp_json['state'])
+            except Exception:
+                resp_json['summary'] = '(form summary failed)'
 
-        if not ok:
+        if capture_name and cmd != 'capture':
+            capture_raw = _send_command(json.dumps(
+                {"reqId": f"cap_{req_id}", "cmd": "capture", "target": capture_name},
+                ensure_ascii=False))
+            capture_resp_json = _decode_response(capture_raw)
+            capture_ok = capture_resp_json.get('status', 'err') in ('ok', 'ack')
+
+        step_ok = ok and capture_ok
+        results.append({
+            'step': step, 'command': cmd_str,
+            'response': resp_json,
+            'status': 'ok' if step_ok else 'error',
+        })
+        if capture_name and cmd != 'capture':
+            results[-1]['capture'] = capture_name
+            results[-1]['capture_response'] = capture_resp_json
+
+        # ⭐ Assert 检查 — Python 端后置验证
+        assert_result = _check_assert(step, resp_json)
+        results[-1]['assert_result'] = assert_result
+        if not assert_result.get('passed', True):
+            results[-1]['status'] = 'assert_fail'
+            step_ok = False
+
+        if not step_ok:
             success = False
         time.sleep(0.3)
 
@@ -749,4 +992,5 @@ def execute_script(app_path: str, script,
         'process_reused': not is_new,
         'process_alive': app_path in _process_pool,
         'results': results,
+        'report': _make_report(results, len(steps)),
     }

@@ -118,11 +118,10 @@ src/
 编辑 Delphi 文件时的行号规则、脏标记保护、输出格式等详细规范已迁移至 `config/CODING_RULES.mdc`，AI 应通过以下方式获取：
 
 ```python
-get_coding_rules(section="delphi_file_tool")            # 全部规则
-get_coding_rules(section="delphi_file_partial_write")   # 行号规则
+get_coding_rules(section="writing")                     # 写代码全部规则
+get_coding_rules(section="delphi_file_write_rule")      # 行号规则
 get_coding_rules(section="delphi_file_dirty_flag")      # 脏标记保护
 get_coding_rules(section="delphi_file_output_format")   # 输出格式
-get_coding_rules(section="delphi_file_backup")          # 备份规则
 get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 ```
 

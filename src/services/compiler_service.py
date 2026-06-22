@@ -727,7 +727,7 @@ class CompilerService:
 
         # 中间文件目录（存放 .dcu 文件）
         dcu_dir = None
-        dproj_path_dcu = Path(request.project_path).with_suffix('.dproj')
+        dproj_path_dcu = Path(project_path).with_suffix('.dproj')
         if dproj_path_dcu.exists():
             try:
                 from ..utils.dproj_parser import DprojParser
@@ -815,6 +815,7 @@ class CompilerService:
         logger.debug(f"生成的 .dpr 编译参数: {' '.join(args)}")
         return args
 
+    @staticmethod
     @staticmethod
     def _get_platform_compiler_name(platform: TargetPlatform) -> str:
         """根据目标平台返回编译器可执行文件名"""

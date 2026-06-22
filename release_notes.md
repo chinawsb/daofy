@@ -32,7 +32,8 @@
 - **脏标记系统**：文件写入后标记脏，再次 write 前必须 read/preview 确认行号
 
 ### 文件编辑增强（v2026.06.08.1 ~ v2026.06.15）
-- **RWLock 防并发文件损坏**：`file_tool` 所有操作引入多读单写锁，并行写入自动引导为 batch_write
+- **RWLock 防并发文件损坏**：`file_tool` 所有操作引入多读单写锁，并行写入自动引导为一次 `write(edits=[...])`
+- **旧内容校验写入**：`write` 支持每个 edit 提供 `old_content`，以“行号 + 旧内容”校验命中范围，减少重复读取；比较时忽略字符串外空白以降低格式化干扰
 - **auto_format 偏移量重算**：formatting 后自动重读文件计算真实偏移差
 - **format action 移除偏移量计算**：pasfmt 可能非线性重构代码，format 后仅标记脏标记
 - **重复行检测降级为警告**：不再阻断写入，仅提示 AI verify 结果
@@ -46,8 +47,8 @@
 - **auto_format 后 fmt_diff 未初始化**：pasfmt 未格式化时局部变量可能未定义
 - **format action 遗留代码清理**：移除格式化前后行数计算的无用代码（~20 行）
 - **console_execute Windows pipe 读取**：`select.select` 不适用于 Windows pipe，改为 thread + Queue
-- **batch_write experimental 标记移除**：batch_write 正式作为标准接口
-- **batch_write content 首行重复检测修正**：s=0 时（文件头替换）不再误报
+- **旧批量写接口清理**：移除 `batch_write` 独立 action，统一使用 `write(edits=[...])`
+- **content 首行重复检测修正**：文件头替换时 content 首行与原文件首行重复不再误报
 - **`tool_docs.py`/`server.py` 参数同步**：delphi_rtti 注册；delphi_file 统一 edits 参数格式
 
 ## 重构与改进

@@ -395,7 +395,7 @@ begin
       CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos - 1)), 0);
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if Screen.ActiveForm <> nil then begin
-        WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
+        WC := TWinControl(FindNamedControl(CtrlName));
         if WC <> nil then begin
           Ch := WC.Handle;
           SendMessage(Ch, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(CX, CY));
@@ -405,7 +405,7 @@ begin
     end;
   end else begin
     if Screen.ActiveForm <> nil then begin
-      WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
+      WC := TWinControl(FindNamedControl(CtrlName));
       if WC <> nil then begin
         Ch := WC.Handle;
         SendMessage(Ch, BM_CLICK, 0, 0);
@@ -434,7 +434,7 @@ var
 begin
   Ch := 0;
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
-    WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+    WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then Ch := WC.Handle;
   end;
 
@@ -493,7 +493,7 @@ begin
       CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos - 1)), 0);
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if Screen.ActiveForm <> nil then begin
-        WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
+        WC := TWinControl(FindNamedControl(CtrlName));
         if WC <> nil then begin
           Ch := WC.Handle;
           SendMessage(Ch, WM_LBUTTONDBLCLK, MK_LBUTTON, MakeLParam(CX, CY));
@@ -502,7 +502,7 @@ begin
     end;
   end else begin
     if Screen.ActiveForm <> nil then begin
-      WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
+      WC := TWinControl(FindNamedControl(CtrlName));
       if WC <> nil then begin
         Ch := WC.Handle;
         GetWindowRect(Ch, R);
@@ -521,7 +521,7 @@ var
   R: TRect;
 begin
   if Screen.ActiveForm <> nil then begin
-    WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+    WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
       GetWindowRect(Ch, R);
@@ -540,7 +540,7 @@ var
   R: TRect;
 begin
   if Screen.ActiveForm <> nil then begin
-    WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+    WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
       SendMessage(Ch, WM_MOUSEMOVE, 0, MakeLParam(WC.Width div 2, WC.Height div 2));
@@ -560,7 +560,7 @@ var
 begin
   if Target <> '' then begin
     if Screen.ActiveForm <> nil then begin
-      WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+      WC := TWinControl(FindNamedControl(Target));
       if WC <> nil then begin
         GetWindowRect(WC.Handle, R);
         CX := R.Left + (R.Width div 2);
@@ -593,7 +593,7 @@ begin
   if (Screen.ActiveForm = nil) or (Source = '') then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
-  SrcCtrl := Screen.ActiveForm.FindChildControl(Source) as TWinControl;
+  SrcCtrl := TWinControl(FindNamedControl(Source));
   if SrcCtrl = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
   SrcCh := SrcCtrl.Handle;
 
@@ -604,7 +604,7 @@ begin
 
   // 终点
   if Target <> '' then begin
-    var DstCtrl := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+    var DstCtrl := TWinControl(FindNamedControl(Target));
     if DstCtrl <> nil then begin
       GetWindowRect(DstCtrl.Handle, TR);
       TX := TR.Left + TR.Width div 2;
@@ -637,7 +637,7 @@ var
   Ch: HWND;
 begin
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
-    WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
+    WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
       SetWindowText(Ch, PChar(Value));
@@ -661,7 +661,7 @@ var
 begin
   try
     if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
+    Ctrl := TControl(FindNamedControl(Target));
     if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
     Parts := Prop.Split(['.']);
@@ -702,7 +702,7 @@ var
 begin
   try
     if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
+    Ctrl := TControl(FindNamedControl(Target));
     if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
     Ctx := TRttiContext.Create;
@@ -752,7 +752,7 @@ begin
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
 
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
+    Ctrl := TControl(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -814,7 +814,7 @@ begin
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
+    Ctrl := TControl(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -919,9 +919,26 @@ begin
 end;
 
 function TAutomationProcessor.FindNamedControl(const AName: string): TObject;
+
+  function FindRecursive(Parent: TWinControl): TObject;
+  var
+    I: Integer;
+    C: TControl;
+  begin
+    for I := 0 to Parent.ControlCount - 1 do begin
+      C := Parent.Controls[I];
+      if SameText(C.Name, AName) then Exit(C);
+      if C is TWinControl then begin
+        Result := FindRecursive(TWinControl(C));
+        if Result <> nil then Exit;
+      end;
+    end;
+    Result := nil;
+  end;
+
 begin
   if Screen.ActiveForm <> nil then
-    Result := Screen.ActiveForm.FindChildControl(AName)
+    Result := FindRecursive(Screen.ActiveForm)
   else
     Result := nil;
 end;

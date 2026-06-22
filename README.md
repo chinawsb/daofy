@@ -109,7 +109,7 @@ delphi_kb(
 | `package` | 组件包管理：安装(action=install) / 列出已安装(action=list) |
 | `get_coding_rules` | 获取 Delphi 编码规范，支持按章节分段获取 |
 | `delphi_kb` | 搜索代码/类/函数/文档/示例代码，查看统计或构建知识库 |
-| `delphi_file` | Delphi 文件专用操作：读/写/批量写入(batch_write)/格式化/备份管理（编码检测+自动备份+DFM转换） |
+| `delphi_file` | Delphi 文件专用操作：读/写(edits批量修改)/格式化/备份管理（编码检测+自动备份+DFM转换） |
 | `manage_component` | DFM 组件增/删/改/生成 + PAS 自动同步 |
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab/Gitee/GitCode 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
@@ -413,14 +413,14 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ### v2026.06.08.1
 
-- `delphi_file` 全操作 RWLock 防并发文件损坏：read/write/batch_write/format/backup/uses 全部引入多读单写锁，并发写入返回明确错误引导合并 batch_write
+- `delphi_file` 全操作 RWLock 防并发文件损坏：read/write/format/backup/uses 全部引入多读单写锁，并发写入返回明确错误，引导合并到一次 write(edits=[...])
 - `tools/7z/` 补齐 7z.dll，release 包开箱可用
-- `tool_docs.py` 约束强化：batch_write 标注"⭐ 优先使用"，新增并行写入禁令
+- `tool_docs.py` 约束强化：统一写入参数为 edits，并新增并行写入禁令（后续版本推荐 `replace`/`insert`/`delete` 结构化入口）
 - `.gitignore` 排除 dot-prefixed 目录，清理 AI 工作目录追踪
 
 ### v2026.06.03
 
-- `delphi_file` 新增 `batch_write` action：一次传入多个 edit，内部按 `start_line` 升序排列，以备份文件为参照系，内存中累积偏移量后一次性写出（配套 18 个测试用例）
+- `delphi_file` 写入统一为 `write(edits=[...])`：一次传入多个 edit，内部按 `start_line` 升序排列，内存中累积偏移量后一次性写出
 - `compilers.json` 路径自愈：检测到不在 `src/config/` 时自动回退到项目根 `config/`，避免 MCP 启动时因路径差异直接报错
 - 18 处 `except Exception: pass` 添加 `logger.debug` 异常日志，便于调试时定位失败原因
 - `search_knowledge` 重构：597→37 行，拆 16 个模块级子函数，行为完全等价
@@ -430,7 +430,7 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 - `delphi_file` 部分写入行号修正：0-indexed 文档纠偏，写入后返回偏移量+后续行号调整公式
 - `delphi_file(action="uses")` 同步返回偏移量信息
-- `AGENTS.md` 新增部分写入规则章节：0-indexed 语义 + 连续编辑偏移算法
+- `AGENTS.md` 当时新增部分写入规则章节；后续版本已统一为 1-indexed inclusive 行号
 - 全量测试 684 passed, 6 skipped
 
 ### v2026.05.14

@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 
 # MSBuild 命名空间
 MSBUILD_NS = "http://schemas.microsoft.com/developer/msbuild/2003"
+ET.register_namespace('', MSBUILD_NS)  # 防止写回时元素变成 ns0: 前缀（MSBuild 不认）
 
 
 def _ns(tag: str) -> str:
@@ -1298,6 +1299,60 @@ def _compute_targeted_platforms_mask(platforms: List[str]) -> int:
 
 async def _handle_info(project_path: str) -> CallToolResult:
     """读取 .dproj 文件完整信息"""
+    path_obj = Path(project_path)
+
+    # .dpr/.dpk → 自动转换为对应的 .dproj 路径
+    if path_obj.suffix.lower() in ('.dpr', '.dpk'):
+        dproj_path = path_obj.with_suffix('.dproj')
+        if dproj_path.exists():
+            project_path = str(dproj_path)
+        else:
+            # 无对应 .dproj，返回 .dpr 基础信息
+            try:
+                content = path_obj.read_text(encoding='utf-8-sig', errors='replace')
+            except Exception:
+                content = ''
+            lines_out = [
+                f"📄 文件: {project_path}",
+                f"状态: 独立的 .dpr/.dpk 文件，无对应 .dproj 项目文件",
+                "",
+            ]
+            # 提取源文件类型（program/library/package）
+            for line in content.split('\n'):
+                stripped = line.strip()
+                if stripped.startswith(('program ', 'library ', 'package ')):
+                    lines_out.append(f"类型: {stripped.split()[0]}")
+                    break
+            # 提取 uses 子句
+            in_uses = False
+            uses_items = []
+            for line in content.split('\n'):
+                stripped = line.strip()
+                if stripped.lower().startswith('uses'):
+                    in_uses = True
+                    rest = stripped[4:].strip()
+                    if rest:
+                        uses_items.append(rest.rstrip(';'))
+                elif in_uses:
+                    if ';' in stripped:
+                        uses_items.append(stripped.rstrip(';'))
+                        break
+                    elif stripped:
+                        uses_items.append(stripped)
+                    else:
+                        break
+            if uses_items:
+                uses_joined = ' '.join(uses_items)
+                parts = [u.strip() for u in uses_joined.split(',') if u.strip()]
+                lines_out.append(f"引用的单元 ({len(parts)} 个): {', '.join(parts[:30])}{'...' if len(parts) > 30 else ''}")
+            lines_out.append("")
+            lines_out.append(f"💡 可通过 project(action='create', project_path='{dproj_path}', main_source='{path_obj.name}') 创建对应的 .dproj")
+
+            return CallToolResult(
+                content=[TextContent(type="text", text="\n".join(lines_out))],
+                isError=False,
+            )
+
     parser = DprojParser(project_path)
     if not parser.parse():
         return CallToolResult(

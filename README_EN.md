@@ -283,7 +283,7 @@ The following configs apply to users who installed via git clone. Replace the pa
 | `package` | Package management: install(action=install) / list installed(action=list) |
 | `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval |
 | `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base |
-| `delphi_file` | Delphi file operations: read/write/batch_write/format/backup (encoding detection + auto-backup + DFM conversion) |
+| `delphi_file` | Delphi file operations: read/write(edits)/format/backup (encoding detection + auto-backup + DFM conversion) |
 | `manage_component` | Manage DFM components: add/remove/modify/create + PAS auto-sync |
 | `code_hosting` | Unified operations for Gitea/GitHub/GitLab/Gitee/GitCode + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
@@ -330,7 +330,7 @@ MIT License - See [LICENSE](LICENSE) file.
 
 ### v2026.06.03 (Latest)
 
-- `delphi_file` new `batch_write` action: pass multiple edits at once, sorted by `start_line`, accumulates offsets in memory and writes once (18 accompanying test cases)
+- `delphi_file` write now uses `write(edits=[...])` for one or more edits: sorted by `start_line`, accumulates offsets in memory, and writes once
 - `compilers.json` path self-healing: auto-fallback to project root `config/` when not found in `src/config/`, avoiding MCP startup failure due to path mismatch
 - 18 `except Exception: pass` blocks now log `logger.debug(msg, exc_info=True)` with traceback for easier debugging
 - `search_knowledge` refactor: 597→37 lines, split into 16 module-level sub-functions, behavior fully equivalent
@@ -338,9 +338,9 @@ MIT License - See [LICENSE](LICENSE) file.
 
 ### v2026.06.01
 
-- `delphi_file` partial write line number fix: 0-indexed documentation correction, offset returned after each write
+- `delphi_file` partial write line number fix; later versions use 1-indexed inclusive line numbers consistently, with offsets returned after writes
 - `delphi_file(action="uses")` now also returns offset info
-- `AGENTS.md`: new partial write rules section (0-indexed semantics + consecutive edit offset algorithm)
+- `AGENTS.md`: new partial write rules section; later versions use 1-indexed inclusive semantics with consecutive edit offsets
 - Full test suite: 684 passed, 6 skipped
 
 ### v2026.05.14

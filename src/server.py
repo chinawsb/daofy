@@ -53,7 +53,7 @@ else:
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents
+    from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
@@ -99,6 +99,7 @@ else:
 )
     from src.tools.delphi_rtti import handle_delphi_rtti as _handle_delphi_rtti
     from src.services.copyright_service import generate_copyright as _generate_copyright
+    # ocr 使用延迟导入 — 仅当工具调用时才 import（避免未装 onnxruntime 时启动崩溃）
 
     # 后台版本检查结果缓存（由 startup 异步任务填充）
     _update_check_result: Optional[dict] = None
@@ -369,7 +370,7 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "batch_write", "format", "backup", "uses"], "default": "read", "description": "操作类型: read=读文件, write=写文件(edits参数), batch_write=已废弃(用write), format=格式化, backup=备份管理, uses=增删uses"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses"},
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
 
                         # ---- [read] 参数 ----
@@ -382,31 +383,33 @@ async def run_server():
                         "limit": {"type": "integer", "default": 500, "description": "[read] 最大返回行数(默认500，上限1000)"},
                         "show_line_numbers": {"type": "boolean", "default": False, "description": "[read] 显示 1-indexed 行号前缀"},
                         "end_line": {"type": "integer", "description": "[read] 结束行号(1-indexed inclusive)，默认 start_line+limit-1"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[read/class] 搜索范围 delphi/thirdparty/all"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "[read/class] 搜索范围 delphi/project/thirdparty/all"},
                         "project_path": {"type": "string", "description": "[read/class] 项目文件路径，用于搜索项目 KB"},
 
-                        # ---- [write] 参数 ----
-                        # write 统一使用 edits 参数，content/start_line/end_line 已合并到 edits 中
+                        # ---- [write/replace/insert/delete] 参数 ----
+                        # write 兼容旧语义；replace/insert/delete 提供更明确的安全编辑语义。
                         "edits": {
                             "type": "array",
-                            "description": "[write] 编辑列表。全量: [{start_line:1, content:'...'}]；部分: [{start_line:5, end_line:10, content:'...'}]。相邻区间不能重叠。",
+                            "description": "[write/replace/insert/delete] 编辑列表。replace=替换范围，insert=以start_line为锚点按position插入，delete=删除范围。replace/insert/delete 对现有文件要求每个 edit 提供非空 old_content。",
                             "items": {
                                 "type": "object",
-                                "required": ["start_line", "content"],
+                                "required": ["start_line"],
                                 "properties": {
                                     "start_line": {"type": "integer", "description": "起始行号（1-indexed inclusive）"},
-                                    "end_line": {"type": "integer", "description": "结束行号（1-indexed inclusive），不传则到文件末尾"},
-                                    "content": {"type": "string", "description": "替换内容（空串=删除该区间）。全量替换时 start_line=1 不加 end_line"},
+                                    "end_line": {"type": "integer", "description": "结束行号（1-indexed inclusive）；replace/delete 不传则到文件末尾；insert 不使用"},
+                                    "position": {"type": "string", "enum": ["before", "after"], "default": "before", "description": "[insert] 插入位置: before=锚点行前, after=锚点行后"},
+                                    "content": {"type": "string", "description": "replace/write 的替换内容；insert 的插入内容；delete 可省略。兼容 write 中空串=删除该区间"},
+                                    "old_content": {"type": "string", "description": "将被替换/删除区间或 insert 锚点行的非空旧内容。写入前会忽略字符串外空白后比较；replace/insert/delete 对现有文件必填"},
                                     "description": {"type": "string", "description": "可选的文字描述，仅用于返回消息标记"}
                                 }
                             }
                         },
-                        "encoding": {"type": "string", "default": "auto", "description": "[write/uses] 写入编码: auto/utf-8/gbk/utf-16，默认 auto"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "[write] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
-                        "backup": {"type": "boolean", "default": True, "description": "[write/uses] 写入前自动备份到 __history（建议保持 true）"},
-                        "preview": {"type": "boolean", "default": False, "description": "[write] 预览模式: 只算 diff 不写盘，清除脏标记"},
-                        "force": {"type": "boolean", "default": False, "description": "[write] 跳过续重行检测（默认 false 时检测到重复仅警告不阻断）"},
-                        "allow_dirty": {"type": "boolean", "default": False, "description": "[write] 跳过脏标记检查（默认 false）。脏标记阻止对未重新读取的文件再次写入，防止 AI 使用过期行号。设 true 可绕过（风险自负）"},
+                        "encoding": {"type": "string", "default": "auto", "description": "[read/write/replace/insert/delete/uses] 读/写编码: auto/utf-8/gbk/utf-16，默认 auto。read 时指定可覆盖自动检测结果"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
+                        "backup": {"type": "boolean", "default": True, "description": "[write/replace/insert/delete/uses] 写入前自动备份到 __history（建议保持 true）"},
+                        "preview": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 预览模式: 只算 diff 不写盘，不清除脏标记"},
+                        "force": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过续重行检测（默认 false 时检测到重复仅警告不阻断）"},
+                        "allow_dirty": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过脏标记检查（默认 false）。优先为每个 edit 提供 old_content；仅确认行号准确时才设 true"},
 
                         # ---- [format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[format] 模式: file/code/check"},
@@ -418,6 +421,10 @@ async def run_server():
                         # ---- [backup] 参数 ----
                         "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[backup] 子操作: create/list/restore"},
                         "version": {"type": "integer", "description": "[backup/restore] 版本号，不传则恢复最新"},
+
+                        # ---- [encode] 参数 ----
+                        "from_encoding": {"type": "string", "default": "auto", "description": "[encode] 源编码（auto=自动检测，推荐始终用 auto；显式指定错误可能导致解码失败或乱码）"},
+                        "to_encoding": {"type": "string", "description": "[encode] 目标编码: utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi"},
 
                         # ---- [uses] 参数 ----
                         "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[uses] add=添加, remove=删除"},
@@ -527,28 +534,57 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "platform": {"type": "string", "enum": ["gitea", "github", "gitlab", "gitee", "gitcode"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
-                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "close_issue", "add_comment", "list_issues", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status"], "description": "操作类型: git_* 为 Git 本地操作（必须使用此工具，禁止用 bash 执行 git）；create_token/init_labels/create_issue 等为平台 API 操作"},
+                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "get_issue", "edit_issue", "set_labels", "close_issue", "add_comment", "list_issues", "create_pull", "get_pull", "list_pulls", "edit_pull", "merge_pull", "close_pull", "reopen_pull", "create_release", "get_release", "list_releases", "edit_release", "delete_release", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status", "git_diff", "git_show", "git_log", "git_fetch", "git_pull", "git_branch", "git_switch", "git_merge", "git_restore", "git_unstage", "git_stash", "git_tag"], "description": "操作类型: git_* 为 Git 本地操作（必须使用此工具，禁止用 bash 执行 git）；create_token/init_labels/create_issue 等为平台 API 操作"},
                         "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
                         "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
                         "repo": {"type": "string", "description": "仓库名，格式 owner/repo (API 操作需要)"},
-                        "issue_number": {"type": "integer", "description": "工单编号 (close_issue/add_comment 需要)"},
-                        "title": {"type": "string", "description": "工单标题 (create_issue 需要)"},
-                        "body": {"type": "string", "description": "正文内容，支持 Markdown (create_issue/add_comment 需要)"},
-                        "labels": {"type": "array", "items": {"type": "string"}, "description": "标签名称列表 (create_issue 可选)"},
+                        "issue_number": {"type": "integer", "description": "工单编号 (get_issue/edit_issue/set_labels/close_issue/add_comment 需要)"},
+                        "pull_number": {"type": "integer", "description": "PR/MR 编号 (get_pull/edit_pull/merge_pull/close_pull/reopen_pull 需要)"},
+                        "release_id": {"type": "integer", "description": "Release ID (GitHub/Gitea/Gitee get/edit/delete release 需要)"},
+                        "title": {"type": "string", "description": "工单或 PR/MR 标题 (create_issue/create_pull 需要)"},
+                        "body": {"type": "string", "description": "正文内容，支持 Markdown (create_issue/add_comment/create_pull/create_release 等使用)"},
+                        "labels": {"type": "array", "items": {"type": "string"}, "description": "标签名称列表 (create_issue/edit_issue/set_labels 可选)"},
                         "comment": {"type": "string", "description": "关闭工单时的说明 (close_issue 可选)"},
-                        "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "工单过滤状态 (list_issues 可选，默认 open)"},
+                        "state": {"type": "string", "enum": ["open", "closed", "merged", "all"], "description": "工单/PR 过滤或修改状态；merged 仅用于 list_pulls 过滤，合并请用 merge_pull (list_issues/list_pulls/edit_issue/edit_pull 可选，默认 open)"},
+                        "page": {"type": "integer", "description": "分页页码 (list_issues/list_pulls/list_releases 可选，默认 1)"},
                         "username": {"type": "string", "description": "用户名 (create_token 需要)"},
                         "password": {"type": "string", "description": "密码 (create_token 需要)"},
                         "token_name": {"type": "string", "description": "Token 名称 (create_token 可选，默认 delphi-mcp)"},
+                        "source_branch": {"type": "string", "description": "源分支 (create_pull 需要，edit_pull 可选)"},
+                        "target_branch": {"type": "string", "description": "目标分支 (create_pull 需要，edit_pull 可选)"},
+                        "tag_name": {"type": "string", "description": "Release 标签名 (create_release 需要；GitLab/GitCode get/edit/delete release 需要)"},
+                        "name": {"type": "string", "description": "Release 名称 (create_release/edit_release 可选)"},
+                        "target_commitish": {"type": "string", "description": "GitHub/Gitea/Gitee Release 目标提交 (create_release 可选)"},
+                        "draft": {"type": "boolean", "description": "GitHub/Gitea/Gitee Release 草稿标记 (create_release/edit_release 可选)"},
+                        "prerelease": {"type": "boolean", "description": "GitHub/Gitea/Gitee Release 预发布标记 (create_release/edit_release 可选)"},
                         # Git 操作参数
                         "dir": {"type": "string", "description": "Git 仓库本地路径 (git_* 操作需要)"},
                         "repo_url": {"type": "string", "description": "远程仓库 URL (git_clone 需要)"},
                         "mirror": {"type": "string", "description": "GitHub 镜像源地址，如 https://hub.fastgit.xyz (git_clone 可选)"},
-                        "branch": {"type": "string", "description": "分支名 (git_clone/git_push 可选)"},
+                        "branch": {"type": "string", "description": "分支名 (git_clone/git_push/git_fetch/git_pull/git_branch/git_switch/git_merge 可选)"},
                         "message": {"type": "string", "description": "提交信息 (git_commit 需要)"},
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "要 add 的文件列表 (git_add 需要)"},
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "文件列表 (git_add/git_diff/git_log/git_restore/git_unstage/git_stash 可选/需要)"},
+                        "ref": {"type": "string", "description": "提交/分支/范围引用 (git_diff/git_show/git_log/git_fetch/git_pull/git_tag 需要)"},
+                        "staged": {"type": "boolean", "description": "查看 staged diff / restore staged 时使用"},
+                        "stat": {"type": "boolean", "description": "输出 diff/show 统计信息"},
+                        "name_only": {"type": "boolean", "description": "只输出文件名 (git_diff/git_show 可选)"},
+                        "limit": {"type": "integer", "description": "输出截断或日志条数 (git_diff/git_show/git_log 可选)"},
+                        "start_point": {"type": "string", "description": "新分支/新标签起点 (git_branch/git_switch/git_tag 可选)"},
+                        "source": {"type": "string", "description": "git_restore 的 --source 引用 (可选)"},
+                        "tag": {"type": "string", "description": "标签名 (git_tag 或 create_release/get_release/edit_release/delete_release 可选/需要)"},
+                        "delete": {"type": "boolean", "description": "删除分支/标签 (git_branch/git_tag 可选)"},
+                        "create": {"type": "boolean", "description": "创建并切换分支 (git_switch 可选)"},
+                        "prune": {"type": "boolean", "description": "git_fetch 使用 --prune"},
+                        "remote_branches": {"type": "boolean", "description": "git_branch 列出远程分支 (-a)"},
+                        "rebase": {"type": "boolean", "description": "git pull 使用 rebase 模式"},
+                        "ff_only": {"type": "boolean", "description": "git pull / git merge 使用 ff-only"},
+                        "no_commit": {"type": "boolean", "description": "git merge 使用 no-commit"},
+                        "async_mode": {"type": "boolean", "description": "git_fetch/git_pull/git_merge 使用后台任务执行，返回 task_id 后配合 async_task 查询"},
+                        "include_untracked": {"type": "boolean", "description": "git stash push 包含未跟踪文件"},
+                        "op": {"type": "string", "description": "git stash 操作: push/list/pop/apply/drop/show"},
                         "remote": {"type": "string", "description": "远程名称 (git_push/git_push_retry 可选，默认 origin)"},
                         "retry_interval": {"type": "integer", "description": "重试间隔秒数 (git_push_retry 可选，默认 300)"},
+                        "max_retries": {"type": "integer", "description": "最大重试次数 (git_push_retry 可选，默认 12)"},
                         "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
                     },
                     "required": ["action"]
@@ -688,10 +724,13 @@ async def run_server():
                         },
                         # ── GUI 模式参数 ──
                         "script": {
-                            "type": "string",
-                            "description": "[gui] JSON 脚本（文件路径 或 JSON 字符串）。"
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "object"}}
+                            ],
+                            "description": "[gui] JSON 脚本（JSON 字符串、文件路径 或 命令对象数组）。"
                                            " 格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
-                                           " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rinspect)立即返回ACK；sync其余阻塞等待。",
+                                            " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/formsum/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type)立即返回ACK；sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect)阻塞等待。",
                         },
                         "snapshots_dir": {
                             "type": "string",
@@ -731,6 +770,58 @@ async def run_server():
                         },
                     },
                     "required": ["app_path"],
+                }
+            ),
+
+            # ===== OCR 图像文字识别（可选功能）⭐ =====
+            Tool(
+                name="ocr",
+                description=(
+                    "图像分析: recognize(文字识别)/detect(文本框)/diff(截图对比)/"
+                    "color(颜色分析)/match(图标匹配)/status。"
+                    " 可选功能(pip install daofy-for-delphi[ocr])。"
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["recognize", "detect", "status",
+                                     "diff", "color", "match"],
+                            "default": "recognize",
+                            "description": "recognize/detect/status/diff/color/match",
+                        },
+                        "image_path": {
+                            "type": "string",
+                            "description": "[recognize/detect/color/match] 图片路径",
+                        },
+                        "baseline": {
+                            "type": "string",
+                            "description": "[diff] 基线截图路径",
+                        },
+                        "current": {
+                            "type": "string",
+                            "description": "[diff] 当前截图路径",
+                        },
+                        "threshold": {
+                            "type": "number",
+                            "description": "[diff]像素差异阈值0-255(默认10) / [match]匹配阈值0-1(默认0.8)",
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "[diff] 差异图输出目录",
+                        },
+                        "region": {
+                            "type": "array",
+                            "items": {"type": "number"},
+                            "description": "[color] 分析区域 [x,y,w,h]",
+                        },
+                        "template_path": {
+                            "type": "string",
+                            "description": "[match] 模板图标路径",
+                        },
+                    },
+                    "required": [],
                 }
             ),
 
@@ -1232,6 +1323,20 @@ async def run_server():
         """处理 delphi_rtti 工具调用（RTTI 发现/调用）。"""
         return await _handle_delphi_rtti(arguments)
 
+    async def _handle_ocr(arguments: dict) -> dict:
+        """处理 ocr 工具调用（延迟导入，无 OCR 依赖时返回友好错误）。"""
+        try:
+            from src.tools.ocr import handle_ocr as _ocr_handler
+        except ImportError as e:
+            return {
+                "status": "failed",
+                "error": (
+                    f"缺少 OCR 依赖: {e}。"
+                    "请安装可选依赖: pip install daofy-for-delphi[ocr]"
+                ),
+            }
+        return await asyncio.to_thread(_ocr_handler, arguments)
+
     _TOOL_HANDLERS = {
         "project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
@@ -1249,6 +1354,7 @@ async def run_server():
         "generate_copyright": _handle_generate_copyright,
         "automate_delphi": _handle_automate_delphi,
         "delphi_rtti": _handle_delphi_rtti,
+        "ocr": _handle_ocr,
     }
 
     @server.call_tool()
@@ -1480,6 +1586,456 @@ async def run_server():
             )
 
         raise ValueError(f"未知资源: {uri}")
+
+    # ============================================================
+    # MCP 提示词注册
+    # 自动化测试工作流专用提示词模板
+    # ============================================================
+
+    @server.list_prompts()
+    async def list_prompts():
+        """列出所有可用提示词模板"""
+        return [
+            Prompt(
+                name="automate-expert-primer",
+                description="🎭 注入测试专家角色：设定身份、思维框架、三层递进思考模型",
+                arguments=[
+                    PromptArgument(
+                        name="app_name",
+                        description="被测 Delphi 应用名称",
+                        required=False,
+                    ),
+                    PromptArgument(
+                        name="project_path",
+                        description="项目路径（用于后续代码分析）",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name="automate-code-analysis",
+                description="🔍 代码感知分析：读取目标单元的 DFM/PAS，生成控件映射表、事件分析、测试路径",
+                arguments=[
+                    PromptArgument(
+                        name="form_name",
+                        description="目标 Form/Frame 类名（如 TNewCustomerForm）",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="project_path",
+                        description="项目路径（传给 delphi_kb 搜索代码）",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="app_path",
+                        description="Delphi 应用 exe 路径（可选，用于后续自动化）",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name="automate-test-plan",
+                description="启动自动化测试规划：角色设定 + 代码分析 + 结构化步骤序列",
+                arguments=[
+                    PromptArgument(
+                        name="goal",
+                        description="测试目标描述（如「新建客户 - 成功路径」）",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="app_path",
+                        description="Delphi 应用 exe 路径",
+                        required=False,
+                    ),
+                    PromptArgument(
+                        name="project_path",
+                        description="项目路径（用于代码分析）",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name="automate-step-execute",
+                description="单步自动化执行协议：前置感知→执行→等待→验证",
+                arguments=[
+                    PromptArgument(
+                        name="phase",
+                        description="步骤阶段: perceive / execute / verify",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="tool",
+                        description="工具/命令名 (如 goto+click, capture, waitfor, rcall)",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="target",
+                        description="操作目标 (控件名/坐标/文件路径)",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="expected",
+                        description="预期结果描述",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name="automate-failure-recover",
+                description="自动化测试失败恢复：诊断→决策→恢复→学习",
+                arguments=[
+                    PromptArgument(
+                        name="signal",
+                        description="失败信号: timeout / click_error / unexpected_dialog / rtti_exception / ocr_mismatch",
+                        required=True,
+                    ),
+                    PromptArgument(
+                        name="expected",
+                        description="预期结果",
+                        required=False,
+                    ),
+                    PromptArgument(
+                        name="actual",
+                        description="实际结果",
+                        required=False,
+                    ),
+                ],
+            ),
+            Prompt(
+                name="automate-save-experience",
+                description="测试完成后保存经验到知识库：结构化记录成功/失败模式",
+                arguments=[],
+            ),
+            Prompt(
+                name="automate-session-end",
+                description="结束测试会话：保存经验、导出脚本、角色切回开发模式",
+                arguments=[
+                    PromptArgument(
+                        name="save_experience",
+                        description="是否保存测试经验（true/false，默认 true）",
+                        required=False,
+                    ),
+                    PromptArgument(
+                        name="export_script",
+                        description="是否导出测试脚本到 tests/scripts/（true/false，默认 true）",
+                        required=False,
+                    ),
+                ],
+            ),
+        ]
+
+    @server.get_prompt()
+    async def get_prompt(name: str, arguments: dict[str, str] | None) -> GetPromptResult:
+        """获取指定提示词模板内容"""
+        args = arguments or {}
+
+        if name == "automate-expert-primer":
+            app_name = args.get("app_name", "待测 Delphi 应用")
+            project_path = args.get("project_path", "")
+            proj_line = f"\n项目路径: `{project_path}`" if project_path else ""
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 角色设定：Delphi UI 自动化测试专家\n\n"
+                                f"你是一位 **Delphi UI 自动化测试专家**。"
+                                f"被测应用: **{app_name}**{proj_line}\n\n"
+                                f"### 你的核心方法论\n\n"
+                                f"**感知 → 规划 → 执行 → 反馈（循环）**\n\n"
+                                f"### 三层递进思考模型\n\n"
+                                f"**第一层：理解被测对象（代码感知）**\n"
+                                f"在操作任何控件之前，先读源码理解它：\n"
+                                f"- 读 `.dfm` → 了解控件布局、类型、名称、事件绑定\n"
+                                f"- 读 `.pas` → 了解事件处理程序、验证逻辑、数据流\n"
+                                f"- 用 `delphi_kb` 查 API → 理解框架行为\n"
+                                f"- 输出：控件映射表 + 事件处理程序分析 + 代码分支路径表\n\n"
+                                f"**第二层：生成测试策略（规划）**\n"
+                                f"根据源码理解，确定：\n"
+                                f"- 覆盖哪些路径 — 每个事件处理程序 + 每个代码分支\n"
+                                f"- 用什么工具 — RTTI(`rcall`) > 控件级(`goto+click`) > 坐标级(`move+click`)\n"
+                                f"- 预期结果 — 从代码逻辑推导的断言（如 `ModalResult := mrOk` → 窗口应关闭）\n"
+                                f"- 边界条件 — 从验证代码中提取（`if edtName.Text=''` → 测试空值）\n\n"
+                                f"**第三层：执行-验证循环（执行）**\n"
+                                f"严格按感知→执行→验证每步循环：\n"
+                                f"- 先感知（`capture`/`dumpstate`/`msgscan`），不假设 UI 状态\n"
+                                f"- 一步一验证，失败即停\n"
+                                f"- 弹窗优先处理 — 操作后立即 `msgscan`\n"
+                                f"- 失败时诊断→决策→恢复→学习\n\n"
+                                f"---\n"
+                                f"开始前，请先执行 `get_coding_rules(section=\"automation\")` "
+                                f"加载完整的方法论和提示词模板。"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-code-analysis":
+            form_name = args.get("form_name", "")
+            project_path = args.get("project_path", "")
+            app_path = args.get("app_path", "")
+            app_hint = f"\n应用路径: `{app_path}`" if app_path else ""
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 代码感知分析\n\n"
+                                f"目标类: **{form_name}**\n"
+                                f"项目路径: `{project_path}`{app_hint}\n\n"
+                                f"请按以下流程分析源码并输出测试路径：\n\n"
+                                f"### 步骤 1：定位目标代码\n"
+                                f"```\n"
+                                f"delphi_kb(query=\"{form_name}\", search_type=\"class\", "
+                                f"kb_type=\"project\", project_path=\"{project_path}\")\n"
+                                f"delphi_file(action=\"read\", search_type=\"class\", "
+                                f"type_name=\"{form_name}\", search_in=\"project\", "
+                                f"project_path=\"{project_path}\")\n"
+                                f"```\n\n"
+                                f"### 步骤 2：分析 DFM 控件结构\n"
+                                f"读取 `.dfm` 文件，列出：\n"
+                                f"- 所有控件的名称、类型、事件绑定\n"
+                                f"- 关键初始状态（Visible, Enabled, ReadOnly, MaxLength 等）\n"
+                                f"- 输出：控件映射表\n\n"
+                                f"### 步骤 3：分析 PAS 事件处理程序\n"
+                                f"对每个绑定事件的处理程序，分析：\n"
+                                f"- 代码路径：`if`/`case`/`try` 分支\n"
+                                f"- 验证逻辑：检查空值、范围、格式的代码\n"
+                                f"- 业务操作：数据创建、DB 写入、窗口关闭等\n"
+                                f"- 输出：事件处理程序分析表\n\n"
+                                f"### 步骤 4：推导测试路径\n"
+                                f"按代码到测试路径的映射规则，输出：\n\n"
+                                f"| # | 路径 | 操作 | 代码派生的断言 |\n"
+                                f"|---|------|------|--------------|\n"
+                                f"| 1 | 成功路径 | ... | ... |\n"
+                                f"| 2 | 空值路径 | ... | ... |\n"
+                                f"| 3 | 边界值 | ... | ... |\n"
+                                f"| 4 | 异常路径 | ... | ... |\n"
+                                f"| ... | ... | ... | ... |\n\n"
+                                f"### 步骤 5（可选）：整合到测试规划\n"
+                                f"使用 `prompts/get automate-test-plan` 将分析结果嵌入完整测试规划。\n\n"
+                                f"完整方法论见 `get_coding_rules(section=\"automation\")` §H"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-test-plan":
+            goal = args.get("goal", "未指定测试目标")
+            app_path = args.get("app_path", "")
+            project_path = args.get("project_path", "")
+            app_line = f"\n应用路径: `{app_path}`" if app_path else ""
+            proj_line = f"\n项目路径: `{project_path}`" if project_path else ""
+            code_analysis_step = (
+                f"\n\n### 阶段 0（前置）：代码感知分析\n"
+                f"在感知 UI 之前，先读源码理解被测功能：\n"
+                f"- 使用 `automate-code-analysis` prompt 分析目标单元的 DFM + PAS\n"
+                f"- 获取控件映射表 + 事件处理程序分析 + 代码派生的断言\n"
+                f"- 这些分析结果将直接指导后续的规划步骤"
+            ) if project_path else ""
+
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 自动化测试规划\n\n"
+                                f"**目标**: {goal}{app_line}{proj_line}\n\n"
+                                f"角色身份：你是 **Delphi UI 自动化测试专家**。"
+                                f"按三层递进模型工作：代码感知 → 策略规划 → 执行验证。\n"
+                                f"完整角色定义见 `get_coding_rules(section=\"automation\")` §F0\n"
+                                f"代码感知方法论见 §H\n{code_analysis_step}"
+                                f"\n\n### 阶段 1：加载方法论\n"
+                                f"执行 `get_coding_rules(section=\"automation\")` 获取完整的"
+                                f"感知·规划·执行·反馈架构、提示词模板(F)和经验优化闭环(G)\n\n"
+                                f"### 阶段 2：检索经验\n"
+                                f"```\n"
+                                f"experience(action=\"search\", query=\"{goal}\", top_k=3)\n"
+                                f"```\n\n"
+                                f"### 阶段 3：感知当前状态\n"
+                                f"通过 `capture` / `dumpstate` / `listwnd` / `msgscan` "
+                                f"了解 UI 当前状态\n\n"
+                                f"### 阶段 4：规划步骤序列\n"
+                                f"输出结构化的步骤表，断言从代码逻辑推导：\n\n"
+                                f"| # | 阶段 | 工具 | 目标 | 预期结果 | 超时 | 失败处理 |\n"
+                                f"|---|------|------|------|---------|------|---------|\n"
+                                f"| 0 | code | delphi_kb/delphi_file | 读源码分析 | 控件映射表 | — | — |\n"
+                                f"| 1 | perceive | capture/dumpstate | 初始状态 | 主窗口已打开 | 5s | 上报 |\n"
+                                f"| 2 | execute | goto+click | 操作目标 | 代码派生断言 | 10s | capture→分析 |\n"
+                                f"| 3 | verify | waitfor+rget | 验证结果 | 与代码逻辑一致 | 5s | 降级RTTI |\n"
+                                f"| ... | ... | ... | ... | ... | ... | ... |\n\n"
+                                f"### 阶段 5：确认后执行\n"
+                                f"每步严格按 `感知→执行→验证` 循环，失败即停不继续后续\n\n"
+                                f"详细模板见 `get_coding_rules(section=\"automation\")` §F1"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-step-execute":
+            phase = args.get("phase", "")
+            tool = args.get("tool", "")
+            target = args.get("target", "")
+            expected = args.get("expected", "未指定")
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 单步自动化执行\n\n"
+                                f"**阶段**: {phase}\n"
+                                f"**工具**: {tool}\n"
+                                f"**目标**: {target}\n"
+                                f"**预期**: {expected}\n\n"
+                                f"### 执行协议\n\n"
+                                f"1. **前置感知** — `msgscan` 检查弹窗；必要时 `capture`/`dumpstate` 确认当前状态\n"
+                                f"2. **执行** — 调用 `{tool}` 操作 `{target}`\n"
+                                f"   - 同步命令 → 检查返回码\n"
+                                f"   - 异步命令 → 记录操作已发起\n"
+                                f"3. **等待** — 异步命令用 `wait(500~2000)` 或 `waitfor(控件, 10000)`\n"
+                                f"4. **验证** — `msgscan` 确认无弹窗；`capture`/`rget`/`ocr` 确认结果\n"
+                                f"   - 一致 → 标记完成\n"
+                                f"   - 不一致 → 切换到失败恢复流程\n\n"
+                                f"详细协议见 `get_coding_rules(section=\"automation\")` §F2"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-failure-recover":
+            signal = args.get("signal", "未指定")
+            expected = args.get("expected", "未记录")
+            actual = args.get("actual", "未记录")
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 自动化测试失败恢复\n\n"
+                                f"**失败信号**: {signal}\n"
+                                f"**预期**: {expected}\n"
+                                f"**实际**: {actual}\n\n"
+                                f"### 诊断\n"
+                                f"1. `capture` 截图留存\n"
+                                f"2. `dumpstate` 获取当前控件树\n"
+                                f"3. `msgscan` 检测弹窗\n"
+                                f"4. 分析差异原因：控件状态/弹窗/时序/路径变更\n\n"
+                                f"### 恢复策略\n\n"
+                                f"| 条件 | 恢复动作 |\n"
+                                f"|------|---------|\n"
+                                f"| 弹窗干扰 | msgclick(OK/Cancel) → 重试原操作 |\n"
+                                f"| 控件不可见 | dumpstate 查替代路径 → 修正 goto |\n"
+                                f"| 超时无错误 | 增加 waitfor 时间 → 重试 |\n"
+                                f"| RTTI 可用 | degrade 到 rcall/rset 绕过 GUI |\n"
+                                f"| 确定性失败 | 上报并保存经验 |\n\n"
+                                f"### 学习记录\n"
+                                f"恢复后保存经验：\n"
+                                f"`experience(action=\"save\", problem=\"{signal} in {expected}\", "
+                                f"solution=\"...恢复方法...\", tags=[\"automation\", \"failure_recovery\"])`\n\n"
+                                f"完整恢复模板见 `get_coding_rules(section=\"automation\")` §F3"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-save-experience":
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 保存自动化测试经验\n\n"
+                                f"测试执行完成，请按以下模板保存经验：\n\n"
+                                f"### 执行概况\n"
+                                f"- **总步骤数**: \n"
+                                f"- **成功**: \n"
+                                f"- **失败+恢复**: \n"
+                                f"- **不可恢复失败**: \n"
+                                f"- **总耗时**: \n\n"
+                                f"### 成功模式\n"
+                                f"- 稳定的工具组合: \n"
+                                f"- RTTI 使用情况: \n"
+                                f"- 关键时序调整: \n\n"
+                                f"### 失败模式\n"
+                                f"- 失败描述 → 原因 → 恢复方式 → 是否可自动化\n\n"
+                                f"### 保存\n"
+                                f"```\n"
+                                f"experience(action=\"save\",\n"
+                                f"    problem=\"<场景关键词>\",\n"
+                                f"    solution=\"<核心做法>\",\n"
+                                f"    tools_used=[\"<工具列表>\"],\n"
+                                f"    tags=[\"automation\", \"<app_name>\"])\n"
+                                f"```\n\n"
+                                f"完整模板见 `get_coding_rules(section=\"automation\")` §F4"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        if name == "automate-session-end":
+            save_exp = args.get("save_experience", "true")
+            export_script = args.get("export_script", "true")
+            return GetPromptResult(
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type="text",
+                            text=(
+                                f"## 结束自动化测试会话\n\n"
+                                f"测试执行完成，请按以下步骤收尾：\n\n"
+                                f"### 1. 保存本次测试经验\n"
+                                f"（save_experience={save_exp}）\n"
+                                f"```\n"
+                                f"experience(action=\"save\",\n"
+                                f"    problem=\"<场景关键词>\",\n"
+                                f"    solution=\"<核心做法>\",\n"
+                                f"    tools_used=[\"<工具列表>\"],\n"
+                                f"    tags=[\"automation\", \"<app_name>\"])\n"
+                                f"```\n\n"
+                                f"### 2. 导出可复用脚本\n"
+                                f"（export_script={export_script}）\n"
+                                f"将本次执行的脚本保存到 `tests/scripts/`：\n"
+                                f"```\n"
+                                f"delphi_file(action=\"write\",\n"
+                                f"    file_path=\"tests/scripts/<test_name>.json\",\n"
+                                f"    content=<script_json>)\n"
+                                f"```\n"
+                                f"详细格式见 `get_coding_rules(section=\"automation\")` §I2\n\n"
+                                f"### 3. 角色切换\n"
+                                f"自动化测试会话已结束。\n"
+                                f"角色从 **Delphi UI 自动化测试专家** 切回 **Delphi 开发专家**。\n"
+                                f"思维框架切换为编码模式：\n"
+                                f"```\n"
+                                f"get_coding_rules(section=\"coding\")\n"
+                                f"```\n"
+                                f"开始编码工作前，建议先执行 `get_coding_rules(section=\"workflow\")` "
+                                f"获取完整开发工作流。"
+                            ),
+                        ),
+                    ),
+                ]
+            )
+
+        raise ValueError(f"未知提示词: {name}")
 
     # ============================================================
     # 后台版本检查 — 启动时异步检测 GitHub 有无新版本（带自动重试）

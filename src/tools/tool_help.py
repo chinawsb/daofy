@@ -112,10 +112,71 @@ def get_tool_help(tool_name: str) -> dict:
             lines.append(f"  {name}: {flow}")
         lines.append("")
 
+    if docs.get("architecture"):
+        arch = docs["architecture"]
+        lines.append(f"架构模式: {arch.get('pattern', '')}")
+        lines.append(f"  脑（大模型）: {arch.get('brain', '')}")
+        lines.append(f"  手脚（MCP）: {arch.get('hands', '')}")
+        see = arch.get('see_also')
+        if see:
+            lines.append(f"  参考: {see}")
+        sl = arch.get('self_learning')
+        if sl:
+            lines.append(f"  自我进化: {sl}")
+        lines.append("")
+
+    if docs.get("planning_guide"):
+        pg = docs["planning_guide"]
+        lines.append(f"规划指南:")
+        lines.append(f"  原则: {pg.get('principle', '')}")
+        prefer = pg.get('prefer_order')
+        if prefer:
+            lines.append("  降级优先级:")
+            for p in prefer:
+                lines.append(f"    → {p}")
+        recovery = pg.get('failure_recovery')
+        if recovery:
+            lines.append("  失败恢复:")
+            for signal, action in recovery.items():
+                lines.append(f"    {signal}: {action}")
+        pt = pg.get('prompt_templates')
+        if pt:
+            lines.append(f"  提示词模板: {pt}")
+        eo = pg.get('experience_optimization')
+        if eo:
+            lines.append(f"  经验优化: {eo}")
+        lines.append("")
+
     if docs.get("modes"):
         lines.append("运行模式:")
         for mode_name, mode_desc in docs["modes"].items():
-            lines.append(f"  {mode_name}: {mode_desc}")
+            if isinstance(mode_desc, dict):
+                lines.append(f"  {mode_name}: {mode_desc.get('description', '')}")
+                needs = mode_desc.get('needs_auto_unit')
+                if needs is not None:
+                    lines.append(f"    需要 DaofyAutomation: {'是' if needs else '否'}")
+                # Phase-based commands
+                cmds_by_phase = mode_desc.get('commands_by_phase')
+                if cmds_by_phase:
+                    lines.append("    命令分类（按感知-执行-验证阶段）:")
+                    for phase_name, phase_info in cmds_by_phase.items():
+                        icon = {"perception": "🔍", "execution": "⚡", "verification": "✅"}.get(phase_name, "•")
+                        lines.append(f"    {icon} {phase_info.get('description', phase_name)}:")
+                        for cmd_key, cmd_desc in phase_info.get('cmds', {}).items():
+                            lines.append(f"        {cmd_key}: {cmd_desc}")
+                # Legacy flat commands
+                legacy_cmds = mode_desc.get('commands')
+                if legacy_cmds and not cmds_by_phase:
+                    for group, desc in legacy_cmds.items():
+                        lines.append(f"    {group}: {desc}")
+                # Console params
+                params = mode_desc.get('params')
+                if params:
+                    lines.append("    参数:")
+                    for pname, pdesc in params.items():
+                        lines.append(f"      {pname}: {pdesc}")
+            else:
+                lines.append(f"  {mode_name}: {mode_desc}")
         lines.append("")
 
     if docs.get("workflow"):

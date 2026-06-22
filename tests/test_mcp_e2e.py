@@ -33,6 +33,7 @@ class TestToolRegistrationConsistency:
         "check_environment", "async_task", "package", "get_coding_rules",
         "code_hosting", "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
+        "ocr",
     }
 
     # _TOOL_HANDLERS 中已注册的 handler 名（含别名）
@@ -43,6 +44,7 @@ class TestToolRegistrationConsistency:
         "package", "get_coding_rules", "code_hosting",
         "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
+        "ocr",
     }
 
     HANDLER_ALLOWED_ALIASES = {"file_tool"}
@@ -268,9 +270,8 @@ class TestToolSchemaCompleteness:
       - async_task 的 long_poll_seconds 在 src/tools/async_tasks.py:325 中读取
         (arguments.get("long_poll_seconds", 0))，但未在 inputSchema 中声明，
         导致 MCP 客户端（Claude Desktop、Qoder 等）静默丢弃该参数
-      - delphi_file action=batch_write 的 force 在 src/tools/file_tool.py:759 中
-        读取（arguments.get("force", False)），但未在 inputSchema 中声明，
-        同样被静默丢弃
+      - delphi_file write 的 force/old_content 参数必须在 inputSchema 中声明，
+        否则 MCP 客户端会静默丢弃这些安全控制参数
 
     这些测试确保任何 handler 中 arguments.get("xxx", default) 引入的参数
     都必须在 list_tools() 的 inputSchema.properties 中显式声明。
@@ -300,11 +301,24 @@ class TestToolSchemaCompleteness:
         assert '"type": "integer"' in after, "long_poll_seconds 应声明为 integer"
         assert '"default": 0' in after, "long_poll_seconds 默认值应为 0"
 
-    def test_delphi_file_schema_declares_batch_write_force(self):
-        """delphi_file inputSchema 必须在 batch_write 段（edits 之后）声明 force"""
+    def test_delphi_file_schema_declares_write_safety_params(self):
+        """delphi_file inputSchema 必须声明 write 的 force/old_content 安全参数，且不再声明 batch_write"""
         block = self._extract_tool_block("delphi_file")
+        action_line = block.split('"action"', 1)[1][:500]
+        assert '"batch_write"' not in action_line, "delphi_file schema must not expose removed batch_write action"
+        assert '"replace"' in action_line, "delphi_file schema missing replace action"
+        assert '"insert"' in action_line, "delphi_file schema missing insert action"
+        assert '"delete"' in action_line, "delphi_file schema missing delete action"
         edits_idx = block.find('"edits"')
         assert edits_idx > 0, "delphi_file schema missing 'edits' declaration"
+        edits_desc = block[edits_idx:edits_idx + 1200]
+        assert '"position"' in edits_desc, "delphi_file schema missing insert position"
+        assert '"required": ["start_line"]' in edits_desc, "delete action should not be forced to pass content by schema"
+        assert '"old_content"' in block, "delphi_file schema missing per-edit old_content"
+        old_content_desc = block.split('"old_content"', 1)[1][:300]
+        assert "非空" in old_content_desc, "old_content schema must document non-empty guard requirement"
+        assert '"expected_old_hash"' not in block, "delphi_file schema must not expose removed expected_old_hash"
+        assert '"base_file_sha256"' not in block, "delphi_file schema must not expose removed base_file_sha256"
         # 提取 edits 之后到 # format 段之前的内容
         rest = block[edits_idx:]
         # 截到 # format 注释或下个 # action 段（避免误匹配其他工具的 force 字段）
@@ -312,8 +326,8 @@ class TestToolSchemaCompleteness:
         if segment_end > 0:
             rest = rest[:segment_end]
         assert '"force"' in rest, (
-            "delphi_file batch_write 段缺少 'force' 参数声明。\n"
-            "force 是 batch_write 专属参数（跳过 AI 偏移量检查），"
+            "delphi_file write 段缺少 'force' 参数声明。\n"
+            "force 是 write 参数（跳过连续重复行检测），"
             "MCP 客户端会因 schema mismatch 静默丢弃该参数。"
         )
         # 验证类型/默认值与 handler 一致
@@ -331,7 +345,7 @@ class TestToolSchemaCompleteness:
         # 1) async_tasks.py 中 long_poll_seconds 必须能正常读取（handler 逻辑无回归）
         from src.tools.async_tasks import get_task_status  # noqa: F401
         # 2) file_tool.py 中 force 必须能正常读取（handler 逻辑无回归）
-        from src.tools.file_tool import handle_batch_write  # noqa: F401
+        from src.tools.file_tool import handle_write  # noqa: F401
         # 3) 双方各自 handler 中确实读取这些参数（静态扫描确认）
         async_src = (Path(__file__).parent.parent / "src" / "tools" / "async_tasks.py").read_text(encoding="utf-8")
         file_src = (Path(__file__).parent.parent / "src" / "tools" / "file_tool.py").read_text(encoding="utf-8")

@@ -11,3 +11,9 @@ python-docx>=0.8.11
 # 可选依赖: 语义搜索(embedding) —— 安装后显著提升搜索质量
 # pip install daofy-for-delphi[embedding]
 # 或: pip install sentence-transformers numpy
+# 可选依赖: OCR 图像文字识别 —— PP-OCRv6 (纯 ONNX Runtime)
+# pip install daofy-for-delphi[ocr]
+# 或: pip install onnxruntime opencv-python-headless numpy pyclipper shapely
+# Intel CPU 加速: pip install daofy-for-delphi[ocr-openvino]
+# 或: pip install onnxruntime-openvino
+chardet>=7.0

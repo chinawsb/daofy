@@ -632,7 +632,7 @@ Daofy 知识库体系
 | `src/tools/experience.py` | MCP 工具入口，action 分派，格式化输出 |
 | `src/services/experience_service.py` | 核心服务：`ExperienceMemoryService` 类 |
 | `src/server.py` | 工具注册 + 超时保护 |
-| `src/config/tool_docs.py` | `experience` 工具的 help 文档 |
+| `src/tool_docs.py` | `experience` 工具的 help 文档 |
 | `data/experience-knowledge-base/experiences.sqlite` | 数据库文件（自动创建） |
 
 ## 附录 B：数据库诊断
