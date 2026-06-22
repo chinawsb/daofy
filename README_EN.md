@@ -42,9 +42,9 @@ Daofy for Delphi is a server based on Model Context Protocol (MCP) that allows A
 - **Third-party Library Knowledge Base**: Automatically extracts third-party library paths from .dproj files and builds knowledge base
 - **Incremental Updates**: Automatically detects source code changes and incrementally updates project knowledge base
 - **Help Documentation Knowledge Base**: Extracts content from Delphi CHM help files, supports API documentation queries
-- **Generic Document Knowledge Base**: Supports scanning and searching of txt/md/html/docx/doc/pdf/epub and web documents
-  - Required dependencies: `beautifulsoup4`, `html2text`, `lxml`, `requests` (already in requirements.txt)
-  - Optional dependencies: `python-docx` (Word .docx support), `antiword/catdoc` (legacy Word .doc support), `PyMuPDF` (PDF support, recommended) or `pdfplumber` (PDF support, fallback)
+- **Generic Document Knowledge Base**: Supports scanning and searching of txt/md/html/docx/doc/pdf/epub and web documents (ZVec-based vector storage + FTS full-text index)
+  - Required dependencies: `html2text`, `requests` (already in requirements.txt)
+  - Optional dependencies: `python-docx` (Word .docx support), `antiword/catdoc` (legacy Word .doc support), `PyMuPDF` (PDF support, recommended) or `pdfplumber` (PDF support, fallback), `beautifulsoup4` (EPUB support)
 - **Smart Deduplication**: Deduplicates based on full path, correctly handles files with same name in different directories
 
 ### Coding Standards Features
@@ -74,9 +74,11 @@ All knowledge base data is stored in the `data/` folder under the project root:
 | Experience KB | `data/experience-knowledge-base/` | AI experience memory (`experiences.sqlite`) |
 
 Each knowledge base directory contains:
-- `documents.sqlite` / `knowledge_base.sqlite` / `knowledge.sqlite` - SQLite database file
-- `experiences.sqlite` - Experience memory database
+- `*.zvec/` - ZVec vector database directory (document/example/project/thirdparty KB)
+- `experiences.sqlite` - Experience memory database (experience KB only)
 - `config.json` - Knowledge base configuration file
+
+Note: All KB types except experience KB have migrated from SQLite to ZVec vector engine. Document KB no longer uses SQLite FTS5.
 
 ## Knowledge Base Configuration
 
@@ -278,7 +280,7 @@ The following configs apply to users who installed via git clone. Replace the pa
 
 | Tool Name | Description |
 |-----------|-------------|
-| `project` | Project lifecycle: compile/configure(info/set/create)/audit(audit/ast/runtime) |
+| `delphi_project` | Delphi project lifecycle: compile/configure(info/set/create)/audit(audit/ast/runtime) |
 | `check_environment` | Diagnose environment, detect compilers, install pasfmt |
 | `package` | Package management: install(action=install) / list installed(action=list) |
 | `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval |

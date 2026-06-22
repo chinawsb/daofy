@@ -20,7 +20,7 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 ```
 src/
 ├── server.py              # MCP entry point
-├── tools/                 # MCP tool implementations (delphi_file, code_hosting, project, delphi_kb, ...)
+├── tools/                 # MCP tool implementations (delphi_file, code_hosting, delphi_project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
 │   └── knowledge_base/    # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
@@ -70,9 +70,9 @@ src/
 | ⑤ 写代码 | `delphi_file(action="write", edits=[...])` | 写入代码（自动备份到 __history） |
 | ⑤b 批量写 | `delphi_file(action="write", edits=[...])` | 批量写入多处（edits 顺序不限，自动备份到 __history） |
 | ⑥ 格式化 | `delphi_file(action="format", file_path=...)` | pasfmt 格式化代码 |
-| **⑦ 编译验证** | **`project(action="compile", project_path=...)`** | **编译 `.dproj`/`.dpr`/`.dpk` 项目** |
-| **⑧ 运行验证** | **`project(action="compile", ..., run_verify=True)`** | **编译后启动 exe 运行 3 秒，检测运行时崩溃** |
-| **⑨ 运行时检查** | **`project(action="runtime", base_dir=...)`** | **扫描组件类名，检测遗漏 uses 单元** |
+| **⑦ 编译验证** | **`delphi_project(action="compile", project_path=...)`** | **编译 `.dproj`/`.dpr`/`.dpk` 项目** |
+| **⑧ 运行验证** | **`delphi_project(action="compile", ..., run_verify=True)`** | **编译后启动 exe 运行 3 秒，检测运行时崩溃** |
+| **⑨ 运行时检查** | **`delphi_project(action="runtime", base_dir=...)`** | **扫描组件类名，检测遗漏 uses 单元** |
 
 各步骤补充说明：
 
@@ -155,12 +155,12 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
    └─ Python 项目（当前 MCP Server）→ 按下方 Python 审计要求逐项检查
 ② 确定审计范围（全局/指定文件/新增代码）
 ③ 搜索相关 API 定义，评估用法（Delphi 用 delphi_kb，Python 用 grep/LSP）
-④ **优先调用 project(audit/ast)**（daudit 不可用时降级为引导）
+④ **优先调用 delphi_project(audit/ast)**（daudit 不可用时降级为引导）
    → 使用 `mode="ast"`（⭐ 推荐，daudit --mode skeleton --compact）快速了解代码结构
    → 需要深度规则检查时使用 `mode="audit"`（运行 50+ 条静态分析规则）
    → AI 解读结果，排除误报，生成修复建议
-   → 补充手动检查（project(action="audit") 标记 is_ai_needed=true 的项）
-⑤ project(action="compile") / pytest 验证（如果涉及代码修改）
+   → 补充手动检查（delphi_project(action="audit") 标记 is_ai_needed=true 的项）
+⑤ delphi_project(action="compile") / pytest 验证（如果涉及代码修改）
 ⑥ 输出审计报告
 ```
 
@@ -199,7 +199,7 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 | # | 检查项 | 说明 |
 |---|--------|------|
 | 3.1 | Worker print 禁令 | `multiprocessing` worker 内部禁用 `print()`，MCP 环境下 stdout 是通信管道，print 破坏协议边界 |
-| 3.2 | 子进程退出清理 | 使用 `Popen`/`ProcessPoolExecutor` 后确保进程退出时资源清理（`terminate()`/`join()`/`cancel()`） |
+| 3.2 | 子进程退出清理 | 使用 `Popen`/`Process`/`ProcessPoolExecutor` 后确保进程退出时资源清理（`terminate()`/`join()`/`cancel()`） |
 | 3.3 | 竞态条件 | 共享变量（`_pkb_cache` 等）加锁保护，用 `threading.Lock` 而非 `global` 裸访问 |
 | 3.4 | 跨平台兼容 | Windows `spawn` 模式下子进程重新导入模块 → 在 `if __name__ != '__mp_main__'` 保护下延迟导入 |
 | 3.5 | 长轮询超时 | 编译状态轮询 ≤30 秒，超时后切换短轮询，防止阻塞 MCP 请求通道 |
@@ -310,11 +310,11 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 
 ```
 get_coding_rules(section="review")               → 获取 Delphi 审核标准
-project(action="ast", base_dir="src")           → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
-project(action="audit", base_dir=".", rules="P0") → 深度静态分析规则检查（可选的）
+delphi_project(action="ast", base_dir="src")           → ⭐ 代码骨架提取（daudit --mode skeleton --compact 最省 token）
+delphi_project(action="audit", base_dir=".", rules="P0") → 深度静态分析规则检查（可选的）
 delphi_file(action="read", file_path="unit.pas")   → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
-project(action="compile", project_path="proj.dproj") → Delphi 审计后验证编译
+delphi_project(action="compile", project_path="proj.dproj") → Delphi 审计后验证编译
 --- Python 项目审计用以下工具 ---
 grep / ast_grep_search                      → 搜索 Python 代码中的模式
 lsp_diagnostics / lsp_symbols               → 类型检查和符号分析

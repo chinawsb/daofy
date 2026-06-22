@@ -1345,7 +1345,7 @@ get_coding_rules(section="list")         # 列出所有可用章节名
 | `kb_type="delphi"` | VCL/FMX/RTL 官方 | 不需要 |
 | `kb_type="project"` | 项目自有代码 | **必须传**（或自动检测CWD .dproj） |
 | `kb_type="thirdparty"` | 三方组件 | 不需要 |
-| `kb_type="document"` | Delphi 帮助文档（FTS5 全文） | 不需要 |
+| `kb_type="document"` | Delphi 帮助文档（ZVec 全文索引） | 不需要 |
 | 默认（不传） | 全部三库 | — |
 
 ### 项目路径自动检测

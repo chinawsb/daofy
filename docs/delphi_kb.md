@@ -368,4 +368,4 @@ delphi_kb(action="search"|"build"|"stats"|...)
 | 构建 KB 超时 | 数据量大 | 用 `async_mode=True` 异步执行 |
 | 构建 KB 失败 | 三方库路径不对 | 检查 `DCC_UnitSearchPath` 配置 |
 | CHM 无法解析 | 未安装 7-Zip | 将 7z.exe 放到 `tools/7z/` 目录 |
-| 文档 KB 搜索慢 | 未建 FTS5 索引 | 重建时用 `rebuild=True` |
+| 文档 KB 搜索无结果 | 知识库未构建 | 先执行 `delphi_kb(action="build", kb_type="document")` |

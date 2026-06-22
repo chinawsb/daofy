@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.22] - 2026-06-22
+
+### Changed
+
+- **`project` → `delphi_project` 重命名**: 工具名从 `project` 改为 `delphi_project`，防止非 Delphi 用户在 AI 工具调用时误触。更新 server.py、tool_docs、tests 中所有引用。
+- **`HTMLProcessor`/`WebDocumentProcessor` 移除 BeautifulSoup**: html2text 已自带跳过 script/style，BS4 的 tag.decompose() 和 sections/code_examples 提取在 ZVec 中不存储，属于无用计算。改用正则 `<title>` 提取标题。构建时间从 17:41 → 10:24（-41%）。
+- **`scan_directory` 改为生产者-消费者模式**: ProcessPoolExecutor 替换为 `mp.Process` + `mp.Queue(maxsize=200)`，worker 逐条放入队列，主进程实时消费写入 ZVec，内存峰值从天降至 KB 级。
+- **文档知识库存储引擎**: SQLite FTS5 → ZVec 全文索引，文档存储路径 `data/document-knowledge-base/` 不再包含 SQLite 文件。`example_knowledge_base`/`thirdparty_knowledge_base` 同步迁移。
+- **`scan_generic_documents.py` 缩减**: +230/-620 行，移除 FTS5 写入、SQLite 备份/恢复、偏移量计算等废弃逻辑。
+
+### Fixed
+
+- **`scan_directory` chunk_id 全量冲突**: `path_val = result.get('full_path')` 对同一 CHM 内所有 HTML 页返回相同路径（CHM 文件路径），导致所有 chunk_id 的 md5 相同，ZVec 覆盖写入仅保留 19 条 → 最终数据仅 4.15MB。修复为 `result.get('path')`（每个 HTML 页唯一路径）+ `chm#html` 复合格式保证跨 CHM 唯一。重建后 169,951 条、1.1 GB。
+- **`col.insert()` 超过 ZVec 1024 批处理上限**: `batch_buffer` 在 `for result in docs` 循环外才 flush，单个 CHM 返回 45000+ 页面时单批超限报错。修复为每个 result 后 + 到达 BATCH_SIZE(500) 时 flush。
+- **`add_web_document` 调用不存在的 `col.close()`**: ZVec Collection 无 close() 方法，改为 `del col + gc.collect() + sleep`。
+- **进度回调百分比错误**: 传 2 参数 `(processed, total)` 被 `update_progress` 误识别为"单数值百分比"。改为传 3 参数触发 `(current, total, message)` 分支正确计算。
+- **`HTMLProcessor` 中 `file_path.stem` 不支持 str 参数**: 当 process() 被直接传入字符串路径时报 `'str' object has no attribute 'stem'`。改为 `Path(file_path).stem`。
+
+### Removed
+
+- **`fts5_lazy_manager.py`**: 文档 KB 不再使用 FTS5，整模块删除。
+- **`schema.py` 中文档相关 SQLite 表定义**: 标记为废弃。
+- **`knowledge_base.py` 中 `_build_document_zvec`**: 不再需要独立构建步骤。
+- **`async_tasks.py` 中 SQLite→ZVec 转换步骤**: 扫描器直接写入 ZVec。
+
 ## [2026.06.15.1] - 2026-06-15
 
 ### Changed
