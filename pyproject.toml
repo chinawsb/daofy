@@ -33,6 +33,7 @@ dependencies = [
     "requests>=2.31.0",
 
     "chardet>=7.0",
+    "zvec>=0.5.0",
 ]
 
 [project.optional-dependencies]

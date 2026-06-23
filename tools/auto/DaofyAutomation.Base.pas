@@ -150,6 +150,10 @@ type
     function PropToJSON(const Prop: TRttiProperty; Obj: TObject): TJSONValue;
     function BtnID(const S: string): Integer;
 
+    /// <summary>解析 "PropName[Index]" → PropName, Index。无索引时返回 False。</summary>
+    class function ParseIndexedProp(const Segment: string;
+      out PropName: string; out Index: Integer): Boolean; static;
+
     // ── MessageBox / 文件对话框操作（纯 Win32）──
 
     function DoMsgScan: string;
@@ -809,6 +813,26 @@ begin
   Result := -1;
 end;
 
+class function TAutomationProcessorBase.ParseIndexedProp(
+  const Segment: string; out PropName: string; out Index: Integer): Boolean;
+var
+  LB, RB: Integer;
+begin
+  LB := Pos('[', Segment);
+  RB := Pos(']', Segment);
+  if (LB > 0) and (RB > LB) then
+  begin
+    PropName := Copy(Segment, 1, LB - 1);
+    Index := StrToIntDef(Copy(Segment, LB + 1, RB - LB - 1), -1);
+    Result := Index >= 0;
+  end else
+  begin
+    PropName := Segment;
+    Index := -1;
+    Result := False;
+  end;
+end;
+
 { ── MessageBox 扫描/点击（纯 Win32 API，框架无关）── }
 
 function TAutomationProcessorBase.DoMsgScan: string;
@@ -892,12 +916,15 @@ var
   Ctrl: TObject;
   Ctx: TRttiContext;
   Pr: TRttiProperty;
+  IP: TRttiIndexedProperty;
   V: TValue;
   StartTime: UInt64;
   Parts: TArray<string>;
   i: Integer;
   Obj: TObject;
   CurrentValue: string;
+  PropName: string;
+  Idx: Integer;
 begin
   Result := WriteResp(ReqId, 'err', 'NF:' + Target);
 
@@ -916,18 +943,33 @@ begin
 
     Ctx := TRttiContext.Create;
     try
-      Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(Parts[0]);
-      if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + Parts[0]));
-      V := Pr.GetValue(Ctrl);
+      ParseIndexedProp(Parts[0], PropName, Idx);
+      if Idx >= 0 then begin
+        IP := Ctx.GetType(Ctrl.ClassType).GetIndexedProperty(PropName);
+        if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        V := IP.GetValue(Ctrl, [TValue.From<Integer>(Idx)]);
+      end else begin
+        Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(PropName);
+        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        V := Pr.GetValue(Ctrl);
+      end;
       Obj := Ctrl;
 
       for i := 1 to High(Parts) do begin
         if V.Kind <> tkClass then Break;
         Obj := V.AsObject;
         if Obj = nil then Break;
-        Pr := Ctx.GetType(Obj.ClassType).GetProperty(Parts[i]);
-        if Pr = nil then Break;
-        V := Pr.GetValue(Obj);
+
+        ParseIndexedProp(Parts[i], PropName, Idx);
+        if Idx >= 0 then begin
+          IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
+          if IP = nil then Break;
+          V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
+        end else begin
+          Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
+          if Pr = nil then Break;
+          V := Pr.GetValue(Obj);
+        end;
       end;
 
       CurrentValue := V.ToString;

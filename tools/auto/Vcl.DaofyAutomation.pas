@@ -654,10 +654,13 @@ var
   Ctrl: TControl;
   Ctx: TRttiContext;
   Pr: TRttiProperty;
+  IP: TRttiIndexedProperty;
   V: TValue;
   Obj: TObject;
   Parts: TArray<string>;
   i: Integer;
+  PropName: string;
+  Idx: Integer;
 begin
   try
     if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
@@ -669,19 +672,35 @@ begin
 
     Ctx := TRttiContext.Create;
     try
-      Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(Parts[0]);
-      if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + Parts[0]));
-      if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + Parts[0]));
-      V := Pr.GetValue(Ctrl);
+      // 第一段：支持 ContrlName[Index] 索引
+      ParseIndexedProp(Parts[0], PropName, Idx);
+      if Idx >= 0 then begin
+        IP := Ctx.GetType(Ctrl.ClassType).GetIndexedProperty(PropName);
+        if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        V := IP.GetValue(Ctrl, [TValue.From<Integer>(Idx)]);
+      end else begin
+        Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(PropName);
+        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
+        V := Pr.GetValue(Ctrl);
+      end;
 
       for i := 1 to High(Parts) do begin
         if V.Kind <> tkClass then Exit(WriteResp(ReqId, 'err', 'not an object: ' + Parts[i]));
         Obj := V.AsObject;
         if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil: ' + Parts[i]));
-        Pr := Ctx.GetType(Obj.ClassType).GetProperty(Parts[i]);
-        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + Parts[i]));
-        if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + Parts[i]));
-        V := Pr.GetValue(Obj);
+
+        ParseIndexedProp(Parts[i], PropName, Idx);
+        if Idx >= 0 then begin
+          IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
+          if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
+        end else begin
+          Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
+          if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
+          V := Pr.GetValue(Obj);
+        end;
       end;
 
       Result := WriteResp(ReqId, 'ok', V.ToString);
@@ -806,7 +825,10 @@ var
   Obj: TObject;
   i, p: Integer;
   Pr: TRttiProperty;
+  IP: TRttiIndexedProperty;
   V: TValue;
+  PropName: string;
+  Idx: Integer;
   ParamValues: TArray<TValue>;
   ParamArr: TJSONArray;
   ParamValue: TJSONValue;
@@ -829,11 +851,18 @@ begin
       // 遍历属性链（除最后一段外都是属性名）
       Obj := Ctrl;
       for i := 0 to Length(Parts) - 2 do begin
-        Pr := Ctx.GetType(Obj.ClassType).GetProperty(Parts[i]);
-        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + Parts[i]));
-        V := Pr.GetValue(Obj);
+        ParseIndexedProp(Parts[i], PropName, Idx);
+        if Idx >= 0 then begin
+          IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
+          if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
+        end else begin
+          Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
+          if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          V := Pr.GetValue(Obj);
+        end;
         Obj := V.AsObject;
-        if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil:' + Parts[i]));
+        if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil:' + PropName));
       end;
 
       // 最后一段是方法名

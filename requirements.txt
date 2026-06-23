@@ -16,4 +16,5 @@ python-docx>=0.8.11
 # 或: pip install onnxruntime opencv-python-headless numpy pyclipper shapely
 # Intel CPU 加速: pip install daofy-for-delphi[ocr-openvino]
 # 或: pip install onnxruntime-openvino
+zvec>=0.5.0
 chardet>=7.0
