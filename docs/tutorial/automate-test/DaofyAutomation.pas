@@ -1,796 +1,536 @@
+{
+  DaofyAutomation.pas — 左右道飞MCP服务系统 自动化截图辅助单元
+
+  原理：
+    1. 创建隐藏消息窗口接收自动化消息
+    2. IAT Hook 拦截 MessageBoxW / TaskDialogIndirect
+    3. API 调用时 PostMessage 到隐藏窗口 → 主线程消息循环处理截图
+    4. 后台命名管道接收 Python 命令
+    5. 手动埋点 AutoCapture 在代码关键位置触发截图
+
+  用法：
+    uses DaofyAutomation;
+    begin
+      DaofyAutomation.AutoStart;
+      Application.Initialize;
+      Application.CreateForm(TForm1, Form1);
+      Application.Run;
+      DaofyAutomation.AutoStop;
+    end.
+
+    代码中调用截图: AutoCapture('order_confirm_003');
+
+  编译：
+    - Delphi 2009+: PNG 输出（需引用 Vcl.Imaging.pngimage）
+    - 旧版: BMP 输出自动降级
+}
+
 unit DaofyAutomation;
 
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages,
-  System.SysUtils, System.Classes, System.Rtti, System.TypInfo,
-  System.Generics.Collections, System.JSON;
+  Winapi.Windows, Winapi.Messages, Winapi.CommCtrl,
+  System.SysUtils, System.Classes;
 
+// ── 公开接口 ──
+
+/// 启动自动化：创建隐藏消息窗口 + IAT Hook + 命名管道监听
 procedure AutoStart(const APipeName: string = '\\.\pipe\daofy_auto');
+
+/// 停止自动化
 procedure AutoStop;
+
+/// 任意位置手动截图：{ScreenshotDir}\{AName}.png(.bmp)
 procedure AutoCapture(const AName: string);
+
+/// 设置截图保存目录（默认 Python 端 snapdir 命令设置）
 procedure SetScreenshotDir(const ADir: string);
 
 implementation
 
-uses Vcl.Forms, Vcl.Controls, Vcl.Graphics, Vcl.Imaging.Jpeg, Vcl.Menus;
+uses
+  Vcl.Forms, Vcl.Controls, Vcl.Graphics;
 
+// ============================================================
+// 常量
+// ============================================================
 const
-  WM_DAOFY_CMD = WM_USER + $200;
-  MAX_PIPE = 4096; BM_CLICK = $00F5; JPG_Q = 80;
+  WM_DAOFY_COMMAND  = WM_USER + $200;
+  WM_DAOFY_CAPTURE  = WM_USER + $201;
+  MAX_CMD_LEN       = 4096;
+  MSG_WIN_CLASS     = 'DaofyAutoMsgWindow';
+
+// ============================================================
+// 函数指针类型（从 IAT 读出原始地址后直接调用）
+// ============================================================
+type
+  TMessageBoxWFunc = function(hWnd: HWND; lpText, lpCaption: LPCWSTR;
+    uType: UINT): Integer; stdcall;
+  TTaskDialogIndirectFunc = function(const pConfig: TTaskDialogIndirectConfig;
+    pnButton: PInteger; pnRadioButton: PInteger;
+    pfVerificationFlagChecked: PBOOL): HRESULT; stdcall;
+
+// ============================================================
+// 全局状态
+// ============================================================
+var
+  _PipeThread: TThread          = nil;
+  _MsgWnd: HWND                 = 0;
+  _ScreenshotDir: string        = '';
+  _MsgBoxCounter: Integer       = 0;
+  _TaskDlgCounter: Integer      = 0;
+  _OrigMessageBoxW: TMessageBoxWFunc         = nil;
+  _OrigTaskDialogIndirect: TTaskDialogIndirectFunc = nil;
+
+// ============================================================
+// IAT 查找 — 在 EXE 导入表中定位目标函数
+// ============================================================
+
+function FindIATEntry(const TargetModule, TargetFunc: AnsiString): PPointer;
+var
+  Base: PByte;
+  DosHdr: PImageDosHeader;
+  NtHdrs: PImageNtHeaders;
+  ImpDesc: PImageImportDescriptor;
+  OrigThunk, Thunk: PImageThunkData;
+  FuncName: PAnsiChar;
+  I: Integer;
+begin
+  Result := nil;
+  Base := PByte(GetModuleHandle(nil));
+  if Base = nil then Exit;
+
+  DosHdr := PImageDosHeader(Base);
+  if DosHdr.e_magic <> IMAGE_DOS_SIGNATURE then Exit;
+
+  NtHdrs := PImageNtHeaders(Base + DosHdr._lfanew);
+  if NtHdrs.Signature <> IMAGE_NT_SIGNATURE then Exit;
+
+  ImpDesc := PImageImportDescriptor(Base +
+    NtHdrs.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+  if ImpDesc = nil then Exit;
+
+  for I := 0 to 1023 do
+  begin
+    if ImpDesc[I].OriginalFirstThunk = 0 then Break;
+
+    if (AnsiCompareText(PAnsiChar(Base + ImpDesc[I].Name), TargetModule) = 0)
+       or (AnsiCompareText(PAnsiChar(Base + ImpDesc[I].Name),
+           PAnsiChar(TargetModule + '.dll')) = 0) then
+    begin
+      OrigThunk := PImageThunkData(Base + ImpDesc[I].OriginalFirstThunk);
+      Thunk     := PImageThunkData(Base + ImpDesc[I].FirstThunk);
+
+      while Thunk.u1.Function <> 0 do
+      begin
+        if OrigThunk.u1.Ordinal and IMAGE_ORDINAL_FLAG32 <> 0 then
+        begin
+          Inc(OrigThunk); Inc(Thunk);
+          Continue;
+        end;
+        if OrigThunk.u1.AddressOfData <> 0 then
+        begin
+          FuncName := PAnsiChar(Base +
+            PImageImportByName(Base + OrigThunk.u1.AddressOfData).Name);
+          if AnsiCompareText(FuncName, TargetFunc) = 0 then
+          begin
+            Result := @Thunk.u1.Function;
+            Exit;
+          end;
+        end;
+        Inc(OrigThunk); Inc(Thunk);
+      end;
+    end;
+  end;
+end;
+
+function InstallIATHook(const TargetModule, TargetFunc: AnsiString;
+  HookProc: Pointer; out OriginalProc: Pointer): Boolean;
+var
+  IATPtr: PPointer;
+  Old: DWORD;
+begin
+  Result := False;
+  OriginalProc := nil;
+  IATPtr := FindIATEntry(TargetModule, TargetFunc);
+  if IATPtr = nil then Exit;
+  OriginalProc := IATPtr^;
+  if VirtualProtect(IATPtr, SizeOf(Pointer), PAGE_READWRITE, Old) then
+  begin
+    IATPtr^ := HookProc;
+    VirtualProtect(IATPtr, SizeOf(Pointer), Old, Old);
+    Result := True;
+  end;
+end;
+
+// ============================================================
+// IAT Hook 回调
+// ============================================================
+
+function HookedMessageBoxW(hWnd: HWND; lpText, lpCaption: LPCWSTR;
+  uType: UINT): Integer; stdcall;
+var
+  CapName: AnsiString;
+begin
+  Inc(_MsgBoxCounter);
+  CapName := AnsiString(Format('auto_msgbox_%.3d', [_MsgBoxCounter]));
+
+  // 异步投递截图 — 原 MessageBoxW 模态循环中会处理此消息
+  if _MsgWnd <> 0 then
+    PostMessage(_MsgWnd, WM_DAOFY_CAPTURE, WPARAM(@CapName[1]), 0);
+
+  // 通过原始函数指针直接调用（不走 IAT，防止递归）
+  if Assigned(_OrigMessageBoxW) then
+    Result := _OrigMessageBoxW(hWnd, lpText, lpCaption, uType)
+  else
+    Result := MessageBoxW(hWnd, lpText, lpCaption, uType);
+end;
+
+function HookedTaskDialogIndirect(const pConfig: TTaskDialogIndirectConfig;
+  pnButton: PInteger; pnRadioButton: PInteger;
+  pfVerificationFlagChecked: PBOOL): HRESULT; stdcall;
+var
+  CapName: AnsiString;
+begin
+  Inc(_TaskDlgCounter);
+  CapName := AnsiString(Format('auto_taskdlg_%.3d', [_TaskDlgCounter]));
+
+  if _MsgWnd <> 0 then
+    PostMessage(_MsgWnd, WM_DAOFY_CAPTURE, WPARAM(@CapName[1]), 0);
+
+  if Assigned(_OrigTaskDialogIndirect) then
+    Result := _OrigTaskDialogIndirect(pConfig, pnButton, pnRadioButton,
+      pfVerificationFlagChecked)
+  else
+    Result := TaskDialogIndirect(pConfig, pnButton, pnRadioButton,
+      pfVerificationFlagChecked);
+end;
+
+// ============================================================
+// 截图
+// ============================================================
+
+function TakeScreenshotToFile(const AFileName: string): Boolean;
+var
+  hWin: HWND;
+  DC, MemDC: HDC;
+  Bmp: TBitmap;
+  Old: HGDIOBJ;
+  R: TRect;
+begin
+  Result := False;
+  hWin := GetActiveWindow;
+  if hWin = 0 then hWin := GetForegroundWindow;
+  if hWin = 0 then Exit;
+
+  GetWindowRect(hWin, R);
+  if (R.Width <= 0) or (R.Height <= 0) then Exit;
+
+  DC := GetWindowDC(hWin);
+  if DC = 0 then Exit;
+  try
+    MemDC := CreateCompatibleDC(DC);
+    if MemDC = 0 then Exit;
+    try
+      Bmp := TBitmap.Create;
+      try
+        Bmp.PixelFormat := pf24bit;
+        Bmp.Width  := R.Width;
+        Bmp.Height := R.Height;
+        Old := SelectObject(MemDC, Bmp.Handle);
+        BitBlt(MemDC, 0, 0, R.Width, R.Height, DC, 0, 0, SRCCOPY);
+        SelectObject(MemDC, Old);
+
+        ForceDirectories(ExtractFilePath(AFileName));
+        {$IF declared(TPNGImage)}
+        Bmp.SaveToFile(ChangeFileExt(AFileName, '.png'));
+        {$ELSE}
+        Bmp.SaveToFile(ChangeFileExt(AFileName, '.bmp'));
+        {$ENDIF}
+        Result := True;
+      finally
+        Bmp.Free;
+      end;
+    finally
+      DeleteDC(MemDC);
+    end;
+  finally
+    ReleaseDC(hWin, DC);
+  end;
+end;
+
+procedure DoCapture(const AName: string);
+var
+  FName: string;
+begin
+  if _ScreenshotDir = '' then Exit;
+  FName := _ScreenshotDir + '\' + AName;
+  TakeScreenshotToFile(FName);
+end;
+
+// ============================================================
+// 命令执行（主线程调用）
+// ============================================================
+
+procedure ExecCommand(const ACmd: string);
+var
+  Cmd, Param: string;
+  P: Integer;
+  I: Integer;
+  WaitMs: Integer;
+  Ctrl: TControl;
+  Btn: TButton;
+  hWnd: HWND;
+  Buf: array[0..255] of Char;
+begin
+  P := Pos(':', ACmd);
+  if P > 0 then
+  begin
+    Cmd   := LowerCase(Copy(ACmd, 1, P - 1));
+    Param := Copy(ACmd, P + 1, MaxInt);
+  end
+  else
+  begin
+    Cmd   := LowerCase(ACmd);
+    Param := '';
+  end;
+
+  if Cmd = 'goto' then
+  begin
+    for I := 0 to Screen.FormCount - 1 do
+      if SameText(Screen.Forms[I].ClassName, Param) or
+         SameText(Screen.Forms[I].Name, Param) then
+      begin
+        Screen.Forms[I].Show;
+        Screen.Forms[I].BringToFront;
+        Screen.Forms[I].SetFocus;
+        Break;
+      end;
+  end
+  else if Cmd = 'click' then
+  begin
+    if (Screen.ActiveForm <> nil) and (Param <> '') then
+    begin
+      Ctrl := Screen.ActiveForm.FindChildControl(Param);
+      if (Ctrl is TButton) and Assigned(TButton(Ctrl).OnClick) then
+        TButton(Ctrl).OnClick(TButton(Ctrl));
+    end;
+  end
+  else if Cmd = 'type' then
+  begin
+    // 格式: type:ControlName=Text
+    P := Pos('=', Param);
+    if (P > 0) and (Screen.ActiveForm <> nil) then
+    begin
+      Ctrl := Screen.ActiveForm.FindChildControl(Copy(Param, 1, P - 1));
+      if Ctrl is TEdit then
+        TEdit(Ctrl).Text := Copy(Param, P + 1, MaxInt);
+    end;
+  end
+  else if Cmd = 'wait' then
+  begin
+    WaitMs := StrToIntDef(Param, 500);
+    if WaitMs > 10000 then WaitMs := 10000;
+    Sleep(WaitMs);
+  end
+  else if Cmd = 'capture' then
+    DoCapture(Param)
+  else if Cmd = 'msgclose' then
+  begin
+    // 按标题找 #32770 弹窗并关闭
+    hWnd := FindWindowW('#32770', nil);
+    while hWnd <> 0 do
+    begin
+      GetWindowTextW(hWnd, Buf, 256);
+      if (Param = '') or (Pos(Param, string(Buf)) > 0) then
+      begin
+        SendMessage(hWnd, WM_CLOSE, 0, 0);
+        Break;
+      end;
+      hWnd := GetNextWindow(hWnd, GW_HWNDNEXT);
+    end;
+  end
+  else if Cmd = 'snapdir' then
+  begin
+    _ScreenshotDir := Param;
+    ForceDirectories(_ScreenshotDir);
+  end
+  else if Cmd = 'exit' then
+    Application.Terminate;
+end;
+
+// ============================================================
+// 隐藏消息窗口（处理来自 Hook 和管道线程的消息）
+// ============================================================
+
+function MsgWndProc(hWnd: HWND; Msg: UINT; wParam: WPARAM;
+  lParam: LPARAM): LRESULT; stdcall;
+begin
+  if Msg = WM_DAOFY_COMMAND then
+  begin
+    ExecCommand(string(PWideChar(wParam)));
+    Result := 0;
+  end
+  else if Msg = WM_DAOFY_CAPTURE then
+  begin
+    DoCapture(string(PWideChar(wParam)));
+    Result := 0;
+  end
+  else
+    Result := DefWindowProc(hWnd, Msg, wParam, lParam);
+end;
+
+function CreateMsgWindow: HWND;
+var
+  WndClass: TWndClassEx;
+begin
+  FillChar(WndClass, SizeOf(WndClass), 0);
+  WndClass.cbSize        := SizeOf(WndClass);
+  WndClass.lpfnWndProc   := @MsgWndProc;
+  WndClass.hInstance     := HInstance;
+  WndClass.lpszClassName := MSG_WIN_CLASS;
+  WndClass.cbWndExtra    := 0;
+  RegisterClassEx(WndClass);
+
+  Result := CreateWindowEx(0, MSG_WIN_CLASS, '', 0,
+    0, 0, 0, 0, HWND_MESSAGE, 0, HInstance, nil);
+end;
+
+// ============================================================
+// 命名管道监听线程
+// ============================================================
 
 type
-  TAutomationProcessor = class(TThread)
+  TPipeThread = class(TThread)
   private
-    class var FCurrent: TAutomationProcessor;
-    FMsgWnd: HWND;
     FPipeName: string;
-    FSSDir: string;
-    FLastResp: string;
-    class function GetCurrent: TAutomationProcessor; static;
-    // JSON 协议
-    function GetReqId(const Req: string): string;
-    function GetCmd(const Req: string): string;
-    function IsAsyncCmd(const Cmd: string): Boolean;
-    function GetJSONStr(const J: TJSONObject; const K, Def: string): string;
-    function ExecCmd(const AReq: string): string;
-    procedure WndProc(var Msg: TMessage);
-    // 工具
-    procedure WriteJSON(Obj: TJSONObject); overload;
-    function WriteResp(const ReqId, Status, Data: string): string;
-    procedure WriteAsyncJSON(const ReqId: string; Obj: TJSONObject);
-    function TakeShot(const AFile: string): string;
-    function DoCap(const AName: string): string;
-    function DoDump: string;
-    function DoDlgScan: string;
-    function DoDlgClick(const Param: string): string;
-    function DoMsgScan: string;
-    function DoMsgClick(const Param: string): string;
-    function BtnID(const S: string): Integer;
-    function FindClick(Items: TMenuItem; const Cap: string): string;
-    function IsX(const N: string): Boolean;
-    function IsSK(K: TTypeKind): Boolean;
-    function P2J(const Prop: TRttiProperty; Obj: TObject): TJSONValue;
-    function DTree(Ctrl: TControl): TJSONObject;
-    // RTTI 命令
-    function DoRGet(const ReqId, Target, Prop: string): string;
-    function DoRSet(const ReqId, Target, Prop, Val: string): string;
-    function DoRInsp(const ReqId, Target: string): string;
   protected
     procedure Execute; override;
   public
-    class property Current: TAutomationProcessor read GetCurrent;
     constructor Create(const APipeName: string);
-    destructor Destroy; override;
-    procedure SetSSDir(const D: string);
-    procedure DoCapPub(const AName: string);
   end;
 
-// ═ WndProc（stdcall 静态函数，可被 SendMessage 跨线程调用）═
-
-function WP(hWnd: HWND; Msg: UINT; w: WPARAM; l: LPARAM): LRESULT; stdcall;
-var P: PWideChar; Cmd: string;
+constructor TPipeThread.Create(const APipeName: string);
 begin
-  Result := 0;
-  if (Msg = WM_DAOFY_CMD) and (TAutomationProcessor.Current <> nil) then begin
-    P := PWideChar(w);
-    if P <> nil then begin
-      Cmd := string(P);
-      TAutomationProcessor.Current.ExecCmd(Cmd);
-      GlobalFree(Winapi.Windows.HGLOBAL(w));
-    end;
-  end else
-    Result := DefWindowProc(hWnd, Msg, w, l);
+  inherited Create(False);
+  FPipeName := APipeName;
+  FreeOnTerminate := True;
 end;
 
-// ═ 全局接口 ═
-
-procedure AutoStart(const APipeName: string);
+procedure TPipeThread.Execute;
+var
+  hPipe: THandle;
+  CmdBuf: array[0..MAX_CMD_LEN - 1] of AnsiChar;
+  BytesRead, BytesWritten: DWORD;
+  Cmd: string;
+  RespBuf: AnsiString;
 begin
-  // GetCurrent 惰性创建并启动线程（构造函数中 inherited Create(False) 已调用 Start）
-  TAutomationProcessor.Current.SetSSDir('');
+  while not Terminated do
+  begin
+    hPipe := CreateNamedPipe(
+      PChar(FPipeName),
+      PIPE_ACCESS_DUPLEX,
+      PIPE_TYPE_MESSAGE or PIPE_READMODE_MESSAGE or PIPE_WAIT,
+      PIPE_UNLIMITED_INSTANCES,
+      MAX_CMD_LEN,
+      MAX_CMD_LEN,
+      100,
+      nil
+    );
+    if hPipe = INVALID_HANDLE_VALUE then
+    begin
+      Sleep(500);
+      Continue;
+    end;
+
+    if not ConnectNamedPipe(hPipe, nil)
+       and (GetLastError <> ERROR_PIPE_CONNECTED) then
+    begin
+      CloseHandle(hPipe);
+      Sleep(500);
+      Continue;
+    end;
+
+    while not Terminated do
+    begin
+      FillChar(CmdBuf, SizeOf(CmdBuf), 0);
+      if not ReadFile(hPipe, CmdBuf, SizeOf(CmdBuf) - 1, BytesRead, nil) then
+        Break;
+
+      if BytesRead > 0 then
+      begin
+        Cmd := Trim(string(UTF8ToString(CmdBuf)));
+        if Cmd <> '' then
+        begin
+          // 投递到隐藏窗口（主线程消息循环处理）
+          if _MsgWnd <> 0 then
+            SendMessage(_MsgWnd, WM_DAOFY_COMMAND, WPARAM(PWideChar(WideString(Cmd))), 0);
+
+          // 写响应
+          RespBuf := 'OK'#10;
+          WriteFile(hPipe, RespBuf[1], Length(RespBuf), BytesWritten, nil);
+        end;
+      end;
+    end;
+
+    CloseHandle(hPipe);
+  end;
+end;
+
+// ============================================================
+// 公开接口
+// ============================================================
+
+procedure AutoStart(const APipeName: string = '\\.\pipe\daofy_auto');
+var
+  Orig: Pointer;
+begin
+  if _MsgWnd <> 0 then Exit;
+
+  // 1. 创建隐藏消息窗口
+  _MsgWnd := CreateMsgWindow;
+
+  // 2. 安装 IAT Hook: MessageBoxW
+  if InstallIATHook('user32', 'MessageBoxW', @HookedMessageBoxW, Orig) then
+    _OrigMessageBoxW := TMessageBoxWFunc(Orig);
+
+  // 3. 安装 IAT Hook: TaskDialogIndirect
+  if InstallIATHook('comctl32', 'TaskDialogIndirect',
+     @HookedTaskDialogIndirect, Orig) then
+    _OrigTaskDialogIndirect := TTaskDialogIndirectFunc(Orig);
+
+  // 4. 启动管道监听线程
+  _PipeThread := TPipeThread.Create(APipeName);
 end;
 
 procedure AutoStop;
 begin
-  if TAutomationProcessor.Current <> nil then
-    TAutomationProcessor.Current.Terminate;
+  if Assigned(_PipeThread) then
+  begin
+    _PipeThread.Terminate;
+    _PipeThread := nil;
+  end;
+
+  if _MsgWnd <> 0 then
+  begin
+    DestroyWindow(_MsgWnd);
+    _MsgWnd := 0;
+  end;
+
+  _OrigMessageBoxW := nil;
+  _OrigTaskDialogIndirect := nil;
 end;
 
 procedure AutoCapture(const AName: string);
 begin
-  if TAutomationProcessor.Current <> nil then
-    TAutomationProcessor.Current.DoCapPub(AName);
+  DoCapture(AName);
 end;
 
 procedure SetScreenshotDir(const ADir: string);
 begin
-  TAutomationProcessor.Current.SetSSDir(ADir);
-  ForceDirectories(ADir);
+  _ScreenshotDir := ADir;
+  ForceDirectories(_ScreenshotDir);
 end;
-
-// ═══════════════════════════════════════════════════════
-// TAutomationProcessor
-// ═══════════════════════════════════════════════════════
-
-class function TAutomationProcessor.GetCurrent: TAutomationProcessor;
-begin
-  // 惰性创建单例
-  if FCurrent = nil then
-    FCurrent := TAutomationProcessor.Create('\\.\pipe\daofy_auto');
-  Result := FCurrent;
-end;
-
-constructor TAutomationProcessor.Create(const APipeName: string);
-begin
-  inherited Create(False);
-  FPipeName := APipeName;
-  // 在主线程上下文创建隐藏窗口（因为是构造时创建，此时在主线程）
-  FMsgWnd := AllocateHWnd(WndProc);
-  FreeOnTerminate := False;
-end;
-
-destructor TAutomationProcessor.Destroy;
-begin
-  Terminate;
-  WaitFor;
-  if FMsgWnd <> 0 then begin DeallocateHWnd(FMsgWnd); FMsgWnd := 0; end;
-  inherited;
-end;
-
-procedure TAutomationProcessor.SetSSDir(const D: string);
-begin FSSDir := D; end;
-
-procedure TAutomationProcessor.DoCapPub(const AName: string);
-begin DoCap(AName); end;
-
-// ── 管道线程（TAutomationProcessor 就是 TThread）─
-
-procedure TAutomationProcessor.Execute;
-var
-  h: THandle;
-  Buf: array[0..MAX_PIPE-1] of AnsiChar;
-  Br, Bw: DWORD;
-  Req, Resp, ReqId, Cmd: string;
-  R: TBytes;
-begin
-  while not Terminated do begin
-    h := CreateNamedPipe(PChar(FPipeName), PIPE_ACCESS_DUPLEX,
-      PIPE_TYPE_MESSAGE or PIPE_READMODE_MESSAGE or PIPE_WAIT,
-      PIPE_UNLIMITED_INSTANCES, MAX_PIPE, MAX_PIPE, 100, nil);
-    if h = INVALID_HANDLE_VALUE then begin Sleep(500); Continue; end;
-    if not ConnectNamedPipe(h, nil) and (GetLastError <> ERROR_PIPE_CONNECTED) then
-      begin CloseHandle(h); Sleep(500); Continue; end;
-    while not Terminated do begin
-      FillChar(Buf, SizeOf(Buf), 0);
-      if not ReadFile(h, Buf, SizeOf(Buf)-1, Br, nil) then Break;
-      if Br > 0 then begin
-        Req := Trim(string(UTF8ToString(Buf)));
-        if Req = '' then Continue;
-        ReqId := GetReqId(Req);
-        Cmd := GetCmd(Req);
-        if Cmd = '' then begin
-          Resp := WriteResp(ReqId, 'err', 'no cmd');
-        end else if IsAsyncCmd(Cmd) then begin
-          // 异步：PostMessage，不阻塞管道线程，立即返回 ACK
-          var P := PWideChar(GlobalAlloc(GMEM_FIXED, (Length(Req)+1)*SizeOf(WideChar)));
-          if P <> nil then begin
-            Move(PWideChar(Req)^, P^, (Length(Req)+1)*SizeOf(WideChar));
-            PostMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-          end;
-          Resp := WriteResp(ReqId, 'ack', '');
-        end else begin
-          // 同步：SendMessage 到主线程，等待执行完成
-          var P := PWideChar(GlobalAlloc(GMEM_FIXED, (Length(Req)+1)*SizeOf(WideChar)));
-          if P <> nil then begin
-            Move(PWideChar(Req)^, P^, (Length(Req)+1)*SizeOf(WideChar));
-            SendMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-          end;
-          Resp := FLastResp;
-        end;
-        R := TEncoding.UTF8.GetBytes(Resp + #10);
-        WriteFile(h, R[0], Length(R), Bw, nil);
-      end;
-    end;
-    CloseHandle(h);
-  end;
-end;
-
-// ── WndProc（AllocateHWnd 回调，运行在主线程）─
-
-// ── WndProc（AllocateHWnd 回调，运行在主线程）─
-
-procedure TAutomationProcessor.WndProc(var Msg: TMessage);
-begin
-  if Msg.Msg = WM_DAOFY_CMD then begin
-    var P := PWideChar(Msg.WParam);
-    if P <> nil then begin
-      FLastResp := ExecCmd(string(P));
-      GlobalFree(Winapi.Windows.HGLOBAL(Msg.WParam));
-    end;
-    Msg.Result := 0;
-  end else
-    Msg.Result := DefWindowProc(FMsgWnd, Msg.Msg, Msg.WParam, Msg.LParam);
-end;
-
-// ── ExecCmd：所有命令的统一入口 ──
-
-// ── ExecCmd：JSON 请求分发器，运行在主线程 ──
-
-function TAutomationProcessor.ExecCmd(const AReq: string): string;
-var J: TJSONObject; Cmd, ReqId, Target: string;
-  I, WaitMs: Integer; Ch, hWnd: Winapi.Windows.HWND;
-  WC: TWinControl; Buf: array[0..255] of Char; R: TRect;
-  V: TJSONValue;
-begin
-  try
-    V := TJSONObject.ParseJSONValue(AReq);
-    if V = nil then Exit(WriteResp('', 'err', 'invalid JSON'));
-    if not (V is TJSONObject) then begin V.Free; Exit(WriteResp('', 'err', 'not a JSON object')); end;
-    J := V as TJSONObject;
-    try
-      ReqId := GetJSONStr(J, 'reqId', '');
-      Cmd   := LowerCase(GetJSONStr(J, 'cmd', ''));
-      Target := GetJSONStr(J, 'target', '');
-
-      if Cmd = '' then
-        Result := WriteResp(ReqId, 'err', 'no cmd')
-
-      else if Cmd = 'goto' then begin
-        for I := 0 to Screen.FormCount - 1 do
-          if SameText(Screen.Forms[I].ClassName, Target) or SameText(Screen.Forms[I].Name, Target) then
-            begin Screen.Forms[I].Show; Screen.Forms[I].BringToFront; Screen.Forms[I].SetFocus; Break; end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'click' then begin
-        var AtPos := Pos('@', Target);
-        var CtrlName := Target;
-        if AtPos > 0 then begin
-          var CoordStr := Copy(Target, AtPos+1, MaxInt);
-          CtrlName := Copy(Target, 1, AtPos-1);
-          var CommaPos := Pos(',', CoordStr);
-          if CommaPos > 0 then begin
-            var CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos-1)), 0);
-            var CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos+1, MaxInt)), 0);
-            if Screen.ActiveForm <> nil then begin
-              WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
-              if WC <> nil then begin Ch := WC.Handle;
-                SendMessage(Ch, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(CX, CY));
-                SendMessage(Ch, WM_LBUTTONUP, 0, MakeLParam(CX, CY));
-              end;
-            end;
-          end;
-        end else begin
-          if Screen.ActiveForm <> nil then begin
-            WC := Screen.ActiveForm.FindChildControl(CtrlName) as TWinControl;
-            if WC <> nil then begin Ch := WC.Handle; SendMessage(Ch, BM_CLICK, 0, 0); end; end;
-        end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'dblclick' then begin
-        var AtPos2 := Pos('@', Target);
-        var CtrlName2 := Target;
-        if AtPos2 > 0 then begin
-          var CoordStr2 := Copy(Target, AtPos2+1, MaxInt);
-          CtrlName2 := Copy(Target, 1, AtPos2-1);
-          var CommaPos2 := Pos(',', CoordStr2);
-          if CommaPos2 > 0 then begin
-            var CX2 := StrToIntDef(Trim(Copy(CoordStr2, 1, CommaPos2-1)), 0);
-            var CY2 := StrToIntDef(Trim(Copy(CoordStr2, CommaPos2+1, MaxInt)), 0);
-            if Screen.ActiveForm <> nil then begin
-              WC := Screen.ActiveForm.FindChildControl(CtrlName2) as TWinControl;
-              if WC <> nil then begin Ch := WC.Handle;
-                SendMessage(Ch, WM_LBUTTONDBLCLK, MK_LBUTTON, MakeLParam(CX2, CY2));
-              end;
-            end;
-          end;
-        end else begin
-          if Screen.ActiveForm <> nil then begin
-            WC := Screen.ActiveForm.FindChildControl(CtrlName2) as TWinControl;
-            if WC <> nil then begin Ch := WC.Handle;
-              GetWindowRect(Ch, R);
-              SendMessage(Ch, WM_LBUTTONDBLCLK, MK_LBUTTON,
-                MakeLParam(R.Width div 2, R.Height div 2));
-            end;
-          end;
-        end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'rclick' then begin
-        if Screen.ActiveForm <> nil then begin
-          WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
-          if WC <> nil then begin Ch := WC.Handle; GetWindowRect(Ch, R);
-            if Screen.ActiveForm.PopupMenu <> nil then
-              Screen.ActiveForm.PopupMenu.Popup(R.Left+(R.Width div 2), R.Top+(R.Height div 2)); end; end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'hover' then begin
-        if Screen.ActiveForm <> nil then begin
-          WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
-          if WC <> nil then begin Ch := WC.Handle;
-            SendMessage(Ch, WM_MOUSEMOVE, 0, MakeLParam(WC.Width div 2, WC.Height div 2)); end; end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'type' then begin
-        var VStr := GetJSONStr(J, 'value', '');
-        if (Target <> '') and (Screen.ActiveForm <> nil) then begin
-          WC := Screen.ActiveForm.FindChildControl(Target) as TWinControl;
-          if WC <> nil then begin Ch := WC.Handle;
-            SetWindowText(Ch, PChar(VStr)); end; end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'wait' then begin
-        WaitMs := StrToIntDef(GetJSONStr(J, 'ms', '500'), 500);
-        if WaitMs > 10000 then WaitMs := 10000; Sleep(WaitMs);
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'capture' then begin
-        DoCap(Target);
-        Result := WriteResp(ReqId, 'ok', 'captured'); end
-
-      else if Cmd = 'dlgscan' then begin
-        DoDlgScan;
-        Result := WriteResp(ReqId, 'ok', 'scanned'); end
-
-      else if Cmd = 'dlgclick' then begin
-        Result := WriteResp(ReqId, 'ok', DoDlgClick(Target)); end
-
-      else if Cmd = 'msgscan' then begin
-        DoMsgScan;
-        Result := WriteResp(ReqId, 'ok', 'scanned'); end
-
-      else if Cmd = 'msgclick' then begin
-        Result := WriteResp(ReqId, 'ok', DoMsgClick(Target)); end
-
-      else if Cmd = 'msgclose' then begin
-        hWnd := FindWindowW('#32770', nil);
-        while hWnd <> 0 do begin GetWindowTextW(hWnd, Buf, 256);
-          if (Target = '') or (Pos(Target, string(Buf)) > 0) then
-            begin SendMessage(hWnd, WM_CLOSE, 0, 0); Break; end;
-          hWnd := GetNextWindow(hWnd, GW_HWNDNEXT); end;
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'snapdir' then begin
-        FSSDir := Target; ForceDirectories(FSSDir);
-        Result := WriteResp(ReqId, 'ok', 'OK'); end
-
-      else if Cmd = 'dumpstate' then begin
-        DoDump;
-        Result := WriteResp(ReqId, 'ok', 'dumped'); end
-
-      else if Cmd = 'exit' then begin
-        Application.Terminate;
-        Result := WriteResp(ReqId, 'ok', 'bye'); end
-
-      // RTTI 命令（同步）
-      else if Cmd = 'rget' then begin
-        var Prop := GetJSONStr(J, 'prop', '');
-        Result := DoRGet(ReqId, Target, Prop); end
-
-      else if Cmd = 'rset' then begin
-        var Prop := GetJSONStr(J, 'prop', '');
-        var Val := GetJSONStr(J, 'value', '');
-        Result := DoRSet(ReqId, Target, Prop, Val); end
-
-      // rinspect 异步：ExecCmd 被 PostMessage 调用，结果写文件
-      else if Cmd = 'rinspect' then begin
-        DoRInsp(ReqId, Target);
-        Result := ''; end
-
-      else
-        Result := WriteResp(ReqId, 'err', 'unknown cmd: ' + Cmd);
-
-    finally J.Free; end;
-  except
-    on E: Exception do
-      Result := WriteResp('', 'err', E.Message);
-  end;
-end;
-
-// ── 工具 ──
-
-
-procedure TAutomationProcessor.WriteJSON(Obj: TJSONObject);
-var F: string; Raw: TBytes; SS: TFileStream;
-begin if (FSSDir = '') or (Obj = nil) then Exit;
-  F := FSSDir + '\_formstate.json';
-  Raw := TEncoding.UTF8.GetBytes(Obj.ToJSON);
-  SS := TFileStream.Create(F, fmCreate);
-  try SS.Write(Raw[0], Length(Raw)); finally SS.Free; end;
-end;
-
-// ── 截图 ──
-
-function TAutomationProcessor.TakeShot(const AFile: string): string;
-var hWin: Winapi.Windows.HWND; DC, MemDC: HDC; Bmp: TBitmap; Jpg: TJPEGImage;
-  Old: HGDIOBJ; R: TRect;
-begin
-  Result := 'NO_WIN';
-  hWin := FindWindowW('#32770', nil);
-  if hWin = 0 then
-    if Screen.ActiveForm <> nil then hWin := Screen.ActiveForm.Handle
-    else hWin := GetTopWindow(0);
-  if hWin = 0 then Exit;
-  GetWindowRect(hWin, R);
-  if (R.Width <= 0) or (R.Height <= 0) then begin Result := 'ZERO'; Exit; end;
-  DC := GetWindowDC(hWin); if DC = 0 then begin Result := 'NODC'; Exit; end;
-  try MemDC := CreateCompatibleDC(DC); if MemDC = 0 then begin Result := 'NOMC'; Exit; end;
-    try Bmp := TBitmap.Create; try Bmp.PixelFormat := pf24bit;
-      Bmp.Width := R.Width; Bmp.Height := R.Height;
-      Old := SelectObject(MemDC, Bmp.Handle);
-      BitBlt(MemDC, 0, 0, R.Width, R.Height, DC, 0, 0, SRCCOPY);
-      SelectObject(MemDC, Old);
-      Jpg := TJPEGImage.Create;
-      try Jpg.Assign(Bmp); Jpg.CompressionQuality := JPG_Q; Jpg.Compress;
-        ForceDirectories(ExtractFilePath(AFile)); Jpg.SaveToFile(AFile); Result := 'OK';
-        finally Jpg.Free; end;
-    finally Bmp.Free; end; finally DeleteDC(MemDC); end;
-  finally ReleaseDC(hWin, DC); end;
-end;
-
-function TAutomationProcessor.DoCap(const AName: string): string;
-begin if FSSDir = '' then Exit('NODIR');
-  Result := TakeShot(FSSDir + '\' + AName + '.jpg'); end;
-
-// ── RTTI ──
-
-function TAutomationProcessor.IsX(const N: string): Boolean;
-const X: array of string = ['Action','Align','AlignWithMargins','Anchors',
-  'BiDiMode','BorderSpacing','Brush','Canvas','ClientHeight','ClientWidth',
-  'Color','Constraints','Cursor','CustomHint','Font','Handle','Height',
-  'HelpContext','HelpKeyword','HelpType','Hint','ImeMode','ImeName',
-  'Left','Top','Width','Margins','Name','Owner','Padding','Parent',
-  'ParentBackground','ParentBiDiMode','ParentColor','ParentCtl3D',
-  'ParentCustomHint','ParentDoubleBuffered','ParentFont','ParentShowHint',
-  'PopupMenu','ScrollBar','Showing','StyleElements','TabOrder','Tag',
-  'Touch','WindowHandle','WindowProc',
-  'OnActivate','OnClick','OnChange','OnClose','OnCreate','OnDblClick',
-  'OnDeactivate','OnDestroy','OnEnter','OnExit','OnKeyDown','OnKeyPress',
-  'OnKeyUp','OnMouseActivate','OnMouseDown','OnMouseEnter','OnMouseLeave',
-  'OnMouseMove','OnMouseUp','OnResize','OnShow'];
-var S: string;
-begin for S in X do if SameText(S, N) then Exit(True); Result := False; end;
-
-function TAutomationProcessor.IsSK(K: TTypeKind): Boolean;
-begin Result := K in [tkString,tkUString,tkWString,tkLString,tkChar,tkWChar,
-  tkInteger,tkInt64,tkEnumeration,tkFloat]; end;
-
-function TAutomationProcessor.P2J(const Prop: TRttiProperty; Obj: TObject): TJSONValue;
-var V: TValue;
-begin
-  if not Prop.IsReadable then Exit(TJSONNull.Create);
-  V := Prop.GetValue(Obj);
-  case V.Kind of
-    tkString,tkUString,tkWString,tkLString: Result := TJSONString.Create(V.AsString);
-    tkChar,tkWChar: Result := TJSONString.Create(string(V.AsString));
-    tkInteger,tkInt64: Result := TJSONNumber.Create(V.AsInteger);
-    tkEnumeration: if SameText(Prop.PropertyType.Name, 'Boolean') then
-      Result := TJSONBool.Create(V.AsBoolean)
-    else Result := TJSONString.Create(GetEnumName(Prop.PropertyType.Handle, V.AsOrdinal));
-    tkFloat: Result := TJSONNumber.Create(V.AsExtended);
-  else Result := TJSONNull.Create; end;
-end;
-
-function TAutomationProcessor.DTree(Ctrl: TControl): TJSONObject;
-var Ctx: TRttiContext; Prop: TRttiProperty; Seen: TDictionary<string, Boolean>;
-  I: Integer; W: TWinControl; Props: TJSONObject; Children: TJSONArray;
-begin
-  Result := TJSONObject.Create;
-  Result.AddPair('name', Ctrl.Name);
-  Result.AddPair('class', Ctrl.ClassName);
-  Props := TJSONObject.Create;
-  Seen := TDictionary<string, Boolean>.Create;
-  try Ctx := TRttiContext.Create; try for Prop in Ctx.GetType(Ctrl.ClassType).GetProperties do
-    if not IsX(Prop.Name) and IsSK(Prop.PropertyType.TypeKind)
-      and not Seen.ContainsKey(Prop.Name) then begin
-      Seen.Add(Prop.Name, True);
-      Props.AddPair(Prop.Name, P2J(Prop, Ctrl)); end;
-  finally Ctx.Free; end; finally Seen.Free; end;
-  Result.AddPair('props', Props);
-  if Ctrl is TWinControl then begin
-    W := TWinControl(Ctrl);
-    if W.ControlCount > 0 then begin
-      Children := TJSONArray.Create;
-      for I := 0 to W.ControlCount - 1 do
-        Children.AddElement(DTree(W.Controls[I]));
-      Result.AddPair('children', Children);
-    end;
-  end;
-end;
-
-function TAutomationProcessor.DoDump: string;
-var I: Integer; F: TForm; Ctx: TRttiContext; Prop: TRttiProperty;
-  Seen: TDictionary<string, Boolean>;
-  Root: TJSONObject; Props: TJSONObject; Controls: TJSONArray;
-begin if FSSDir = '' then Exit('NODIR');
-  F := Screen.ActiveForm; if F = nil then begin if Screen.FormCount > 0 then F := Screen.Forms[0] else Exit; end;
-  Root := TJSONObject.Create; Seen := TDictionary<string, Boolean>.Create;
-  try
-    Root.AddPair('form', F.Name);
-    Root.AddPair('class', F.ClassName);
-    Root.AddPair('caption', F.Caption);
-    Props := TJSONObject.Create;
-    Ctx := TRttiContext.Create; try for Prop in Ctx.GetType(F.ClassType).GetProperties do
-      if not IsX(Prop.Name) and IsSK(Prop.PropertyType.TypeKind)
-        and (Prop.Name <> 'Caption') and not Seen.ContainsKey(Prop.Name) then begin
-        Seen.Add(Prop.Name, True);
-        Props.AddPair(Prop.Name, P2J(Prop, F)); end;
-    finally Ctx.Free; end;
-    Root.AddPair('props', Props);
-    Controls := TJSONArray.Create;
-    for I := 0 to F.ControlCount - 1 do
-      Controls.AddElement(DTree(F.Controls[I]));
-    Root.AddPair('controls', Controls);
-    WriteJSON(Root); Result := 'OK';
-  finally Seen.Free; Root.Free; end;
-end;
-
-function TAutomationProcessor.DoDlgScan: string;
-var F: TForm; PM: TPopupMenu; Root: TJSONObject; Items: TJSONArray;
-  II: Integer; It: TMenuItem;
-begin if FSSDir = '' then Exit('NODIR');
-  F := Screen.ActiveForm; if F = nil then Exit('NOF');
-  PM := F.PopupMenu; if PM = nil then Exit('NOP');
-  Root := TJSONObject.Create;
-  try
-    Root.AddPair('type', 'popup');
-    Root.AddPair('menu', PM.Name);
-    Items := TJSONArray.Create;
-    for II := 0 to PM.Items.Count - 1 do begin
-      It := PM.Items[II];
-      var ItemObj := TJSONObject.Create;
-      ItemObj.AddPair('name', It.Name);
-      ItemObj.AddPair('caption', It.Caption);
-      ItemObj.AddPair('enabled', TJSONBool.Create(It.Enabled));
-      ItemObj.AddPair('visible', TJSONBool.Create(It.Visible));
-      ItemObj.AddPair('checked', TJSONBool.Create(It.Checked));
-      Items.AddElement(ItemObj); end;
-    Root.AddPair('items', Items);
-    WriteJSON(Root); Result := 'OK';
-  finally Root.Free; end;
-end;
-
-function TAutomationProcessor.FindClick(Items: TMenuItem; const Cap: string): string;
-var I: Integer;
-begin for I := 0 to Items.Count - 1 do begin
-  if SameText(Items[I].Caption, Cap) then begin Items[I].Click; Exit('OK'); end;
-  if Items[I].Count > 0 then if FindClick(Items[I], Cap) = 'OK' then Exit('OK'); end;
-  Result := 'NF'; end;
-
-function TAutomationProcessor.DoDlgClick(const Param: string): string;
-var F: TForm; PM: TPopupMenu;
-begin F := Screen.ActiveForm; if F = nil then Exit('NOF');
-  PM := F.PopupMenu; if PM = nil then Exit('NOP');
-  Result := FindClick(PM.Items, Param); end;
-
-function TAutomationProcessor.BtnID(const S: string): Integer;
-begin
-  if LowerCase(S) = 'ok' then Exit(1); if LowerCase(S) = 'cancel' then Exit(2);
-  if LowerCase(S) = 'abort' then Exit(3); if LowerCase(S) = 'retry' then Exit(4);
-  if LowerCase(S) = 'ignore' then Exit(5); if LowerCase(S) = 'yes' then Exit(6);
-  if LowerCase(S) = 'no' then Exit(7); Result := -1; end;
-
-function TAutomationProcessor.DoMsgScan: string;
-var Root: TJSONObject; Buttons: TJSONArray;
-  hDlg, hSt, hBtn: Winapi.Windows.HWND; Buf: array[0..511] of Char;
-begin if FSSDir = '' then Exit('NODIR');
-  hDlg := FindWindowW('#32770', nil); if hDlg = 0 then Exit('NOD');
-  Root := TJSONObject.Create;
-  try
-    FillChar(Buf, SizeOf(Buf), 0); GetWindowTextW(hDlg, Buf, 512);
-    Root.AddPair('title', string(Buf));
-    Root.AddPair('type', 'msgbox');
-    Root.AddPair('hWnd', IntToStr(hDlg));
-    hSt := FindWindowExW(hDlg, 0, 'Static', nil);
-    if hSt <> 0 then begin FillChar(Buf, SizeOf(Buf), 0); GetWindowTextW(hSt, Buf, 512);
-      Root.AddPair('text', string(Buf)); end
-    else Root.AddPair('text', '');
-    Buttons := TJSONArray.Create;
-    hBtn := FindWindowExW(hDlg, 0, 'Button', nil);
-    while hBtn <> 0 do begin FillChar(Buf, SizeOf(Buf), 0); GetWindowTextW(hBtn, Buf, 512);
-      if string(Buf) <> '' then
-        Buttons.AddElement(TJSONString.Create(string(Buf)));
-      hBtn := FindWindowExW(hDlg, hBtn, 'Button', nil); end;
-    Root.AddPair('buttons', Buttons);
-    WriteJSON(Root); Result := 'OK';
-  finally Root.Free; end;
-end;
-
-function TAutomationProcessor.DoMsgClick(const Param: string): string;
-var hDlg, hBtn: Winapi.Windows.HWND; Buf: array[0..255] of Char; ID: Integer;
-begin
-  hDlg := FindWindowW('#32770', nil); if hDlg = 0 then Exit('NOD');
-  ID := BtnID(Param);
-  if ID > 0 then begin SendMessage(hDlg, WM_COMMAND, ID, 0); Exit('OK'); end;
-  hBtn := FindWindowExW(hDlg, 0, 'Button', nil);
-  while hBtn <> 0 do begin FillChar(Buf, SizeOf(Buf), 0); GetWindowTextW(hBtn, Buf, 255);
-    if LowerCase(string(Buf)) = LowerCase(Param) then
-      begin SendMessage(hBtn, BM_CLICK, 0, 0); Exit('OK'); end;
-    hBtn := FindWindowExW(hDlg, hBtn, 'Button', nil); end;
-  Result := 'NF';
-end;
-
-// ══════════════════════════════════════════════════════════════
-// 协议辅助
-// ══════════════════════════════════════════════════════════════
-
-function TAutomationProcessor.GetJSONStr(const J: TJSONObject; const K, Def: string): string;
-var V: TJSONValue;
-begin
-  V := J.Values[K];
-  if V <> nil then Result := V.Value else Result := Def;
-end;
-
-function TAutomationProcessor.WriteResp(const ReqId, Status, Data: string): string;
-var J: TJSONObject;
-begin
-  J := TJSONObject.Create;
-  try
-    J.AddPair('reqId', ReqId);
-    J.AddPair('status', Status);
-    J.AddPair('data', Data);
-    Result := J.ToJSON;
-  finally J.Free; end;
-end;
-
-procedure TAutomationProcessor.WriteAsyncJSON(const ReqId: string; Obj: TJSONObject);
-var F: string; Raw: TBytes; SS: TFileStream;
-begin
-  if FSSDir = '' then Exit;
-  F := FSSDir + '\_async_' + ReqId + '.json';
-  Raw := TEncoding.UTF8.GetBytes(Obj.ToJSON);
-  SS := TFileStream.Create(F, fmCreate);
-  try SS.Write(Raw[0], Length(Raw)); finally SS.Free; end;
-end;
-
-function TAutomationProcessor.GetReqId(const Req: string): string;
-var V: TJSONValue;
-begin
-  V := TJSONObject.ParseJSONValue(Req);
-  if V is TJSONObject then
-    Result := GetJSONStr(V as TJSONObject, 'reqId', '')
-  else
-    Result := '';
-  V.Free;
-end;
-
-function TAutomationProcessor.GetCmd(const Req: string): string;
-var V: TJSONValue;
-begin
-  V := TJSONObject.ParseJSONValue(Req);
-  if V is TJSONObject then
-    Result := LowerCase(GetJSONStr(V as TJSONObject, 'cmd', ''))
-  else
-    Result := '';
-  V.Free;
-end;
-
-function TAutomationProcessor.IsAsyncCmd(const Cmd: string): Boolean;
-begin
-  Result := (Cmd = 'click') or (Cmd = 'dblclick') or (Cmd = 'rclick') or
-            (Cmd = 'msgclick') or (Cmd = 'dlgclick') or (Cmd = 'hover') or
-            (Cmd = 'rinspect');
-end;
-
-// ══════════════════════════════════════════════════════════════
-// RTTI 命令
-// ══════════════════════════════════════════════════════════════
-
-function TAutomationProcessor.DoRGet(const ReqId, Target, Prop: string): string;
-var Ctrl: TControl; Ctx: TRttiContext; Pr: TRttiProperty; V: TValue; Obj: TObject;
-  Parts: TArray<string>; i: Integer;
-begin
-  try
-    if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
-    if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:'+Target));
-    Parts := Prop.Split(['.']);
-    if Length(Parts) = 0 then Exit(WriteResp(ReqId, 'err', 'no property'));
-    Ctx := TRttiContext.Create;
-    try
-      // First segment: control property
-      Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(Parts[0]);
-      if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:'+Parts[0]));
-      if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:'+Parts[0]));
-      V := Pr.GetValue(Ctrl);
-      // Nested segments: traverse object chain
-      for i := 1 to High(Parts) do begin
-        if V.Kind <> tkClass then Exit(WriteResp(ReqId, 'err', 'not an object: '+Parts[i]));
-        Obj := V.AsObject;
-        if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil: '+Parts[i]));
-        Pr := Ctx.GetType(Obj.ClassType).GetProperty(Parts[i]);
-        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:'+Parts[i]));
-        if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:'+Parts[i]));
-        V := Pr.GetValue(Obj);
-      end;
-      Result := WriteResp(ReqId, 'ok', V.ToString);
-    finally Ctx.Free; end;
-  except
-    on E: Exception do Result := WriteResp(ReqId, 'err', E.Message);
-  end;
-end;
-
-function TAutomationProcessor.DoRSet(const ReqId, Target, Prop, Val: string): string;
-var Ctrl: TControl; Ctx: TRttiContext; Pr: TRttiProperty;
-begin
-  try
-    if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
-    if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:'+Target));
-    Ctx := TRttiContext.Create;
-    try
-      Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(Prop);
-      if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:'+Prop));
-      if not Pr.IsWritable then Exit(WriteResp(ReqId, 'err', 'NW:'+Prop));
-      case Pr.PropertyType.TypeKind of
-        tkString, tkUString, tkWString, tkLString:
-          Pr.SetValue(Ctrl, Val);
-        tkInteger, tkInt64:
-          Pr.SetValue(Ctrl, StrToIntDef(Val, 0));
-        tkFloat:
-          Pr.SetValue(Ctrl, StrToFloatDef(Val, 0));
-        tkEnumeration:
-          if SameText(Pr.PropertyType.Name, 'Boolean') then
-            Pr.SetValue(Ctrl, SameText(Val, 'true'))
-          else
-            Pr.SetValue(Ctrl, TValue.FromOrdinal(Pr.PropertyType.Handle,
-              GetEnumValue(Pr.PropertyType.Handle, Val)));
-      else
-        Exit(WriteResp(ReqId, 'err', 'unsupported type'));
-      end;
-      Result := WriteResp(ReqId, 'ok', 'OK');
-    finally Ctx.Free; end;
-  except
-    on E: Exception do Result := WriteResp(ReqId, 'err', E.Message);
-  end;
-end;
-
-function TAutomationProcessor.DoRInsp(const ReqId, Target: string): string;
-var Ctrl: TControl; Ctx: TRttiContext; Ty: TRttiType;
-  M: TRttiMethod; PR: TRttiProperty;
-  Root: TJSONObject; Methods: TJSONArray; Props: TJSONArray; JE: TJSONObject;
-begin
-  try
-    if FSSDir = '' then Exit;
-    if Screen.ActiveForm = nil then begin
-      JE := TJSONObject.Create; JE.AddPair('status','err'); JE.AddPair('data','NA');
-      WriteAsyncJSON(ReqId, JE); JE.Free; Exit; end;
-    Ctrl := Screen.ActiveForm.FindChildControl(Target);
-    if Ctrl = nil then begin
-      JE := TJSONObject.Create; JE.AddPair('status','err'); JE.AddPair('data','NF');
-      WriteAsyncJSON(ReqId, JE); JE.Free; Exit; end;
-    Root := TJSONObject.Create;
-    try
-      Ctx := TRttiContext.Create; Ty := Ctx.GetType(Ctrl.ClassType);
-      try
-        Root.AddPair('name', Ctrl.Name);
-        Root.AddPair('class', Ctrl.ClassName);
-        Methods := TJSONArray.Create;
-        for M in Ty.GetMethods do
-          if (M.Visibility=mvPublic) and (M.MethodKind=mkProcedure)
-            and (Length(M.GetParameters)=0) then
-            Methods.AddElement(TJSONString.Create(M.Name));
-        Root.AddPair('methods', Methods);
-        Props := TJSONArray.Create;
-        for PR in Ty.GetProperties do
-          if PR.IsReadable and PR.IsWritable then begin
-            var PObj := TJSONObject.Create;
-            PObj.AddPair('name', PR.Name);
-            PObj.AddPair('type', PR.PropertyType.Name);
-            Props.AddElement(PObj); end;
-        Root.AddPair('props', Props);
-        WriteAsyncJSON(ReqId, Root);
-      finally Ctx.Free; end;
-    finally Root.Free; end;
-    Result := WriteResp(ReqId, 'ok', 'OK');
-  except
-    on E: Exception do begin
-      JE := TJSONObject.Create; JE.AddPair('status','err'); JE.AddPair('data',E.Message);
-      WriteAsyncJSON(ReqId, JE); JE.Free;
-      Result := WriteResp(ReqId, 'err', E.Message);
-    end;
-  end;
- end;
 
 end.

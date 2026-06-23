@@ -1,0 +1,81 @@
+{
+  "total_scripts": 1,
+  "total_steps": 12,
+  "total_passed": 12,
+  "total_failed": 0,
+  "success_rate": "100%",
+  "scripts": [
+    {
+      "script": "AutoTest-完整实测",
+      "report": {
+        "total": 12,
+        "passed": 12,
+        "failed": 0,
+        "duration_seconds": 0.0,
+        "success_rate": "100%",
+        "steps": [
+          {
+            "cmd": "goto",
+            "target": "TForm1",
+            "status": "pass"
+          },
+          {
+            "cmd": "formsum",
+            "target": "",
+            "status": "pass"
+          },
+          {
+            "cmd": "dumpstate",
+            "target": "",
+            "status": "pass"
+          },
+          {
+            "cmd": "rinspect",
+            "target": "EditName",
+            "status": "pass"
+          },
+          {
+            "cmd": "rinspect",
+            "target": "BtnHello",
+            "status": "pass"
+          },
+          {
+            "cmd": "capture",
+            "target": "",
+            "status": "pass"
+          },
+          {
+            "cmd": "type",
+            "target": "EditName",
+            "status": "pass"
+          },
+          {
+            "cmd": "rinspect",
+            "target": "EditName",
+            "status": "pass"
+          },
+          {
+            "cmd": "click",
+            "target": "BtnHello",
+            "status": "pass"
+          },
+          {
+            "cmd": "rinspect",
+            "target": "BtnHello",
+            "status": "pass"
+          },
+          {
+            "cmd": "capture",
+            "target": "",
+            "status": "pass"
+          },
+          {
+            "cmd": "exit",
+            "target": "",
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ]
+}

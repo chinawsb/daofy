@@ -1,0 +1,75 @@
+{
+  "test_name": "HDPI-缩放回归测试",
+  "app_path": "C:/App/CustomerApp.exe",
+  "target_form": "TMainForm",
+  "version": 1,
+  "created": "2026-06-18T15:00:00",
+  "source_hash": "",
+  "source_files": ["UnitMain.pas", "UnitMain.dfm", "UnitCustomer.pas", "UnitCustomer.dfm"],
+  "run_count": 0,
+
+  "steps": [
+    {
+      "phase": "perceive",
+      "cmd": "dumpstate",
+      "note": "在 100% 缩放时获取基线结构"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "formsum",
+      "note": "窗体摘要：记录控件布局基线"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "capture",
+      "capture": "baseline_100pct",
+      "note": "基线截图（100% 缩放）"
+    },
+    {
+      "phase": "execution",
+      "cmd": "rinspect",
+      "target": "btnSave",
+      "prop": "Caption",
+      "expected": "保存",
+      "note": "RTTI 确认按钮文案"
+    },
+    {
+      "phase": "verify",
+      "cmd": "ocr",
+      "action": "recognize",
+      "image_path": "docs/copyright/snapshots/baseline_100pct.jpg",
+      "note": "OCR 确认按钮文字在 100% 下完整显示"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "capture",
+      "capture": "check_150pct",
+      "note": "切换到 150% 缩放后再次截图"
+    },
+    {
+      "phase": "verify",
+      "cmd": "ocr",
+      "action": "diff",
+      "baseline": "docs/copyright/snapshots/baseline_100pct.jpg",
+      "current": "docs/copyright/snapshots/check_150pct.jpg",
+      "threshold": 10,
+      "note": "diff 检测 150% 缩放下是否有意外视觉变化"
+    },
+    {
+      "phase": "verify",
+      "cmd": "ocr",
+      "action": "color",
+      "image_path": "docs/copyright/snapshots/check_150pct.jpg",
+      "region": [180, 170, 75, 25],
+      "note": "color 分析保存按钮区域颜色是否正常"
+    },
+    {
+      "phase": "verify",
+      "cmd": "rinspect",
+      "target": "btnSave",
+      "prop": "Width",
+      "expected": 75,
+      "note": "RTTI 验证按钮宽度在缩放后变化是否合理"
+    }
+  ]
+}

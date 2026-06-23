@@ -322,7 +322,7 @@ AI 会搜索 Delphi 源码知识库，返回 `TStringList` 的完整信息：继
 
 ##### 第 4 步：编译验证
 
-- AI 调用 `compile_project(project_path="DatabaseManager.pas")` → 一次通过 ✅
+- AI 调用 `project(action="compile", project_path="DatabaseManager.pas")` → 一次通过 ✅
 
 #### 旁白
 
@@ -352,7 +352,7 @@ FireDAC 的参数体系非常庞大：`TFDConnection` 的 driver 选择、`Param
 用户: 编译当前项目，Debug 模式，Win32 平台
 ```
 
-- AI 调用 `compile_project(project_path="Project1.dproj", build_configuration="Debug", target_platform="win32")`
+- AI 调用 `project(action="compile", project_path="Project1.dproj", build_configuration="Debug", target_platform="win32")`
 - 展示编译过程输出：编译事件、编译参数、编译结果
 
 #### 旁白
@@ -375,7 +375,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 用户: 检查 Unit1.pas 的语法
 ```
 
-- AI 调用 `compile_project(project_path="Unit1.pas")`
+- AI 调用 `project(action="compile", project_path="Unit1.pas")`
 - 展示语法检查结果
 
 #### 旁白
@@ -487,7 +487,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
   - CalculateTotal: 魔法数值改为常量定义
   - GetUserCount: 简化逻辑
   - ExportData: 删除未使用的 LValue 变量
-- AI 调用 `compile_project(project_path="review-demo/LegacyData.pas")` — 编译验证修复后的代码
+- AI 调用 `project(action="compile", project_path="review-demo/LegacyData.pas")` — 编译验证修复后的代码
 
 ##### Phase 4：提交修复并关闭工单
 
@@ -605,9 +605,9 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 ```
 
 - AI 逐个文件编辑修改
-- 每次修改后调用 `compile_project(project_path="当前文件.pas")` 做语法检查
-- 全部修改完成后，调用 `compile_project(project_path="项目.dproj")` 做全项目编译验证，确保跨文件类型引用正确
-- 编译通过后，调用 `file_tool(action="format")` 格式化代码
+- 每次修改后调用 `project(action="compile", project_path="当前文件.pas")` 做语法检查
+- 全部修改完成后，调用 `project(action="compile", project_path="项目.dproj")` 做全项目编译验证，确保跨文件类型引用正确
+- 编译通过后，调用 `delphi_file(action="format")` 格式化代码
 - 展示最终编译通过的确认
 
 #### 旁白
@@ -638,7 +638,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 ##### 第 1 步：自动备份
 
-- AI 调用 `file_tool(action="format", file_path="DataProcessor.pas", backup=true)`
+- AI 调用 `delphi_file(action="format", file_path="DataProcessor.pas", backup=true)`
 - pasfmt 在执行格式化前自动执行备份逻辑：
   ```
   ✅ 备份文件已创建: DataProcessor.pas.__history\DataProcessor.pas.~1~
@@ -816,8 +816,8 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 - AI 发现 `ProjectGroup.groupproj` 文件，解析项目依赖关系
 - AI 按构建顺序编译：
-  - 第 1 步：`compile_project(project_path="LibProject/LibUtils.dproj", build_configuration="Debug")` → ✅
-  - 第 2 步：`compile_project(project_path="AppProject/MainApp.dproj", build_configuration="Debug")` → ✅
+  - 第 1 步：`project(action="compile", project_path="LibProject/LibUtils.dproj", build_configuration="Debug")` → ✅
+  - 第 2 步：`project(action="compile", project_path="AppProject/MainApp.dproj", build_configuration="Debug")` → ✅
 - 展示编译输出：两个项目依次编译成功
 
 ```
@@ -912,14 +912,14 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 用户: 安装 MyComponent.dpk 组件包
 ```
 
-- AI 调用 `install_package(package_path="MyComponent.dpk")`
+- AI 调用 `package(action="install", package_path="MyComponent.dpk")`
 - 展示编译和注册过程
 
 ```
 用户: 查看已安装的组件包列表
 ```
 
-- AI 调用 `list_installed_packages()`
+- AI 调用 `package(action="list")`
 - 展示已注册的 IDE 组件包
 
 #### 旁白
@@ -942,7 +942,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 用户: 编译 compile-error-demo/ErrorCode.pas，如果有错误分析并修复
 ```
 
-- AI 调用 `compile_project(project_path="compile-error-demo/ErrorCode.pas")`
+- AI 调用 `project(action="compile", project_path="compile-error-demo/ErrorCode.pas")`
 - 编译错误：
   ```
   [dcc32 Error] ErrorCode.pas(28): E2511 Type parameter 'TCustomKey' must have a comparer
@@ -1038,7 +1038,7 @@ AI 的做法跟人类完全不同：
 用户: 编译项目检查语法
 ```
 
-- AI 调用 `compile_project(project_path="JsonConfigManager.pas")`
+- AI 调用 `project(action="compile", project_path="JsonConfigManager.pas")`
 - 如果编译失败，AI 自动修复并重新编译
 - 展示编译成功
 
@@ -1048,7 +1048,7 @@ AI 的做法跟人类完全不同：
 用户: 格式化代码
 ```
 
-- AI 调用 `file_tool(action="format", file_path="JsonConfigManager.pas")`
+- AI 调用 `delphi_file(action="format", file_path="JsonConfigManager.pas")`
 - 展示格式化后的最终代码
 
 ##### 第 6 步：代码审计
@@ -1078,7 +1078,7 @@ AI 的做法跟人类完全不同：
 
 **① 获取编码规范** → AI 先了解项目规则
 **② 搜索 API 确认签名** → 查 `TJSONObject`、`TJSONValue`、`TFile.ReadAllText` 的确切用法
-**③ 知识库驱动代码生成** → 结合规范 + API 定义生成代码（file_tool write 默认自动备份），而不是凭记忆瞎猜
+**③ 知识库驱动代码生成** → 结合规范 + API 定义生成代码（delphi_file write 默认自动备份），而不是凭记忆瞎猜
 **④ 格式化** → pasfmt 统一风格
 **⑤ 编译验证** → 编译检查语法
 **⑥ 代码审计 + 创建工单** → 审计后把问题自动登记为 Issue
@@ -1086,7 +1086,7 @@ AI 的做法跟人类完全不同：
 
 关键区别在于 **第②步和第⑥步**：
 - 第②步不是 AI 凭训练数据"回忆"API——它真的去知识库里查了 `TJSONObject` 的类继承链和构造函数签名
-- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `code_hosting` 工具一键转为工单，纳入 Gitea 问题追踪（⑧ Gitea 缺陷闭环：审计工单 → 修复 → `gitea_close_issue` 关联提交并关闭）
+- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `code_hosting` 工具一键转为工单，纳入 Gitea 问题追踪（⑧ Gitea 缺陷闭环：审计工单 → 修复 → `close_issue` 关联提交并关闭）
 
 整个流程你只需要做决策和提需求，AI 负责执行和验证。这就是 **MCP Server + AI 辅助 Delphi 开发** 的完整形态。
 

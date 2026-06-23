@@ -1,0 +1,85 @@
+{
+  "test_name": "新建客户-成功路径",
+  "app_path": "C:/App/CustomerApp.exe",
+  "target_form": "TNewCustomerForm",
+  "version": 1,
+  "created": "2026-06-18T15:00:00",
+  "source_hash": "",
+  "source_files": ["UnitCustomer.pas", "UnitCustomer.dfm"],
+  "run_count": 0,
+
+  "steps": [
+    {
+      "phase": "perceive",
+      "cmd": "formsum",
+      "note": "获取当前窗体快照，确认初始状态"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "rinspect",
+      "target": "edtName",
+      "prop": "Text",
+      "note": "确认客户名称输入框初始为空"
+    },
+    {
+      "phase": "perceive",
+      "cmd": "capture",
+      "capture": "before_input",
+      "note": "留存操作前截图基线"
+    },
+    {
+      "phase": "execute",
+      "cmd": "type",
+      "target": "edtName",
+      "text": "张三",
+      "assert": "rinspect Text='张三'"
+    },
+    {
+      "phase": "execute",
+      "cmd": "type",
+      "target": "edtAge",
+      "text": "25",
+      "assert": "rinspect Text='25'"
+    },
+    {
+      "phase": "verify",
+      "cmd": "rinspect",
+      "target": "btnSave",
+      "prop": "Enabled",
+      "expected": true,
+      "note": "验证保存按钮在输入后变为可用"
+    },
+    {
+      "phase": "execute",
+      "cmd": "click",
+      "target": "btnSave",
+      "assert": "waitfor 保存成功提示"
+    },
+    {
+      "phase": "verify",
+      "cmd": "msgscan",
+      "note": "确认无错误弹窗"
+    },
+    {
+      "phase": "verify",
+      "cmd": "waitfor",
+      "target": "TMainForm",
+      "timeout": 5000,
+      "note": "等待返回主窗口"
+    },
+    {
+      "phase": "verify",
+      "cmd": "capture",
+      "capture": "after_save",
+      "note": "留存操作后截图"
+    },
+    {
+      "phase": "verify",
+      "cmd": "rinspect",
+      "target": "lblStatus",
+      "prop": "Caption",
+      "expected": "保存成功",
+      "note": "RTTI 验证状态栏文本"
+    }
+  ]
+}

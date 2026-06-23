@@ -1,0 +1,78 @@
+{
+  "test_name": "AutoTest-完整实测",
+  "app_path": "C:\\user\\daofy-agent\\daofy\\docs\\tutorial\\automate-test\\Win32\\Debug\\AutoTest.exe",
+  "target_form": "TForm1",
+  "version": 1,
+  "created": "2026-06-18T15:52:21",
+  "source_hash": "9cb2da8d4282a35d",
+  "source_files": [
+    "MainForm.pas",
+    "MainForm.dfm",
+    "AutoTest.dpr"
+  ],
+  "run_count": 1,
+  "steps": [
+    {
+      "cmd": "goto",
+      "target": "TForm1",
+      "note": "确保窗体已激活"
+    },
+    {
+      "cmd": "formsum",
+      "note": "⭐ 窗体摘要 — 快速获取控件结构"
+    },
+    {
+      "cmd": "dumpstate",
+      "note": "dumpstate — 完整控件树（含布局属性）"
+    },
+    {
+      "cmd": "rinspect",
+      "target": "EditName",
+      "prop": "Text",
+      "note": "⭐ RTTI 验证输入框初始值"
+    },
+    {
+      "cmd": "rinspect",
+      "target": "BtnHello",
+      "prop": "Caption",
+      "note": "⭐ RTTI 验证按钮标题"
+    },
+    {
+      "cmd": "capture",
+      "name": "step1_before",
+      "note": "★ 留存操作前截图"
+    },
+    {
+      "cmd": "type",
+      "target": "EditName",
+      "text": "实测验证",
+      "note": "输入文本"
+    },
+    {
+      "cmd": "rinspect",
+      "target": "EditName",
+      "prop": "Text",
+      "note": "⭐ RTTI 验证输入成功"
+    },
+    {
+      "cmd": "click",
+      "target": "BtnHello",
+      "note": "点击 Hello 按钮"
+    },
+    {
+      "cmd": "rinspect",
+      "target": "BtnHello",
+      "prop": "Caption",
+      "note": "⭐ RTTI 验证按钮标题已更新"
+    },
+    {
+      "cmd": "capture",
+      "name": "step2_after",
+      "note": "★ 留存操作后截图"
+    },
+    {
+      "cmd": "exit",
+      "note": "正常退出"
+    }
+  ]
+}

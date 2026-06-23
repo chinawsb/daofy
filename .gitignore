@@ -101,6 +101,19 @@ opencode.json
 
 # Creative roadmap (not in version control)
 docs/roadmap-creative.md
+docs/copyright/roadmap-creative.md
+
+# Personal notes / scratch
+docs/todos.md
+docs/tofix.md
+
+# Debug scripts
+_debug_*.py
+_test_*.py
+test_*.png
+
+# Commercial paid tools (not in version control)
+tools/daudit/
 
 # Dot-prefixed directories (AI agent workdirs, etc.)
 .*/
