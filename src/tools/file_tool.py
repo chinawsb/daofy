@@ -1305,16 +1305,6 @@ async def _handle_write_edits(
                 c_lines = c.splitlines(keepends=True)
                 inserted = len(c_lines)
 
-                # AI 偏移检查：s_1 > 1 时检查（非文件头替换）
-                if not force and s_1 > 1 and removed > 0 and adj_s < len(lines):
-                    first_new = c_lines[0].rstrip('\n\r')
-                    first_old = lines[adj_s].rstrip('\n\r')
-                    if first_old and first_old == first_new:
-                        results.append(
-                            f"  ⚠️ {desc}: content 首行与将被替换的第 {s_1} 行内容相同，"
-                            f"可能因偏移量错误造成重复（如需强制写入请设 force=true）"
-                        )
-
                 if removed > 0 and removed <= 5:
                     actual_lineno = adj_s + 1  # 实际 1-indexed 起始行号
                     removed_lines_preview = [

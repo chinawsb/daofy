@@ -308,6 +308,8 @@ def collect_all_units(root: DfmComponent) -> List[str]:
 # ============================================================
 
 def parse_dfm_text(text: str, root_class_name: str = "") -> Optional[DfmComponent]:
+    # 移除 UTF-8 BOM（\ufeff），否则首行 object/inherited 因 \s* 不匹配 BOM 而被跳过
+    text = text.lstrip('\ufeff')
     lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
     root = _parse_dfm_lines(lines, root_class_name)
     return root

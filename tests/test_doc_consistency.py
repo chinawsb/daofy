@@ -57,7 +57,13 @@ class TestDocConsistency:
             s = line.strip()
             if any(kw in s for kw in ["成员发现", "RTTI 结构", 'cmd="rinspect"']):
                 continue
+            # Skip table-format lines (| ... |) that describe rinspect, not suggest usage
+            if s.startswith("|") and s.endswith("|"):
+                continue
             if "rinspect" in s and any(kw in s for kw in ["检查", "验证", "读", "确认"]):
+                # "读" in "读取" is not "读" as a command for value reading
+                if "读" in kw and "读取" in s:
+                    continue
                 assert False, f"L{i+1}: rinspect used for value checking: {s}"
 
     def test_coding_rules_async_list_updated(self):

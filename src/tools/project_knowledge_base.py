@@ -109,13 +109,11 @@ async def init_project_knowledge_base(arguments: Any) -> CallToolResult:
 
         if stats["project"]:
             output += f"  项目源码: {stats['project']['files']} 文件, "
-            output += f"{stats['project']['classes']} 类, "
-            output += f"{stats['project']['functions']} 函数\n"
+            output += f"{stats['project']['classes']} 类\n"
 
         if stats["thirdparty"]:
             output += f"  三方库: {stats['thirdparty']['files']} 文件, "
-            output += f"{stats['thirdparty']['classes']} 类, "
-            output += f"{stats['thirdparty']['functions']} 函数\n"
+            output += f"{stats['thirdparty']['classes']} 类\n"
 
         output += f"\n知识库位置: {project_kb.kb_dir}"
 
@@ -354,7 +352,6 @@ async def get_project_kb_stats(arguments: Any) -> CallToolResult:
             output += "项目源码:\n"
             output += f"  - 文件数: {stats['project']['files']}\n"
             output += f"  - 类数量: {stats['project']['classes']}\n"
-            output += f"  - 函数数量: {stats['project']['functions']}\n"
             output += f"  - 数据库大小: {stats['project']['database_size_mb']:.2f} MB\n\n"
         else:
             output += "项目源码: 未构建\n\n"
@@ -363,7 +360,6 @@ async def get_project_kb_stats(arguments: Any) -> CallToolResult:
             output += "三方库:\n"
             output += f"  - 文件数: {stats['thirdparty']['files']}\n"
             output += f"  - 类数量: {stats['thirdparty']['classes']}\n"
-            output += f"  - 函数数量: {stats['thirdparty']['functions']}\n"
             output += f"  - 数据库大小: {stats['thirdparty']['database_size_mb']:.2f} MB\n\n"
         else:
             output += "三方库: 未构建\n\n"

@@ -225,7 +225,7 @@ def chunk_directory(source_dir: str,
     Args:
         source_dir: 源码目录
         extensions: 文件扩展名集合（默认 {'.pas'}）
-        progress_callback: 进度回调 (current, total, file_name)
+        progress_callback: 进度回调 (percent, message, extra_dict)
 
     Returns:
         所有 chunk 的列表
@@ -246,7 +246,8 @@ def chunk_directory(source_dir: str,
             logger.warning(f"Chunk 失败: {f}: {e}")
 
         if progress_callback and (i + 1) % 100 == 0:
-            progress_callback(i + 1, len(files), f.name)
+            pct = ((i + 1) / len(files) * 100) if files else 0
+            progress_callback(pct, f.name, {"current": i + 1, "total": len(files)})
 
     return all_chunks
 
@@ -258,7 +259,7 @@ def chunk_file_list(file_paths: List[str],
 
     Args:
         file_paths: 文件路径列表
-        progress_callback: 进度回调 (current, total, file_name)
+        progress_callback: 进度回调 (percent, message, extra_dict)
 
     Returns:
         所有 chunk 的列表
@@ -272,6 +273,7 @@ def chunk_file_list(file_paths: List[str],
             logger.warning(f"Chunk 失败: {fp}: {e}")
 
         if progress_callback and (i + 1) % 100 == 0:
-            progress_callback(i + 1, len(file_paths), Path(fp).name)
+            pct = ((i + 1) / len(file_paths) * 100) if file_paths else 0
+            progress_callback(pct, Path(fp).name, {"current": i + 1, "total": len(file_paths)})
 
     return all_chunks

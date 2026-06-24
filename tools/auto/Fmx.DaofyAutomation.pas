@@ -540,6 +540,17 @@ function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): strin
     end;
   end;
 
+  function IsCtrlVisible(Ctrl: TComponent): Boolean;
+  var
+    C: TControl;
+  begin
+    if Ctrl is TControl then begin
+      C := TControl(Ctrl);
+      Result := C.Visible and C.Enabled;
+    end else
+      Result := True;
+  end;
+
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -549,7 +560,7 @@ var
   CX, CY: Integer;
   CtrlName: string;
 begin
-  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
 
   // 解析 @x,y 坐标点击
   AtPos := Pos('@', Target);
@@ -562,7 +573,10 @@ begin
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if CtrlName <> '' then begin
         Ctrl := Screen.ActiveForm.FindComponent(CtrlName);
-        if Ctrl <> nil then DoClickAt(Ctrl, CX, CY);
+        if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+        if not IsCtrlVisible(Ctrl) then
+          Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
+        DoClickAt(Ctrl, CX, CY);
       end else begin
         // 没有控件名，相对活动窗体坐标
         var FH := FormToHWND(Screen.ActiveForm as TCommonCustomForm);
@@ -578,7 +592,9 @@ begin
 
   // 常规 RTTI 点击
   Ctrl := Screen.ActiveForm.FindComponent(Target);
-  if Ctrl = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
+  if not IsCtrlVisible(Ctrl) then
+    Exit(WriteResp(ReqId, 'err', 'invisible:' + Target));
 
   Ctx := TRttiContext.Create;
   try
@@ -721,6 +737,10 @@ begin
     Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(
       CtrlCtl.Width / 2, CtrlCtl.Height / 2));
     SetCursorPos(Round(Pt.X), Round(Pt.Y));
+    var H := FormToHWND(F);
+    if H <> 0 then
+      SendMessage(H, WM_MOUSEMOVE, 0,
+        MakeLParam(Round(Pt.X), Round(Pt.Y)));
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
@@ -818,8 +838,13 @@ begin
       Ctx := TRttiContext.Create;
       try
         Prop := Ctx.GetType(Ctrl.ClassType).GetProperty('Text');
-        if (Prop <> nil) and Prop.IsWritable then
+        if (Prop <> nil) and Prop.IsWritable then begin
           Prop.SetValue(Ctrl, Value);
+          var M := Ctx.GetType(Ctrl.ClassType).GetMethod('Change');
+          if (M <> nil) and (M.MethodKind = mkProcedure) and
+             (Length(M.GetParameters) = 0) then
+            M.Invoke(Ctrl, []);
+        end;
       finally
         Ctx.Free;
       end;

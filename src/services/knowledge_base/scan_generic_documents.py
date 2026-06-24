@@ -7,6 +7,7 @@
 
 import re
 import json
+import os
 import struct
 import hashlib
 import logging
@@ -1338,15 +1339,12 @@ def _has_lxml() -> bool:
         return False
 
 
-def _producer_worker(file_path_str: str, directory_str: str, queue):
+def _pool_worker(work_queue, result_queue, directory_str):
     """
-    生产者 worker：处理单个文档文件，逐条将结果放入队列。
-    CHM 类文件会将每个 HTML 页作为单独结果放入队列。
-    完成后放入 None 作为哨兵。
+    池化 worker：从 work_queue 取文件路径，处理后结果放入 result_queue。
+    收到 None 哨兵后退出，并在 result_queue 回传 None 通知消费者。
     """
-    file_path = Path(file_path_str)
     directory = Path(directory_str)
-    
     processors = [
         TextProcessor(),
         MarkdownProcessor(),
@@ -1358,38 +1356,39 @@ def _producer_worker(file_path_str: str, directory_str: str, queue):
         ChmProcessor(),
         HlpProcessor()
     ]
-    
-    try:
-        stat_info = file_path.stat()
-        
-        for processor in processors:
-            if processor.can_process(file_path):
-                results = processor.process(file_path)
-                if results:
-                    rel_path = str(file_path.relative_to(directory)).replace('\\', '/')
-                    common_meta = {
-                        'full_path': str(file_path),
-                        'extension': file_path.suffix.lower(),
-                        'file_size': stat_info.st_size,
-                        'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
-                    }
-                    
-                    if isinstance(results, list):
-                        for item in results:
-                            item.setdefault('path', rel_path)
-                            item.update(common_meta)
-                            if not item.get('path') or item['path'] == rel_path:
-                                item['path'] = f"{rel_path}#{item.get('title', 'untitled')}"
-                            queue.put(item)
-                    else:
-                        results['path'] = rel_path
-                        results.update(common_meta)
-                        queue.put(results)
-                break
-    except Exception:
-        pass
-    finally:
-        queue.put(None)
+
+    for file_path_str in iter(work_queue.get, None):
+        file_path = Path(file_path_str)
+        try:
+            stat_info = file_path.stat()
+            for processor in processors:
+                if processor.can_process(file_path):
+                    results = processor.process(file_path)
+                    if results:
+                        rel_path = str(file_path.relative_to(directory)).replace('\\', '/')
+                        common_meta = {
+                            'full_path': str(file_path),
+                            'extension': file_path.suffix.lower(),
+                            'file_size': stat_info.st_size,
+                            'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
+                        }
+
+                        if isinstance(results, list):
+                            for item in results:
+                                item.setdefault('path', rel_path)
+                                item.update(common_meta)
+                                if not item.get('path') or item['path'] == rel_path:
+                                    item['path'] = f"{rel_path}#{item.get('title', 'untitled')}"
+                                result_queue.put(item)
+                        else:
+                            results['path'] = rel_path
+                            results.update(common_meta)
+                            result_queue.put(results)
+                    break
+        except Exception:
+            pass
+
+    result_queue.put(None)  # 哨兵：此 worker 已完成
 
 
 class GenericDocumentScanner:
@@ -1686,7 +1685,7 @@ class GenericDocumentScanner:
         
         # ZVec 要求在空目录创建，用临时子目录方案
         col_schema = zvec.CollectionSchema("documents", fields=[
-            zvec.FieldSchema("chunk_text", zvec.DataType.STRING),
+            zvec.FieldSchema("chunk_text", zvec.DataType.STRING, index_param=zvec.FtsIndexParam(tokenizer_name="jieba")),
             zvec.FieldSchema("path", zvec.DataType.STRING),
             zvec.FieldSchema("content_type", zvec.DataType.STRING),
             zvec.FieldSchema("extension", zvec.DataType.STRING),
@@ -1702,35 +1701,41 @@ class GenericDocumentScanner:
         try:
             import multiprocessing as mp
             ctx = mp.get_context('spawn')
-            # 有界队列：生产超过 200 条时背压，防止内存暴涨
-            work_queue = ctx.Queue(maxsize=200)
+            # work_queue: 分发给 worker 的文件路径（不限大小）
+            # result_queue: 有界队列，超过 200 条时背压 worker，防止内存暴涨
+            work_queue = ctx.Queue()
+            result_queue = ctx.Queue(maxsize=200)
 
-            # 启动生产者进程
-            processes = []
+            # 向 work_queue 放入所有文件路径 + 每个 worker 一个 None 哨兵
             for f in all_files:
+                work_queue.put(str(f))
+            for _ in range(max_workers):
+                work_queue.put(None)
+
+            # 启动固定数量 worker 进程
+            workers = []
+            for _ in range(max_workers):
                 p = ctx.Process(
-                    target=_producer_worker,
-                    args=(str(f), str(directory), work_queue),
+                    target=_pool_worker,
+                    args=(work_queue, result_queue, str(directory)),
                 )
                 p.start()
-                processes.append(p)
+                workers.append(p)
 
-            # 消费者循环：持续从队列读取结果，批量写入 ZVec
-            files_remaining = len(processes)
-            seen_sentinels = 0
+            # 消费者循环：从 result_queue 读取结果，批量写入 ZVec
+            workers_remaining = max_workers
 
-            while files_remaining > 0:
+            while workers_remaining > 0:
                 try:
-                    item = work_queue.get(timeout=5.0)
+                    item = result_queue.get(timeout=5.0)
                 except mp.queues.Empty:
-                    alive = sum(1 for p in processes if p.is_alive())
+                    alive = sum(1 for p in workers if p.is_alive())
                     if alive == 0:
                         break
                     continue
 
                 if item is None:
-                    seen_sentinels += 1
-                    files_remaining = len(processes) - seen_sentinels
+                    workers_remaining -= 1
                     continue
 
                 result = item
@@ -1779,10 +1784,11 @@ class GenericDocumentScanner:
                     failed += 1
 
                 if self.progress_callback and processed % 50 == 0:
-                    self.progress_callback(processed, estimated_total, f"{processed}/{estimated_total} 文件")
+                    pct = (processed / estimated_total * 100) if estimated_total > 0 else 0
+                    self.progress_callback(pct, f"{processed}/{estimated_total} 文件", {"processed": processed, "total": estimated_total})
 
-            # 等待所有进程退出
-            for p in processes:
+            # 等待所有 worker 进程退出
+            for p in workers:
                 p.join(timeout=30)
                 if p.is_alive():
                     p.terminate()
@@ -1793,12 +1799,15 @@ class GenericDocumentScanner:
                 col.flush()
                 batch_buffer.clear()
 
-            # 构建 FTS 全文索引
+            # 构建 FTS 全文索引（Schema 已内置，但旧集合可能缺少）
             if processed > 0:
                 if self.progress_callback:
-                    self.progress_callback(total_files, "正在构建全文索引...")
+                    self.progress_callback(99, "正在构建全文索引...")
                 try:
-                    col.create_index("chunk_text", zvec.FtsIndexParam(tokenizer_name="jieba"))
+                    has_fts = any(f.name == "chunk_text" and f.index_param is not None
+                                  for f in col.schema.fields)
+                    if not has_fts:
+                        col.create_index("chunk_text", zvec.FtsIndexParam(tokenizer_name="jieba"))
                     col.optimize()
                 except Exception as e:
                     logger.warning(f"全文索引构建失败（搜索自动降级）: {e}")
@@ -1933,13 +1942,24 @@ class GenericDocumentScanner:
                     ))
 
                 if docs:
-                    col_schema = zvec.CollectionSchema("documents", fields=[
-                        zvec.FieldSchema("chunk_text", zvec.DataType.STRING),
-                        zvec.FieldSchema("path", zvec.DataType.STRING),
-                        zvec.FieldSchema("content_type", zvec.DataType.STRING),
-                        zvec.FieldSchema("extension", zvec.DataType.STRING),
-                    ])
-                    col = zvec.create_and_open(str(self.zvec_dir), schema=col_schema)
+                    # 检查 ZVec 集合是否已存在（任何 manifest.* 文件）
+                    import glob as _glob
+                    manifest_files = _glob.glob(str(Path(str(self.zvec_dir)) / 'manifest.*'))
+                    if manifest_files:
+                        col = zvec.open(str(self.zvec_dir))
+                    else:
+                        # create_and_open 要求目录不存在
+                        zvec_path = Path(str(self.zvec_dir))
+                        if zvec_path.exists():
+                            import shutil as _shutil
+                            _shutil.rmtree(str(zvec_path), ignore_errors=True)
+                        col_schema = zvec.CollectionSchema("documents", fields=[
+                            zvec.FieldSchema("chunk_text", zvec.DataType.STRING, index_param=zvec.FtsIndexParam(tokenizer_name="jieba")),
+                            zvec.FieldSchema("path", zvec.DataType.STRING),
+                            zvec.FieldSchema("content_type", zvec.DataType.STRING),
+                            zvec.FieldSchema("extension", zvec.DataType.STRING),
+                        ])
+                        col = zvec.create_and_open(str(self.zvec_dir), schema=col_schema)
                     col.insert(docs)
                     col.flush()
                     # zvec.Collection 无 close() 方法，del+gc 释放锁
@@ -1954,6 +1974,182 @@ class GenericDocumentScanner:
             return None
         except Exception as e:
             return {'error': str(e)}
+
+    def crawl_website(self,
+                      start_url: str,
+                      max_pages: int = 100,
+                      max_depth: int = 3,
+                      domain_filter: Optional[str] = None,
+                      url_pattern: Optional[str] = None) -> Dict:
+        """
+        广度优先爬取网站，解析页面链接并存入 ZVec 文档知识库（非递归）。
+
+        Args:
+            start_url: 起始 URL
+            max_pages: 最大爬取页数
+            max_depth: 最大爬取深度（1=只爬起始页的直接链接）
+            domain_filter: 域名过滤，只爬匹配的域名（如 \"www.postgresql.org\"）
+            url_pattern: URL 模式过滤（如 \"/docs/19/\"）
+
+        Returns:
+            {"success": int, "failed": int, "total": int, "total_size": int}
+        """
+        processor = WebDocumentProcessor()
+        visited: set = set()
+        # BFS 队列: (url, depth)
+        from collections import deque
+        queue: deque = deque()
+        queue.append((start_url, 0))
+        visited.add(start_url)
+
+        success = 0
+        failed = 0
+        total_size = 0
+        import time as _time
+
+        # 确保 ZVec 集合已初始化
+        import glob as _glob
+        manifest_files = _glob.glob(str(Path(str(self.zvec_dir)) / 'manifest.*'))
+        if manifest_files:
+            col = zvec.open(str(self.zvec_dir))
+        else:
+            # create_and_open 要求目录不存在
+            zvec_path = Path(str(self.zvec_dir))
+            if zvec_path.exists():
+                import shutil as _shutil
+                _shutil.rmtree(str(zvec_path), ignore_errors=True)
+            col_schema = zvec.CollectionSchema("documents", fields=[
+                zvec.FieldSchema("chunk_text", zvec.DataType.STRING, index_param=zvec.FtsIndexParam(tokenizer_name="jieba")),
+                zvec.FieldSchema("path", zvec.DataType.STRING),
+                zvec.FieldSchema("content_type", zvec.DataType.STRING),
+                zvec.FieldSchema("extension", zvec.DataType.STRING),
+            ])
+            col = zvec.create_and_open(str(self.zvec_dir), schema=col_schema)
+
+        # 检查 FTS 索引，若不存在（旧集合可能缺少），尝试创建
+        has_fts = any(f.name == "chunk_text" and f.index_param is not None
+                      for f in col.schema.fields)
+        if not has_fts:
+            logger.warning("chunk_text 字段缺少 FTS 索引，尝试重建")
+            try:
+                col.create_index("chunk_text", zvec.FtsIndexParam(tokenizer_name="jieba"))
+                col.flush()
+            except Exception as e:
+                logger.error(f"FTS 索引重建失败: {e}")
+
+        try:
+            while queue and (success + failed) < max_pages:
+                url, depth = queue.popleft()
+
+                # 爬取并处理页面
+                result = processor.process_url(url)
+                if not result:
+                    failed += 1
+                    continue
+
+                content = result.get('content', '')
+                total_size += len(content)
+
+                # 清理 Base64
+                content = re.sub(
+                    r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}',
+                    '[Base64 Image]',
+                    content
+                )
+
+                # 写入 ZVec
+                title = result.get('title', '')
+                content_lines = content.split('\n')
+                chunk_size = 5000
+                docs = []
+                for ci in range(0, len(content_lines), chunk_size):
+                    chunk_lines = content_lines[ci:ci + chunk_size]
+                    chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                    chunk_id = hashlib.md5(f"{url}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
+                    docs.append(zvec.Doc(
+                        id=chunk_id,
+                        fields={
+                            'chunk_text': chunk_text,
+                            'path': url,
+                            'content_type': result.get('content_type', ''),
+                            'extension': '.html',
+                        }
+                    ))
+
+                if docs:
+                    col.insert(docs)
+                    col.flush()
+
+                success += 1
+
+                # 进度回调
+                if self.progress_callback:
+                    pct = min(99.0, (success + failed) / max_pages * 100)
+                    self.progress_callback(pct, f"爬取中: {success}/{max_pages} 页 (深度 {depth})")
+
+                # 非递归：只在当前深度 < max_depth 时，从页面提取新链接
+                if depth < max_depth:
+                    # 重新获取原始 HTML 以解析链接
+                    try:
+                        import requests
+                        headers = {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                        resp = requests.get(url, headers=headers, timeout=30)
+                        resp.encoding = resp.apparent_encoding or 'utf-8'
+                        raw_html = resp.text
+                    except Exception:
+                        raw_html = ''
+
+                    if raw_html:
+                        # 提取所有 href 链接
+                        found_links = re.findall(r'href="([^"]*)"', raw_html)
+                        found_links += re.findall(r"href='([^']*)'", raw_html)
+
+                        for link in found_links:
+                            # 跳过锚点和非 HTTP(S) 协议
+                            if link.startswith('#') or link.startswith('mailto:') or link.startswith('javascript:'):
+                                continue
+
+                            # 用 urljoin 统一补全所有格式的相对路径
+                            # 包括 "preface.html"、"/docs/19/sql.html"、"../../manual" 等
+                            from urllib.parse import urljoin as _urljoin
+                            full_url = _urljoin(url, link)
+                            if not full_url.startswith('http'):
+                                continue
+
+                            # 域名过滤
+                            if domain_filter and domain_filter not in full_url:
+                                continue
+                            # URL 模式过滤
+                            if url_pattern and url_pattern not in full_url:
+                                continue
+                            # 去重
+                            clean_link = full_url.split('#')[0]
+                            if clean_link not in visited:
+                                visited.add(clean_link)
+                                queue.append((clean_link, depth + 1))
+
+                # 礼貌延迟
+                _time.sleep(0.3)
+
+        finally:
+            # 优化索引
+            try:
+                col.optimize()
+                col.flush()
+            except Exception:
+                pass
+            del col
+            import gc
+            gc.collect()
+
+        return {
+            'success': success,
+            'failed': failed,
+            'total': success + failed,
+            'total_size': total_size,
+        }
 
     def search(self, query: str, content_type: Optional[str] = None, top_k: int = 10, use_fts5: bool = True) -> List[Dict]:
         """

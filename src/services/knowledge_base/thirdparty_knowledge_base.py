@@ -486,28 +486,35 @@ class ThirdPartyKnowledgeBase:
             _migrate_old_zvec_data(old_zvec, self.kb_dir)
 
         kv_dir = str(self.kb_dir)
-        if rebuild and Path(kv_dir).exists():
-            # 重建时只清除 ZVec 文件（不删除 config 等）
-            for item in Path(kv_dir).iterdir():
-                if item.name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOG", "LOCK", "CURRENT", "IDENTITY", "OPTIONS")):
-                    if item.is_dir():
-                        shutil.rmtree(item, ignore_errors=True)
-                    else:
-                        item.unlink(missing_ok=True)
-
         import zvec
         from zvec import CollectionSchema, FieldSchema, DataType, FtsIndexParam, InvertIndexParam, Doc
 
-        # 简化 schema：entity_name 合并到 chunk_text 中
-        schema = CollectionSchema("thirdparty_kb", fields=[
-            FieldSchema("chunk_text", DataType.STRING),
-            FieldSchema("chunk_type", DataType.STRING),
-            FieldSchema("base_class", DataType.STRING),
-            FieldSchema("file_path", DataType.STRING),
-            FieldSchema("start_line", DataType.INT32),
-            FieldSchema("end_line", DataType.INT32),
-        ])
-        col = zvec.create_and_open(path=kv_dir, schema=schema)
+        # 打开或创建集合：存在有效集合则 open，否则删除目录后 create_and_open
+        kv_path = Path(kv_dir)
+        has_valid = kv_path.exists() and any(
+            f.name.startswith("manifest") for f in kv_path.iterdir()
+        )
+        if has_valid:
+            col = zvec.open(kv_dir)
+            if rebuild:
+                # 重建：删集合目录，下一行 create_and_open 重新创建
+                import shutil as _shutil
+                _shutil.rmtree(kv_dir, ignore_errors=True)
+                has_valid = False  # fall through to create_and_open
+        if not has_valid:
+            if kv_path.exists():
+                import shutil as _shutil
+                _shutil.rmtree(kv_dir, ignore_errors=True)
+            # 简化 schema：entity_name 合并到 chunk_text 中
+            schema = CollectionSchema("thirdparty_kb", fields=[
+                FieldSchema("chunk_text", DataType.STRING),
+                FieldSchema("chunk_type", DataType.STRING),
+                FieldSchema("base_class", DataType.STRING),
+                FieldSchema("file_path", DataType.STRING),
+                FieldSchema("start_line", DataType.INT32),
+                FieldSchema("end_line", DataType.INT32),
+            ])
+            col = zvec.create_and_open(path=kv_dir, schema=schema)
 
         # 先插入数据
         for offset in range(0, len(chunks), 500):
@@ -525,12 +532,27 @@ class ThirdPartyKnowledgeBase:
             col.insert(docs)
         col.flush()
 
-        # 再建索引
+        # 再建索引（对已有集合重复 create_index 安全，zvec 不会报错）
         col.create_index("chunk_text", FtsIndexParam(tokenizer_name="jieba"))
         col.create_index("chunk_type", InvertIndexParam())
         col.create_index("base_class", InvertIndexParam())
         col.optimize()
         col.flush()
+
+        # 保存构建元数据
+        class_count = sum(1 for c in chunks if c.get('chunk_type') in ('class', 'record', 'interface'))
+        try:
+            metadata = {
+                "files": len(files),
+                "classes": class_count,
+                "chunks": len(chunks),
+            }
+            (self.kb_dir / "metadata.json").write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.warning(f"保存三方库 KB metadata 失败: {e}")
 
         self.kb_instance = ZVecKnowledgeBaseAdapter(str(self.kb_dir), source_dirs=dirs)
         logger.info("3rd party KB done: %d chunks in %ds" % (len(chunks), int(time.time()-_bt)))
@@ -731,16 +753,29 @@ class ThirdPartyKnowledgeBase:
         if not self.kb_instance: return []
         return self.kb_instance.semantic_search_functions(query, top_k)
     def get_statistics(self) -> Dict:
-        zvec_dir = self.kb_dir
-        if not any(f.name.startswith("manifest") for f in zvec_dir.iterdir() if zvec_dir.exists()):
-            return {"files": 0, "classes": 0, "functions": 0, "database_size_mb": 0}
+        # 优先从 metadata.json 读取实际统计
+        metadata_file = self.kb_dir / "metadata.json"
+        if metadata_file.exists():
+            try:
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+                sz = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(self.kb_dir) for f in fs)
+                return {
+                    "files": meta.get("files", 0),
+                    "classes": meta.get("classes", 0),
+                    "database_size_mb": round(sz / (1024 * 1024), 1),
+                }
+            except Exception:
+                pass
+        # fallback: zvec 内部文件计数（旧数据）
+        if not any(f.name.startswith("manifest") for f in self.kb_dir.iterdir() if self.kb_dir.exists()):
+            return {"files": 0, "classes": 0, "database_size_mb": 0}
         chunk_count = 0
-        for root, dirs, files in os.walk(zvec_dir):
+        for root, dirs, files in os.walk(self.kb_dir):
             for f in files:
                 if f.endswith('.sst') or f.endswith('.ipc') or f.endswith('.proxima'):
                     chunk_count += 1
-        sz = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(zvec_dir) for f in fs)
-        return {"files": chunk_count, "classes": chunk_count // 2, "functions": 0, "database_size_mb": round(sz / (1024*1024), 1)}
+        sz = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(self.kb_dir) for f in fs)
+        return {"files": chunk_count, "classes": chunk_count // 2, "database_size_mb": round(sz / (1024*1024), 1)}
 
     def close(self):
         """关闭知识库连接"""

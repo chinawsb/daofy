@@ -81,7 +81,7 @@ class ZVecKnowledgeBase:
 
         # Step 1: 插入所有数据
         if progress_callback:
-            progress_callback(25, f"插入 {len(chunks)} chunks...")
+            progress_callback(30, f"插入 {len(chunks)} chunks...")
 
         BATCH = 500
         inserted = 0
@@ -105,7 +105,7 @@ class ZVecKnowledgeBase:
             inserted += len(batch)
 
             if progress_callback and (offset + BATCH) % 4000 == 0:
-                pct = 25 + int((offset + BATCH) / len(chunks) * 50)
+                pct = 30 + int((offset + BATCH) / len(chunks) * 50)
                 progress_callback(pct, f"插入 {offset + BATCH}/{len(chunks)}...")
 
         col.flush()
@@ -122,11 +122,15 @@ class ZVecKnowledgeBase:
         col.optimize()
         col.flush()
 
+        # 按 chunk_type 分类统计
+        class_count = sum(1 for c in chunks if c.get('chunk_type') in ('class', 'record', 'interface'))
+        func_count = sum(1 for c in chunks if c.get('chunk_type') in ('function', 'procedure'))
         elapsed = time.time() - start_time
         stats = {
             "status": "ok",
             "files": len(file_paths),
             "chunks": len(chunks),
+            "classes": class_count,
             "time_seconds": round(elapsed, 1),
             "dir": str(self.kb_dir),
         }
@@ -139,6 +143,8 @@ class ZVecKnowledgeBase:
     def _open_collection(self, zvec):
         """打开或创建 ZVec Collection（合并字段版）"""
         from zvec import CollectionSchema, FieldSchema, DataType
+        from pathlib import Path
+        import glob, shutil
 
         schema = CollectionSchema("delphi_kb", fields=[
             FieldSchema("chunk_text", DataType.STRING),   # 含 entity_name 前缀
@@ -149,10 +155,16 @@ class ZVecKnowledgeBase:
             FieldSchema("end_line", DataType.INT32),
         ])
 
-        # 不存在则创建，存在则打开
-        if os.path.exists(self._db_path):
+        # 存在有效集合 → open；否则清理目录后 create_and_open
+        db_path = Path(self._db_path)
+        has_valid = db_path.exists() and any(
+            f.name.startswith("manifest") for f in db_path.iterdir()
+        )
+        if has_valid:
             self._collection = zvec.open(self._db_path)
         else:
+            if db_path.exists():
+                shutil.rmtree(str(db_path), ignore_errors=True)
             self._collection = zvec.create_and_open(
                 path=self._db_path, schema=schema
             )

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
 from src.utils.logger import get_logger
 from src.utils.dproj_parser import DprojParser
+from .delphi_chunker import chunk_file_list
 from .zvec_adapter import ZVecKnowledgeBaseAdapter
 
 logger = get_logger(__name__)
@@ -373,30 +374,35 @@ class ProjectKnowledgeBase:
 
         # 构建 ZVec 知识库（展平到 kb_dir 根目录）
         kv_dir = str(self.kb_dir)
-        if rebuild:
-            import shutil as _shutil
-            # 只清除 ZVec 数据文件，保留 hash/配置
-            for item in Path(kv_dir).iterdir():
-                if item.name.startswith(("scalar", "fts", "idmap", "del.", "manifest", "LOG", "LOCK", "CURRENT", "IDENTITY", "OPTIONS")):
-                    if item.is_dir():
-                        _shutil.rmtree(item, ignore_errors=True)
-                    else:
-                        item.unlink(missing_ok=True)
-
         import zvec
         from zvec import CollectionSchema, FieldSchema, DataType, FtsIndexParam, InvertIndexParam, Doc
 
-        # 简化 schema：entity_name 合并到 chunk_text 中
-        schema = CollectionSchema("project_kb", fields=[
-            FieldSchema("chunk_text", DataType.STRING),
-            FieldSchema("chunk_type", DataType.STRING),
-            FieldSchema("base_class", DataType.STRING),
-            FieldSchema("file_path", DataType.STRING),
-            FieldSchema("start_line", DataType.INT32),
-            FieldSchema("end_line", DataType.INT32),
-        ])
-
-        col = zvec.create_and_open(path=kv_dir, schema=schema)
+        # 打开或创建集合：存在有效集合则 open，否则删除目录后 create_and_open
+        kv_path = Path(kv_dir)
+        has_valid = kv_path.exists() and any(
+            f.name.startswith("manifest") for f in kv_path.iterdir()
+        )
+        if has_valid:
+            col = zvec.open(kv_dir)
+            if rebuild:
+                # 重建：删集合目录后重新 create_and_open
+                import shutil as _shutil
+                _shutil.rmtree(kv_dir, ignore_errors=True)
+                has_valid = False
+        if not has_valid:
+            if kv_path.exists():
+                import shutil as _shutil
+                _shutil.rmtree(kv_dir, ignore_errors=True)
+            # 简化 schema：entity_name 合并到 chunk_text 中
+            schema = CollectionSchema("project_kb", fields=[
+                FieldSchema("chunk_text", DataType.STRING),
+                FieldSchema("chunk_type", DataType.STRING),
+                FieldSchema("base_class", DataType.STRING),
+                FieldSchema("file_path", DataType.STRING),
+                FieldSchema("start_line", DataType.INT32),
+                FieldSchema("end_line", DataType.INT32),
+            ])
+            col = zvec.create_and_open(path=kv_dir, schema=schema)
 
         # 先插入数据
         BATCH = 500
@@ -432,6 +438,21 @@ class ProjectKnowledgeBase:
         # 保存 source_hash
         hash_file = self.kb_dir / "source_hash.txt"
         hash_file.write_text(current_hash, encoding='utf-8')
+
+        # 保存构建元数据
+        class_count = sum(1 for c in chunks if c.get('chunk_type') in ('class', 'record', 'interface'))
+        try:
+            metadata = {
+                "files": len(project_files),
+                "classes": class_count,
+                "chunks": len(chunks),
+            }
+            (self.kb_dir / "metadata.json").write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+        except Exception as e:
+            logger.warning(f"保存项目 KB metadata 失败: {e}")
 
         # 设置 project_kb 为 ZVec 适配器
         self.project_kb = ZVecKnowledgeBaseAdapter(str(self.kb_dir), source_dirs=[str(self.project_dir)])
@@ -609,17 +630,37 @@ class ProjectKnowledgeBase:
             统计信息
         """
         stats = {"project": None, "thirdparty": None}
+
+        # 优先从 metadata.json 读取实际统计
+        metadata_file = self.kb_dir / "metadata.json"
+        if metadata_file.exists():
+            try:
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+                total_size = sum(
+                    os.path.getsize(os.path.join(dp, f))
+                    for dp, _, fs in os.walk(self.kb_dir) for f in fs
+                )
+                stats["project"] = {
+                    "files": meta.get("files", 0),
+                    "classes": meta.get("classes", 0),
+                    "chunks": meta.get("chunks", 0),
+                    "database_size_mb": round(total_size / (1024 * 1024), 1),
+                }
+                return stats
+            except Exception:
+                pass
+
+        # fallback: zvec 内部文件计数（旧/无 metadata 数据）
         zvec_dir = self.kb_dir
         if not any(f.name.startswith("manifest") for f in zvec_dir.iterdir() if zvec_dir.exists()):
             return stats
 
         try:
             chunk_count = 0
-            type_counts = {}
             for root, dirs, files in os.walk(zvec_dir):
                 for f in files:
                     if f.endswith('.sst') or f.endswith('.ipc') or f.endswith('.proxima'):
-                        chunk_count += 1  # approximate
+                        chunk_count += 1
 
             total_size = sum(
                 os.path.getsize(os.path.join(dp, f))
@@ -628,7 +669,6 @@ class ProjectKnowledgeBase:
             stats["project"] = {
                 "files": chunk_count,
                 "classes": chunk_count // 2,
-                "functions": 0,
                 "database_size_mb": round(total_size / (1024 * 1024), 1),
             }
         except Exception as e:

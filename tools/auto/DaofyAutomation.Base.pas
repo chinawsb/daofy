@@ -51,6 +51,7 @@ type
     FAsyncEvent: THandle;
     FAsyncQueue: TList<string>;
     FAsyncQueueCS: TRTLCriticalSection;
+    FAsyncResultsCS: TRTLCriticalSection; // 保护 FAsyncResults 跨线程访问
     FRegFilePath: string;  // 进程注册文件路径 (%TEMP%\daofy-rtti-{PID}.json)
   protected
     FSSDir: string;
@@ -189,24 +190,6 @@ implementation
 uses
   DaofyAutomation.RttiDiscovery;
 
-{ ═════════════════════════════════════════════════════════════════════════════
-  WndProc（stdcall 静态函数，可被 SendMessage 跨线程调用）
-  ═════════════════════════════════════════════════════════════════════════════ }
-
-function WP(hWnd: HWND; Msg: UINT; w: WPARAM; l: LPARAM): LRESULT; stdcall;
-var P: PWideChar; Cmd: string;
-begin
-  Result := 0;
-  if (Msg = WM_DAOFY_CMD) and (TAutomationProcessorBase.Current <> nil) then begin
-    P := PWideChar(w);
-    if P <> nil then begin
-      Cmd := string(P);
-      TAutomationProcessorBase.Current.ExecCmd(Cmd);
-      GlobalFree(Winapi.Windows.HGLOBAL(w));
-    end;
-  end else
-    Result := DefWindowProc(hWnd, Msg, w, l);
-end;
 
 { ═════════════════════════════════════════════════════════════════════════════
   TAutomationProcessorBase
@@ -232,6 +215,7 @@ begin
   FAsyncQueue := TList<string>.Create;
   FAsyncEvent := CreateEvent(nil, False, False, nil);
   InitializeCriticalSection(FAsyncQueueCS);
+  InitializeCriticalSection(FAsyncResultsCS);
   FreeOnTerminate := False;
 end;
 
@@ -248,6 +232,7 @@ begin
   FAsyncResults.Free;
   CloseHandle(FAsyncEvent);
   DeleteCriticalSection(FAsyncQueueCS);
+  DeleteCriticalSection(FAsyncResultsCS);
   if FCurrent = Self then
     FCurrent := nil;
   inherited;
@@ -360,7 +345,7 @@ begin
   while not Terminated do begin
     h := CreateNamedPipe(PChar(FPipeName), PIPE_ACCESS_DUPLEX,
       PIPE_TYPE_MESSAGE or PIPE_READMODE_MESSAGE or PIPE_WAIT,
-      PIPE_UNLIMITED_INSTANCES, MAX_PIPE, MAX_PIPE, 100, nil);
+      PIPE_UNLIMITED_INSTANCES, MAX_PIPE, MAX_PIPE, 5000, nil);
     if h = INVALID_HANDLE_VALUE then begin Sleep(500); Continue; end;
     if not ConnectNamedPipe(h, nil) and (GetLastError <> ERROR_PIPE_CONNECTED) then begin
       CloseHandle(h); Sleep(500); Continue;
@@ -387,9 +372,38 @@ begin
 
       if WR = WAIT_OBJECT_0 then begin
         // ── 管道请求到达 ──
-        if not GetOverlappedResult(h, Overlap, Br, False) or (Br = 0) then
-          Break;
-        Req := Trim(string(UTF8ToString(Copy(Buf, 0, Br))));
+        // 循环读取，处理 ERROR_MORE_DATA（消息超过单次缓冲区大小）
+        SetLength(ReqBuf, 0);
+        TotalLen := 0;
+        repeat
+          ReadOk := GetOverlappedResult(h, Overlap, Br, False);
+          if not ReadOk then begin
+            if GetLastError = ERROR_MORE_DATA then begin
+              SetLength(ReqBuf, TotalLen + Br);
+              Move(Buf[0], ReqBuf[TotalLen], Br);
+              Inc(TotalLen, Br);
+              FillChar(Buf, SizeOf(Buf), 0);
+              ResetEvent(Overlap.hEvent);
+              if not ReadFile(h, Buf, SizeOf(Buf) - 1, Br, @Overlap) then
+                if GetLastError <> ERROR_IO_PENDING then Break;
+              // 等待这次读取完成
+              if WaitForSingleObject(Overlap.hEvent, 5000) <> WAIT_OBJECT_0 then
+                ReadOk := False;
+              Continue;
+            end else
+              Break; // 实际错误，断开连接
+          end;
+          if Br = 0 then begin ReadOk := False; Break; end;
+          SetLength(ReqBuf, TotalLen + Br);
+          Move(Buf[0], ReqBuf[TotalLen], Br);
+          Inc(TotalLen, Br);
+          Break; // 完整消息已接收
+        until False;
+
+        if not ReadOk then Break;
+
+        Req := Trim(string(UTF8ToString(
+          TEncoding.UTF8.GetString(ReqBuf))));
         if Req <> '' then begin
           ReqId := GetReqId(Req);
           Cmd := GetCmd(Req);
@@ -401,20 +415,23 @@ begin
             if P <> nil then begin
               Move(PWideChar(Req)^, P^, (Length(Req) + 1) * SizeOf(WideChar));
               PostMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-            end;
-            Resp := WriteResp(ReqId, 'ack', '');
+              Resp := WriteResp(ReqId, 'ack', '');
+            end else
+              Resp := WriteResp(ReqId, 'err', 'alloc_failed');
           end else begin
             var P := PWideChar(GlobalAlloc(GMEM_FIXED,
               (Length(Req) + 1) * SizeOf(WideChar)));
             if P <> nil then begin
               Move(PWideChar(Req)^, P^, (Length(Req) + 1) * SizeOf(WideChar));
               SendMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-            end;
-            Resp := FLastResp;
+              Resp := FLastResp;
+            end else
+              Resp := WriteResp(ReqId, 'err', 'alloc_failed');
           end;
           SendResp(h, Resp);
         end;
         // 发起下一次异步 ReadFile
+        SetLength(ReqBuf, 0);
         FillChar(Buf, SizeOf(Buf), 0);
         ResetEvent(Overlap.hEvent);
         if not ReadFile(h, Buf, SizeOf(Buf) - 1, Br, @Overlap) then
@@ -428,11 +445,16 @@ begin
         var ExpiredList: TList<string>;
         ExpiredList := TList<string>.Create;
         try
-          for var K in FAsyncResults.Keys do
-            if NowTick - FAsyncResults[K].Tick > ASYNC_TTL then
-              ExpiredList.Add(K);
-          for var K in ExpiredList do
-            FAsyncResults.Remove(K);
+          EnterCriticalSection(FAsyncResultsCS);
+          try
+            for var K in FAsyncResults.Keys do
+              if NowTick - FAsyncResults[K].Tick > ASYNC_TTL then
+                ExpiredList.Add(K);
+            for var K in ExpiredList do
+              FAsyncResults.Remove(K);
+          finally
+            LeaveCriticalSection(FAsyncResultsCS);
+          end;
         finally
           ExpiredList.Free;
         end;
@@ -466,7 +488,9 @@ begin
           var AR: TAsyncResultRec;
           AR.Resp := FLastResp;
           AR.Tick := GetTickCount;
+          EnterCriticalSection(FAsyncResultsCS);
           FAsyncResults.AddOrSetValue(RId, AR);
+          LeaveCriticalSection(FAsyncResultsCS);
           EnterCriticalSection(FAsyncQueueCS);
           FAsyncQueue.Add(FLastResp);
           LeaveCriticalSection(FAsyncQueueCS);
@@ -925,24 +949,33 @@ var
   CurrentValue: string;
   PropName: string;
   Idx: Integer;
+  WaitResult: DWORD;
+  Msg: TMsg;
 begin
   Result := WriteResp(ReqId, 'err', 'NF:' + Target);
 
-  // 用 Sleep 简单轮询（ExecCmd 在主线程运行，Sleep 不阻塞消息泵）
+  // MsgWaitForMultipleObjects 轮询，同时处理消息避免阻塞消息泵。
+  // TRttiContext 提到循环外，避免每轮重复创建。
   StartTime := GetTickCount;
-  while GetTickCount - StartTime < UInt64(TimeoutMs) do begin
-    Ctrl := FindNamedControl(Target);
-    if Ctrl = nil then begin
-      Sleep(IntervalMs);
-      Continue;
-    end;
+  Ctx := TRttiContext.Create;
+  try
+    while GetTickCount - StartTime < UInt64(TimeoutMs) do begin
+      Ctrl := FindNamedControl(Target);
+      if Ctrl = nil then begin
+        WaitResult := MsgWaitForMultipleObjects(0, nil, False, IntervalMs, QS_ALLINPUT);
+        if WaitResult = WAIT_OBJECT_0 then begin
+          while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
+            TranslateMessage(Msg);
+            DispatchMessage(Msg);
+          end;
+        end;
+        Continue;
+      end;
 
-    Parts := Prop.Split(['.']);
-    if Length(Parts) = 0 then
-      Exit(WriteResp(ReqId, 'err', 'no property'));
+      Parts := Prop.Split(['.']);
+      if Length(Parts) = 0 then
+        Exit(WriteResp(ReqId, 'err', 'no property'));
 
-    Ctx := TRttiContext.Create;
-    try
       ParseIndexedProp(Parts[0], PropName, Idx);
       if Idx >= 0 then begin
         IP := Ctx.GetType(Ctrl.ClassType).GetIndexedProperty(PropName);
@@ -977,11 +1010,18 @@ begin
         Result := WriteResp(ReqId, 'ok', CurrentValue);
         Exit;
       end;
-    finally
-      Ctx.Free;
-    end;
 
-    Sleep(IntervalMs);
+      // 两轮 RTTI 检查之间同样用 MsgWaitForMultipleObjects 等待
+      WaitResult := MsgWaitForMultipleObjects(0, nil, False, IntervalMs, QS_ALLINPUT);
+      if WaitResult = WAIT_OBJECT_0 then begin
+        while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
+          TranslateMessage(Msg);
+          DispatchMessage(Msg);
+        end;
+      end;
+    end;
+  finally
+    Ctx.Free;
   end;
 
   Result := WriteResp(ReqId, 'err', 'TIMEOUT:' + CurrentValue);

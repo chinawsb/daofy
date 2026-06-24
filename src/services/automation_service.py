@@ -79,6 +79,12 @@ def detect_exe_subsystem(exe_path: str) -> int | None:
     except Exception:
         return None
 
+# ── 异步命令集合（Delphi 端 IsAsyncCmd 的镜像）──
+_ASYNC_CMDS = frozenset({
+    'click', 'dblclick', 'rclick', 'msgclick', 'dlgclick',
+    'hover', 'move', 'drag', 'rcall', 'key', 'rset', 'type',
+})
+
 # ── 进程池 ──
 _process_pool: dict[str, dict] = {}
 _pool_lock = Lock()
@@ -508,7 +514,7 @@ def _ensure_process(app_path: str, wait_for_pipe: float) -> tuple[bool, str]:
             # 进程已死，移除
             del _process_pool[app_path]
 
-    # 启动新进程
+    # 启动新进程（锁外执行，避免阻塞其他线程）
     try:
         proc = subprocess.Popen(
             [app_path],
@@ -524,7 +530,16 @@ def _ensure_process(app_path: str, wait_for_pipe: float) -> tuple[bool, str]:
             pass
         return True, f'Delphi 程序未在 {wait_for_pipe}s 内创建管道'
 
+    # 双重检查：锁内确认其他线程未提前注册同一 app_path
     with _pool_lock:
+        if app_path in _process_pool:
+            # 其他线程已注册，关掉我们新建的进程，复用它
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            _process_pool[app_path]['last_used'] = time.time()
+            return False, ''
         _process_pool[app_path] = {
             'proc': proc,
             'last_used': time.time(),
@@ -926,6 +941,29 @@ def execute_script(app_path: str, script,
         resp_status = resp_json.get('status', 'err')
 
         ok = resp_status in ('ok', 'ack')
+
+        # ── 异步命令 ack 后轮询 peekresult 取回真实结果 ──
+        if cmd in _ASYNC_CMDS and resp_status == 'ack':
+            _peek_timeout = 6.0
+            _poll_interval = 0.05
+            _deadline = time.time() + _peek_timeout
+            while time.time() < _deadline:
+                _peek_raw = _send_command(json.dumps(
+                    {"reqId": f"{req_id}_peek", "cmd": "peekresult", "target": req_id},
+                    ensure_ascii=False))
+                _peek_json = _decode_response(_peek_raw)
+                if _peek_json.get('status') == 'ok':
+                    # 取到真实结果，替换 ack
+                    resp_json = _peek_json
+                    resp_status = 'ok'
+                    ok = True
+                    break
+                # 仅当 status=err + data 以 NR: 开头时继续轮询（尚未就绪）
+                if not (_peek_json.get('status') == 'err' and
+                        str(_peek_json.get('data', '')).startswith('NR:')):
+                    break  # 非预期响应，停止
+                time.sleep(_poll_interval)
+
         capture_resp_json = None
         capture_ok = True
 

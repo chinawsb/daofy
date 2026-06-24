@@ -356,9 +356,9 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "default": "search", "description": "操作类型: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
+                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "description": "操作类型（默认 search；若提供 url 则自动设为 web）: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时需要）"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document", "example"], "default": "all", "description": "知识库类型"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document", "example"], "default": "all", "description": "知识库类型: delphi=Delphi RTL/VCL/FMX 官方源码, project=当前项目源码, thirdparty=第三方组件库(如 FastReport/DevExpress), document=文档(Chm/网页), example=示例代码(Demo), all=所有"},
                         "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "set", "helper", "type", "const", "resourcestring", "variable", "property", "method", "field", "event", "operator", "string", "dfm", "attribute", "unit", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
                         "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
                         "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj/.dpr/.dpk）"},
@@ -371,7 +371,7 @@ async def run_server():
                         "directory": {"type": "string", "description": "扫描目录（action=scan时使用，或build document时可以不传自动检测Delphi帮助目录）"},
                         "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名过滤（action=scan/build时使用，如[\".chm\"]）"},
                         "content_type": {"type": "string", "description": "文档类型过滤（action=search kb_type=document时使用）"},
-                        "url": {"type": "string", "description": "网页URL（action=web时使用）或文档URL（action=read时使用）"},
+                        "url": {"type": "string", "description": "网页URL（提供 url 且未传 action 时自动触发 web 模式；或 read 时作为文档URL）"},
                         "doc_id": {"type": "string", "description": "文档ID（action=read时使用，与url二选一）"},
                         "file_path": {"type": "string", "description": "文件路径（action=read时使用）"},
                         "offset": {"type": "integer", "default": 0, "description": "读取偏移量（action=read时使用）"},
@@ -434,7 +434,7 @@ async def run_server():
                         "auto_format": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
                         "backup": {"type": "boolean", "default": True, "description": "[write/replace/insert/delete/uses] 写入前自动备份到 __history（建议保持 true）"},
                         "preview": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 预览模式: 只算 diff 不写盘，不清除脏标记"},
-                        "force": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过续重行检测（默认 false 时检测到重复仅警告不阻断）"},
+                        "force": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断）"},
                         "allow_dirty": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过脏标记检查（默认 false）。优先为每个 edit 提供 old_content；仅确认行号准确时才设 true"},
 
                         # ---- [format] 参数 ----
@@ -955,7 +955,8 @@ async def run_server():
         return await _handle_project(**arguments)
 
     async def _handle_delphi_kb(arguments: dict) -> Any:
-        action = arguments.get("action", "search")
+        default_action = "web" if arguments.get("url") else "search"
+        action = arguments.get("action", default_action)
         kb_type = arguments.get("kb_type", "all")
         if action == "search":
             return await doc_tools.search_documents(arguments) if kb_type == "document" else await kb_tools.search_knowledge(arguments)
@@ -974,19 +975,54 @@ async def run_server():
             incremental = arguments.get("incremental", False)
             if task_type == "build_document_knowledge_base":
                 directory = arguments.get("directory")
-                if not directory:
+                start_url = arguments.get("start_url")
+                urls = arguments.get("urls", [])
+                # 只有当没有指定 start_url 和 urls（纯目录扫描）时才自动检测帮助目录
+                if not directory and not start_url and not urls:
                     detected = _auto_detect_delphi_help_dir()
                     if detected:
                         directory = detected
                         logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
                     else:
                         logger.warning("未提供 directory 且未检测到 Delphi 帮助目录")
+
+                # 文档知识库重建确认：force_rebuild 会清除现有所有文档
+                if rebuild:
+                    try:
+                        _scanner = doc_tools._get_scanner()
+                        _stats = _scanner.get_statistics()
+                        _total = _stats.get('total_documents', 0)
+                        if _total > 0:
+                            _confirm = _coerce_bool(arguments.get("confirm"), False)
+                            if not _confirm:
+                                _msg = [f"⚠️ **确认重建文档知识库**\n\n当前知识库包含 **{_total}** 篇文档：\n"]
+                                _by_type = _stats.get('by_type', {})
+                                if _by_type:
+                                    _msg.append("按类型：\n")
+                                    for _t, _c in sorted(_by_type.items(), key=lambda x: x[1], reverse=True):
+                                        _msg.append(f"  - {_t}: {_c}\n")
+                                _by_ext = _stats.get('by_extension', {})
+                                if _by_ext:
+                                    _msg.append("按扩展名：\n")
+                                    for _e, _c in sorted(_by_ext.items(), key=lambda x: x[1], reverse=True):
+                                        _msg.append(f"  - {_e}: {_c}\n")
+                                _msg.append(
+                                    "\n`rebuild=True` 将 **清除以上所有文档** 后重新构建，原有内容不可恢复。\n\n"
+                                    "如需保留旧内容，请：\n"
+                                    "  1. 在本次构建参数中同时包含旧的文档源（如多个 URL 或目录），或\n"
+                                    "  2. 移除 `rebuild=True` 改用增量添加\n\n"
+                                    "**确认继续请添加参数 `confirm=True`**"
+                                )
+                                return CallToolResult(content=[TextContent(type="text", text="".join(_msg))])
+                    except Exception as _e:
+                        logger.warning(f"检查文档知识库状态失败，跳过确认: {_e}")
+
                 task_params = {"urls": arguments.get("urls", []), "directory": directory,
                                "extensions": arguments.get("extensions", [".chm"]),
                                "start_url": arguments.get("start_url"), "max_pages": arguments.get("max_pages", 100),
                                "max_depth": arguments.get("max_depth", 3), "domain_filter": arguments.get("domain_filter"),
                                "url_pattern": arguments.get("url_pattern"), "exclude": arguments.get("exclude"),
-                               "rebuild": arguments.get("rebuild", False)}
+                               "rebuild": rebuild}
             elif task_type == "init_project_knowledge_base":
                 resolved_path = _resolve_project_path(arguments.get("project_path"))
                 task_params = {"project_path": resolved_path, "version": version,

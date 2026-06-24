@@ -398,19 +398,31 @@ begin
         WC := TWinControl(FindNamedControl(CtrlName));
         if WC <> nil then begin
           Ch := WC.Handle;
+          if not IsWindowVisible(Ch) then
+            Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
+          if not IsWindowEnabled(Ch) then
+            Exit(WriteResp(ReqId, 'err', 'disabled:' + CtrlName));
           SendMessage(Ch, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(CX, CY));
           SendMessage(Ch, WM_LBUTTONUP, 0, MakeLParam(CX, CY));
-        end;
-      end;
+        end else
+          Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+      end else
+        Exit(WriteResp(ReqId, 'err', 'no active form'));
     end;
   end else begin
     if Screen.ActiveForm <> nil then begin
       WC := TWinControl(FindNamedControl(CtrlName));
       if WC <> nil then begin
         Ch := WC.Handle;
+        if not IsWindowVisible(Ch) then
+          Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
+        if not IsWindowEnabled(Ch) then
+          Exit(WriteResp(ReqId, 'err', 'disabled:' + CtrlName));
         SendMessage(Ch, BM_CLICK, 0, 0);
-      end;
-    end;
+      end else
+        Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+    end else
+      Exit(WriteResp(ReqId, 'err', 'no active form'));
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
@@ -546,6 +558,7 @@ begin
       SendMessage(Ch, WM_MOUSEMOVE, 0, MakeLParam(WC.Width div 2, WC.Height div 2));
       GetWindowRect(Ch, R);
       SetCursorPos(R.Left + WC.Width div 2, R.Top + WC.Height div 2);
+      WC.Perform(CM_MOUSEENTER, 0, 0);
     end;
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
@@ -618,11 +631,12 @@ begin
   SetCursorPos(SX, SY);
   SendMessage(SrcCh, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(0, 0));
 
-  // 渐进移动（平滑拖拽）
+  // 渐进移动（平滑拖拽），发送 WM_MOUSEMOVE 消息
   for I := 1 to 10 do begin
-    SetCursorPos(
-      SX + (TX - SX) * I div 10,
-      SY + (TY - SY) * I div 10);
+    var MX := SX + (TX - SX) * I div 10;
+    var MY := SY + (TY - SY) * I div 10;
+    SetCursorPos(MX, MY);
+    SendMessage(SrcCh, WM_MOUSEMOVE, MK_LBUTTON, MakeLParam(MX, MY));
     Sleep(10);
   end;
 
@@ -635,12 +649,17 @@ function TAutomationProcessor.HandleCmdType(const ReqId, Target, Value: string):
 var
   WC: TWinControl;
   Ch: HWND;
+  C: Char;
 begin
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
     WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
-      SetWindowText(Ch, PChar(Value));
+      // 先清空原有文本
+      SendMessage(Ch, WM_SETTEXT, 0, LPARAM(PChar('')));
+      // 逐字符发送 WM_CHAR，触发控件 OnChange 等事件
+      for C in Value do
+        SendMessage(Ch, WM_CHAR, Ord(C), 0);
     end;
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');

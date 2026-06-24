@@ -1,4 +1,4 @@
-﻿unit Fmx.DaofyAutomation;
+﻿unit Fmx.DaofyAutomation.Test;
 
 {===============================================================================
   Fmx.DaofyAutomation - FMX 框架自动化实现

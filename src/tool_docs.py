@@ -205,7 +205,7 @@ TOOL_HELP_DOCS: dict = {
         },
     },
     "delphi_kb": {
-        "summary": "搜索 Delphi API/项目代码/文档(类/函数/语义搜索)，构建知识库。",
+        "summary": "搜索 Delphi API/项目代码/三方库/文档(类/函数/语义搜索)，构建知识库。",
         "description": "知识库搜索/管理 — 查 Delphi API、项目代码、文档",
         "triggers": [
             "搜索类、搜索函数、查API、查定义、知识库、构建知识库、KB、语义搜索",
@@ -224,6 +224,7 @@ TOOL_HELP_DOCS: dict = {
         "examples": [
             'delphi_kb(query="TStringList")                                    搜索类',
             'delphi_kb(query="Create", search_type="function")                  搜索函数',
+            'delphi_kb(query="TfrxReport", kb_type="thirdparty")                搜索三方库(如 FastReport)',
             'delphi_kb(action="stats")                                          查看统计',
             'delphi_kb(action="build", kb_type="project")                       构建项目知识库',
         ],
@@ -308,7 +309,7 @@ TOOL_HELP_DOCS: dict = {
                     "backup": "写入前自动备份，默认 true",
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
                     "auto_format": "写入后自动调用 pasfmt 格式化，默认 false。返回的偏移量已包含格式化造成的行数变化",
-                    "force": "跳过续重行检测（默认 false 时检测到重复仅警告不阻断写入）",
+                    "force": "跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断写入）",
                     "dry_run": "设为 true 时只预览 diff 不写盘（不备份、不写入、不格式化），默认 false。dry_run 不清除脏标记，后续 write 仍需 read 或 old_content。推荐使用 dry_run 替代 preview",
                     "preview": "⚠ 已废弃，请使用 dry_run 替代。当前仍作为 dry_run 的别名临时保留",
                     "old_content": "写在每个 edit 内；将被替换区间的非空旧内容。写入前忽略字符串外空白后比较，避免行号错位",

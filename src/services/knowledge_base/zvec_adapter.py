@@ -3,6 +3,7 @@ ZVec 知识库适配器 — 兼容现有 DelphiKnowledgeBaseService 接口
 
 让 ZVecKnowledgeBase 可以被 server.py / knowledge_base.py 直接使用。
 """
+import json
 import os
 import time
 import shutil
@@ -72,13 +73,32 @@ class ZVecKnowledgeBaseAdapter:
 
         # 去旧库（rebuild）
         if rebuild:
+            # 重建：删整目录（不 mkdir，让 create_and_open 自行创建）
+            import shutil as _shutil
+            if self.kb_dir.exists():
+                _shutil.rmtree(str(self.kb_dir), ignore_errors=True)
             from .zvec_knowledge_base import ZVecKnowledgeBase
-            # 清理 kb_dir 内的 ZVec 数据（manifest、scalar、fts 等子目录）
-            _clean_zvec_collection(self.kb_dir)
             self._zvec = ZVecKnowledgeBase(str(self.kb_dir))
 
         # 构建
         stats = self._zvec.build(all_files, progress_callback=self.progress_callback)
+
+        # 保存构建元数据到 metadata.json
+        if stats and stats.get("status") == "ok":
+            metadata = {
+                "files": stats.get("files", 0),
+                "classes": stats.get("classes", 0),
+                "chunks": stats.get("chunks", 0),
+                "time_seconds": stats.get("time_seconds", 0),
+            }
+            try:
+                (self.kb_dir / "metadata.json").write_text(
+                    json.dumps(metadata, ensure_ascii=False, indent=2),
+                    encoding="utf-8"
+                )
+            except Exception as e:
+                logger.warning(f"保存 KB metadata 失败: {e}")
+
         return stats.get("status") == "ok"
 
     # ── 搜索 ──
@@ -173,17 +193,30 @@ class ZVecKnowledgeBaseAdapter:
 
     def get_statistics(self) -> Dict:
         """获取统计信息（兼容旧接口）"""
+        # 优先从 metadata.json 读取实际统计
+        metadata_file = self.kb_dir / "metadata.json"
+        meta = {"files": 0, "classes": 0, "chunks": 0}
+        if metadata_file.exists():
+            try:
+                meta.update(json.loads(metadata_file.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+
+        # 获取实时的 ZVec doc_count（chunk 级）
+        doc_count = 0
         try:
             stats = self._zvec.get_statistics()
+            if isinstance(stats, dict):
+                doc_count = stats.get("doc_count", 0)
         except Exception:
-            return {"files": 0, "classes": 0, "functions": 0}
+            pass
 
         db_size = _calc_zvec_dir_size(self.kb_dir)
 
         return {
-            "files": stats.get("doc_count", 0) if isinstance(stats, dict) else 0,
-            "classes": stats.get("doc_count", 0) // 2 if isinstance(stats, dict) else 0,
-            "functions": 0,
+            "files": meta.get("files", 0),
+            "classes": meta.get("classes", 0),
+            "chunks": doc_count or meta.get("chunks", 0),
             "database_size_mb": round(db_size / (1024 * 1024), 1),
         }
 

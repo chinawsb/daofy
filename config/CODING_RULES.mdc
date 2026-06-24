@@ -1,5 +1,5 @@
 # Delphi 编码规范
-> 最后更新: 2026-06-13 | 版本: 1.12.0
+> 最后更新: 2026-06-24 | 版本: 1.13.0
 
 ## 工作流总览
 ```
@@ -230,26 +230,11 @@ capture = 证据留存                          ★ 截图，人工可回溯
 
 全流程（感知 → 执行 → 验证）各有优先级：
 
-**感知优先级** — 获取信息越精确、越快越好：
+**感知优先级** — 获取信息越精确、越快越好。见 §A0 RTTI/OCR 决策矩阵（line 45-121）获取完整场景对照。
 ```
-首选: RTTI 直接读取（最稳定、最准确）
-    ├─ rget(TControl, "Text") — 读单个属性值（⭐首选）
-    ├─ rinspect(TControl) — 查看属性名列表+类型（结构发现）
-    └─ dumpstate/formsum — 批量获取控件结构+属性
-    → 微秒级响应，100% 精确，不受 UI 渲染影响
-    → 适合：所有通过 published 属性暴露的信息
-
-次选: 结构化 UI 扫描
-    ├─ msgscan — 检测弹窗
-    ├─ listwnd — 枚举窗口
-    └─ dlgscan — 文件对话框
-    → 毫秒级，针对特定 UI 元素精确检测
-
-末选: 视觉识别（兜底）
-    ├─ capture — 截图留存
-    └─ ocr — 从截图提取文字
-    → 百毫秒级，精度受字体/分辨率/背景影响
-    → 仅当：RTTI 无法获取（自定义绘图、跨平台控件、图形）
+⭐ RTTI（rget/rinspect/dumpstate/formsum）→ 微秒级，published 属性
+★ 结构化扫描（msgscan/listwnd/dlgscan）→ 毫秒级，弹窗/窗口
+△ OCR 视觉识别（capture/ocr）→ 百毫秒级，RTTI 够不到的场景
 ```
 
 **执行优先级** — 操作越直接越稳定：
@@ -419,37 +404,43 @@ delphi_file(action="read", file_path="tests/scripts/")
 # 阶段 3：感知-执行-验证循环
 # ═══════════════════════════════════════════════════════
 
-# ── 步骤 1: 感知初始状态 ──
-listwnd                                 # 确认窗口列表
-formsum                                 # ⭐ 窗体摘要（紧凑 JSON）
-rget(target="edtName.Text")             # ⭐ RTTI 读取输入框值
-capture(capture="before_test")          # ★ 截图留存
+# 通过 automate_delphi 工具提交 GUI 操作脚本
+# 完整脚本会依次执行以下步骤：
+script = [
+    # ── 步骤 1: 感知初始状态 ──
+    {"cmd": "listwnd", "note": "确认窗口列表"},
+    {"cmd": "formsum", "note": "⭐ 窗体摘要（紧凑 JSON）"},
+    {"cmd": "rget", "target": "edtName.Text"},
+    {"cmd": "capture", "capture": "before_test"},
 
-# ── 步骤 2: 输入客户名称 ──
-type(target="edtName", text="张三")
-rget(target="edtName.Text",
-     assert="actual == '张三'")          # ⭐ RTTI 验证输入成功
+    # ── 步骤 2: 输入客户名称 ──
+    {"cmd": "type", "target": "edtName", "text": "张三"},
+    {"cmd": "rget", "target": "edtName.Text", "assert": "actual == '张三'"},  # ⭐ 验证
 
-# ── 步骤 3: 输入年龄 ──
-type(target="edtAge", text="25")
-rget(target="edtAge.Text",
-     assert="actual == '25'")            # ⭐ RTTI 验证
+    # ── 步骤 3: 输入年龄 ──
+    {"cmd": "type", "target": "edtAge", "text": "25"},
+    {"cmd": "rget", "target": "edtAge.Text", "assert": "actual == '25'"},     # ⭐ 验证
 
-# ── 步骤 4: 验证保存按钮状态 ──
-rget(target="btnSave.Enabled",
-     assert="actual == 'True'")          # ⭐ RTTI 验证按钮可用
+    # ── 步骤 4: 验证保存按钮状态 ──
+    {"cmd": "rget", "target": "btnSave.Enabled", "assert": "actual == 'True'"},
 
-# ── 步骤 5: 点击保存 ──
-click(target="btnSave")
-msgscan                                 # ★ 检查弹窗
-waitfor(target="TMainForm", timeout=5000) # ★ 等待返回
+    # ── 步骤 5: 点击保存并等待 ──
+    {"cmd": "click", "target": "btnSave"},
+    {"cmd": "msgscan"},                              # ★ 检查弹窗
+    {"cmd": "waitfor", "target": "TMainForm", "timeout": 5000},
 
-# ── 步骤 6: 结果验证 ──
-rget(target="lblStatus.Caption",
-     assert="actual == '保存成功'")        # ⭐ RTTI 验证状态栏文本
-capture(capture="after_save")           # ★ 截图留存
+    # ── 步骤 6: 结果验证 ──
+    {"cmd": "rget", "target": "lblStatus.Caption", "assert": "actual == '保存成功'"},
+    {"cmd": "capture", "capture": "after_save"},
+]
 
-# ── 步骤 7（可选）: 视觉完整性验证 ──
+# 提交脚本执行
+automate_delphi(action="gui", app_path="CustomerApp.exe", script=script)
+
+# ⚠ automate_delphi 脚本中的 cmd 值对应 §⑧ 命令列表。
+#   并非 Python 原生函数，而是 JSON 命令对象的 cmd 字段。
+
+# ── 步骤 7（可选）: 视觉完整性验证（单独调用 ocr 工具）──
 ocr(action="diff",
     baseline="docs/copyright/snapshots/before_test.jpg",
     current="docs/copyright/snapshots/after_save.jpg",
@@ -484,31 +475,36 @@ get_coding_rules(section="coding")  # 加载编码规范
 # HDPI 缩放回归验证
 # ═══════════════════════════════════════════════════════
 
-# ── 基线采集（100% 缩放）──
-capture(capture="baseline_100pct")      # 留存基线
-formsum                                 # 控件基线
-rget(target="btnSave.Width",
-     assert="int(actual) == 75")         # 按钮基线尺寸
+# ── 步骤 1：基线采集（100% 缩放）──
+#    通过 automate_delphi 提交 GUI 操作脚本
+automate_delphi(action="gui", app_path="App.exe", script=[
+    {"cmd": "capture", "capture": "baseline_100pct"},   # 留存基线
+    {"cmd": "formsum"},                                  # 控件基线
+    {"cmd": "rget", "target": "btnSave.Width",
+     "assert": "int(actual) == 75"},                     # 按钮基线尺寸
+])
 
-# ── 切换到 150% 缩放 ──
+# ── 步骤 2：切换到 150% 缩放 ──
 # (通过 Windows 缩放设置或应用内缩放)
 
-# ── 对比检测 ──
+# ── 步骤 3：截图对比（单独调用 ocr 工具）──
 ocr(action="diff",
     baseline="docs/copyright/snapshots/baseline_100pct.jpg",
     current="docs/copyright/snapshots/check_150pct.jpg",
     threshold=10)
 # 若 diff_percent > 5% → 可能存在布局问题
 
-# ── 颜色验证 ──
+# ── 步骤 4：颜色验证（单独调用 ocr 工具）──
 ocr(action="color",
     image_path="docs/copyright/snapshots/check_150pct.jpg",
     region=[180, 170, 75, 25])          # 分析保存按钮区域颜色
 # 验证：按钮背景是否为预期颜色
 
-# ── RTTI 辅助验证 ──
-rget(target="btnSave.Left")   # 位置是否合理变化
-rget(target="btnSave.Width")  # 尺寸是否按 DPI 缩放
+# ── 步骤 5：RTTI 辅助验证（automate_delphi 脚本）──
+automate_delphi(action="gui", app_path="App.exe", script=[
+    {"cmd": "rget", "target": "btnSave.Left"},    # 位置是否合理变化
+    {"cmd": "rget", "target": "btnSave.Width"},   # 尺寸是否按 DPI 缩放
+])
 ```
 
 ---
@@ -553,37 +549,18 @@ rget(target="btnSave.Width")  # 尺寸是否按 DPI 缩放
 
 #### F0. 系统角色与思维框架 — 你是谁，如何思考
 
----
-**角色定义**: 你是 **Delphi UI 自动化测试专家**。
-**核心方法论**: 感知 → 规划 → 执行 → 反馈（循环）
-
-执行自动化测试时，按以下**三层递进**思考：
-
-**第一层：理解被测对象（代码感知）**
-在操作任何控件之前，先读源码理解它：
-- 读 `.dfm` → 了解控件布局、类型、名称、事件绑定
-- 读 `.pas` → 了解事件处理程序、验证逻辑、数据流
-- 用 `delphi_kb` 查 API → 理解框架行为和组件用法
-- **输出**: 控件映射表 + 事件处理程序分析 + 代码分支路径表
-
-**第二层：生成测试策略（规划）**
-根据源码理解，确定：
-- 覆盖哪些路径 — 每个事件处理程序 + 每个代码分支
-- 用什么工具 — RTTI(`rcall`) > 控件级(`goto+click`) > 坐标级(`move+click`)
-- 预期结果 — 从代码逻辑推导演出的断言（见 §H4）
-- 边界条件 — 从验证代码中提取（`if edtName.Text='' then` → 测试空值）
-
-**第三层：执行-验证循环（执行）**
-严格按感知→执行→验证每步循环：
-- 先感知（`capture`/`dumpstate`/`msgscan`），不假设 UI 状态
-- 一步一验证，失败即停，不继续后续操作
-- 弹窗优先处理 — 执行操作后立即 `msgscan`
-- 失败时诊断→决策→恢复→学习（见 §F3）
-
-**角色边界**: 本角色仅用于**自动化测试阶段**。
-测试完成后（保存经验 / 导出脚本到 `tests/scripts/` 后），
-角色自动切回 **Delphi 开发专家**，思维框架切换为编码规范：
-`get_coding_rules(section="coding")` 或 `get_coding_rules(section="writing")`。
+> **角色注入**: 调用 MCP prompt `automate-expert-primer` 即可注入完整的
+> **Delphi UI 自动化测试专家** 角色（含三层递进思维模型 + 角色边界）。
+> 无需在此处展开——prompt 内容即本节的完整定义。
+>
+> ```python
+> # 在会话开始时调用（MCP 客户端处理）
+> # prompts/get automate-expert-primer
+> # 参数: app_name="CustomerApp.exe", project_path="C:/App"
+> ```
+>
+> 角色边界：本角色仅用于**自动化测试阶段**。测试完成后（保存经验 / 导出脚本后），
+> 角色自动切回 **Delphi 开发专家**（`get_coding_rules(section="coding")`）。
 
 ---
 
@@ -738,6 +715,23 @@ experience(action="save",
     tools_used=["{工具列表}"],
     tags=["automation", "{app_name}"])
 ```
+
+#### F5. MCP Prompt 快速参考
+
+所有自动化测试相关的 MCP Prompt 清单：
+
+| Prompt | 用途 | 参数 | 对应 F 节 |
+|--------|------|------|-----------|
+| `automate-expert-primer` | 注入测试专家角色（三层递进思维） | `app_name`, `project_path` | F0 |
+| `automate-code-analysis` | 代码感知分析（DFM+PAS→测试路径） | `form_name`, `project_path`, `app_path` | H |
+| `automate-test-plan` | 完整测试规划（角色+代码分析+步骤表） | `goal`, `app_path`, `project_path` | F1 |
+| `automate-step-execute` | 单步执行协议（前置感知→执行→等待→验证） | `phase`, `tool`, `target`, `expected` | F2 |
+| `automate-failure-recover` | 失败恢复（诊断→决策→恢复→学习） | `signal`, `expected`, `actual` | F3 |
+| `automate-save-experience` | 保存测试经验到知识库 | （无参数） | F4 |
+| `automate-session-end` | 结束会话：保存经验+导出脚本+角色切换 | `save_experience`, `export_script` | — |
+
+> 所有 prompt 通过 MCP 客户端调用: `prompts/get <prompt_name>`。
+> 部分 prompt 需要前置参数，建议调用前先读取对应 F 节了解完整用法。
 
 ---
 
@@ -1644,21 +1638,53 @@ project(action="compile", project_path="Project.dproj", run_verify=True)
 > 当前仅启用调用栈捕获（函数名+源文件行号），未启用局部变量值快照。如需局部变量，需额外设置 `TStackTraceManager.CaptureVariables := True`。
 
 ### 编译失败处理
+
+编译失败是调试中最频繁的场景，按结构化流程处理：
+
 ```
-失败 → check_environment(action="check") 确认编译器状态
-    → 检查是否缺少搜索路径（dpk 或 dproj 中 DCC_UnitSearchPath 配置）
-    → dproj 中 DCC_UnitSearchPath 是否包含需要的三方库路径
-    → 确认目标平台（win32/win64）编译器可用
-    → 条件编译符号是否匹配（DEBUG/RELEASE）
-    → 以上排查完仍未解决 → 转 §10.1 评估是否申请人工介入
+编译失败
+  │
+  ├─ ① 确认编译器状态
+  │   └─ check_environment(action="check")
+  │
+  ├─ ② 分类错误级别
+  │   ├─ Fatal → 先处理（通常是路径/配置缺失）
+  │   ├─ Error → 主要修复目标
+  │   └─ 仅 Warning/Hint → 可暂缓（见 §8.8 错误分类表）
+  │
+  ├─ ③ 增量 vs 全量
+  │   ├─ 首次失败 → 检查最近修改的代码
+  │   ├─ 怀疑缓存损坏 → 删 .dcu/.map/.dres 后全量编译
+  │   └─ 全量编译通过但增量失败 → 增量缓存问题
+  │
+  ├─ ④ 路径/配置检查
+  │   ├─ DCC_UnitSearchPath 是否包含所有三方库路径
+  │   ├─ DCCReference 是否注册了所有依赖单元
+  │   └─ 条件编译符号是否匹配当前配置（DEBUG/RELEASE）
+  │
+  ├─ ⑤ 单文件隔离
+  │   ├─ 错误集中在少量单元 → compile_file 单文件验证
+  │   ├─ 大量错误 → 从第一个 Error 开始（后续常为连带错误）
+  │   └─ 疑难错误 → 二分法隔离（见 §8.9）
+  │
+  ├─ ⑥ 查经验库
+  │   └─ experience(search, query="DCC {错误号} {关键词}")
+  │
+  ├─ ⑦ 假设驱动分析（§8.7）
+  │   └─ 进入假设驱动循环 → 生成 2~3 个假设 → 并行验证
+  │
+  ├─ ⑧ 二分法隔离（§8.9）
+  │   └─ 编译错误二进制搜索 / 运行时崩溃二分 / 回归定位
+  │
+  ├─ ⑨ 维护调试日志（§8.10）
+  │   └─ 每次尝试后更新：假设→验证→结果→推断
+  │
+  └─ ⑩ 3 次失败仍未解决 → 转 §8.1 评估人工介入
+      └─ 检查 §8.14 升级检查点，确认已满足全部条件后再申请介入
 ```
 
-### 编译事件
-.dproj 中的 PreBuildEvent/PostBuildEvent/PreLinkEvent 自动执行，无需手动处理。
-
-### 编译安全与超时
-- `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）
-- 长轮询 ≤30 秒（MCP 请求通道约 60s 超时），超时后切换短轮询
+> **编译事件**：.dproj 中的 PreBuildEvent/PostBuildEvent/PreLinkEvent 自动执行。编译失败时可临时禁用事件排除干扰：在 dproj 中注释相关 `<Event>` 行。
+> **编译安全**：`shell=True` 执行事件前记录 `logger.warning`；长轮询 ≤30 秒，超时后切换短轮询。
 
 ## ⑥ 代码审核
 
@@ -1812,17 +1838,21 @@ project(action="compile", project_path="Project.dproj", run_verify=True)
 ## 知识库重建
 ```python
 # Delphi 源码 KB（~1分钟，163737类/300228函数）
-delphi_kb(action="build", kb_type="delphi", force_rebuild=true, async_mode=true)
+delphi_kb(action="build", kb_type="delphi", rebuild=True, async_mode=true)
 # 三方库 KB（~6秒，5606类/51265函数）
-delphi_kb(action="build", kb_type="thirdparty", force_rebuild=true, async_mode=true)
-# 文档 KB（~6分钟，160328文档）
-delphi_kb(action="build", kb_type="document", force_rebuild=true, async_mode=true)
+delphi_kb(action="build", kb_type="thirdparty", rebuild=True, async_mode=true)
+# 文档 KB（~6分钟；含 Delphi CHM 中的 DCC 编译器错误说明，共约 1278 个错误/警告文档）
+# 构建后可用 delphi_kb(query="E2003", kb_type="document") 查编译器错误官方解释
+# ⚠️ rebuild=True 会清除现有文档 KB 中所有内容，如需确认请加 confirm=True
+delphi_kb(action="build", kb_type="document", rebuild=True, confirm=True, async_mode=true)
 # 项目 KB
-delphi_kb(action="build", kb_type="project", project_path="Project.dproj", force_rebuild=true)
+delphi_kb(action="build", kb_type="project", project_path="Project.dproj", rebuild=True)
 
 # 轮询进度用短轮询（long_poll ≤30s，超时切换短轮询）
 async_task(action="status", task_id="task_xxx")
 ```
+
+> **文档 KB 重建安全机制**：对文档 KB 设置 `rebuild=True` 时，若 KB 中已有文档（非空），系统会返回当前 KB 统计并要求添加 `confirm=True` 才能继续。这是为了防止意外清除已有的文档内容（如网页抓取的历史文档）。如果你希望保留旧内容，可将旧文档源在新构建参数中一并传入，或移除 `rebuild` 改用增量构建。
 
 ---
 
@@ -1890,24 +1920,21 @@ Python (automation_service.py)              Delphi (TAutomationProcessorBase)
 
 ### 命令列表
 
-| 命令 | 功能 | 同步/异步 |
-|------|------|-----------|
-| `goto` | 激活指定类名/Name 的窗体 | 同步 |
-| `click` / `rclick` / `dblclick` | 点击/右键/双击控件 | 异步 |
-| `hover` / `move` / `drag` | 鼠标悬停/移动/拖拽 | 异步 |
-| `type` | 输入文本 | 异步 |
-| `key` | 发送按键 | 异步 |
-| `wait` / `waitfor` | 等待时间(ms) / 等待控件属性满足条件 | 同步 |
-| `capture` | 截图（JPEG，保存到 snapshots_dir） | 同步 |
-| `listwnd` | 枚举所有窗口 | 同步 |
-| `dumpstate` | 获取控件树状态快照 | 同步 |
-| `dlgscan` / `msgscan` / `msgclose` | 扫描文件/消息对话框 / 关闭消息框 | 同步 |
-| `dlgclick` / `msgclick` | 点击文件/消息对话框按钮 | 异步 |
-| `rget` / `rinspect` | RTTI 读属性值 / 成员发现 | 同步 |
-| `rset` / `rcall` | RTTI 写属性 / 调用方法 | 异步 |
-| `dlgfile` | 文件对话框操作（输入路径） | 同步 |
-| `snapdir` | 设置截图输出目录 | 同步 |
-| `exit` | 退出被测进程 | 同步 |
+> 各命令的详细描述、典型场景、优先级见 §A 工具分类（perceive/execute/verify）。
+> 下表仅补充**同步/异步**属性（§A 未标注）。
+
+| 命令 | 同步/异步 | 说明 |
+|------|-----------|------|
+| `goto` / `snapdir` / `exit` / `dlgfile` | 同步 | 菜单级状态变更，需确认完成 |
+| `capture` / `dumpstate` / `listwnd` / `formsum` | 同步 | 感知类，需等待完整数据返回 |
+| `wait` / `waitfor` | 同步 | 时序控制，本身设计为阻塞 |
+| `dlgscan` / `msgscan` / `msgclose` | 同步 | 弹窗扫描需完整结果 |
+| `rget` / `rinspect` | 同步 | RTTI 读取需返回值 |
+| `click` / `rclick` / `dblclick` | 异步 | UI 操作不阻塞管道 |
+| `hover` / `move` / `drag` | 异步 | 鼠标事件异步提交 |
+| `type` / `key` | 异步 | 输入队列异步推送 |
+| `rcall` / `rset` | 异步 | RTTI 调用不等待业务完成 |
+| `msgclick` / `dlgclick` | 异步 | 弹窗按钮点击后立即 ACK |
 
 ### keep_alive 机制
 
@@ -2323,6 +2350,542 @@ end;
 | `server.py call_tool` | 顶层兜底捕获所有异常，格式化为 `CallToolResult(isError=True)` 返回；禁止裸抛 |
 | `services/*.py` | 业务异常使用自定义异常类，保留完整调用链；记录日志但**不吞异常** |
 | `utils/*.py` | 工具函数内部通常不捕获，让上层统一处理 |
+
+---
+
+### 8.7 假设驱动调试循环（Hypothesis-Driven Debugging）
+
+当面对一个尚未定位根因的问题时，不要跳进"猜测→修改→验证"的随机修复循环。
+应采用假设驱动的方式，系统性地缩小范围：
+
+```
+┌─ 第①步: 信息采集 ──────────────────────────────┐
+│  收集所有可用线索，不预设任何原因                   │
+│  ├─ 完整错误消息 + 错误号/异常类型                 │
+│  ├─ 调用栈（符号化/非符号化均可）                  │
+│  ├─ 环境信息（Delphi版本/OS/平台/配置）             │
+│  ├─ 复现步骤（确定能否稳定复现）                   │
+│  ├─ 最近变更（git log --oneline -10 检查最近修改） │
+│  └─ 查经验库: experience(search, query="...")     │
+└──────────────────────────────────────────────────┘
+                         ↓
+┌─ 第②步: 生成 2~3 个独立假设 ────────────────────┐
+│  H1: 假设原因A → 预期应观察到A' → 验证方法V1      │
+│  H2: 假设原因B → 预期应观察到B' → 验证方法V2      │
+│  H3: 假设原因C → 预期应观察到C' → 验证方法V3      │
+│                                                    │
+│  假设要求:                                         │
+│  ├─ 必须基于第①步的证据，而非凭空猜测              │
+│  ├─ 互斥或至少独立（不相互依赖）                   │
+│  └─ 按 最易验证 > 最可能成立 排序                  │
+└──────────────────────────────────────────────────┘
+                         ↓
+┌─ 第③步: 并行验证 ──────────────────────────────┐
+│  ├─ 互不依赖的假设同时验证                         │
+│  ├─ 每个验证用最少操作（最小化代码改动）            │
+│  ├─ 编译错误用 compile_file 单文件验证，非全量编译  │
+│  └─ 运行时问题用 rget/delphi_rtti 快速验证         │
+└──────────────────────────────────────────────────┘
+                         ↓
+┌─ 第④步: 分析结果 → 决策 ───────────────────────┐
+│  ├─ H被证实 → 进入修复                            │
+│  ├─ 所有H被证伪 → 回到①采集更多信息或触发介入      │
+│  └─ 部分证实 → 调整假设缩小范围，重入循环           │
+└──────────────────────────────────────────────────┘
+
+最多 3 轮循环仍无法定位根因 → 触发 §8.1 P0 人工介入。
+```
+
+**关键规则**：
+1. **禁止零假设修复** — 没有形成假设之前不得修改代码
+2. **每次只验证一个假设** — 不要同时做多个改动，否则不知道哪个生效
+3. **假设可证伪** — 如果假设无法设计验证方法，说明假设不具体，需要细化
+4. **维护调试日志** — 按 §8.10 记录已尝试方案，避免 §8.1 的同质方案重复
+
+---
+
+### 8.8 DCC 编译错误分类与解码
+
+#### 文档知识库搜索（首选方案）
+
+Delphi 官方 CHM 帮助文档（`topics.chm`）包含了全部 DCC 编译器错误/警告/提示的**官方说明**（共约 1278 个 HTML 文件，涵盖 875 个 EXXXX 错误 + 20 个 FXXXX 致命错误 + W/H 系列）。
+使用文档知识库搜索 DCC 错误是最精确的方案（无需硬编码所有错误码）：
+
+```
+前置条件：文档知识库需从 Delphi CHM 构建（仅需一次）
+delphi_kb(action="build", kb_type="document", async_mode=true)
+# 自动检测 C:\Program Files\Embarcadero\Studio\<版本>\Help\Doc\ 下的 .chm 文件
+# 完成后即可搜索
+
+# 如需强制重建（会清除 KB 中现有所有文档）：
+# delphi_kb(action="build", kb_type="document", rebuild=True, confirm=True, async_mode=true)
+# ⚠️ rebuild=True 会清除 KB 中已有的全部文档，请先确认旧内容已不需要或已包含在新的文档源中
+
+# 搜索具体 DCC 错误号（返回官方解释+修复建议）
+delphi_kb(query="E2003", kb_type="document", search_type="semantic")
+delphi_kb(query="E2010 incompatible types", kb_type="document", search_type="semantic")
+delphi_kb(query="F2613 unit not found", kb_type="document", search_type="semantic")
+
+# 按主题搜索
+delphi_kb(query="Delphi Compiler Errors Index", kb_type="document")
+delphi_kb(query="Error and Warning Messages (Delphi)", kb_type="document")
+delphi_kb(query="Fatal errors", kb_type="document")
+```
+
+> 文档 KB 构建后，任何 `delphi_kb(kb_type="document")` 查询直接返回 DCC 错误码的官方解释，
+> 不再需要 AI 凭猜测修复。
+
+#### 错误级别速查
+
+| 级别 | 前缀 | 含义 | 处理策略 |
+|------|------|------|---------|
+| **Fatal** | Fxxxx | 编译器无法继续，必须先解决 | 先修复路径/配置问题，再处理其他错误 |
+| **Error** | Exxxx | 语法/语义错误 | 读错误行源码 → 查文档 KB → 修复 |
+| **Warning** | Wxxxx | 潜在问题 | 评估是否影响功能；已知警告（如 W1057）可忽略 |
+| **Hint** | Hxxxx | 风格/类型建议 | 仅整理代码时处理，调试阶段可跳过 |
+
+#### 常见 DCC 错误速查表（常用 8 条，完整列表见文档 KB）
+
+| 错误号 | 典型消息 | 常见原因 | 解决方向 |
+|--------|---------|---------|---------|
+| E2003 | Undeclared identifier: 'X' | 缺 uses 单元 / 拼写错误 | 检查 uses 子句 + 标识符大小写 |
+| E2010 | Incompatible types: 'X' and 'Y' | 类型不匹配 | 检查赋值/参数类型，必要时显式转换 |
+| E2029 | Statement expected but 'X' found | 语法结构错误 | 检查括号/分号/begin..end 配对 |
+| E2037 | Record, object or class type required | 对非对象类型使用 '.' 访问 | 检查变量类型声明 |
+| E2066 | Missing operator or semicolon | 前一行漏分号 | 回溯错误行前一行末尾 |
+| E2251 | Ambiguous overloaded call to 'X' | 重载函数匹配歧义 | 用显式类型转换消除歧义 |
+| E2506 | Unit 'X' not compiled (Y.dcu out of date) | DCU 缓存过期 | 全量编译或删除 .dcu 文件 |
+| F2613 | Unit 'X' not found | 搜索路径未包含目标单元 | 检查 DCC_UnitSearchPath / 添加 DCCReference |
+
+#### 编译错误处理流程
+
+```
+编译失败
+  │
+  ├─ ① 分类错误级别
+  │   ├─ Fatal → 先处理（通常是路径/配置问题）
+  │   ├─ Error → 主要修复目标
+  │   └─ 仅 Warning/Hint → 可暂缓
+  │
+  ├─ ② 单文件 vs 全量
+  │   ├─ 增量编译出错 → 先 clean（删 .dcu/.map/.dres）再全量编译
+  │   ├─ 错误集中在少量单元 → compile_file 单文件验证
+  │   └─ 大量错误 → 从第一个 Error 开始（后续常为连带错误）
+  │
+  ├─ ③ Error 定位（优先级从高到低）
+  │   1️⃣ delphi_kb(query="{错误号}", kb_type="document")  → 查官方解释
+  │   2️⃣ delphi_kb(query="{关键词}", kb_type="document")  → 语义搜索
+  │   3️⃣ 对照 DCC 速查表 + 读错误行源码上下文
+  │   4️⃣ delphi_kb(search_type="function") 查 API 定义
+  │   5️⃣ 修复后增量编译验证
+  │
+  └─ ④ 疑难/重复失败
+      ├─ 二分法隔离（见 §8.9）
+      ├─ 查经验库：experience(search, query="DCC Exxxx ...")
+      └─ 3 次失败 → 转 §8.1 P0 人工介入
+```
+
+#### 增量编译缓存问题
+
+- `.dcu`/`.map`/`.dres` 缓存损坏会导致幽灵错误（错误行与实际不符）
+- **症状**：修复了错误行但仍报相同错误，或错误指向已删除的代码
+- **解决**：删除缓存文件后全量编译
+- Windows 上 `.map` 文件在 IDE 打开项目时可能被锁定，先关闭 IDE
+
+---
+
+### 8.9 二分法与隔离调试
+
+当面对大型项目、复杂函数、或难以定位的错误时，不要试图一次性理解所有代码。
+用二分法（Binary Search）快速缩小可疑范围：
+
+```
+编译错误二分法（文件级）:
+  ① 将文件从中间分为上下两半
+  ② 用 {$IFDEF DEBUG_SKIP}...{$ENDIF} 注释掉上半部分 → 编译
+  ③ 错误消失 → 错误在上半部分；仍在 → 错误在下半部分
+  ④ 对包含错误的半部分递归二分，直到定位到具体行
+
+运行时崩溃二分法（代码路径级）:
+  ① 确定触发崩溃的最简操作路径
+  ② 在调用链的中点插入 Exit / 提前返回
+  ③ 崩溃消失 → 问题在后面半段；仍在 → 问题在前面半段
+  ④ 递归缩小范围，直到定位到具体函数
+
+多模块隔离（项目级）:
+  ① 临时关闭所有编译事件（PreBuild/PostBuild）
+  ② 从 dproj 中逐个移除 DCCReference，定位缺少的单元
+  ③ 分批注释 uses 子句，定位循环引用
+  ④ 关闭 {$DEFINE} 条件编译符号，逐步开启排查
+
+回归定位（变更级）:
+  git bisect 是最可靠的回归定位工具：
+  ① git bisect start
+  ② git bisect bad          # 当前版本有问题
+  ③ git bisect good <tag>   # 上一个已知正常版本
+  ④ git bisect run <script> # 自动二分编译验证脚本
+  ⑤ 定位到引入问题的 commit
+
+  无 git 时：手动记录"最后正常"的时间点，沿 changelog 逐个版本测试。
+```
+
+**隔离原则**：
+- 每次隔离**只改变一个变量**（注释一个块/禁用一个单元）
+- 确认隔离结果后再进行下一步（不要同时做多个改动）
+- 二分法的最优复杂度是 O(log N)，不要用线性扫描替代
+- 编译错误隔离用 `{$IFDEF}` 而非删除代码，方便恢复
+
+---
+
+### 8.10 调试状态日志
+
+调试过程中，AI Agent **必须维护结构化调试日志**，显式追踪已尝试的方案和结果。
+这直接防止 §8.1 人工介入触发条件表中「连续同质方案」(P2 级，第 2 次失败触发)——有了日志，AI 能精确判断当前尝试是否与之前本质不同。
+
+```
+[调试日志] <问题摘要>
+═══════════════════════════════════════
+问题描述: {一句话描述}
+
+已尝试的方案:
+  #1: 假设 H1=... → 验证方法=... → 结果=证伪 → 推断=排除原因A
+  #2: 假设 H2=... → 验证方法=... → 结果=证实 → 推断=原因B → 已修复
+  #3: ...
+
+当前范围:
+  已排除: [模块X, 模块Y, 文件Z, ...]
+  剩余可疑: [模块W, ...]
+  当前最可能假设: {假设描述 + 依据}
+
+下一步计划: {具体要验证的内容}
+是否触发人工介入: 是/否（触发原因）
+═══════════════════════════════════════
+```
+
+**使用规则**：
+- 在开始调试任何问题前创建日志
+- 每次尝试后更新日志（假设 → 验证 → 结果 → 推断）
+- 进入下一轮假设循环前回顾日志，确认新假设与已证伪的假设**本质不同**
+- 日志本身不保存到文件，仅作为本轮调试的工作记忆
+- 问题解决后日志可丢弃，但经验必须通过 `experience(save)` 持久化
+
+---
+
+### 8.11 调试工具选择决策树
+
+面对不同性质的问题，选择最高效的工具组合：
+
+```
+遇到问题
+  │
+  ├─ 编译错误（DCC 报错）
+  │   ├─ ⭐ delphi_project(action="compile") — 全量/增量编译
+  │   ├─ ⭐ delphi_project(action="compile", compile_file=...) — 单文件语法检查
+  │   ├─ ☆ delphi_file(action="read") — 读错误行源码上下文
+  │   ├─ ☆ delphi_kb(query=...) — 查 API 定义确认用法
+  │   └─ ☆ experience(search, query="DCC ...") — 查同类编译错误经验
+  │
+  ├─ 运行时崩溃（Access Violation / 异常弹窗）
+  │   ├─ ⭐ 先分类崩溃子类型 → 按 §8.13 对号入座
+  │   ├─ ⭐ automate_delphi(cmd="msgscan") — 捕获异常弹窗内容
+  │   ├─ ⭐ StackTrace.pas / madExcept — 获取完整符号化调用栈
+  │   ├─ ⭐ delphi_rtti(action="discover") — 检查运行时对象状态
+  │   ├─ ☆ guide user in IDE (F7/F8/F9) — 人工引导设断点调试
+  │   └─ ☆ experience(search, query="...崩溃...") — 查同类崩溃经验
+  │
+  ├─ 逻辑错误（结果不对 / 界面显示异常）
+  │   ├─ ⭐ delphi_file(action="read") — 读源码确认业务逻辑
+  │   ├─ ⭐ delphi_kb(query=...) — 确认 API 行为是否符合预期
+  │   ├─ ⭐ LSP diagnostics / lsp_symbols — 检查代码符号
+  │   ├─ ☆ automate_delphi(cmd="rget") — 读运行时控件属性值
+  │   ├─ ☆ automate_delphi(cmd="capture") — 截图视觉对比
+  │   └─ ☆ experience(search, query="...")
+  │
+  └─ 环境问题（路径/版本/配置）
+      ├─ ⭐ check_environment(action="check") — 确认编译器状态
+      ├─ ⭐ delphi_project(action="info") — 查看 dproj 配置
+      ├─ ☆ git diff — 检查最近配置变更
+      └─ ☆ experience(search, query="环境 ...")
+```
+
+**优先级**：⭐ 首先尝试 → ☆ 备选或辅助
+
+**通用原则**：
+- **先查经验库再动手**：`experience(search, query="...")` 可能在 30 秒内给出答案
+- **先确认 API 再修代码**：不确定 API 行为时先用 `delphi_kb` 查定义，不凭猜测修改
+- **单文件验证优先**：编译错误优先用 `compile_file` 快速验证，不用每次全量编译
+- **错误先隔离再分析**：通过 §8.9 二分法缩小范围后，再深入分析具体代码
+
+---
+
+### 8.12 修复后复盘 — 从调试到防御
+
+修复验证通过后，必须执行复盘（Post-Mortem），将本次调试的成果沉淀为长期资产：
+
+```
+┌─ 修复后复盘清单 ──────────────────────────────────┐
+│                                                      │
+│ ① 根因归类                                           │
+│    ├─ 编码错误（逻辑缺陷/语法错误）                   │
+│    ├─ API 误用（参数错误/生命周期/约定误解）          │
+│    ├─ 环境差异（Delphi版本/OS/三方库版本）            │
+│    ├─ 并发/时序问题（竞态/死锁/事件顺序）             │
+│    └─ 外部依赖变更（API 废弃/行为变化）               │
+│                                                      │
+│ ② 评估防御措施                                       │
+│    ├─ 加 Assert 在开发阶段捕获？                      │
+│    │   → 根因是前置条件不满足 → 加 Assert             │
+│    ├─ 加日志让下次调试更快？                          │
+│    │   → 根因是信息不足导致定位困难 → 加日志          │
+│    ├─ 加自动化测试防止回归？                          │
+│    │   → 业务逻辑错误 → 加测试用例                    │
+│    └─ 更新 CODING_RULES 让所有 AI 受益？              │
+│        → 常见模式 → 新增规则（见 §⑫）                │
+│                                                      │
+│ ③ 经验保存（必须执行）                                │
+│    └─ experience(action="save", ...)                  │
+│       problem: "{泛化后的问题描述}"                   │
+│       solution: "{修复步骤 + 关键代码}"               │
+│       tags: ["调试", "{错误类别}", "{模块名}"]        │
+│                                                      │
+│ ④ 规则联动检查                                       │
+│    ├─ 经验被复用 hit_count ≥ 3？                     │
+│    │   → 评估是否升级为 CODING_RULES 正式规则        │
+│    └─ 本次调试发现了规则盲区？                        │
+│        → 按 §⑫ 模板新增/更新规则                    │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+**原则**：
+- **每个修复都伴随复盘**：修复不只是改代码，更是改进开发流程
+- **经验的半衰期是 30 天**：不记录的经验会随时间衰减价值（见 §9.5）
+- **规则是经验的固化**：hit_count ≥ 3 的经验应升级为正式规则
+- **复盘不是可选项**：这是调试流程的最后一个步骤，不可跳过
+
+---
+
+### 8.13 Delphi 运行时崩溃分类排查
+
+Delphi 运行时崩溃有 4 种截然不同的根因模式，先分类再排查比笼统定位快得多：
+
+#### 类型 A：Access Violation — 接口引用计数问题
+
+**特征**：调用接口方法时 AV，调用对象方法正常。常见于接口引用跨对象传递后原对象被释放。
+
+```
+症状: AV 发生在 interface 方法调用链中
+调用栈: TMyClass.SomeMethod → [Interface Dispatch] → AV
+```
+
+排查步骤：
+```
+① 确认是否为接口调用：看调用栈中是否经过 Interface Dispatch
+② 检查接口引用来源：
+   ├─ 是否从已 Free 的对象获取？（对象的 Free 早于接口使用）
+   ├─ 接口是否正确实现了 _Release/_AddRef（手工管理时）
+   └─ 是否跨线程传递了接口引用？（线程 A 释放了对象但线程 B 仍有接口引用）
+③ 修复方案：
+   ├─ 确保对象生命周期 ≥ 接口使用周期
+   ├─ 或将接口引用提升为全局/所属对象的字段
+   └─ 或使用弱引用（weak reference）模式避免循环引用
+```
+
+#### 类型 B：Access Violation — TComponent 所有权/生命周期违规
+
+**特征**：访问已释放的 TComponent 派生对象，通常表现为 AV 在 Form 关闭后或析构链中。
+
+```
+症状: AV 在 TForm.Destroy 或 TComponent.Notification 中
+典型场景: Timer/Socket 事件的回调中访问了 Owner 已释放的组件
+```
+
+排查步骤：
+```
+① 检查 AV 地址对应的源码行（通过 StackTrace.pas 或 madExcept）
+② 确认该组件是否已被 Free / Release
+③ 检查组件事件的注册/注销是否配对：
+   ├─ OnTimer / OnSocketData 等异步事件回调中访问 Self/组件
+   ├─ OnNotify / FreeNotification 是否在析构前已注销
+   └─ TThread.Synchronize/Queue 回调中访问了已释放的 Form
+④ 修复方案：
+   ├─ 在 Form.OnDestroy 中注销所有外部事件回调
+   ├─ 异步回调中检查 Assigned(Self) / csDestroying flag
+   └─ 使用 TComponent.FreeNotification 接收析构通知
+```
+
+#### 类型 C：DFM 流式错误 — Class Not Found / Property Error
+
+**特征**：打开 Form 时 IDE 报错误，或运行期间 DFM 流化异常。
+
+```
+典型错误:
+  "Class TMyFrame not found"        → 缺少 uses 或未 RegisterClass
+  "Property Caption does not exist" → DFM 中的属性名拼写或类型不匹配
+  "Error reading X: ..."            → DFM 中的二进制数据损坏或版本不兼容
+```
+
+排查步骤：
+```
+① Class Not Found:
+   ├─ 确认该单元已加入 uses 子句（检查 implementation 和 interface 两处）
+   ├─ 自定义 Frame/Component 需在 initialization 中调用 RegisterClass
+   └─ 检查 DFM 中的类名与 PAS 中的类名是否一致（大小写敏感！）
+② Property Error:
+   ├─ 对照 DFM 中出错属性和 PAS 类声明，检查属性名/类型是否匹配
+   ├─ published 区域是否声明了该属性
+   └─ 检查 DFM 中的对象类名是否与 PAS 一致（有时 IDE 会写错继承链）
+③ DFM 文件损坏：
+   ├─ 尝试另存为文本 DFM（Form → Right Click → Text DFM）再恢复
+   ├─ 或从 __history/ 备份恢复
+   └─ 运行期间错误 → 检查 TReader/TWriter 的自定义序列化逻辑
+```
+
+#### 类型 D：包/动态库加载错误
+
+**特征**：启动或加载 BPL/DLL 时报错。
+
+```
+典型错误:
+  "Cannot load package XXX"            → BPL 不在搜索路径或版本不匹配
+  "The procedure entry point YYY..."   → 导出函数签名不匹配
+  "Module not found" / "DLL not found" → 依赖 DLL 缺失
+  "Runtime error 216/217"              → 初始化异常或依赖未就绪
+```
+
+排查步骤：
+```
+① 包加载错误:
+   ├─ check_environment(action="check") — 确认 BPL 路径包含在系统 PATH
+   ├─ delphi_project(action="info") — 检查 RuntimePackages 配置
+   ├─ 确认所有依赖包已编译且版本匹配（build number + compiler version）
+   └─ requires 链中是否存在循环依赖
+② Entry Point Not Found:
+   ├─ 导出函数名拼写/C 调用约定是否匹配
+   ├─ Delphi 包 → 检查 exports 子句
+   └─ 编译版本不一致（Delphi 11 的 BPL 不能在 Delphi 12 加载）
+③ Runtime error 216/217（常见于 DPK 初始化和 DLL 加载）:
+   ├─ Runtime error 216 = Access Violation（初始化顺序问题）
+   ├─ Runtime error 217 = 未处理异常（单元 initialization 中抛异常）
+   ├─ 检查所有单元的 initialization/finalization 是否异常
+   └─ 从 __history/ 中回溯最近修改的单元
+```
+
+#### 崩溃分类决策树
+
+```
+运行时崩溃
+  ├─ 异常类型明确 → 按匹配类型直接跳到对应 A/B/C/D
+  ├─ 调用栈经过 Interface Dispatch → 走 A
+  ├─ 调用栈在 TComponent.Notification 或 Form 析构中 → 走 B
+  ├─ 错误含 "Class ... not found" 或 "Property ..." → 走 C
+  ├─ 错误含 "Cannot load package" / "entry point" / "216" / "217" → 走 D
+  └─ 无法分类 → 走通用排查（StackTrace.pas 获取完整调用栈后重分类）
+```
+
+---
+
+### 8.14 尝试升级检查点（Attempt Escalation Checkpoints）
+
+§8.1 用「3 次失败」一刀切触发人工介入，但缺少半程检查。本节定义**每次尝试后的检查点**，确保 3 次失败前有合理的换档机制：
+
+#### 第 1 次尝试失败
+
+```
+┌─ □ 检查点 1 ──────────────────────────────────────────┐
+│  ① 确认方案与上一个失败方案是否本质不同                  │
+│     → 如果只是换参数/换顺序再试 → §8.1 P2「同质方案」→ 立即换方向 │
+│                                                          │
+│  ② 检查是否用对了工具                                    │
+│     → 参考 §8.11 决策树，当前问题类别对应 ⭐ 工具用了没有？ │
+│                                                          │
+│  ③ 创建结构化调试日志（§8.10）                           │
+│     → 记录: 假设→验证方法→失败结果→排除的内容              │
+│                                                          │
+│  ④ 更新假设                                              │
+│     → 根据失败结果调整假设，生成新的验证方案               │
+└──────────────────────────────────────────────────────────┘
+```
+
+#### 第 2 次尝试失败
+
+```
+┌─ □ 检查点 2 ──────────────────────────────────────────┐
+│  ① 查经验库（必须有）                                   │
+│     → experience(search, query="{问题关键词} {错误类型}") │
+│     → 如找到匹配经验 → 直接应用，无需重造轮子            │
+│                                                          │
+│  ② 二分法隔离评估                                       │
+│     → 是否可以用 §8.9 二分法缩小范围？                    │
+│     → 编译问题 → 文件级/代码行级二分                      │
+│     → 运行时问题 → 调用链二分                             │
+│     → 如果之前未尝试二分法 → 这是最佳时机                  │
+│                                                          │
+│  ③ 尝试不同工具或不同方法                                │
+│     → 同一个工具连续失败 2 次 → §8.1 P2「同工具2次」→ 换工具 │
+│     → 编译问题: 全量→单文件→语法检查→手动审查             │
+│     → 运行时: msgscan→StackTrace→RTTI→人工引导            │
+│                                                          │
+│  ④ 更新调试日志                                         │
+│     → 更新已排除范围 / 剩余可疑 / 当前假设                │
+└──────────────────────────────────────────────────────────┘
+```
+
+#### 第 3 次尝试失败（触发介入前）
+
+```
+┌─ □ 检查点 3 — 触发人工介入前置检查 ───────────────────┐
+│  ① 调试日志完整性检查                                    │
+│     → 确保日志包含: 问题描述 / 所有尝试记录 / 已排除范围   │
+│                                                          │
+│  ② 经验搜索已执行                                        │
+│     → 确认已经查过经验库，结果已记录在调试日志中           │
+│                                                          │
+│  ③ 异常现场信息完整                                      │
+│     → 按 §8.3 模板确保异常消息/调用栈/环境信息已采集       │
+│     → 错误消息不完整？先追踪补充，不跳过                  │
+│                                                          │
+│  ④ 二分法已被尝试                                        │
+│     → 如果问题适合二分法隔离但未尝试 → 强制先做二分法      │
+│     → 不做二分法直接介入 → 人工可以退回（浪费介入资源）    │
+│                                                          │
+│  ⑤ 构建人工介入申请书                                    │
+│     → 按 §8.4 清单逐项填写                               │
+│     → 包含最小复现示例（MRE）或至少精确复现步骤            │
+│                                                          │
+│  ✅ 以上全部满足 → 提交介入申请                           │
+│  ❌ 任何一项不满足 → 回到对应步骤补齐后再申请              │
+└──────────────────────────────────────────────────────────┘
+```
+
+#### 升级流程总图
+
+```
+尝试 #1 失败
+  │
+  ├─ 同质方案？→ 立即换方向（不浪费 #2）
+  │
+  └─ 检查点 1 → 更新日志 → 更新假设 → 进入 #2
+         │
+尝试 #2 失败
+  │
+  ├─ 查经验库 + 二分法评估
+  ├─ 换工具？→ §8.1 同工具2次规则
+  │
+  └─ 检查点 2 → 更新日志 → 换方向 → 进入 #3
+         │
+尝试 #3 失败
+  │
+  └─ 检查点 3（介入前置检查）
+      ├─ 通过 → §8.4 申请人工介入
+      └─ 不通过 → 补齐后重试（不消耗 #4 计数）
+```
+
+**关键规则**：
+- 第 1 次和第 2 次之间必须**换方向**（不同假设/不同工具/不同方法）
+- 第 2 次和第 3 次之间必须**查经验库 + 评估二分法**
+- 如果任何检查点发现「同质方案」→ **立即**触发 P2 换方向，不等到满 3 次
+- 严格区分「尝试计数」和「方案计数」：换 3 个不同方法各失败 1 次 = 3 次不同方案（可继续尝试），同一方案改参数试 3 次 = 1 种方案 3 次同质尝试（必须换方向）
 
 ---
 

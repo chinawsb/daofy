@@ -97,8 +97,7 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
             bi = _format_build_info(s)
             guide += (
                 f"  Delphi KB:  {s.get('files', 0)} 文件, "
-                f"{s.get('classes', 0)} 类, "
-                f"{s.get('functions', 0)} 函数{bi}\n"
+                f"{s.get('classes', 0)} 类{bi}\n"
             )
         except Exception as e:
             logger.debug("获取 Delphi KB 统计失败: %s", e)
@@ -113,8 +112,7 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
                 bi = _format_build_info(pj)
                 guide += (
                     f"  Project KB: {pj.get('files', 0)} 文件, "
-                    f"{pj.get('classes', 0)} 类, "
-                    f"{pj.get('functions', 0)} 函数{bi}\n"
+                    f"{pj.get('classes', 0)} 类{bi}\n"
                 )
         except Exception as e:
             logger.debug("获取 Project KB 统计失败: %s", e)
@@ -124,8 +122,7 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
             bi = _format_build_info(s)
             guide += (
                 f"  Thirdparty: {s.get('files', 0)} 文件, "
-                f"{s.get('classes', 0)} 类, "
-                f"{s.get('functions', 0)} 函数{bi}\n"
+                f"{s.get('classes', 0)} 类{bi}\n"
             )
         except Exception as e:
             logger.debug("获取 Thirdparty KB 统计失败: %s", e)
@@ -1498,7 +1495,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                 # 映射 keys to expected format
                 stats["total_documents"] = stats.get("files", 0)
                 stats["total_classes"] = stats.get("classes", 0)
-                stats["total_functions"] = stats.get("functions", 0) + stats.get("procedures", 0)
+                stats["procedures"] = stats.get("procedures", 0)
                 results["delphi"] = stats
             elif kb == "project":
                 project_path = _resolve_project_path(arguments.get("project_path"))
@@ -1611,7 +1608,6 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                 continue
             output += f"  文件: {stats.get('total_documents', stats.get('files', 0))}\n"
             output += f"  类: {stats.get('total_classes', stats.get('classes', 0))}\n"
-            output += f"  函数: {stats.get('total_functions', stats.get('functions', 0))}\n"
             output += f"  数据库: {stats.get('database_size_mb', 0):.2f} MB\n"
             bt = stats.get('last_build_time')
             dur = stats.get('last_build_duration')

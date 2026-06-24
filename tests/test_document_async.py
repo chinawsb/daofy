@@ -78,7 +78,7 @@ def test_async_scan_progress():
         
         progress_events = []
         
-        def progress_callback(value, message):
+        def progress_callback(value, message, *_):
             progress_events.append((value, message))
         
         scanner = GenericDocumentScanner(

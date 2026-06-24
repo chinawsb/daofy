@@ -141,36 +141,17 @@ class AsyncTaskManager:
                 # 创建进度更新函数——在回调中嵌入取消检查，下游无需修改
                 def update_progress(*args, **kwargs):
                     # Handle different callback signatures:
-                    # 1. ProgressInfo object (from ProgressTracker)
-                    # 2. Single numeric value
-                    # 3. (current, total, message) - legacy style
-                    # 4. (stage, current, total, message) - help KB style
+                    # 1. ProgressInfo object (from ProgressTracker) — has .percentage
+                    # 2. (percent, message) or (percent, message, extra_dict) — standard
                     
                     if args and hasattr(args[0], 'percentage'):
                         # Case 1: ProgressInfo object
                         pct = args[0].percentage
                         msg = args[0].message
-                    elif args and len(args) >= 3:
-                        # Case 3 or 4: tuple arguments
-                        # For help KB: stage, current, total, message
-                        # For legacy: current, total, message
-                        if len(args) == 4:
-                            # Help KB style: (stage, current, total, message)
-                            # Calculate percentage from current/total
-                            current = args[1]
-                            total = args[2]
-                            pct = (current / total * 100) if total > 0 else 0
-                            msg = args[3]
-                        else:
-                            # Legacy style: (current, total, message)
-                            current = args[0]
-                            total = args[1]
-                            pct = (current / total * 100) if total > 0 else 0
-                            msg = args[2] if len(args) > 2 else ''
                     elif args and isinstance(args[0], (int, float)):
-                        # Case 2: Single numeric value
+                        # Case 2: (percent, message, extra_dict?)
                         pct = float(args[0])
-                        msg = kwargs.get('message', '')
+                        msg = str(args[1]) if len(args) > 1 else kwargs.get('message', '')
                     else:
                         pct = 0
                         msg = str(args) if args else ''

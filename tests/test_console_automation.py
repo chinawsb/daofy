@@ -274,8 +274,11 @@ class TestGuiScriptResultHandling:
         """主命令成功但附加截图失败时，步骤整体应失败。"""
         from src.services import automation_service
 
+        # 异步命令 ack + peekresult 轮询 + capture + exit
         responses = [
             json.dumps({"reqId": "step_0", "status": "ack", "data": "ACK"}),
+            # peekresult 轮询：首次返回真实结果
+            json.dumps({"reqId": "step_0_peek", "status": "ok", "data": "OK"}),
             json.dumps({"reqId": "cap_step_0", "status": "err", "data": "capture failed"}),
             json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
         ]
@@ -292,7 +295,8 @@ class TestGuiScriptResultHandling:
         assert result["status"] == "partial"
         step = result["results"][0]
         assert step["status"] == "error"
-        assert step["response"]["status"] == "ack"
+        # peekresult 轮询取到真实结果后替换了 ack，状态变为 ok
+        assert step["response"]["status"] == "ok"
         assert step["capture_response"]["status"] == "err"
         assert result["report"]["failed"] == 1
 

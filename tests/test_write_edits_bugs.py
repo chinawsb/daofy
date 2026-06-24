@@ -212,8 +212,8 @@ async def test_enddot_delete_enddot_line():
         shutil.rmtree(d, ignore_errors=True)
 
 @pytest.mark.asyncio
-async def test_sanity_warn_on_dup_first_line():
-    """content 首行与被替换行相同 → ⚠️ 警告出现（但写入仍然成功）"""
+async def test_sanity_no_warn_on_dup_first_line():
+    """content 首行与被替换行相同时应正常写入（不再发出首行重复警告）"""
     d = tempfile.mkdtemp(prefix="warn_")
     try:
         f = os.path.join(d, "U.pas")
@@ -223,8 +223,7 @@ async def test_sanity_warn_on_dup_first_line():
         ], "backup": False})
         assert r.get("status") == "success", f"应成功但返回了:\n{r}"
         msg = r.get("message", "")
-        assert "⚠️" in msg, f"期望警告但未出现:\n{msg}"
-        assert "content 首行" in msg, f"错误信息缺少原因:\n{msg}"
+        assert "⚠️" not in msg, f"不应再出现首行重复警告:\n{msg}"
         # 文件应有 F1 且无重复
         with open(f) as fh:
             c = fh.read()
@@ -235,8 +234,8 @@ async def test_sanity_warn_on_dup_first_line():
 
 
 @pytest.mark.asyncio
-async def test_force_bypasses_dup_first_line():
-    """force=true 时跳过 content 首行重复检查"""
+async def test_force_no_effect_on_dup_first_line():
+    """force=true 不影响首行内容（首行重复检查已移除，正常写入）"""
     d = tempfile.mkdtemp(prefix="force_")
     try:
         f = os.path.join(d, "U.pas")
