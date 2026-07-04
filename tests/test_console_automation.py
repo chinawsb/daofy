@@ -244,6 +244,1054 @@ class TestExecuteAutomation:
 class TestGuiScriptResultHandling:
     """GUI 脚本结果合成逻辑。"""
 
+    def test_gui_script_reuses_one_pipe_connection(self, tmp_path):
+        """GUI script commands should share one pipe connection for the whole run."""
+        from src.services import automation_service
+
+        responses = iter([
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "cap_step_0", "status": "ok", "data": "captured"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ])
+
+        def fake_send_on_handle(handle, cmd):
+            return next(responses)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_open_pipe", return_value=12345) as open_mock, \
+                mock.patch.object(automation_service, "_send_command_on_handle", side_effect=fake_send_on_handle), \
+                mock.patch.object(automation_service, "_CloseHandle") as close_mock, \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "goto", "target": "TMainForm", "capture": "after_goto"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert open_mock.call_count == 1
+        close_mock.assert_called_once_with(12345)
+
+    def test_gui_script_file_accepts_utf8_bom(self, tmp_path):
+        """GUI script files written by Windows tools may include a UTF-8 BOM."""
+        from src.services import automation_service
+
+        script_path = tmp_path / "script.json"
+        script_path.write_text(
+            json.dumps({"test_name": "bom", "steps": [{"cmd": "listwnd"}]}),
+            encoding="utf-8-sig",
+        )
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=lambda _: responses.pop(0)), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=str(script_path),
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["script_metadata"]["test_name"] == "bom"
+
+    def test_pipe_session_reopens_after_io_failure(self):
+        """A failed persistent pipe handle should be discarded before retrying."""
+        from src.services import automation_service
+
+        handles = iter([101, 202])
+        responses = iter([
+            "ERR:read_failed (err=109)",
+            json.dumps({"reqId": "step_1", "status": "ok", "data": "OK"}),
+        ])
+
+        with mock.patch.object(automation_service, "_open_pipe", side_effect=lambda *_: next(handles)) as open_mock, \
+                mock.patch.object(automation_service, "_send_command_on_handle", side_effect=lambda handle, cmd: next(responses)), \
+                mock.patch.object(automation_service, "_CloseHandle") as close_mock:
+            automation_service._begin_pipe_session()
+            try:
+                first = automation_service._send_command("first")
+                second = automation_service._send_command("second")
+            finally:
+                automation_service._end_pipe_session()
+
+        assert first.startswith("ERR:read_failed")
+        assert json.loads(second)["status"] == "ok"
+        assert open_mock.call_count == 2
+        close_mock.assert_any_call(101)
+        close_mock.assert_any_call(202)
+
+    def test_click_step_forwards_client_coordinates(self, tmp_path):
+        """click x/y fields should be encoded for the inline automation unit."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "click", "target": "cbMenus", "x": 70, "y": 430}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["target"] == "cbMenus@70,430"
+
+    def test_callgraph_forwards_max_depth_and_parses_state(self, tmp_path):
+        """callgraph max_depth should be sent to the optional Delphi extension."""
+        from src.services import automation_service
+
+        sent_commands = []
+        graph_payload = {
+            "root": "TMainForm.Save",
+            "calls": [],
+            "error_code": "no_edges",
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "ok",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph",
+                    "target": "TMainForm.Save",
+                    "max_depth": 3,
+                    "edge_limit": 25,
+                    "direction": "callers",
+                    "project_only": True,
+                    "exclude_prefixes": ["VirtualTrees.", "QLog."],
+                    "include_prefixes": ["TMainForm."],
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph"
+        assert sent_commands[0]["target"] == "TMainForm.Save"
+        assert sent_commands[0]["max_depth"] == "3"
+        assert sent_commands[0]["edge_limit"] == "25"
+        assert sent_commands[0]["direction"] == "callers"
+        assert sent_commands[0]["project_only"] == "1"
+        assert sent_commands[0]["exclude_prefixes"] == "VirtualTrees.,QLog."
+        assert sent_commands[0]["include_prefixes"] == "TMainForm."
+        assert result["results"][0]["response"]["state"]["error_code"] == "no_edges"
+
+    def test_callgraph_diff_compares_baseline_to_current_state(self, tmp_path):
+        """callgraph_diff should send callgraph and compare the response to a baseline."""
+        from src.services import automation_service
+
+        sent_commands = []
+        baseline = {
+            "root": "TMainForm.Save",
+            "calls": [
+                {"from": "A", "from_addr": "00000001", "to": "B", "to_addr": "00000002"},
+                {"from": "A", "from_addr": "00000001", "to": "C", "to_addr": "00000003"},
+            ],
+        }
+        current = {
+            "root": "TMainForm.Save",
+            "direction": "callees",
+            "calls": [
+                {"from": "A", "from_addr": "0000BEEF", "to": "B", "to_addr": "0000CAFE"},
+                {"from": "A", "from_addr": "00000001", "to": "D", "to_addr": "00000004"},
+            ],
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "ok",
+                "data": json.dumps(current),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_diff",
+                    "target": "TMainForm.Save",
+                    "baseline": baseline,
+                    "max_depth": 2,
+                    "save_as": "callgraph/current-save",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph"
+        assert sent_commands[0]["target"] == "TMainForm.Save"
+        state = result["results"][0]["response"]["state"]
+        assert state["compare_by"] == "name"
+        assert state["counts"] == {
+            "added": 1,
+            "removed": 1,
+            "unchanged": 1,
+            "baseline": 2,
+            "current": 2,
+        }
+        assert state["added"][0]["to"] == "D"
+        assert state["removed"][0]["to"] == "C"
+        assert result["results"][0]["response"]["callgraph"] == current
+        saved_path = tmp_path / "callgraph" / "current-save.json"
+        assert saved_path.exists()
+        assert json.loads(saved_path.read_text(encoding="utf-8")) == current
+        assert state["saved"] == {
+            "path": "callgraph/current-save.json",
+            "edge_count": 2,
+        }
+
+    def test_callgraph_diff_reads_baseline_path_under_snapshots_dir(self, tmp_path):
+        """Relative baseline_path should be resolved under snapshots_dir."""
+        from src.services import automation_service
+
+        baseline = {
+            "root": "TMainForm.Save",
+            "calls": [
+                {"from": "A", "to": "B"},
+            ],
+        }
+        baseline_path = tmp_path / "callgraph" / "baseline.json"
+        baseline_path.parent.mkdir(parents=True)
+        baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+        current = {
+            "root": "TMainForm.Save",
+            "direction": "callees",
+            "calls": [
+                {"from": "A", "to": "B"},
+                {"from": "A", "to": "C"},
+            ],
+        }
+        sent_commands = []
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "ok",
+                "data": json.dumps(current),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_diff",
+                    "target": "TMainForm.Save",
+                    "baseline_path": "callgraph/baseline.json",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph"
+        state = result["results"][0]["response"]["state"]
+        assert state["counts"] == {
+            "added": 1,
+            "removed": 0,
+            "unchanged": 1,
+            "baseline": 1,
+            "current": 2,
+        }
+
+    def test_callgraph_diff_rejects_baseline_path_outside_snapshots_dir_before_send(self, tmp_path):
+        """baseline_path should not be allowed to escape snapshots_dir."""
+        from src.services import automation_service
+
+        outside_path = tmp_path.parent / f"{tmp_path.name}-outside-baseline.json"
+        outside_path.write_text(json.dumps({"calls": []}), encoding="utf-8")
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_diff",
+                    "target": "TMainForm.Save",
+                    "baseline_path": str(outside_path),
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert "callgraph_diff baseline_path must stay under snapshots_dir" in step["response"]["data"]
+
+    def test_callgraph_diff_save_as_rejects_unsafe_paths(self, tmp_path):
+        """save_as should reject empty, traversal, and absolute paths without writing files."""
+        from src.services import automation_service
+
+        current = {
+            "root": "TMainForm.Save",
+            "direction": "callees",
+            "calls": [
+                {"from": "A", "to": "B"},
+            ],
+        }
+        unsafe_cases = [
+            ("", None),
+            ("../outside-save", tmp_path.parent / "outside-save.json"),
+            (str(tmp_path.parent / "absolute-save.json"), tmp_path.parent / "absolute-save.json"),
+        ]
+
+        for save_as, outside_path in unsafe_cases:
+            if outside_path and outside_path.exists():
+                outside_path.unlink()
+
+            sent_commands = []
+            responses = [
+                json.dumps({
+                    "reqId": "step_0",
+                    "status": "ok",
+                    "data": json.dumps(current),
+                }),
+                json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+            ]
+
+            def fake_send(cmd):
+                sent_commands.append(json.loads(cmd))
+                return responses.pop(0)
+
+            with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                    mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                    mock.patch.object(automation_service.time, "sleep"):
+                result = automation_service.execute_script(
+                    app_path="dummy.exe",
+                    script=[{
+                        "cmd": "callgraph_diff",
+                        "target": "TMainForm.Save",
+                        "baseline": {"calls": []},
+                        "save_as": save_as,
+                    }],
+                    snapshots_dir=str(tmp_path),
+                )
+
+            assert result["status"] == "ok"
+            assert sent_commands[0]["cmd"] == "callgraph"
+            state = result["results"][0]["response"]["state"]
+            assert "saved" not in state
+            assert any(warning.startswith("save_as_failed:") for warning in state["warnings"])
+            if outside_path:
+                assert not outside_path.exists()
+
+    def test_callgraph_diff_full_compare_keeps_address_sensitive_edges(self, tmp_path):
+        """compare_by=full should keep the legacy address-sensitive diff behavior."""
+        from src.services import automation_service
+
+        sent_commands = []
+        baseline = {
+            "root": "TMainForm.Save",
+            "calls": [
+                {
+                    "from": "A",
+                    "from_addr": "00000001",
+                    "call_addr": "00000010",
+                    "to": "B",
+                    "to_addr": "00000002",
+                },
+            ],
+        }
+        current = {
+            "root": "TMainForm.Save",
+            "direction": "callees",
+            "calls": [
+                {
+                    "from": "A",
+                    "from_addr": "00000001",
+                    "call_addr": "00000020",
+                    "to": "B",
+                    "to_addr": "00000002",
+                },
+            ],
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "ok",
+                "data": json.dumps(current),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_diff",
+                    "target": "TMainForm.Save",
+                    "baseline": baseline,
+                    "compare_by": "full",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["compare_by"] == "full"
+        state = result["results"][0]["response"]["state"]
+        assert state["compare_by"] == "full"
+        assert state["counts"] == {
+            "added": 1,
+            "removed": 1,
+            "unchanged": 0,
+            "baseline": 1,
+            "current": 1,
+        }
+
+    def test_callgraph_diff_rejects_invalid_compare_by_before_send(self, tmp_path):
+        """Invalid compare_by should fail locally without sending a callgraph request."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_diff",
+                    "target": "TMainForm.Save",
+                    "baseline": {"calls": []},
+                    "compare_by": "line",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == "callgraph_diff compare_by must be name, addr, or full"
+
+    def test_callgraph_rejects_invalid_edge_limit_before_send(self, tmp_path):
+        """edge_limit should be locally validated to avoid oversized/invalid requests."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "callgraph", "target": "TMainForm.Save", "edge_limit": 0}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == "callgraph edge_limit must be between 1 and 5000"
+
+    def test_callgraph_path_forwards_params_and_parses_state(self, tmp_path):
+        """callgraph_path should ask Delphi for bounded source-to-target paths."""
+        from src.services import automation_service
+
+        sent_commands = []
+        path_payload = {
+            "source": "actNewProjectExecute",
+            "target": "SaveIfModified",
+            "found": True,
+            "paths": [[
+                {
+                    "from": "main.TfrmMain.actNewProjectExecute",
+                    "from_addr": "00401000",
+                    "call_addr": "00401020",
+                    "call_file": "main.pas",
+                    "call_line": 683,
+                    "to": "main.TfrmMain.SaveIfModified",
+                    "to_addr": "00402000",
+                }
+            ]],
+            "path_count": 1,
+            "max_depth": 3,
+            "max_paths": 2,
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "ok",
+                "data": json.dumps(path_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_path",
+                    "source": "actNewProjectExecute",
+                    "target": "SaveIfModified",
+                    "max_depth": 3,
+                    "max_paths": 2,
+                    "project_only": True,
+                    "exclude_prefixes": ["System."],
+                    "include_prefixes": "main.",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph_path"
+        assert sent_commands[0]["source"] == "actNewProjectExecute"
+        assert sent_commands[0]["target"] == "SaveIfModified"
+        assert sent_commands[0]["max_depth"] == "3"
+        assert sent_commands[0]["max_paths"] == "2"
+        assert sent_commands[0]["project_only"] == "1"
+        assert sent_commands[0]["exclude_prefixes"] == "System."
+        assert sent_commands[0]["include_prefixes"] == "main."
+        state = result["results"][0]["response"]["state"]
+        assert state["found"] is True
+        assert state["paths"][0][0]["call_line"] == 683
+
+    def test_callgraph_path_rejects_invalid_input_before_send(self, tmp_path):
+        """callgraph_path should validate required and bounded parameters locally."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "callgraph_path", "target": "SaveIfModified", "max_paths": 0}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == "callgraph_path requires source and target"
+
+        sent_commands.clear()
+        responses.append(json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}))
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_path",
+                    "source": "A",
+                    "target": "B",
+                    "max_paths": 0,
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == "callgraph_path max_paths must be between 1 and 100"
+
+    def test_callgraph_error_response_data_is_parsed_as_state(self, tmp_path):
+        """callgraph should preserve structured diagnostics even when status is err."""
+        from src.services import automation_service
+
+        graph_payload = {
+            "root": "MissingEntry",
+            "calls": [],
+            "requested_root": "MissingEntry",
+            "error_code": "entry_not_found",
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "err",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "callgraph", "target": "MissingEntry"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["state"]["error_code"] == "entry_not_found"
+        assert step["response"]["state"]["requested_root"] == "MissingEntry"
+
+    def test_callgraph_win64_unsupported_response_is_parsed_as_state(self, tmp_path):
+        """Win64 callgraph diagnostics should remain structured on err responses."""
+        from src.services import automation_service
+
+        graph_payload = {
+            "root": "TMainForm.Save",
+            "direction": "callees",
+            "calls": [],
+            "requested_root": "TMainForm.Save",
+            "max_depth": 1,
+            "project_only": False,
+            "error_code": "win64_not_supported",
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0",
+                "status": "err",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy-win64.exe",
+                script=[{"cmd": "callgraph", "target": "TMainForm.Save", "max_depth": 1}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["status"] == "err"
+        assert step["response"]["state"]["error_code"] == "win64_not_supported"
+        assert step["response"]["state"]["calls"] == []
+        assert step["response"]["state"]["requested_root"] == "TMainForm.Save"
+
+    def test_callgraph_impact_queries_callers_and_aggregates_entries(self, tmp_path):
+        """callgraph_impact should fan out to callers queries and summarize impact."""
+        from src.services import automation_service
+
+        sent_commands = []
+        save_payload = {
+            "root": "SaveIfModified",
+            "direction": "callers",
+            "calls": [
+                {
+                    "from": "main.TfrmMain.actCloseExecute",
+                    "from_addr": "00401000",
+                    "to": "main.TfrmMain.SaveIfModified",
+                    "to_addr": "00402000",
+                }
+            ],
+        }
+        missing_payload = {
+            "root": "MissingEntry",
+            "direction": "callers",
+            "calls": [],
+            "error_code": "entry_not_found",
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0_0",
+                "status": "ok",
+                "data": json.dumps(save_payload),
+            }),
+            json.dumps({
+                "reqId": "step_0_1",
+                "status": "err",
+                "data": json.dumps(missing_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_impact",
+                    "functions": ["SaveIfModified", "MissingEntry"],
+                    "max_depth": 2,
+                    "edge_limit": 10,
+                    "project_only": True,
+                    "exclude_prefixes": ["System.", "Vcl."],
+                    "include_prefixes": ["main."],
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph"
+        assert sent_commands[0]["target"] == "SaveIfModified"
+        assert sent_commands[0]["direction"] == "callers"
+        assert sent_commands[0]["max_depth"] == "2"
+        assert sent_commands[0]["edge_limit"] == "10"
+        assert sent_commands[0]["project_only"] == "1"
+        assert sent_commands[0]["exclude_prefixes"] == "System.,Vcl."
+        assert sent_commands[0]["include_prefixes"] == "main."
+        assert sent_commands[1]["target"] == "MissingEntry"
+        assert sent_commands[1]["edge_limit"] == "10"
+        assert sent_commands[1]["include_prefixes"] == "main."
+        assert sent_commands[2] == {"reqId": "auto_exit", "cmd": "exit"}
+
+        step = result["results"][0]
+        assert step["status"] == "ok"
+        assert len(step["subcommands"]) == 2
+        state = step["response"]["state"]
+        assert state["mode"] == "impact"
+        assert state["entry_count"] == 1
+        assert state["entries"][0]["name"] == "main.TfrmMain.actCloseExecute"
+        assert state["entries"][0]["target"] == "SaveIfModified"
+        assert state["unresolved"] == [{
+            "target": "MissingEntry",
+            "error_code": "entry_not_found",
+            "status": "err",
+        }]
+
+    def test_callgraph_impact_resolves_file_line_locations(self, tmp_path):
+        """callgraph_impact should resolve Pascal file/line locations to functions."""
+        from src.services import automation_service
+
+        pas_source = """unit Unit1;
+
+interface
+
+type
+  TForm1 = class
+  end;
+
+implementation
+
+procedure TForm1.SaveIfModified;
+begin
+  DoSave;
+end;
+
+procedure TForm1.Other;
+begin
+end;
+
+end.
+"""
+        source_path = tmp_path / "Unit1.pas"
+        source_path.write_text(pas_source, encoding="utf-8")
+        target_line = pas_source.splitlines().index("  DoSave;") + 1
+
+        sent_commands = []
+        graph_payload = {
+            "root": "TForm1.SaveIfModified",
+            "direction": "callers",
+            "calls": [
+                {
+                    "from": "main.TfrmMain.actSaveExecute",
+                    "from_addr": "00403000",
+                    "to": "main.TForm1.SaveIfModified",
+                    "to_addr": "00402000",
+                }
+            ],
+        }
+        responses = [
+            json.dumps({
+                "reqId": "step_0_0",
+                "status": "ok",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_impact",
+                    "base_dir": str(tmp_path),
+                    "locations": [
+                        {"file": "Unit1.pas", "line": target_line},
+                        {"file": "Unit1.pas", "line": 3},
+                    ],
+                    "max_depth": 1,
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["cmd"] == "callgraph"
+        assert sent_commands[0]["target"] == "TForm1.SaveIfModified"
+        assert sent_commands[0]["direction"] == "callers"
+        assert sent_commands[1] == {"reqId": "auto_exit", "cmd": "exit"}
+
+        state = result["results"][0]["response"]["state"]
+        assert state["resolved_locations"] == [{
+            "file": "Unit1.pas",
+            "line": target_line,
+            "function": "TForm1.SaveIfModified",
+        }]
+        assert state["entries"][0]["name"] == "main.TfrmMain.actSaveExecute"
+        assert state["unresolved"][0]["file"].endswith("Unit1.pas")
+        assert state["unresolved"][0]["line"] == 3
+        assert state["unresolved"][0]["error_code"] == "no_function_at_line"
+
+    def test_callgraph_impact_requires_targets_before_send(self, tmp_path):
+        """callgraph_impact without targets should fail locally."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "callgraph_impact"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == (
+            "callgraph_impact requires functions, targets, target, file/line, or locations"
+        )
+
+    def test_callgraph_usecase_local_commands(self, tmp_path):
+        """U2/U3/U5/U6/U7/U8 should run locally from callgraph JSON inputs."""
+        from src.services import automation_service
+
+        impact = {
+            "mode": "impact",
+            "targets": [{"target": "SaveIfModified", "status": "ok", "edge_count": 1}],
+            "entries": [{
+                "name": "main.TfrmMain.actSaveExecute",
+                "target": "SaveIfModified",
+                "via": {"from": "main.TfrmMain.actSaveExecute", "to": "SaveIfModified"},
+            }],
+            "unresolved": [],
+            "warnings": [],
+        }
+        graph = {
+            "root": "SaveIfModified",
+            "direction": "callers",
+            "calls": [
+                {
+                    "from": "UI.TMainForm.ButtonClick",
+                    "from_addr": "1",
+                    "to": "Storage.TRepo.Save",
+                    "to_addr": "2",
+                },
+                {
+                    "from": "SaveIfModified",
+                    "from_addr": "3",
+                    "to": "Storage.TRepo.Save",
+                    "to_addr": "2",
+                },
+            ],
+        }
+        tests = [
+            {"name": "save-flow", "handler": "main.TfrmMain.actSaveExecute", "path": "save.json"},
+            {"name": "other", "handler": "main.TfrmMain.Other", "path": "other.json"},
+        ]
+        sent_commands = []
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"})
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[
+                    {"cmd": "callgraph_select_tests", "impact": impact, "tests": tests},
+                    {
+                        "cmd": "callgraph_failure_diag",
+                        "failure": {"cmd": "click", "target": "btnSave"},
+                        "callgraph": graph,
+                    },
+                    {
+                        "cmd": "callgraph_boundary_check",
+                        "graph": graph,
+                        "rules": [{
+                            "name": "ui-no-storage",
+                            "from_prefix": "UI.",
+                            "to_prefix": "Storage.",
+                            "policy": "forbid",
+                        }],
+                    },
+                    {"cmd": "callgraph_refactor_check", "impact": impact, "targets": ["SaveIfModified"]},
+                    {
+                        "cmd": "callgraph_orphan_candidates",
+                        "symbols": ["SaveIfModified", "UnusedProc", "Storage.TRepo.Save"],
+                        "entries": ["SaveIfModified"],
+                        "graph": graph,
+                    },
+                    {
+                        "cmd": "callgraph_explain_exception",
+                        "stack": ["Storage.TRepo.Save", "SaveIfModified"],
+                        "graph": graph,
+                        "impact": impact,
+                    },
+                ],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+
+        select_state = result["results"][0]["response"]["state"]
+        assert select_state["selected_count"] == 1
+        assert select_state["selected"][0]["name"] == "save-flow"
+        assert select_state["uncovered_targets"] == ["SaveIfModified"]
+
+        failure_state = result["results"][1]["response"]["state"]
+        assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 2
+        assert failure_state["failure"]["target"] == "btnSave"
+
+        boundary_state = result["results"][2]["response"]["state"]
+        assert boundary_state["violation_count"] == 1
+        assert boundary_state["violations"][0]["rule"] == "ui-no-storage"
+
+        refactor_state = result["results"][3]["response"]["state"]
+        assert refactor_state["risk"] == "medium"
+        assert "main.TfrmMain.actSaveExecute" in refactor_state["impacted_callers"]
+
+        orphan_state = result["results"][4]["response"]["state"]
+        assert orphan_state["candidates"] == [{
+            "name": "UnusedProc",
+            "confidence": "low",
+            "reason": "not_seen_as_callee_in_direct_callgraph",
+        }]
+
+        exception_state = result["results"][5]["response"]["state"]
+        assert exception_state["top_frame"] == "Storage.TRepo.Save"
+        assert len(exception_state["upstream"]) == 2
+
+    def test_callgraph_rejects_out_of_range_max_depth_before_send(self, tmp_path):
+        """Invalid callgraph max_depth should be reported without hitting the pipe."""
+        from src.services import automation_service
+
+        sent_commands = []
+        responses = [
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "callgraph", "target": "TMainForm.Save", "max_depth": 21}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["data"] == "callgraph max_depth must be between 0 and 20"
+
     def test_capture_does_not_hide_command_failure(self, tmp_path):
         """附加截图成功时，主命令失败仍应报告失败并保留主响应。"""
         from src.services import automation_service
@@ -300,10 +1348,446 @@ class TestGuiScriptResultHandling:
         assert step["capture_response"]["status"] == "err"
         assert result["report"]["failed"] == 1
 
+    def test_ui_async_not_ready_keeps_ack_and_continues(self, tmp_path):
+        """UI async commands may open modal dialogs; NR must not block following steps."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ack", "data": ""}),
+            json.dumps({"reqId": "step_1", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses) as send_mock, \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[
+                    {"cmd": "click", "target": "BtnOk", "async_timeout": 0},
+                    {"cmd": "msgscan"},
+                ],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["results"][0]["response"]["status"] == "ack"
+        assert result["results"][1]["response"]["status"] == "ok"
+        assert send_mock.call_count == 3
+
+    def test_async_peek_error_replaces_ack(self, tmp_path):
+        """A real async error must replace the initial ack response."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ack", "data": ""}),
+            json.dumps({"reqId": "step_0_peek", "status": "err", "data": "NF:BtnOk"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "click", "target": "BtnOk", "async_timeout": 0.01}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        step = result["results"][0]
+        assert step["status"] == "error"
+        assert step["response"]["status"] == "err"
+        assert step["response"]["data"] == "NF:BtnOk"
+        assert result["report"]["first_failure"]["response_data"] == "NF:BtnOk"
+
+    def test_failure_report_can_attach_callgraph_diagnostics(self, tmp_path):
+        """Optional failure diagnostics should query callgraph before auto-exit."""
+        from src.services import automation_service
+
+        sent_commands = []
+        graph_payload = {
+            "root": "main.TfrmMain.SaveIfModified",
+            "direction": "callers",
+            "calls": [
+                {
+                    "from": "main.TfrmMain.actSaveExecute",
+                    "to": "main.TfrmMain.SaveIfModified",
+                    "call_line": 683,
+                }
+            ],
+            "edge_count": 1,
+            "returned_count": 1,
+            "truncated": False,
+        }
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "err", "data": "NF:btnSave"}),
+            json.dumps({
+                "reqId": "step_0_callgraph_diag",
+                "status": "ok",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script={
+                    "callgraph_diagnostics": True,
+                    "callgraph_options": {
+                        "max_depth": 2,
+                        "edge_limit": 20,
+                        "project_only": True,
+                    },
+                    "steps": [{
+                        "cmd": "click",
+                        "target": "btnSave",
+                        "handler": "main.TfrmMain.SaveIfModified",
+                    }],
+                },
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert sent_commands[1]["cmd"] == "callgraph"
+        assert sent_commands[1]["target"] == "main.TfrmMain.SaveIfModified"
+        assert sent_commands[1]["direction"] == "callers"
+        assert sent_commands[1]["max_depth"] == "2"
+        assert sent_commands[1]["edge_limit"] == "20"
+        assert sent_commands[1]["project_only"] == "1"
+        failure = result["report"]["first_failure"]
+        assert failure["response_data"] == "NF:btnSave"
+        diag = failure["diagnostics"]["callgraph"]
+        assert diag["status"] == "ok"
+        assert diag["target"] == "main.TfrmMain.SaveIfModified"
+        assert diag["edge_count"] == 1
+        assert diag["calls"][0]["from"] == "main.TfrmMain.actSaveExecute"
+
+    def test_failure_callgraph_diagnostic_error_does_not_hide_original_failure(self, tmp_path):
+        """Callgraph diagnostic failures should be secondary warnings."""
+        from src.services import automation_service
+
+        graph_payload = {
+            "root": "MissingHandler",
+            "calls": [],
+            "error_code": "entry_not_found",
+            "edge_count": 0,
+        }
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "err", "data": "NF:btnSave"}),
+            json.dumps({
+                "reqId": "step_0_callgraph_diag",
+                "status": "err",
+                "data": json.dumps(graph_payload),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script={
+                    "callgraph_diagnostics": True,
+                    "steps": [{
+                        "cmd": "click",
+                        "target": "btnSave",
+                        "handler": "MissingHandler",
+                    }],
+                },
+                snapshots_dir=str(tmp_path),
+            )
+
+        failure = result["report"]["first_failure"]
+        assert failure["response_data"] == "NF:btnSave"
+        diag = failure["diagnostics"]["callgraph"]
+        assert diag["status"] == "err"
+        assert diag["error_code"] == "entry_not_found"
+        assert "callgraph_query_failed" in diag["warnings"]
+
+    def test_assert_expr_failure_generates_repair_report(self, tmp_path):
+        """Python 断言失败时报告应包含首个失败和修复建议。"""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "取消"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "rget",
+                    "target": "btnSave.Caption",
+                    "assert_expr": "actual == '保存'",
+                    "expected": "按钮标题应为保存",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "partial"
+        assert result["resolved_action"] == "gui"
+        report = result["report"]
+        assert report["failed"] == 1
+        assert report["first_failure"]["signal"] == "assertion_failed"
+        assert report["first_failure"]["assertion"]["source"] == "assert_expr"
+        assert report["solution"]["next_mode"] == "coding"
+
+    def test_failure_skips_dependent_steps_by_default(self, tmp_path):
+        """首个失败后默认不继续执行后续步骤，报告中标记 skipped。"""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "err", "data": "NF:MissingButton"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses) as send_mock, \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[
+                    {"cmd": "click", "target": "MissingButton"},
+                    {"cmd": "click", "target": "DangerousButton"},
+                ],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert send_mock.call_count == 2
+        assert result["status"] == "partial"
+        assert result["results"][1]["status"] == "skipped"
+        report = result["report"]
+        assert report["failed"] == 1
+        assert report["skipped"] == 1
+        assert report["executed"] == 1
+        assert report["steps"][1]["status"] == "skip"
+
+    def test_stop_on_failure_can_be_disabled(self, tmp_path):
+        """显式关闭 stop_on_failure 时保留旧的连续执行行为。"""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "err", "data": "NF:MissingButton"}),
+            json.dumps({"reqId": "step_1", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses) as send_mock, \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[
+                    {"cmd": "click", "target": "MissingButton"},
+                    {"cmd": "click", "target": "SafeButton"},
+                ],
+                snapshots_dir=str(tmp_path),
+                stop_on_failure=False,
+            )
+
+        assert send_mock.call_count == 3
+        assert result["results"][1]["status"] == "ok"
+        assert result["report"]["skipped"] == 0
+
+    def test_msgscan_no_dialog_uses_nod_assertion(self, tmp_path):
+        """msgscan should expose NOD as the no-dialog assertion value."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "NOD"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "msgscan",
+                    "expected": "No unexpected dialog",
+                    "assert_expr": "actual == 'NOD'",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["report"]["passed"] == 1
+        assert result["results"][0]["assert_result"]["actual"] == "NOD"
+
+    def test_msgscan_dialog_loads_formstate_for_assertions(self, tmp_path):
+        """msgscan OK should load the dialog JSON written by the inline unit."""
+        from src.services import automation_service
+
+        state_path = tmp_path / "_formstate.json"
+        state_path.write_text(
+            json.dumps({"title": "打开工程", "text": "", "buttons": ["确定"]}),
+            encoding="utf-8",
+        )
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "msgscan",
+                    "expected": "A dialog is present",
+                    "assert_expr": "'打开工程' in actual",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        response = result["results"][0]["response"]
+        assert result["status"] == "ok"
+        assert response["data"] == "OK"
+        assert response["state"]["title"] == "打开工程"
+        assert result["results"][0]["assert_result"]["actual"].startswith("{")
+
+    def test_object_script_with_steps_executes_and_preserves_metadata(self, tmp_path):
+        """Resource-documented object scripts should execute directly."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script={
+                    "test_name": "smoke",
+                    "project_path": "App.dproj",
+                    "steps": [{"cmd": "click", "target": "BtnSave"}],
+                },
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["steps_total"] == 1
+        assert result["script_metadata"]["test_name"] == "smoke"
+        assert result["script_metadata"]["project_path"] == "App.dproj"
+
+    def test_assert_field_is_rejected(self, tmp_path):
+        """Unsupported assert field should fail before app commands are sent."""
+        from src.services import automation_service
+
+        with mock.patch.object(automation_service, "_ensure_process") as ensure_process:
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{"cmd": "click", "target": "BtnSave", "assert": "msgscan 无弹窗"}],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "error"
+        assert "unsupported field 'assert'" in result["message"]
+        ensure_process.assert_not_called()
+
 
 # ═══════════════════════════════════════════════════════════════
 # PE 检测边界
 # ═══════════════════════════════════════════════════════════════
+
+    def test_assert_expr_unknown_builtin_reports_error(self, tmp_path):
+        """assert_expr uses explicit locals and does not expose builtins."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "rget",
+                    "target": "StatusBar.Caption",
+                    "assert_expr": "__import__('os').system('echo unsafe') == 0",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assertion = result["report"]["first_failure"]["assertion"]
+        assert assertion["source"] == "assert_expr"
+        assert "assert error" in assertion["message"]
+        assert "__import__" in assertion["message"]
+
+    def test_assert_expr_allows_python_expressions(self, tmp_path):
+        """assert_expr supports normal Python expression syntax."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "42"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "rget",
+                    "target": "EditAge.Text",
+                    "assert_expr": "int(actual) + 1 > 0",
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["report"]["failed"] == 0
+        assert result["report"]["passed"] == 1
+
+    def test_assert_expr_allows_documented_safe_forms(self, tmp_path):
+        """Documented assert_expr examples should stay executable."""
+        from src.services import automation_service
+
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": " Saved "}),
+            json.dumps({"reqId": "step_1", "status": "ok", "data": "13800138000"}),
+            json.dumps({"reqId": "step_2", "status": "ok", "data": "42"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=responses), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[
+                    {"cmd": "rget", "target": "StatusBar.Caption", "assert_expr": "actual.strip() == 'Saved'"},
+                    {"cmd": "rget", "target": "PhoneEdit.Text", "assert_expr": "re.fullmatch(r'1\\d{10}', actual)"},
+                    {"cmd": "rget", "target": "EditAge.Text", "assert_expr": "int(actual) > 0 and float(actual) < 100"},
+                ],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert result["report"]["failed"] == 0
+        assert result["report"]["passed"] == 3
+
 
 class TestDetectEdgeCases:
     """边界情况"""

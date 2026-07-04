@@ -17,9 +17,14 @@ unit DaofyAutomation.Base;
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages,
-  System.SysUtils, System.Classes, System.Rtti, System.TypInfo,
-  System.Generics.Collections, System.JSON;
+  System.Classes,
+  System.Generics.Collections,
+  System.JSON,
+  System.Rtti,
+  System.SysUtils,
+  System.TypInfo,
+  Winapi.Messages,
+  Winapi.Windows;
 
 const
   WM_DAOFY_CMD = WM_USER + $200;
@@ -34,7 +39,8 @@ type
     Tick: UInt64;
   end;
 
-type
+  TAutomationCommandHandler = function(const ReqId, Target: string;
+    const J: TJSONObject): string;
   /// <summary>
   ///  自动化处理器抽象基类。派生于 TThread，在后台线程监听命名管道，
   ///  将接收到的 JSON 请求在主线程上下文中执行。
@@ -42,7 +48,9 @@ type
   /// </summary>
   TAutomationProcessorBase = class(TThread)
   private
-    class var FCurrent: TAutomationProcessorBase;
+    class var
+      FCurrent: TAutomationProcessorBase;
+      FExtraCommandHandlers: TDictionary<string, TAutomationCommandHandler>;
   strict private
     FMsgWnd: HWND;
     FPipeName: string;
@@ -53,6 +61,8 @@ type
     FAsyncQueueCS: TRTLCriticalSection;
     FAsyncResultsCS: TRTLCriticalSection; // 保护 FAsyncResults 跨线程访问
     FRegFilePath: string;  // 进程注册文件路径 (%TEMP%\daofy-rtti-{PID}.json)
+    class function TryHandleExtraCommand(const Cmd, ReqId, Target: string;
+      const J: TJSONObject; out AResponse: string): Boolean; static;
   protected
     FSSDir: string;
     class function GetCurrent: TAutomationProcessorBase; static;
@@ -175,6 +185,10 @@ type
 
     procedure DoCap(const AName: string);
   public
+    class procedure RegisterCommandHandler(const Cmd: string;
+      Handler: TAutomationCommandHandler); static;
+    class procedure UnregisterCommandHandler(const Cmd: string); static;
+
     constructor Create(const APipeName: string);
     destructor Destroy; override;
     procedure SetSSDir(const D: string);
@@ -206,9 +220,40 @@ begin
   FCurrent := Value;
 end;
 
+class procedure TAutomationProcessorBase.RegisterCommandHandler(const Cmd: string;
+  Handler: TAutomationCommandHandler);
+begin
+  if (Cmd = '') or not Assigned(Handler) then
+    Exit;
+  if FExtraCommandHandlers = nil then
+    FExtraCommandHandlers := TDictionary<string, TAutomationCommandHandler>.Create;
+  FExtraCommandHandlers.AddOrSetValue(LowerCase(Cmd), Handler);
+end;
+
+class procedure TAutomationProcessorBase.UnregisterCommandHandler(const Cmd: string);
+begin
+  if (Cmd <> '') and (FExtraCommandHandlers <> nil) then
+    FExtraCommandHandlers.Remove(LowerCase(Cmd));
+end;
+
+class function TAutomationProcessorBase.TryHandleExtraCommand(
+  const Cmd, ReqId, Target: string; const J: TJSONObject;
+  out AResponse: string): Boolean;
+var
+  Handler: TAutomationCommandHandler;
+begin
+  Result := False;
+  if (FExtraCommandHandlers <> nil) and
+     FExtraCommandHandlers.TryGetValue(LowerCase(Cmd), Handler) then
+  begin
+    AResponse := Handler(ReqId, Target, J);
+    Result := True;
+  end;
+end;
+
 constructor TAutomationProcessorBase.Create(const APipeName: string);
 begin
-  inherited Create(False);
+  inherited Create(True);
   FPipeName := APipeName;
   FMsgWnd := AllocateHWnd(WndProc);
   FAsyncResults := TDictionary<string, TAsyncResultRec>.Create;
@@ -218,7 +263,6 @@ begin
   InitializeCriticalSection(FAsyncResultsCS);
   FreeOnTerminate := False;
 end;
-
 destructor TAutomationProcessorBase.Destroy;
 begin
   DeleteRegFile;
@@ -295,7 +339,7 @@ begin
   if FRegFilePath <> '' then
   begin
     if FileExists(FRegFilePath) then
-      DeleteFile(FRegFilePath);
+      System.SysUtils.DeleteFile(FRegFilePath);
     FRegFilePath := '';
   end;
 end;
@@ -333,14 +377,16 @@ type
 
 var
   h: THandle;
-  pBuf: PByteBuffer;
   Buf: array[0..MAX_PIPE - 1] of AnsiChar;
-  Br, Bw, Bw2: DWORD;
+  Br: DWORD;
   Req, Resp, ReqId, Cmd: string;
+  ReqBuf: TBytes;
+  TotalLen: Integer;
+  ReadOk: BOOL;
+  ChunkLen: Integer;
   Overlap: TOverlapped;
   WaitEvents: array[0..1] of THandle;
   WR: DWORD;
-  BytesAvail: DWORD;
 begin
   while not Terminated do begin
     h := CreateNamedPipe(PChar(FPipeName), PIPE_ACCESS_DUPLEX,
@@ -379,31 +425,33 @@ begin
           ReadOk := GetOverlappedResult(h, Overlap, Br, False);
           if not ReadOk then begin
             if GetLastError = ERROR_MORE_DATA then begin
-              SetLength(ReqBuf, TotalLen + Br);
-              Move(Buf[0], ReqBuf[TotalLen], Br);
-              Inc(TotalLen, Br);
+              ChunkLen := Integer(Br);
+              SetLength(ReqBuf, TotalLen + ChunkLen);
+              Move(Buf[0], ReqBuf[TotalLen], ChunkLen);
+              Inc(TotalLen, ChunkLen);
               FillChar(Buf, SizeOf(Buf), 0);
               ResetEvent(Overlap.hEvent);
               if not ReadFile(h, Buf, SizeOf(Buf) - 1, Br, @Overlap) then
                 if GetLastError <> ERROR_IO_PENDING then Break;
               // 等待这次读取完成
-              if WaitForSingleObject(Overlap.hEvent, 5000) <> WAIT_OBJECT_0 then
+              if WaitForSingleObject(Overlap.hEvent, 5000) <> WAIT_OBJECT_0 then begin
                 ReadOk := False;
+                Break;
+              end;
               Continue;
             end else
               Break; // 实际错误，断开连接
           end;
           if Br = 0 then begin ReadOk := False; Break; end;
-          SetLength(ReqBuf, TotalLen + Br);
-          Move(Buf[0], ReqBuf[TotalLen], Br);
-          Inc(TotalLen, Br);
+          ChunkLen := Integer(Br);
+          SetLength(ReqBuf, TotalLen + ChunkLen);
+          Move(Buf[0], ReqBuf[TotalLen], ChunkLen);
           Break; // 完整消息已接收
         until False;
 
         if not ReadOk then Break;
 
-        Req := Trim(string(UTF8ToString(
-          TEncoding.UTF8.GetString(ReqBuf))));
+        Req := Trim(TEncoding.UTF8.GetString(ReqBuf));
         if Req <> '' then begin
           ReqId := GetReqId(Req);
           Cmd := GetCmd(Req);
@@ -478,26 +526,40 @@ begin
   if Msg.Msg = WM_DAOFY_CMD then begin
     var P := PWideChar(Msg.WParam);
     if P <> nil then begin
-      CmdStr := string(P);
-      FLastResp := ExecCmd(CmdStr);
-      // 异步命令完成后存结果，供 getresult 取回
-      Cmd := GetCmd(CmdStr);
-      if IsAsyncCmd(Cmd) then begin
-        RId := GetReqId(CmdStr);
-        if RId <> '' then begin
-          var AR: TAsyncResultRec;
-          AR.Resp := FLastResp;
-          AR.Tick := GetTickCount;
-          EnterCriticalSection(FAsyncResultsCS);
-          FAsyncResults.AddOrSetValue(RId, AR);
-          LeaveCriticalSection(FAsyncResultsCS);
-          EnterCriticalSection(FAsyncQueueCS);
-          FAsyncQueue.Add(FLastResp);
-          LeaveCriticalSection(FAsyncQueueCS);
-          SetEvent(FAsyncEvent);
+      try
+        CmdStr := string(P);
+        Cmd := GetCmd(CmdStr);
+        try
+          FLastResp := ExecCmd(CmdStr);
+        except
+          on E: Exception do
+            FLastResp := WriteResp(GetReqId(CmdStr), 'err', E.Message);
         end;
+        // 异步命令完成后存结果，供 getresult 取回
+        if IsAsyncCmd(Cmd) then begin
+          RId := GetReqId(CmdStr);
+          if RId <> '' then begin
+            var AR: TAsyncResultRec;
+            AR.Resp := FLastResp;
+            AR.Tick := GetTickCount;
+            EnterCriticalSection(FAsyncResultsCS);
+            try
+              FAsyncResults.AddOrSetValue(RId, AR);
+            finally
+              LeaveCriticalSection(FAsyncResultsCS);
+            end;
+            EnterCriticalSection(FAsyncQueueCS);
+            try
+              FAsyncQueue.Add(FLastResp);
+            finally
+              LeaveCriticalSection(FAsyncQueueCS);
+            end;
+            SetEvent(FAsyncEvent);
+          end;
+        end;
+      finally
+        GlobalFree(Winapi.Windows.HGLOBAL(Msg.WParam));
       end;
-      GlobalFree(Winapi.Windows.HGLOBAL(Msg.WParam));
     end;
     Msg.Result := 0;
   end else
@@ -509,7 +571,7 @@ end;
 function TAutomationProcessorBase.ExecCmd(const AReq: string): string;
 var
   J: TJSONObject;
-  Cmd, ReqId, Target: string;
+  Cmd, ReqId, Target, ExtraResp: string;
   WaitMs: Integer;
   Buf: array[0..255] of Char;
   V: TJSONValue;
@@ -558,8 +620,7 @@ begin
       // ── MessageBox/对话框扫描（纯 Win32 API）──
 
       else if Cmd = 'msgscan' then begin
-        DoMsgScan;
-        Result := WriteResp(ReqId, 'ok', 'scanned');
+        Result := WriteResp(ReqId, 'ok', DoMsgScan);
       end
 
       else if Cmd = 'msgclick' then begin
@@ -665,14 +726,23 @@ begin
 
       else if Cmd = 'peekresult' then begin
         var AR: TAsyncResultRec;
-        if FAsyncResults.TryGetValue(Target, AR) then
-          Result := AR.Resp
-        else
-          Result := WriteResp(ReqId, 'err', 'NR:' + Target);
+        EnterCriticalSection(FAsyncResultsCS);
+        try
+          if FAsyncResults.TryGetValue(Target, AR) then begin
+            FAsyncResults.Remove(Target);
+            Result := AR.Resp;
+          end else
+            Result := WriteResp(ReqId, 'err', 'NR:' + Target);
+        finally
+          LeaveCriticalSection(FAsyncResultsCS);
+        end;
       end
 
       else if Cmd = 'listwnd' then
         Result := HandleCmdListWnd(ReqId)
+
+      else if TryHandleExtraCommand(Cmd, ReqId, Target, J, ExtraResp) then
+        Result := ExtraResp
 
       else
         Result := WriteResp(ReqId, 'err', 'unknown cmd: ' + Cmd);
@@ -863,38 +933,65 @@ function TAutomationProcessorBase.DoMsgScan: string;
 var
   Root: TJSONObject;
   Buttons: TJSONArray;
-  hDlg, hSt, hBtn: HWND;
+  hDlg: HWND;
   Buf: array[0..511] of Char;
+  TextValue: string;
+
+  function FindDialog: HWND;
+  var
+    ClassBuf: array[0..255] of Char;
+  begin
+    Result := GetForegroundWindow;
+    if Result <> 0 then begin
+      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
+      GetClassNameW(Result, ClassBuf, 255);
+      if not SameText(string(ClassBuf), '#32770') then
+        Result := 0;
+    end;
+    if Result = 0 then
+      Result := FindWindowW('#32770', nil);
+  end;
+
+  procedure ScanChildren(AParent: HWND);
+  var
+    hChild: HWND;
+    ClassBuf: array[0..255] of Char;
+    Txt: string;
+  begin
+    hChild := FindWindowExW(AParent, 0, nil, nil);
+    while hChild <> 0 do begin
+      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
+      GetClassNameW(hChild, ClassBuf, 255);
+      FillChar(Buf, SizeOf(Buf), 0);
+      GetWindowTextW(hChild, Buf, 511);
+      Txt := Trim(string(Buf));
+      if SameText(string(ClassBuf), 'Static') and (Txt <> '') then begin
+        if TextValue <> '' then
+          TextValue := TextValue + sLineBreak;
+        TextValue := TextValue + Txt;
+      end else if SameText(string(ClassBuf), 'Button') and (Txt <> '') then
+        Buttons.AddElement(TJSONString.Create(Txt));
+      ScanChildren(hChild);
+      hChild := FindWindowExW(AParent, hChild, nil, nil);
+    end;
+  end;
 begin
   if FSSDir = '' then Exit('NODIR');
-  hDlg := FindWindowW('#32770', nil);
+  hDlg := FindDialog;
   if hDlg = 0 then Exit('NOD');
 
   Root := TJSONObject.Create;
   try
     FillChar(Buf, SizeOf(Buf), 0);
-    GetWindowTextW(hDlg, Buf, 512);
+    GetWindowTextW(hDlg, Buf, 511);
     Root.AddPair('title', string(Buf));
     Root.AddPair('type', 'msgbox');
     Root.AddPair('hWnd', IntToStr(hDlg));
 
-    hSt := FindWindowExW(hDlg, 0, 'Static', nil);
-    if hSt <> 0 then begin
-      FillChar(Buf, SizeOf(Buf), 0);
-      GetWindowTextW(hSt, Buf, 512);
-      Root.AddPair('text', string(Buf));
-    end else
-      Root.AddPair('text', '');
-
     Buttons := TJSONArray.Create;
-    hBtn := FindWindowExW(hDlg, 0, 'Button', nil);
-    while hBtn <> 0 do begin
-      FillChar(Buf, SizeOf(Buf), 0);
-      GetWindowTextW(hBtn, Buf, 512);
-      if string(Buf) <> '' then
-        Buttons.AddElement(TJSONString.Create(string(Buf)));
-      hBtn := FindWindowExW(hDlg, hBtn, 'Button', nil);
-    end;
+    TextValue := '';
+    ScanChildren(hDlg);
+    Root.AddPair('text', TextValue);
     Root.AddPair('buttons', Buttons);
 
     WriteJSON(Root);
@@ -907,10 +1004,52 @@ end;
 function TAutomationProcessorBase.DoMsgClick(const Param: string): string;
 var
   hDlg, hBtn: HWND;
-  Buf: array[0..255] of Char;
   ID: Integer;
+  TargetText: string;
+
+  function FindDialog: HWND;
+  var
+    ClassBuf: array[0..255] of Char;
+  begin
+    Result := GetForegroundWindow;
+    if Result <> 0 then begin
+      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
+      GetClassNameW(Result, ClassBuf, 255);
+      if not SameText(string(ClassBuf), '#32770') then
+        Result := 0;
+    end;
+    if Result = 0 then
+      Result := FindWindowW('#32770', nil);
+  end;
+
+  function FindButton(AParent: HWND): HWND;
+  var
+    hChild, hFound: HWND;
+    ClassBuf: array[0..255] of Char;
+    Buf: array[0..255] of Char;
+    Txt: string;
+  begin
+    Result := 0;
+    hChild := FindWindowExW(AParent, 0, nil, nil);
+    while hChild <> 0 do begin
+      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
+      GetClassNameW(hChild, ClassBuf, 255);
+      if SameText(string(ClassBuf), 'Button') then begin
+        FillChar(Buf, SizeOf(Buf), 0);
+        GetWindowTextW(hChild, Buf, 255);
+        Txt := StringReplace(LowerCase(Trim(string(Buf))), '&', '', [rfReplaceAll]);
+        if (TargetText <> '') and (Txt <> '') and
+           ((Txt = TargetText) or (Pos(TargetText, Txt) > 0) or (Pos(Txt, TargetText) > 0)) then
+          Exit(hChild);
+      end;
+      hFound := FindButton(hChild);
+      if hFound <> 0 then
+        Exit(hFound);
+      hChild := FindWindowExW(AParent, hChild, nil, nil);
+    end;
+  end;
 begin
-  hDlg := FindWindowW('#32770', nil);
+  hDlg := FindDialog;
   if hDlg = 0 then Exit('NOD');
 
   ID := BtnID(Param);
@@ -919,15 +1058,11 @@ begin
     Exit('OK');
   end;
 
-  hBtn := FindWindowExW(hDlg, 0, 'Button', nil);
-  while hBtn <> 0 do begin
-    FillChar(Buf, SizeOf(Buf), 0);
-    GetWindowTextW(hBtn, Buf, 255);
-    if LowerCase(string(Buf)) = LowerCase(Param) then begin
-      SendMessage(hBtn, BM_CLICK, 0, 0);
-      Exit('OK');
-    end;
-    hBtn := FindWindowExW(hDlg, hBtn, 'Button', nil);
+  TargetText := StringReplace(LowerCase(Trim(Param)), '&', '', [rfReplaceAll]);
+  hBtn := FindButton(hDlg);
+  if hBtn <> 0 then begin
+    SendMessage(hBtn, BM_CLICK, 0, 0);
+    Exit('OK');
   end;
   Result := 'NF';
 end;
@@ -951,18 +1086,20 @@ var
   Idx: Integer;
   WaitResult: DWORD;
   Msg: TMsg;
+  EmptyHandles: THandle;
 begin
   Result := WriteResp(ReqId, 'err', 'NF:' + Target);
 
   // MsgWaitForMultipleObjects 轮询，同时处理消息避免阻塞消息泵。
   // TRttiContext 提到循环外，避免每轮重复创建。
+  EmptyHandles := 0;
   StartTime := GetTickCount;
   Ctx := TRttiContext.Create;
   try
     while GetTickCount - StartTime < UInt64(TimeoutMs) do begin
       Ctrl := FindNamedControl(Target);
       if Ctrl = nil then begin
-        WaitResult := MsgWaitForMultipleObjects(0, nil, False, IntervalMs, QS_ALLINPUT);
+        WaitResult := MsgWaitForMultipleObjects(0, EmptyHandles, False, IntervalMs, QS_ALLINPUT);
         if WaitResult = WAIT_OBJECT_0 then begin
           while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
             TranslateMessage(Msg);
@@ -986,7 +1123,6 @@ begin
         if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
         V := Pr.GetValue(Ctrl);
       end;
-      Obj := Ctrl;
 
       for i := 1 to High(Parts) do begin
         if V.Kind <> tkClass then Break;
@@ -1012,7 +1148,7 @@ begin
       end;
 
       // 两轮 RTTI 检查之间同样用 MsgWaitForMultipleObjects 等待
-      WaitResult := MsgWaitForMultipleObjects(0, nil, False, IntervalMs, QS_ALLINPUT);
+      WaitResult := MsgWaitForMultipleObjects(0, EmptyHandles, False, IntervalMs, QS_ALLINPUT);
       if WaitResult = WAIT_OBJECT_0 then begin
         while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
           TranslateMessage(Msg);
@@ -1106,9 +1242,12 @@ var
   hDlg: HWND;
   hEdit, hBtn: HWND;
   Buf: array[0..511] of Char;
+  TargetText: string;
 begin
   hDlg := FindWindowW('#32770', nil);
   if hDlg = 0 then Exit('NOD');
+
+  TargetText := StringReplace(LowerCase(ATarget), '&', '', [rfReplaceAll]);
 
   if APath <> '' then begin
     // 找文件名输入框（Edit 或 ComboBox）
@@ -1125,8 +1264,8 @@ begin
     end;
   end;
 
-  // 点按钮
-  if ATarget = 'cancel' then begin
+  // 用异步 PostMessage 点击按钮，避免路径不存在时 Windows 错误框阻塞自动化管道。
+  if SameText(ATarget, 'cancel') then begin
     SendMessageW(hDlg, WM_CLOSE, 0, 0);
     Result := 'OK';
   end else begin
@@ -1134,25 +1273,31 @@ begin
     while hBtn <> 0 do begin
       FillChar(Buf, SizeOf(Buf), 0);
       GetWindowTextW(hBtn, Buf, 511);
-      var Txt := LowerCase(string(Buf));
-      if (ATarget = '') and ((Txt = 'open') or (Txt = 'save') or
-         (Txt = #25153#24320) or (Txt = #20445#23384)) then begin
-        SendMessageW(hBtn, BM_CLICK, 0, 0);
+      var Txt := StringReplace(LowerCase(string(Buf)), '&', '', [rfReplaceAll]);
+      if (ATarget = '') and ((Pos('open', Txt) > 0) or (Pos('save', Txt) > 0) or
+         (Pos(#25153#24320, Txt) > 0) or (Pos(#20445#23384, Txt) > 0)) then begin
+        PostMessageW(hBtn, BM_CLICK, 0, 0);
         Exit('OK');
       end;
-      if Txt = ATarget then begin
-        SendMessageW(hBtn, BM_CLICK, 0, 0);
+      if (TargetText <> '') and ((Txt = TargetText) or (Pos(TargetText, Txt) > 0) or
+         (Pos(Txt, TargetText) > 0)) then begin
+        PostMessageW(hBtn, BM_CLICK, 0, 0);
         Exit('OK');
       end;
       hBtn := FindWindowExW(hDlg, hBtn, 'Button', nil);
     end;
-    // 没找到匹配按钮，用默认 IDOK
-    if ATarget <> 'cancel' then begin
-      SendMessageW(hDlg, WM_COMMAND, 1, 0);
+    // 没找到匹配按钮，用默认 IDOK。
+    if not SameText(ATarget, 'cancel') then begin
+      PostMessageW(hDlg, WM_COMMAND, 1, 0);
       Result := 'OK';
     end else
       Result := 'NF';
   end;
 end;
+
+initialization
+
+finalization
+  TAutomationProcessorBase.FExtraCommandHandlers.Free;
 
 end.

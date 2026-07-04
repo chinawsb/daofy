@@ -35,50 +35,168 @@
 
 ---
 
-## 快速开始
+## 启用指南（给 Delphi 开发者）
 
-### 1. 在目标 Delphi 程序中接入自动化单元
+> 本节面向 **需要在自己的 Delphi 项目中启用自动化测试的开发者**。
+> 按步骤操作后，你的程序就可以被 `automate_delphi` 工具远程操控和测试。
 
-找到 `.dpr` 文件，在 `uses` 中添加对应框架的自动化单元：
+### 前置文件清单
+
+自动化框架文件位于 Daofy 安装目录下的 `tools/auto/`：
+
+| 文件 | 必需？ | 用途 |
+|------|--------|------|
+| `DaofyAutomation.Base.pas` | ✅ 必需 | 命名管道协议、命令分发、异步结果缓存 |
+| `Vcl.DaofyAutomation.pas` | VCL 项目必选 | VCL 控件查找、截图、RTTI 操作 |
+| `Fmx.DaofyAutomation.pas` | FMX 项目必选 | FMX 控件查找、截图、RTTI 操作 |
+| `DaofyAutomation.RttiDiscovery.pas` | 可选 | RTTI 能力发现（供 `delphi_rtti` 工具使用） |
+| `DaofyAutomation.RttiAttributes.pas` | 可选 | AI 注解属性声明 |
+| `DaofyAutomation.CallGraph.pas` + `StackTrace.pas` | 可选 | `callgraph` / `callgraph_diff` / `callgraph_path` / `callgraph_impact` 以及用途层 `callgraph_*` 诊断命令 |
+
+> ⚠️ `DaofyAutomation.Base.pas` 必须同时被项目引用（VCL/FMX 单元依赖它）。
+
+### 步骤一：将 `tools/auto` 添加到项目搜索路径
+
+在 Delphi IDE 中打开项目 → **Project → Options → Delphi Compiler → Search path**，添加：
+
+```
+$(DaofyRoot)\tools\auto
+```
+
+若要使用 `callgraph`，再添加：
+
+```
+$(DaofyRoot)\tools\stacktrace
+```
+
+`callgraph` 支持 `direction=callees|callers`、`project_only=true`、`exclude_prefixes`、`include_prefixes` 过滤和 `edge_limit` 输出上限；响应包含 `edge_count`、`returned_count`、`truncated`，每条边包含 `call_addr`、`call_file`、`call_line` 用于定位调用发生处（无行号信息时为空/0），并包含 `category`、`from_category`、`to_category`（`project|thirdparty|framework|system|unknown`）。`callgraph_path` 接收 `source`、`target`、`max_depth`、`max_paths`、`include_prefixes`，返回 `found` 和 `paths`，找不到路径不是错误；`callgraph_diff` 使用 baseline JSON 或 `baseline_path` 快照文件与当前调用图做边级 added/removed/unchanged 对比，默认 `compare_by=name` 避免重编译地址漂移，必要时可用 `compare_by=addr|full`，并可用 `save_as` 保存当前快照；`save_as` 必须是 `snapshots_dir` 下的相对 JSON 路径，`baseline_path` 及用途层命令的文件型 graph/impact 输入也必须 resolve 后仍在 `snapshots_dir` 内。`callgraph_impact` 接收 `functions`/`targets` 或 `file`+`line`/`locations`，批量查询 callers 并汇总入口候选和 unresolved。用途层命令包括 `callgraph_select_tests`、`callgraph_failure_diag`、`callgraph_boundary_check`、`callgraph_refactor_check`、`callgraph_orphan_candidates`、`callgraph_explain_exception`。
+
+或用相对路径（假设 Daofy 与项目同级）：
+
+```
+..\daofy\tools\auto
+```
+
+> **为什么？** 将目录加入搜索路径后，`.dpr` 中不需要写冗长的 `in 'path\to\xxx.pas'`，只需写 `uses Vcl.DaofyAutomation;`。所有自动化单元会自动解析。
+
+### 步骤二：修改 `.dpr` 文件
+
+在 `program` 的 `uses` 中添加自动化单元，在 `begin..end.` 块中添加 `AutoStart`/`AutoStop` 调用：
 
 ```pascal
 program MyApp;
 
 uses
-  Vcl.Forms,                              // VCL 项目
-  // 或 FMX.Forms,                        // FMX 项目
-  Vcl.DaofyAutomation in 'path\to\tools\auto\Vcl.DaofyAutomation.pas',
-  DaofyAutomation.Base in 'path\to\tools\auto\DaofyAutomation.Base.pas',
-  // 或 Fmx.DaofyAutomation  (FMX 项目)
+  Vcl.Forms,
+  Vcl.DaofyAutomation,          // ← 添加（已配置搜索路径，无需 in 子句）
   MainForm in 'MainForm.pas';
 
 begin
-  Vcl.DaofyAutomation.AutoStart;          // 启动自动化管道线程
+  Vcl.DaofyAutomation.AutoStart;    // ← 添加：创建命名管道 \\.\pipe\daofy_auto
   Application.Initialize;
   Application.CreateForm(TMainForm, MainForm);
   Application.Run;
-  Vcl.DaofyAutomation.AutoStop;
+  Vcl.DaofyAutomation.AutoStop;     // ← 添加：清理管道资源
 end.
 ```
 
-调用 `AutoStart` 后，被测程序会在后台创建命名管道 `\\.\pipe\daofy_auto`，等待外部命令。
+**FMX 项目**请使用 `Fmx.DaofyAutomation`：
 
-### 2. 基础自动化调用
+```pascal
+uses
+  FMX.Forms,
+  Fmx.DaofyAutomation;          // ← FMX 版本
 
-```json
-{
-  "app_path": "C:\\MyApp\\Win32\\Debug\\MyApp.exe",
-  "keep_alive": true,
-  "script": [
-    {"cmd": "goto", "target": "TMainForm"},
-    {"cmd": "capture", "target": "screenshot_01"},
-    {"cmd": "click", "target": "BtnLogin"},
-    {"cmd": "waitfor", "target": "StatusBar", "prop": "Caption", "value": "登录成功", "timeout": "5000"},
-    {"cmd": "capture", "target": "screenshot_02"},
-    {"cmd": "exit"}
-  ]
-}
+begin
+  Fmx.DaofyAutomation.AutoStart;
+  Application.Initialize;
+  Application.CreateForm(TMainForm, MainForm);
+  Application.Run;
+  Fmx.DaofyAutomation.AutoStop;
+end.
 ```
+
+> ⚠️ `AutoStart` **必须在** `Application.Initialize` **之前**调用，确保管道在线程启动阶段就绪。
+
+### 步骤三：编译并验证管道就绪
+
+```bash
+# 在 IDE 中编译（Ctrl+F9），或在命令行中：
+dcc32 MyApp.dproj
+```
+
+启动编译后的 exe：
+
+```bash
+MyApp.exe
+# 控制台程序输入：MyApp.exe arg1 arg2
+```
+
+验证命名管道已创建：
+
+```powershell
+# 使用 PowerShell 检查管道是否存在
+[System.IO.Directory]::GetFiles("\\.\\pipe\\").Where({$_ -match "daofy_auto"})
+```
+
+如果输出包含 `daofy_auto`，说明自动化单元已成功接入。
+
+### 步骤四：运行冒烟测试确认可通信
+
+通过 `automate_delphi` 工具发送一条简单的 `goto` + `capture` 命令，验证完整链路：
+
+```python
+automate_delphi(
+    app_path="C:\MyApp\Win32\Debug\MyApp.exe",
+    keep_alive=True,
+    script=[
+        {"cmd": "goto", "target": "TMainForm", "note": "确认主窗体就绪"},
+        {"cmd": "capture", "target": "smoke_001"},
+        {"cmd": "exit"}
+    ]
+)
+```
+
+**期望结果**：
+- 返回 `status: "ok"`，`process_alive: false`（exit 后退出）
+- `docs/copyright/snapshots/` 目录下生成 `smoke_001.jpg`
+
+如果收到 `target_not_found`，先用 `listwnd` 查看实际窗体类名：
+
+```python
+automate_delphi(
+    app_path="C:\MyApp\Win32\Debug\MyApp.exe",
+    script=[{"cmd": "listwnd"}]
+)
+```
+
+### 验证检查清单
+
+```
+[ ] tools/auto/ 的 3 个核心 .pas 文件存在且可读
+[ ] 搜索路径已包含 tools/auto 目录
+[ ] .dpr 文件中已添加 Vcl.DaofyAutomation / Fmx.DaofyAutomation
+[ ] AutoStart 调用在 Application.Initialize 之前
+[ ] 编译通过（0 error, 0 warning）
+[ ] 进程启动后命名管道 \\.\pipe\daofy_auto 已创建
+[ ] automate_delphi 冒烟测试返回 status=ok
+```
+
+### 常见集成问题
+
+| 问题 | 原因 | 修复 |
+|------|------|------|
+| 编译报错 `File not found: 'DaofyAutomation.Base.pas'` | 搜索路径未包含 `tools/auto` | 检查 Project Options → Search path |
+| 编译报错 `Duplicate resource` | dpr 中 `in` 子句和搜索路径双重引用 | 统一用搜索路径，删除 `in` 子句 |
+| 进程启动但 `automate_delphi` 连不上管道 | AutoStart 未调用或被异常跳过 | 在 `Application.Initialize` 前确认 `AutoStart` 执行 |
+| Windows 防火墙弹窗 | exe 首次侦听管道 | 允许私网访问 |
+| FMX 启动崩溃 | 缺少 FMX 运行时 DLL | 确保 PATH 含 FMX 运行时目录，或启用静态链接 |
+
+---
+
+## 快速开始（给 AI 代理）
+
+> 以下内容供 AI 代理在完成启用步骤后，编写和执行自动化测试脚本。
 
 ---
 
@@ -243,6 +361,7 @@ automate_delphi(app_path="MyApp.exe", script=[exit])
     {"cmd": "click", "target": "BtnLogin"},
     {"cmd": "waitfor", "target": "StatusBar", "prop": "Caption",
      "value": "登录成功", "timeout": "5000"},
+    {"cmd": "rget", "target": "StatusBar.Caption", "assert_expr": "actual == '登录成功'"},
     {"cmd": "capture", "target": "login_result"},
 ]
 
@@ -253,6 +372,56 @@ automate_delphi(app_path="MyApp.exe", script=[exit])
     {"cmd": "rget", "target": "ListView1", "prop": "Items[0].Caption"},
 ]
 ```
+
+---
+
+## 报告与修复闭环
+
+`automate_delphi` 返回的 `report` 是后续决策入口：
+
+```json
+{
+  "status": "partial",
+  "resolved_action": "gui",
+  "report": {
+    "first_failure": {
+      "index": 3,
+      "cmd": "rget",
+      "target": "StatusBar.Caption",
+      "signal": "assertion_failed"
+    },
+    "solution": {
+      "next_mode": "coding",
+      "recommendations": [
+        "Compare actual with expected and decide whether the app logic or the test expectation is wrong."
+      ]
+    }
+  }
+}
+```
+
+处理规则：
+
+1. `report.first_failure != null` 时停止后续依赖步骤。
+2. `signal` 是 `target_not_found/property_not_found` 时先用 `formsum/rinspect` 修脚本。
+3. `signal` 是 `assertion_failed/timeout/command_error` 且预期来自源码分析时，切回编码模式：`get_coding_rules(section="writing")` → `delphi_file` 修代码 → `delphi_project(action="compile")` → 重新执行脚本。
+4. 修复后保存通过脚本到 `tests/scripts/`，保存可复用经验到 `experience`。
+
+默认 `stop_on_failure=true`。首个失败后的步骤不会继续操作 UI，而是在 `report.steps` 中标为 `skip`；需要一次性探索全部步骤时才显式传 `stop_on_failure=false`。
+
+需要源码影响面时，可在完整脚本对象中启用：
+
+```json
+{
+  "callgraph_diagnostics": true,
+  "callgraph_options": {"max_depth": 2, "edge_limit": 20, "project_only": true},
+  "steps": [
+    {"cmd": "click", "target": "btnSave", "handler": "main.TfrmMain.SaveIfModified"}
+  ]
+}
+```
+
+失败步骤会在自动 `exit` 前追加一次 `callgraph(direction=callers)`，并把摘要写入 `report.first_failure.diagnostics.callgraph`。如果 callgraph 查询失败，只记录二级 warning，不覆盖原始 UI 失败原因。
 
 ---
 

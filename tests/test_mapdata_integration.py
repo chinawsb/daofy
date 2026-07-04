@@ -226,8 +226,7 @@ class TestMapdataEmbed:
 class TestMapdataBinaryFormat:
     """Verify MAPDATA binary format constants and structure."""
 
-    # From TestMapDataSerializer.pas: MapResVersion constant
-    # MAPDATA magic is "MAPD" (4 bytes at the start of embedded resource)
+    # From StackTrace.pas: MAPDATA magic is "MAPD" followed by a ZigZag VarInt version.
     MAPDATA_MAGIC = b"MAPD"
 
     def test_mapdata_magic_length(self):
@@ -243,10 +242,10 @@ class TestMapdataBinaryFormat:
         """Verify PE .rsrc section entry structure for MAPDATA.
 
         When daudit embeds MAPDATA, it writes to the .rsrc section
-        with type RT_RCDATA. The structure is:
+        with type RT_RCDATA. MAPDATA v12 structure is:
           - Magic: 'MAPD' (4 bytes)
-          - Version: UInt32 (4 bytes)
+          - Version: ZigZag Int64 VarInt (1-10 bytes)
           - Data: ... (serialized TMapData)
         """
-        header_size = 8  # 4 bytes magic + 4 bytes version
-        assert header_size == 8, "MAPDATA header must be 8 bytes minimum"
+        min_header_size = 5  # 4 bytes magic + one-byte version varint for current v12.
+        assert min_header_size == 5, "MAPDATA v12 header must be at least 5 bytes"

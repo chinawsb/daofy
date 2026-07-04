@@ -27,7 +27,7 @@ implementation
 uses
   Winapi.Windows, Winapi.Messages,
   System.SysUtils, System.Classes, System.Rtti, System.TypInfo,
-  System.Actions, System.Generics.Collections, System.JSON,
+  System.Actions, System.Generics.Collections, System.JSON, System.Math, System.Types,
   Vcl.Forms, Vcl.Controls, Vcl.Graphics, Vcl.Imaging.Jpeg, Vcl.Menus;
 
 type
@@ -86,8 +86,10 @@ type
 
 procedure AutoStart(const APipeName: string);
 begin
-  if TAutomationProcessorBase.Current = nil then
+  if TAutomationProcessorBase.Current = nil then begin
     TAutomationProcessor.Create(APipeName);
+    TAutomationProcessorBase.Current.Start;
+  end;
   TAutomationProcessorBase.Current.SetSSDir('');
 end;
 
@@ -363,8 +365,11 @@ end;
 { ── 控件操作 ── }
 
 function TAutomationProcessor.HandleCmdGoto(const ReqId, Target: string): string;
-var I: Integer;
+var
+  I: Integer;
+  Found: Boolean;
 begin
+  Found := False;
   for I := 0 to Screen.FormCount - 1 do
     if SameText(Screen.Forms[I].ClassName, Target) or
        SameText(Screen.Forms[I].Name, Target) then
@@ -372,9 +377,55 @@ begin
       Screen.Forms[I].Show;
       Screen.Forms[I].BringToFront;
       Screen.Forms[I].SetFocus;
+      Found := True;
       Break;
     end;
-  Result := WriteResp(ReqId, 'ok', 'OK');
+  if Found then
+    Result := WriteResp(ReqId, 'ok', 'OK')
+  else
+    Result := WriteResp(ReqId, 'err', 'NF:' + Target);
+end;
+
+function SendKeyInput(const VK: UInt16; const Unicode: Boolean): Boolean;
+var
+  Inputs: array[0..1] of TInput;
+begin
+  ZeroMemory(@Inputs, SizeOf(Inputs));
+  Inputs[0].Itype := INPUT_KEYBOARD;
+  Inputs[1].Itype := INPUT_KEYBOARD;
+  Inputs[1].ki.dwFlags := KEYEVENTF_KEYUP;
+  if Unicode then begin
+    Inputs[0].ki.wScan := VK;
+    Inputs[0].ki.dwFlags := KEYEVENTF_UNICODE;
+    Inputs[1].ki.wScan := VK;
+    Inputs[1].ki.dwFlags := KEYEVENTF_UNICODE or KEYEVENTF_KEYUP;
+  end else begin
+    Inputs[0].ki.wVk := VK;
+    Inputs[1].ki.wVk := VK;
+  end;
+  Result := SendInput(2, Inputs[0], SizeOf(TInput)) = 2;
+end;
+
+function SendMouseClick(const AScreenX, AScreenY: Integer): Boolean;
+var
+  Inputs: array[0..2] of TInput;
+  SW, SH: Integer;
+begin
+  SW := GetSystemMetrics(SM_CXSCREEN);
+  SH := GetSystemMetrics(SM_CYSCREEN);
+  ZeroMemory(@Inputs, SizeOf(Inputs));
+  // Move
+  Inputs[0].Itype := INPUT_MOUSE;
+  Inputs[0].mi.dx := (AScreenX * 65535) div Max(SW - 1, 1);
+  Inputs[0].mi.dy := (AScreenY * 65535) div Max(SH - 1, 1);
+  Inputs[0].mi.dwFlags := MOUSEEVENTF_ABSOLUTE or MOUSEEVENTF_MOVE;
+  // Down
+  Inputs[1].Itype := INPUT_MOUSE;
+  Inputs[1].mi.dwFlags := MOUSEEVENTF_LEFTDOWN;
+  // Up
+  Inputs[2].Itype := INPUT_MOUSE;
+  Inputs[2].mi.dwFlags := MOUSEEVENTF_LEFTUP;
+  Result := SendInput(3, Inputs[0], SizeOf(TInput)) = 3;
 end;
 
 function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): string;
@@ -382,47 +433,53 @@ var
   AtPos, CommaPos: Integer;
   CoordStr, CtrlName: string;
   CX, CY: Integer;
-  WC: TWinControl;
-  Ch: HWND;
+  Obj: TObject;
+  Ctrl: TControl;
+  Pt: TPoint;
 begin
-  AtPos := Pos('@', Target);
-  CtrlName := Target;
-  if AtPos > 0 then begin
-    CoordStr := Copy(Target, AtPos + 1, MaxInt);
-    CtrlName := Copy(Target, 1, AtPos - 1);
-    CommaPos := Pos(',', CoordStr);
-    if CommaPos > 0 then begin
+  try
+    AtPos := Pos('@', Target);
+    CtrlName := Target;
+    CX := -1;
+    CY := -1;
+
+    if AtPos > 0 then begin
+      CoordStr := Copy(Target, AtPos + 1, MaxInt);
+      CtrlName := Copy(Target, 1, AtPos - 1);
+      CommaPos := Pos(',', CoordStr);
+      if CommaPos <= 0 then
+        Exit(WriteResp(ReqId, 'err', 'bad_coords'));
       CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos - 1)), 0);
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
-      if Screen.ActiveForm <> nil then begin
-        WC := TWinControl(FindNamedControl(CtrlName));
-        if WC <> nil then begin
-          Ch := WC.Handle;
-          if not IsWindowVisible(Ch) then
-            Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
-          if not IsWindowEnabled(Ch) then
-            Exit(WriteResp(ReqId, 'err', 'disabled:' + CtrlName));
-          SendMessage(Ch, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(CX, CY));
-          SendMessage(Ch, WM_LBUTTONUP, 0, MakeLParam(CX, CY));
-        end else
-          Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
-      end else
-        Exit(WriteResp(ReqId, 'err', 'no active form'));
     end;
-  end else begin
-    if Screen.ActiveForm <> nil then begin
-      WC := TWinControl(FindNamedControl(CtrlName));
-      if WC <> nil then begin
-        Ch := WC.Handle;
-        if not IsWindowVisible(Ch) then
-          Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
-        if not IsWindowEnabled(Ch) then
-          Exit(WriteResp(ReqId, 'err', 'disabled:' + CtrlName));
-        SendMessage(Ch, BM_CLICK, 0, 0);
-      end else
-        Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
-    end else
+
+    if CtrlName = '' then
+      Exit(WriteResp(ReqId, 'err', 'no target'));
+    if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
+
+    Obj := FindNamedControl(CtrlName);
+    if Obj = nil then
+      Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+    if not (Obj is TControl) then
+      Exit(WriteResp(ReqId, 'err', 'not_control:' + CtrlName));
+
+    Ctrl := TControl(Obj);
+    if not Ctrl.Visible then
+      Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
+    if not Ctrl.Enabled then
+      Exit(WriteResp(ReqId, 'err', 'disabled:' + CtrlName));
+
+    if AtPos > 0 then
+      Pt := Ctrl.ClientToScreen(Point(CX, CY))
+    else
+      Pt := Ctrl.ClientToScreen(Point(Ctrl.Width div 2, Ctrl.Height div 2));
+
+    if not SendMouseClick(Pt.X, Pt.Y) then
+      Exit(WriteResp(ReqId, 'err', 'SendInput_failed'));
+  except
+    on E: Exception do
+      Exit(WriteResp(ReqId, 'err', E.Message));
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
@@ -439,15 +496,15 @@ const
     (Name: 'DOWN'; VK: VK_DOWN), (Name: 'LEFT'; VK: VK_LEFT),
     (Name: 'RIGHT'; VK: VK_RIGHT), (Name: 'SPACE'; VK: VK_SPACE));
 var
-  Ch: HWND;
   I: Integer;
   VK: Integer;
   WC: TWinControl;
 begin
-  Ch := 0;
+  // Focus target control if specified
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
     WC := TWinControl(FindNamedControl(Target));
-    if WC <> nil then Ch := WC.Handle;
+    if (WC <> nil) and WC.Visible and WC.Enabled then
+      Winapi.Windows.SetFocus(WC.Handle);
   end;
 
   // 查命名键
@@ -462,27 +519,15 @@ begin
     if (FN >= 1) and (FN <= 12) then VK := VK_F1 + FN - 1;
   end;
 
-  // 单字符
+  // Send via SendInput
   if VK = 0 then begin
     if Length(Key) = 1 then begin
-      VK := Ord(UpCase(Key[1]));
-      // 发送字符
-      if Ch <> 0 then begin
-        SendMessage(Ch, WM_CHAR, Ord(Key[1]), 0);
-      end else
-        keybd_event(Ord(Key[1]), 0, 0, 0);
+      // Single character: use KEYEVENTF_UNICODE
+      SendKeyInput(Ord(Key[1]), True);
     end;
-    Exit(WriteResp(ReqId, 'ok', 'OK'));
-  end;
+  end else
+    SendKeyInput(VK, False);
 
-  // 发送按键
-  if Ch <> 0 then begin
-    SendMessage(Ch, WM_KEYDOWN, VK, 0);
-    SendMessage(Ch, WM_KEYUP, VK, 0);
-  end else begin
-    keybd_event(VK, 0, 0, 0);
-    keybd_event(VK, 0, KEYEVENTF_KEYUP, 0);
-  end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
@@ -655,18 +700,15 @@ begin
     WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
-      // 先清空原有文本
+      SetFocus(Ch);
       SendMessage(Ch, WM_SETTEXT, 0, LPARAM(PChar('')));
-      // 逐字符发送 WM_CHAR，触发控件 OnChange 等事件
       for C in Value do
         SendMessage(Ch, WM_CHAR, Ord(C), 0);
+      SendMessage(GetParent(Ch), WM_COMMAND, MakeWParam(GetDlgCtrlID(Ch), EN_CHANGE), LPARAM(Ch));
     end;
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
-
-{ ── RTTI ── }
-
 function TAutomationProcessor.HandleRGet(const ReqId, Target,
   Prop: string): string;
 var

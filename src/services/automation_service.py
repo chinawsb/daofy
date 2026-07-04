@@ -8,7 +8,8 @@ r"""
   请求: {"reqId":"step_0","cmd":"goto","target":"TForm1"}
   响应: {"reqId":"step_0","status":"ok","data":"OK"}
     (async 命令: click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type 返回 ACK，
-    同步命令: goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect 阻塞等待返回。
+    同步命令: goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/
+    callgraph/callgraph_diff/callgraph_path/callgraph_impact 阻塞等待返回。
     异步结果通过后续 peekresult 命令或 waitfor/rget/capture 验证获取，无文件落盘。)
 
 进程池复用：
@@ -16,6 +17,7 @@ r"""
   进程超过 PROCESS_KEEPALIVE_TIMEOUT 未被使用会自动清理。
 """
 
+import ast
 import ctypes
 import io
 import json
@@ -28,7 +30,7 @@ import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEFAULT_SNAPSHOTS_DIR = PROJECT_ROOT / 'docs' / 'copyright' / 'snapshots'
@@ -84,10 +86,33 @@ _ASYNC_CMDS = frozenset({
     'click', 'dblclick', 'rclick', 'msgclick', 'dlgclick',
     'hover', 'move', 'drag', 'rcall', 'key', 'rset', 'type',
 })
+_UI_ASYNC_CMDS = frozenset({
+    'click', 'dblclick', 'rclick', 'msgclick', 'dlgclick',
+    'hover', 'move', 'drag', 'key', 'type',
+})
+_ASYNC_PEEK_TIMEOUT = 6.0
+_UI_ASYNC_PEEK_TIMEOUT = 0.25
+
+# ── UIA 命令集合 ──
+_UIA_PREFIX_CMDS = frozenset({
+    'uiagoto', 'uiaclick', 'uiaget', 'uiascan', 'uiawait', 'uiaset',
+})
+_UIA_CAPABLE_CMDS = frozenset({
+    'goto', 'click', 'get', 'set', 'wait', 'scan',
+})
+_UIA_AVAILABLE = False
+_UIA_MODULE = None
+try:
+    import uiautomation as _UIA_MODULE
+    _UIA_AVAILABLE = True
+except ImportError:
+    pass
 
 # ── 进程池 ──
 _process_pool: dict[str, dict] = {}
 _pool_lock = Lock()
+_gui_execution_lock = RLock()  # RLock 允许同线程重入，防止 UIA 路由死锁
+_pipe_session = threading.local()
 PROCESS_KEEPALIVE_TIMEOUT = 300  # 5 分钟无使用则自动清理
 
 # ── Windows API ──
@@ -234,20 +259,55 @@ def _read_pipe_message_poll(
         _SetNPHState(handle, ctypes.byref(restore_mode), None, None)
 
 
+def _send_command_on_handle(handle: int, cmd: str) -> str:
+    if not _write_pipe(handle, cmd.encode('utf-8')):
+        return f'ERR:write_failed (err={_GetLastError()})'
+
+    raw = _read_pipe_message(handle)
+    if raw is None:
+        return f'ERR:read_failed (err={_GetLastError()})'
+    return raw.decode('utf-8', errors='replace').strip()
+
+
+def _begin_pipe_session() -> None:
+    _end_pipe_session()
+    _pipe_session.enabled = True
+    _pipe_session.handle = None
+
+
+def _end_pipe_session() -> None:
+    handle = getattr(_pipe_session, 'handle', None)
+    if handle:
+        _CloseHandle(handle)
+    _pipe_session.enabled = False
+    _pipe_session.handle = None
+
+
+def _is_pipe_io_error(response: str) -> bool:
+    return response.startswith('ERR:write_failed') or response.startswith('ERR:read_failed')
+
+
 def _send_command_to_pipe(pipe_name: str, cmd: str, timeout_ms: int = PIPE_TIMEOUT_MS) -> str:
     """发送命令到指定的 Delphi 命名管道。"""
+    if getattr(_pipe_session, 'enabled', False):
+        session_handle = getattr(_pipe_session, 'handle', None)
+        if not session_handle:
+            session_handle = _open_pipe(pipe_name, timeout_ms)
+            if session_handle is None:
+                return f'ERR:pipe_unavailable (err={_GetLastError()})'
+            _pipe_session.handle = session_handle
+        response = _send_command_on_handle(session_handle, cmd)
+        if _is_pipe_io_error(response):
+            _CloseHandle(session_handle)
+            _pipe_session.handle = None
+        return response
+
     handle = _open_pipe(pipe_name, timeout_ms)
     if handle is None:
         return f'ERR:pipe_unavailable (err={_GetLastError()})'
 
     try:
-        if not _write_pipe(handle, cmd.encode('utf-8')):
-            return f'ERR:write_failed (err={_GetLastError()})'
-
-        raw = _read_pipe_message(handle)
-        if raw is None:
-            return f'ERR:read_failed (err={_GetLastError()})'
-        return raw.decode('utf-8', errors='replace').strip()
+        return _send_command_on_handle(handle, cmd)
     finally:
         _CloseHandle(handle)
 
@@ -310,7 +370,160 @@ def _extract_actual(cmd: str, resp: dict) -> str:
         return 'ok' if resp.get('status') in ('ok', 'ack') else 'err'
     if cmd in ('click', 'type', 'key', 'goto', 'rcall', 'rset'):
         return resp.get('status', '')
+    if cmd in ('uiascan', 'scan'):
+        return str(resp.get('data', ''))
+    if cmd in ('uiaget', 'get', 'uiaclick', 'uiagoto', 'uiawait', 'uiaset', 'set'):
+        return resp.get('data', '')
     return str(resp.get('data', ''))
+
+
+def _walk_uia_tree(control, depth: int = 0, max_depth: int = 8) -> dict:
+    """递归遍历 UIA 控件树并转成可序列化 dict。
+
+    Args:
+        control: uiautomation.Control 实例。
+        depth: 当前递归深度。
+        max_depth: 最大深度，防止无限递归。
+
+    Returns:
+        控件信息 dict: { name, class_name, automation_id,
+                         control_type, rect, children: [...] }
+    """
+    if control is None or depth > max_depth:
+        return {}
+    try:
+        info = {
+            'name': control.Name or '',
+            'class_name': control.ClassName or '',
+            'automation_id': control.AutomationId or '',
+            'control_type': str(control.ControlType),
+            'rect': [
+                control.BoundingRectangle.left,
+                control.BoundingRectangle.top,
+                control.BoundingRectangle.right,
+                control.BoundingRectangle.bottom,
+            ] if control.BoundingRectangle and not control.BoundingRectangle.isempty() else [],
+        }
+        if depth < max_depth:
+            children = []
+            try:
+                child = control.GetFirstChildControl()
+                while child:
+                    children.append(_walk_uia_tree(child, depth + 1, max_depth))
+                    child = child.GetNextSiblingControl()
+            except Exception:
+                pass
+            info['children'] = children
+        return info
+    except Exception:
+        return {}
+
+
+def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
+    """在 Python 端直接执行 UIA 自动化步骤。
+
+    Args:
+        step: 原始脚本步骤 dict。
+        req: 已构造的请求 dict（含 cmd / target 等字段）。
+        req_id: 请求标识符。
+
+    Returns:
+        (resp_json, step_ok, ok) 三元组，兼容现有管道返回格式。
+    """
+    cmd = req.get('cmd', '')
+    target = req.get('target', '')
+    resp = {'reqId': req_id, 'status': 'ok', 'data': ''}
+
+    if not _UIA_AVAILABLE:
+        resp['status'] = 'err'
+        resp['data'] = 'uiautomation 未安装，请 pip install daofy-for-delphi[uia]'
+        return resp, False, False
+
+    # UIA 需要 COM 初始化为 STA
+    ctypes.windll.ole32.CoInitializeEx(None, 2)  # 2 = COINIT_APARTMENTTHREADED
+    try:
+        if cmd in ('uiagoto', 'goto'):
+            # 按 Name 查找控件并聚焦
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                ctrl.SetFocus()
+                resp['data'] = f'found: {ctrl.Name} ({ctrl.ClassName})'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uiaclick', 'click'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                ctrl.Click()
+                resp['data'] = f'clicked: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uiaget', 'get'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                resp['data'] = ctrl.Name
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uiaset', 'set'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                value = str(step.get('value', step.get('text', '')))
+                value_pattern = None
+                get_value_pattern = getattr(ctrl, 'GetValuePattern', None)
+                if callable(get_value_pattern):
+                    value_pattern = get_value_pattern()
+                if value_pattern is not None and hasattr(value_pattern, 'SetValue'):
+                    value_pattern.SetValue(value)
+                elif hasattr(ctrl, 'SetValue'):
+                    ctrl.SetValue(value)
+                elif hasattr(ctrl, 'SendKeys'):
+                    ctrl.SetFocus()
+                    ctrl.SendKeys('{Ctrl}a')
+                    ctrl.SendKeys(value)
+                elif hasattr(_UIA_MODULE, 'SendKeys'):
+                    ctrl.SetFocus()
+                    _UIA_MODULE.SendKeys('{Ctrl}a')
+                    _UIA_MODULE.SendKeys(value)
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'UIA_SET_UNSUPPORTED: {target}'
+                if resp['status'] == 'ok':
+                    resp['data'] = f'set: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uiascan', 'scan'):
+            root = _UIA_MODULE.GetRootControl()
+            target_ctrl = root
+            if target:
+                t = _UIA_MODULE.Control(Name=target, searchDepth=8)
+                if t.Exists():
+                    target_ctrl = t
+            tree = _walk_uia_tree(target_ctrl, max_depth=6)
+            resp['data'] = json.dumps(tree, ensure_ascii=False, default=str)
+            resp['state'] = tree
+        elif cmd in ('uiawait', 'wait'):
+            timeout_ms = int(step.get('timeout', 5000))
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                resp['data'] = f'found: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'TIMEOUT: {target}'
+        else:
+            resp['status'] = 'err'
+            resp['data'] = f'unknown UIA command: {cmd}'
+
+    except Exception as exc:
+        resp['status'] = 'err'
+        resp['data'] = f'UIA_ERROR: {exc}'
+    finally:
+        ctypes.windll.ole32.CoUninitialize()
+
+    ok = resp.get('status') in ('ok', 'ack')
+    return resp, ok, ok
 
 
 def _decode_response(resp_raw: str) -> dict:
@@ -321,29 +534,1034 @@ def _decode_response(resp_raw: str) -> dict:
         return {'status': 'err', 'data': resp_raw}
 
 
+def _callgraph_step_error(step: dict, req: dict, message: str) -> dict:
+    """Build a local validation error result for callgraph steps."""
+    return {
+        'step': step,
+        'command': json.dumps(req, ensure_ascii=False),
+        'response': {'status': 'err', 'data': message},
+        'status': 'error',
+    }
+
+
+def _callgraph_local_result(step: dict, req: dict, state: dict) -> dict:
+    """Build a successful local callgraph-usecase result."""
+    return {
+        'step': step,
+        'command': json.dumps(req, ensure_ascii=False),
+        'response': {
+            'status': 'ok',
+            'data': json.dumps(state, ensure_ascii=False),
+            'state': state,
+        },
+        'status': 'ok',
+    }
+
+
+def _coerce_callgraph_targets(value: object) -> list[str]:
+    """Normalize a callgraph target/functions value to a non-empty name list."""
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        raw_items: list[object] = value.split(',')
+    elif isinstance(value, (list, tuple, set)):
+        raw_items = list(value)
+    else:
+        raw_items = [value]
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        result.append(name)
+        seen.add(name)
+    return result
+
+
+def _dedupe_callgraph_targets(values: list[str]) -> list[str]:
+    """Remove duplicate callgraph targets while preserving order."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        target = str(value).strip()
+        if not target or target in seen:
+            continue
+        result.append(target)
+        seen.add(target)
+    return result
+
+
+def _coerce_callgraph_locations(step: dict) -> list[dict]:
+    """Normalize file/line inputs for callgraph impact analysis."""
+    locations: list[dict] = []
+    raw_locations = step.get('locations')
+
+    if isinstance(raw_locations, dict):
+        locations.append(raw_locations)
+    elif isinstance(raw_locations, (list, tuple)):
+        locations.extend(item for item in raw_locations if isinstance(item, dict))
+
+    file_value = step.get('file_path', step.get('file'))
+    line_value = step.get('line')
+    if file_value is not None or line_value is not None:
+        locations.append({
+            'file': file_value,
+            'line': line_value,
+        })
+
+    return locations
+
+
+def _callgraph_project_root(step: dict, script_metadata: dict) -> Path | None:
+    """Return an optional root used to resolve relative callgraph source paths."""
+    raw_root = (
+        step.get('base_dir') or
+        step.get('project_path') or
+        script_metadata.get('base_dir') or
+        script_metadata.get('project_path')
+    )
+    if not raw_root:
+        return None
+
+    root = Path(str(raw_root)).expanduser()
+    if root.suffix.lower() in ('.dproj', '.dpr', '.dpk', '.pas'):
+        root = root.parent
+    return root.resolve()
+
+
+_PASCAL_ROUTINE_RE = re.compile(
+    r'^\s*(?:(?:class|static)\s+)?'
+    r'(?:procedure|function|constructor|destructor|operator)\s+'
+    r'([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\b',
+    re.IGNORECASE,
+)
+
+
+def _strip_pascal_line_comment(line: str) -> str:
+    """Remove the common // suffix comment form for lightweight scanning."""
+    return line.split('//', 1)[0]
+
+
+def _find_pascal_routine_at_line(source: str, line_number: int) -> str | None:
+    """Find the Pascal routine containing a 1-based source line."""
+    lines = source.splitlines()
+    if line_number < 1 or line_number > len(lines):
+        return None
+
+    has_implementation = any(
+        re.match(r'^\s*implementation\b', line, re.IGNORECASE)
+        for line in lines
+    )
+    in_implementation = not has_implementation
+    routines: list[tuple[int, str]] = []
+
+    for index, raw_line in enumerate(lines, start=1):
+        line = _strip_pascal_line_comment(raw_line).strip()
+        if re.match(r'^implementation\b', line, re.IGNORECASE):
+            in_implementation = True
+            continue
+        if not in_implementation:
+            continue
+        match = _PASCAL_ROUTINE_RE.match(line)
+        if match:
+            routines.append((index, match.group(1)))
+
+    if not routines:
+        return None
+
+    for index, (start_line, name) in enumerate(routines):
+        end_line = routines[index + 1][0] - 1 if index + 1 < len(routines) else len(lines)
+        if start_line <= line_number <= end_line:
+            return name
+    return None
+
+
+def _resolve_callgraph_location(location: dict, root: Path | None) -> tuple[str | None, dict | None]:
+    """Resolve one file/line location to a Pascal routine name."""
+    file_value = location.get('file_path', location.get('file', location.get('path')))
+    line_value = location.get('line')
+    unresolved_base = {
+        'file': str(file_value or ''),
+        'line': line_value,
+    }
+
+    if not file_value or line_value is None:
+        unresolved_base['error_code'] = 'missing_file_or_line'
+        return None, unresolved_base
+
+    try:
+        line_number = int(line_value)
+    except (TypeError, ValueError):
+        unresolved_base['error_code'] = 'invalid_line'
+        return None, unresolved_base
+    if line_number < 1:
+        unresolved_base['error_code'] = 'invalid_line'
+        return None, unresolved_base
+
+    path = Path(str(file_value)).expanduser()
+    if not path.is_absolute():
+        if root is None:
+            unresolved_base['error_code'] = 'relative_path_requires_base_dir'
+            return None, unresolved_base
+        path = root / path
+    try:
+        resolved_path = path.resolve()
+    except OSError:
+        unresolved_base['error_code'] = 'path_resolve_failed'
+        return None, unresolved_base
+
+    if root is not None:
+        try:
+            resolved_path.relative_to(root)
+        except ValueError:
+            unresolved_base['error_code'] = 'path_outside_project'
+            return None, unresolved_base
+
+    unresolved_base['file'] = str(resolved_path)
+    try:
+        try:
+            source = resolved_path.read_text(encoding='utf-8-sig')
+        except UnicodeDecodeError:
+            source = resolved_path.read_text(encoding='mbcs')
+    except OSError as exc:
+        unresolved_base['error_code'] = 'source_read_failed'
+        unresolved_base['message'] = str(exc)
+        return None, unresolved_base
+
+    routine = _find_pascal_routine_at_line(source, line_number)
+    if not routine:
+        unresolved_base['error_code'] = 'no_function_at_line'
+        return None, unresolved_base
+
+    return routine, None
+
+
+def _resolve_callgraph_impact_targets(
+    step: dict,
+    script_metadata: dict,
+) -> tuple[list[str], list[dict], list[dict]]:
+    """Resolve explicit functions and optional file/line locations."""
+    targets = _coerce_callgraph_targets(step.get('functions', step.get('targets', step.get('target'))))
+    unresolved: list[dict] = []
+    resolved_locations: list[dict] = []
+    root = _callgraph_project_root(step, script_metadata)
+
+    for location in _coerce_callgraph_locations(step):
+        routine, unresolved_location = _resolve_callgraph_location(location, root)
+        if unresolved_location is not None:
+            unresolved.append(unresolved_location)
+            continue
+        if routine:
+            targets.append(routine)
+            resolved_locations.append({
+                'file': str(location.get('file_path', location.get('file', location.get('path', '')))),
+                'line': location.get('line'),
+                'function': routine,
+            })
+
+    return _dedupe_callgraph_targets(targets), unresolved, resolved_locations
+
+
+def _coerce_callgraph_bool(value: object) -> bool:
+    """Parse common JSON/script boolean spellings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+    return False
+
+
+def _callgraph_edge_limit_from_step(step: dict) -> int | None:
+    """Validate optional callgraph edge_limit from a script step."""
+    if 'edge_limit' not in step:
+        return None
+    try:
+        edge_limit = int(step.get('edge_limit'))
+    except (TypeError, ValueError):
+        raise ValueError('callgraph edge_limit must be an integer') from None
+    if edge_limit < 1 or edge_limit > 5000:
+        raise ValueError('callgraph edge_limit must be between 1 and 5000')
+    return edge_limit
+
+
+def _callgraph_max_paths_from_step(step: dict) -> int | None:
+    """Validate optional callgraph_path max_paths from a script step."""
+    if 'max_paths' not in step:
+        return None
+    try:
+        max_paths = int(step.get('max_paths'))
+    except (TypeError, ValueError):
+        raise ValueError('callgraph_path max_paths must be an integer') from None
+    if max_paths < 1 or max_paths > 100:
+        raise ValueError('callgraph_path max_paths must be between 1 and 100')
+    return max_paths
+
+
+def _first_present_dict_value(*sources: dict, keys: tuple[str, ...], default: object = None) -> object:
+    """Return the first present value from source dictionaries."""
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            if key in source:
+                return source[key]
+    return default
+
+
+def _callgraph_diagnostics_enabled(step: dict, script_metadata: dict) -> bool:
+    """Return whether failure callgraph diagnostics should run for this step."""
+    diagnostics = script_metadata.get('diagnostics', {})
+    diag_value = None
+    if isinstance(diagnostics, dict) and 'callgraph' in diagnostics:
+        diag_value = diagnostics.get('callgraph')
+    value = _first_present_dict_value(
+        step,
+        script_metadata,
+        keys=('callgraph_diagnostics', 'callgraph_diag', 'diagnose_callgraph'),
+        default=diag_value,
+    )
+    return _coerce_callgraph_bool(value)
+
+
+def _callgraph_failure_target(step: dict, script_metadata: dict) -> str:
+    """Resolve the function target used for failure callgraph diagnostics."""
+    target_map = script_metadata.get('callgraph_targets', {})
+    target = str(step.get('target', step.get('name', ''))).strip()
+    if isinstance(target_map, dict) and target in target_map:
+        mapped = str(target_map.get(target) or '').strip()
+        if mapped:
+            return mapped
+
+    for key in ('callgraph_target', 'handler', 'entry', 'function', 'routine'):
+        value = str(step.get(key, '') or '').strip()
+        if value:
+            return value
+
+    if step.get('target_is_handler') and target:
+        return target
+    return ''
+
+
+def _callgraph_option_source(script_metadata: dict) -> dict:
+    """Return script-level callgraph diagnostic options."""
+    options = script_metadata.get('callgraph_options', {})
+    return options if isinstance(options, dict) else {}
+
+
+def _callgraph_prefixed_option(
+    step: dict,
+    script_metadata: dict,
+    key: str,
+    default: object = None,
+) -> object:
+    """Read a callgraph diagnostic option from step, callgraph_options, or metadata."""
+    options = _callgraph_option_source(script_metadata)
+    return _first_present_dict_value(
+        step,
+        options,
+        script_metadata,
+        keys=(f'callgraph_{key}', key),
+        default=default,
+    )
+
+
+def _callgraph_prefix_text(value: object) -> str:
+    """Normalize include/exclude prefix option to pipe protocol text."""
+    if value is None:
+        return ''
+    if isinstance(value, (list, tuple)):
+        return ','.join(str(item) for item in value)
+    return str(value)
+
+
+def _callgraph_int_option(value: object, default: int, min_value: int, max_value: int) -> int:
+    """Parse and clamp an integer diagnostic option."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(max_value, parsed))
+
+
+def _callgraph_failure_request(
+    step: dict,
+    script_metadata: dict,
+    req_id: str,
+) -> tuple[dict | None, dict | None]:
+    """Build a bounded callgraph request for a failed step."""
+    target = _callgraph_failure_target(step, script_metadata)
+    if not target:
+        return None, {
+            'enabled': True,
+            'status': 'skipped',
+            'warnings': ['callgraph_target_unresolved'],
+        }
+
+    direction = str(_callgraph_prefixed_option(
+        step, script_metadata, 'direction', 'callers')).strip().lower()
+    aliases = {
+        'caller': 'callers',
+        'callers': 'callers',
+        'up': 'callers',
+        'in': 'callers',
+        'callee': 'callees',
+        'callees': 'callees',
+        'down': 'callees',
+        'out': 'callees',
+    }
+    warnings = []
+    if direction not in aliases:
+        warnings.append('invalid_direction_defaulted_to_callers')
+        direction = 'callers'
+    else:
+        direction = aliases[direction]
+
+    max_depth = _callgraph_int_option(
+        _callgraph_prefixed_option(step, script_metadata, 'max_depth', 2), 2, 0, 20)
+    edge_limit = _callgraph_int_option(
+        _callgraph_prefixed_option(step, script_metadata, 'edge_limit', 20), 20, 1, 5000)
+
+    req = {
+        'reqId': f'{req_id}_callgraph_diag',
+        'cmd': 'callgraph',
+        'target': target,
+        'direction': direction,
+        'max_depth': str(max_depth),
+        'edge_limit': str(edge_limit),
+    }
+
+    project_only = _callgraph_prefixed_option(step, script_metadata, 'project_only', None)
+    if project_only is not None:
+        req['project_only'] = '1' if _coerce_callgraph_bool(project_only) else '0'
+
+    exclude_text = _callgraph_prefix_text(
+        _callgraph_prefixed_option(step, script_metadata, 'exclude_prefixes', None))
+    if exclude_text:
+        req['exclude_prefixes'] = exclude_text
+
+    include_text = _callgraph_prefix_text(
+        _callgraph_prefixed_option(step, script_metadata, 'include_prefixes', None))
+    if include_text:
+        req['include_prefixes'] = include_text
+
+    pre_diag = {
+        'enabled': True,
+        'target': target,
+        'direction': direction,
+        'max_depth': max_depth,
+        'edge_limit': edge_limit,
+    }
+    if warnings:
+        pre_diag['warnings'] = warnings
+    return req, pre_diag
+
+
+def _callgraph_diagnostic_from_response(req: dict, resp_json: dict, pre_diag: dict) -> dict:
+    """Build the report diagnostic payload from a callgraph response."""
+    state = {}
+    if resp_json.get('data'):
+        try:
+            parsed = json.loads(resp_json['data'])
+            if isinstance(parsed, dict):
+                state = parsed
+        except (json.JSONDecodeError, TypeError):
+            state = {}
+
+    edges = _callgraph_edges(state)
+    diag = dict(pre_diag)
+    diag.update({
+        'status': resp_json.get('status', 'err'),
+        'edge_count': int(state.get('edge_count', len(edges))) if isinstance(state, dict) else len(edges),
+        'returned_count': int(state.get('returned_count', len(edges))) if isinstance(state, dict) else len(edges),
+        'truncated': bool(state.get('truncated', False)) if isinstance(state, dict) else False,
+        'calls': edges,
+    })
+    if isinstance(state, dict):
+        for key in ('error_code', 'map_warning'):
+            if state.get(key):
+                diag[key] = state.get(key)
+    if resp_json.get('status') not in ('ok', 'ack'):
+        diag.setdefault('warnings', []).append('callgraph_query_failed')
+    if req:
+        diag['request'] = {
+            'target': req.get('target', ''),
+            'direction': req.get('direction', ''),
+            'max_depth': req.get('max_depth', ''),
+            'edge_limit': req.get('edge_limit', ''),
+        }
+    return diag
+
+
+def _attach_failure_callgraph_diagnostic(
+    result: dict,
+    req_id: str,
+    script_metadata: dict,
+) -> None:
+    """Optionally attach callgraph diagnostics to a failed step result."""
+    if not _callgraph_diagnostics_enabled(result.get('step', {}), script_metadata):
+        return
+
+    req, pre_diag = _callgraph_failure_request(result.get('step', {}), script_metadata, req_id)
+    if req is None:
+        result.setdefault('diagnostics', {})['callgraph'] = pre_diag or {}
+        return
+
+    try:
+        raw = _send_command(json.dumps(req, ensure_ascii=False))
+        resp_json = _decode_response(raw)
+    except Exception as exc:
+        result.setdefault('diagnostics', {})['callgraph'] = {
+            **(pre_diag or {}),
+            'status': 'err',
+            'warnings': ['callgraph_query_exception'],
+            'error': f'{exc.__class__.__name__}: {exc}',
+        }
+        return
+
+    result.setdefault('diagnostics', {})['callgraph'] = _callgraph_diagnostic_from_response(
+        req, resp_json, pre_diag or {})
+
+
+def _resolve_snapshot_child_path(
+    snapshots_dir: str,
+    path_value: object,
+    field_name: str,
+    *,
+    allow_absolute: bool = False,
+    add_json_suffix: bool = False,
+) -> tuple[Path, Path]:
+    """Resolve a snapshot file path and ensure it stays under snapshots_dir."""
+    name = str(path_value or '').strip()
+    if not name:
+        raise ValueError(f'{field_name} cannot be empty')
+
+    path = Path(name)
+    if add_json_suffix and path.suffix.lower() != '.json':
+        path = path.with_suffix('.json')
+
+    root = Path(snapshots_dir).resolve()
+    is_absolute = path.is_absolute() or bool(path.drive) or bool(path.root)
+    if is_absolute:
+        if not allow_absolute:
+            raise ValueError(f'{field_name} must be a relative path under snapshots_dir')
+        resolved = path.resolve()
+    else:
+        if any(part == '..' for part in path.parts):
+            raise ValueError(f'{field_name} must stay under snapshots_dir')
+        resolved = (root / path).resolve()
+
+    try:
+        relative = resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f'{field_name} must stay under snapshots_dir') from exc
+    if resolved == root:
+        raise ValueError(f'{field_name} must name a file under snapshots_dir')
+    return resolved, relative
+
+
+def _read_callgraph_baseline(value: object, snapshots_dir: str) -> object:
+    """Load a callgraph baseline from a dict/list, JSON string, or JSON file."""
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        raise TypeError('callgraph_diff baseline must be an object, JSON string, or file path')
+
+    raw = value.strip()
+    if not raw:
+        raise ValueError('callgraph_diff baseline cannot be empty')
+
+    if raw[0] in ('{', '['):
+        return json.loads(raw)
+
+    path, _ = _resolve_snapshot_child_path(
+        snapshots_dir,
+        raw,
+        'callgraph_diff baseline_path',
+        allow_absolute=True,
+    )
+    return json.loads(path.read_text(encoding='utf-8-sig'))
+
+
+def _callgraph_edges(state: object) -> list[dict]:
+    """Return the calls array from a callgraph state-like value."""
+    if isinstance(state, dict):
+        calls = state.get('calls', [])
+    elif isinstance(state, list):
+        calls = state
+    else:
+        calls = []
+    return [edge for edge in calls if isinstance(edge, dict)]
+
+
+def _callgraph_edge_key(edge: dict, compare_by: str = 'name') -> tuple[str, ...]:
+    """Stable key for comparing callgraph edges."""
+    if compare_by == 'name':
+        return (
+            str(edge.get('from', '')),
+            str(edge.get('to', '')),
+        )
+    if compare_by == 'addr':
+        return (
+            str(edge.get('from_addr', '')),
+            str(edge.get('to_addr', '')),
+        )
+    if compare_by != 'full':
+        raise ValueError('callgraph_diff compare_by must be name, addr, or full')
+    return (
+        str(edge.get('from', '')),
+        str(edge.get('to', '')),
+        str(edge.get('from_addr', '')),
+        str(edge.get('to_addr', '')),
+        str(edge.get('call_addr', '')),
+        str(edge.get('call_file', '')),
+        str(edge.get('call_line', '')),
+    )
+
+
+def _diff_callgraphs(baseline: object, current: dict, compare_by: str = 'name') -> dict:
+    """Compare two callgraph states and return added/removed/unchanged edges."""
+    compare_mode = compare_by.strip().lower()
+    if compare_mode not in ('name', 'addr', 'full'):
+        raise ValueError('callgraph_diff compare_by must be name, addr, or full')
+
+    baseline_edges = _callgraph_edges(baseline)
+    current_edges = _callgraph_edges(current)
+    baseline_map = {_callgraph_edge_key(edge, compare_mode): edge for edge in baseline_edges}
+    current_map = {_callgraph_edge_key(edge, compare_mode): edge for edge in current_edges}
+
+    added_keys = [key for key in current_map if key not in baseline_map]
+    removed_keys = [key for key in baseline_map if key not in current_map]
+    unchanged_keys = [key for key in current_map if key in baseline_map]
+
+    return {
+        'baseline_root': baseline.get('root', '') if isinstance(baseline, dict) else '',
+        'current_root': current.get('root', '') if isinstance(current, dict) else '',
+        'direction': current.get('direction', '') if isinstance(current, dict) else '',
+        'compare_by': compare_mode,
+        'added': [current_map[key] for key in added_keys],
+        'removed': [baseline_map[key] for key in removed_keys],
+        'unchanged': [current_map[key] for key in unchanged_keys],
+        'counts': {
+            'added': len(added_keys),
+            'removed': len(removed_keys),
+            'unchanged': len(unchanged_keys),
+            'baseline': len(baseline_edges),
+            'current': len(current_edges),
+        },
+    }
+
+
+def _build_callgraph_impact_state(
+    target_states: list[dict],
+    initial_unresolved: list[dict] | None = None,
+    resolved_locations: list[dict] | None = None,
+) -> dict:
+    """Build an impact summary from caller-direction callgraph states."""
+    entries: list[dict] = []
+    unresolved: list[dict] = list(initial_unresolved or [])
+    warnings: list[dict] = []
+    seen_entries: set[tuple[str, str]] = set()
+    targets: list[dict] = []
+
+    for item in target_states:
+        target = str(item.get('target', ''))
+        response_status = str(item.get('status', 'err'))
+        state = item.get('state') if isinstance(item.get('state'), dict) else {}
+        edges = _callgraph_edges(state)
+        error_code = str(state.get('error_code') or '')
+
+        target_summary = {
+            'target': target,
+            'status': response_status,
+            'edge_count': len(edges),
+        }
+        if error_code:
+            target_summary['error_code'] = error_code
+        targets.append(target_summary)
+
+        if error_code and error_code not in ('no_edges', 'filtered_empty'):
+            unresolved.append({
+                'target': target,
+                'error_code': error_code,
+                'status': response_status,
+            })
+        elif response_status not in ('ok', 'ack'):
+            unresolved.append({
+                'target': target,
+                'error_code': 'callgraph_response_error',
+                'status': response_status,
+            })
+        elif error_code in ('no_edges', 'filtered_empty'):
+            warnings.append({
+                'target': target,
+                'warning': error_code,
+            })
+
+        for edge in edges:
+            caller_name = str(edge.get('from') or '').strip()
+            if not caller_name:
+                continue
+            key = (caller_name, target)
+            if key in seen_entries:
+                continue
+            seen_entries.add(key)
+            entries.append({
+                'name': caller_name,
+                'target': target,
+                'via': edge,
+            })
+
+    return {
+        'mode': 'impact',
+        'targets': targets,
+        'entries': entries,
+        'entry_count': len(entries),
+        'unresolved': unresolved,
+        'warnings': warnings,
+        'resolved_locations': list(resolved_locations or []),
+    }
+
+
+def _load_callgraph_json_value(value: object, snapshots_dir: str) -> object:
+    """Load JSON-like callgraph input from an object, JSON text, or file path."""
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        raise TypeError('value must be an object, JSON string, or file path')
+
+    raw = value.strip()
+    if not raw:
+        raise ValueError('value cannot be empty')
+    if raw[0] in ('{', '['):
+        return json.loads(raw)
+
+    path, _ = _resolve_snapshot_child_path(
+        snapshots_dir,
+        raw,
+        'callgraph input path',
+        allow_absolute=True,
+    )
+    return json.loads(path.read_text(encoding='utf-8-sig'))
+
+
+def _callgraph_state_from_step(step: dict, snapshots_dir: str, *keys: str) -> object:
+    """Read the first present callgraph state-like field from a step."""
+    for key in keys:
+        if key in step:
+            return _load_callgraph_json_value(step[key], snapshots_dir)
+    raise ValueError('missing callgraph state input')
+
+
+def _save_callgraph_snapshot(snapshots_dir: str, save_as: object, payload: object) -> dict:
+    """Save a callgraph payload under snapshots_dir with path traversal protection."""
+    path, rel = _resolve_snapshot_child_path(
+        snapshots_dir,
+        save_as,
+        'save_as',
+        add_json_suffix=True,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+    return {
+        'path': rel.as_posix(),
+        'edge_count': len(_callgraph_edges(payload)),
+    }
+
+
+def _coerce_callgraph_test_specs(value: object) -> list[dict]:
+    """Normalize test script metadata for callgraph-based test selection."""
+    if value is None:
+        return []
+    raw_items = value if isinstance(value, list) else [value]
+    result: list[dict] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            result.append({'name': item, 'handler': item})
+        elif isinstance(item, dict):
+            name = str(item.get('name') or item.get('script') or item.get('path') or '').strip()
+            handler = str(item.get('handler') or item.get('entry') or '').strip()
+            tags = item.get('tags', [])
+            if isinstance(tags, str):
+                tags = [part.strip() for part in tags.split(',') if part.strip()]
+            result.append({
+                **item,
+                'name': name or handler,
+                'handler': handler,
+                'tags': [str(tag) for tag in tags] if isinstance(tags, list) else [],
+            })
+    return [item for item in result if item.get('name') or item.get('handler')]
+
+
+def _impact_name_sets(impact: object) -> tuple[set[str], set[str]]:
+    """Return impacted caller and target names from an impact state."""
+    callers: set[str] = set()
+    targets: set[str] = set()
+    if not isinstance(impact, dict):
+        return callers, targets
+    for entry in impact.get('entries', []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get('name'):
+            callers.add(str(entry['name']))
+        if entry.get('target'):
+            targets.add(str(entry['target']))
+    for target in impact.get('targets', []):
+        if isinstance(target, dict) and target.get('target'):
+            targets.add(str(target['target']))
+    return callers, targets
+
+
+def _build_callgraph_test_selection(impact: object, tests: object) -> dict:
+    """Select regression tests whose handler metadata intersects impact entries."""
+    callers, targets = _impact_name_sets(impact)
+    specs = _coerce_callgraph_test_specs(tests)
+    selected: list[dict] = []
+    selected_handlers: set[str] = set()
+
+    for spec in specs:
+        handler = str(spec.get('handler') or '')
+        tags = set(str(tag) for tag in spec.get('tags', []))
+        reasons: list[str] = []
+        if handler and handler in callers:
+            reasons.append('handler_is_impacted_entry')
+        if handler and handler in targets:
+            reasons.append('handler_is_changed_target')
+        matched_tags = sorted(tags.intersection(targets))
+        if matched_tags:
+            reasons.append('tag_matches_changed_target')
+        if not reasons:
+            continue
+        selected_handlers.add(handler)
+        selected.append({
+            'name': spec.get('name', handler),
+            'handler': handler,
+            'path': spec.get('path', spec.get('script', '')),
+            'reasons': reasons,
+            'matched_tags': matched_tags,
+        })
+
+    covered_targets = sorted(target for target in targets if target in selected_handlers)
+    return {
+        'mode': 'test_selection',
+        'selected': selected,
+        'selected_count': len(selected),
+        'uncovered_targets': sorted(targets.difference(selected_handlers)),
+        'covered_targets': covered_targets,
+        'warnings': [] if selected else ['no_tests_selected'],
+    }
+
+
+def _match_prefix(value: str, prefixes: object) -> bool:
+    """Return whether value starts with any configured prefix."""
+    if prefixes is None:
+        return True
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    if not isinstance(prefixes, list):
+        return False
+    return any(value.startswith(str(prefix)) for prefix in prefixes)
+
+
+def _build_callgraph_boundary_check(graph: object, rules: object) -> dict:
+    """Check callgraph edges against prefix-based architecture boundary rules."""
+    raw_rules = rules if isinstance(rules, list) else [rules] if isinstance(rules, dict) else []
+    violations: list[dict] = []
+    for edge in _callgraph_edges(graph):
+        caller = str(edge.get('from', ''))
+        callee = str(edge.get('to', ''))
+        for rule in raw_rules:
+            if not isinstance(rule, dict):
+                continue
+            policy = str(rule.get('policy', rule.get('action', 'forbid'))).lower()
+            if policy not in ('forbid', 'deny'):
+                continue
+            if not _match_prefix(caller, rule.get('from_prefix', rule.get('from_prefixes'))):
+                continue
+            if not _match_prefix(callee, rule.get('to_prefix', rule.get('to_prefixes'))):
+                continue
+            violations.append({
+                'rule': rule.get('name', ''),
+                'from': caller,
+                'to': callee,
+                'edge': edge,
+            })
+
+    return {
+        'mode': 'boundary_check',
+        'violations': violations,
+        'violation_count': len(violations),
+        'edge_count': len(_callgraph_edges(graph)),
+    }
+
+
+def _build_callgraph_refactor_check(impact: object, targets: list[str]) -> dict:
+    """Build a conservative refactor safety summary from impact data."""
+    callers, impacted_targets = _impact_name_sets(impact)
+    target_set = set(targets) or impacted_targets
+    impacted = [
+        entry for entry in (impact.get('entries', []) if isinstance(impact, dict) else [])
+        if isinstance(entry, dict) and (not target_set or str(entry.get('target', '')) in target_set)
+    ]
+    return {
+        'mode': 'refactor_check',
+        'targets': sorted(target_set),
+        'impacted_callers': sorted(callers),
+        'impacted_entries': impacted,
+        'risk': 'medium' if impacted else 'low',
+        'warnings': [
+            'static_direct_call_graph_only',
+            'virtual_methods_events_rtti_may_be_missing',
+        ],
+    }
+
+
+def _build_callgraph_orphan_candidates(symbols: object, graph: object, entries: object) -> dict:
+    """Find no-caller candidates from a supplied symbol list and callgraph edges."""
+    symbol_names = _coerce_callgraph_targets(symbols)
+    entry_names = set(_coerce_callgraph_targets(entries))
+    called = {str(edge.get('to', '')) for edge in _callgraph_edges(graph) if edge.get('to')}
+    candidates = []
+    for symbol in symbol_names:
+        if symbol in entry_names or symbol in called:
+            continue
+        candidates.append({
+            'name': symbol,
+            'confidence': 'low',
+            'reason': 'not_seen_as_callee_in_direct_callgraph',
+        })
+    return {
+        'mode': 'orphan_candidates',
+        'candidates': candidates,
+        'candidate_count': len(candidates),
+        'warnings': [
+            'candidate_only_not_safe_to_delete',
+            'events_exports_virtual_methods_and_rtti_may_be_missing',
+        ],
+    }
+
+
+def _coerce_exception_stack(value: object) -> list[str]:
+    """Normalize exception stack input to a list of frame/function strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value)
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def _build_callgraph_exception_explanation(stack: object, graph: object, impact: object) -> dict:
+    """Explain an exception stack with optional callgraph context."""
+    frames = _coerce_exception_stack(stack)
+    top = frames[0] if frames else ''
+    edges = _callgraph_edges(graph)
+    upstream = [
+        edge for edge in edges
+        if top and str(edge.get('to', '')).endswith(top)
+    ]
+    downstream = [
+        edge for edge in edges
+        if top and str(edge.get('from', '')).endswith(top)
+    ]
+    impact_entries = []
+    if isinstance(impact, dict):
+        impact_entries = [
+            entry for entry in impact.get('entries', [])
+            if isinstance(entry, dict) and top and str(entry.get('target', '')).endswith(top)
+        ]
+    return {
+        'mode': 'exception_explanation',
+        'top_frame': top,
+        'frames': frames,
+        'upstream': upstream,
+        'downstream': downstream,
+        'impact_entries': impact_entries,
+        'warnings': [] if top else ['empty_stack'],
+    }
+
+
+def _target_with_client_xy(target: str, step: dict) -> str:
+    """Encode click x/y fields into the inline-unit target@x,y convention."""
+    x_val = step.get('x')
+    y_val = step.get('y')
+    if x_val is None or y_val is None or '@' in target:
+        return target
+    return f'{target}@{x_val},{y_val}' if target else f'@{x_val},{y_val}'
+
+
+def _parse_gui_script(script) -> tuple[list[dict], dict]:
+    """Parse a GUI automation script and return steps plus optional metadata."""
+    if isinstance(script, str):
+        script = script.strip()
+        if os.path.isfile(script):
+            with open(script, 'r', encoding='utf-8-sig') as f:
+                parsed = json.load(f)
+        else:
+            parsed = json.loads(script)
+    else:
+        parsed = script
+
+    if isinstance(parsed, list):
+        _validate_gui_steps(parsed)
+        return parsed, {}
+
+    if isinstance(parsed, dict):
+        steps = parsed.get('steps')
+        if not isinstance(steps, list):
+            raise ValueError("script object must contain a list field named 'steps'")
+        metadata = {k: v for k, v in parsed.items() if k != 'steps'}
+        _validate_gui_steps(steps)
+        return steps, metadata
+
+    raise TypeError('script 须为文件路径、JSON 字符串、步骤列表或包含 steps 的对象')
+
+
+def _validate_gui_steps(steps: list) -> None:
+    """Validate automation step shape before any command is sent to the app."""
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            raise ValueError(f"step {index} must be an object")
+        if 'assert' in step:
+            raise ValueError(
+                f"step {index} uses unsupported field 'assert'; "
+                "use 'assert_expr' for executable Python checks"
+            )
+
+
+def _get_assert_expression(step: dict) -> tuple[str, str]:
+    """Return the executable assertion expression and its source field."""
+    if step.get('assert_expr'):
+        return str(step.get('assert_expr', '')).strip(), 'assert_expr'
+    return '', ''
+
+
 def _check_assert(step: dict, resp: dict) -> dict:
     """评估 Python 断言表达式。
 
-    step['assert'] 为 Python 表达式字符串，可用变量:
+    step['assert_expr'] 为 Python 表达式字符串，可用变量:
       actual  — 从步骤响应中提取的实际值
       re      — re 模块
       len/str/int/float/bool — 内置函数
 
-    注意: 此接口由前端 LLM 调用，LLM 已可执行任意 Python 脚本，
-    因此 eval 不做沙箱限制，仅需清晰说明可用的命名空间。
+    自然语言说明写入 expected/note，只把可执行 Python 表达式写入 assert_expr。
 
     示例:
-      {"assert": "actual == True"}
-      {"assert": "0 < float(actual) < 100"}
-      {"assert": "'保存' in actual"}
-      {"assert": "'保存' in actual and '成功' in actual"}
-      {"assert": "len(actual) > 0"}
-      {"assert": "re.search(r'\\\\d+', actual)"}
+      {"assert_expr": "actual == True"}
+      {"assert_expr": "0 < float(actual) < 100"}
+      {"assert_expr": "'保存' in actual"}
+      {"assert_expr": "'保存' in actual and '成功' in actual"}
+      {"assert_expr": "len(actual) > 0"}
+      {"assert_expr": "re.search(r'\\\\d+', actual)"}
 
     Returns:
-        {passed: bool, expression: str, actual: str, message?: str}
+        {passed: bool, expression: str, source: str, actual: str, message?: str}
     """
-    expression = step.get('assert', '')
+    expression, source = _get_assert_expression(step)
     if not expression:
         return {'passed': True}
 
@@ -351,6 +1569,7 @@ def _check_assert(step: dict, resp: dict) -> dict:
     actual = _extract_actual(cmd, resp)
 
     try:
+        ast.parse(expression, mode='eval')
         loc = {
             'actual': actual,
             're': __import__('re'),
@@ -358,10 +1577,23 @@ def _check_assert(step: dict, resp: dict) -> dict:
             'float': float, 'bool': bool,
         }
         result = bool(eval(expression, {"__builtins__": {}}, loc))
+    except SyntaxError as e:
+        return {
+            'passed': False,
+            'expression': expression,
+            'source': source,
+            'actual': str(actual)[:200],
+            'message': (
+                "assert expression syntax error: {}. "
+                "Use assert_expr for Python expressions and put natural-language "
+                "checks in expected/note."
+            ).format(e.msg),
+        }
     except Exception as e:
         return {
             'passed': False,
             'expression': expression,
+            'source': source,
             'actual': str(actual)[:200],
             'message': f"assert error: {e}",
         }
@@ -369,6 +1601,7 @@ def _check_assert(step: dict, resp: dict) -> dict:
     out = {
         'passed': result,
         'expression': expression,
+        'source': source,
         'actual': str(actual)[:200],
     }
     if not result:
@@ -376,31 +1609,166 @@ def _check_assert(step: dict, resp: dict) -> dict:
     return out
 
 
-def _make_report(results: list, total_steps: int) -> dict:
+def _failure_signal(result: dict) -> str:
+    """Classify a failed automation result for report consumers."""
+    if result.get('status') == 'skipped':
+        return 'skipped'
+    response = result.get('response', {})
+    data = str(response.get('data', ''))
+    ast_result = result.get('assert_result', {})
+    if result.get('status') == 'assert_fail':
+        return 'assertion_failed'
+    if result.get('capture_response', {}).get('status') == 'err':
+        return 'capture_failed'
+    if data.startswith('TIMEOUT:'):
+        return 'timeout'
+    if data.startswith('NF:'):
+        return 'target_not_found'
+    if data.startswith('NP:'):
+        return 'property_not_found'
+    if data.startswith('UIA_ERROR:'):
+        return 'uia_error'
+    if data.startswith('uiautomation 未安装'):
+        return 'uia_not_available'
+    if ast_result.get('message'):
+        return 'assertion_failed'
+    if response.get('status') == 'err':
+        return 'command_error'
+    return 'unknown'
+
+
+def _failure_recommendations(signal: str) -> list[str]:
+    """Return concise recovery actions for an automation failure signal."""
+    table = {
+        'assertion_failed': [
+            'Compare actual with expected and decide whether the app logic or the test expectation is wrong.',
+            'Switch to coding mode if the expected behavior comes from source analysis.',
+        ],
+        'capture_failed': [
+            'Check whether the window is visible and the snapshots_dir is writable.',
+            'Run capture as a standalone step after listwnd/formsum.',
+        ],
+        'timeout': [
+            'Capture current UI state, inspect msgscan/formsum, then increase waitfor only if the app is still progressing.',
+            'Switch to coding mode if the expected state never appears.',
+        ],
+        'target_not_found': [
+            'Run formsum or dumpstate to refresh control names before retrying.',
+            'Switch to coding mode if the control was renamed or not created.',
+        ],
+        'property_not_found': [
+            'Run rinspect on the target and update the property path.',
+            'Prefer rget on a simple published property.',
+        ],
+        'command_error': [
+            'Check response.data, capture the current state, and retry with the lowest-risk command.',
+            'Switch to coding mode for deterministic application errors.',
+        ],
+        'uia_error': [
+            'Run uiascan to verify the UIA tree is accessible.',
+            'Use inspect.exe to confirm the control has a matching Name property.',
+        ],
+        'uia_not_available': [
+            'Install uiautomation: pip install daofy-for-delphi[uia].',
+            'Restart the MCP server to reload the import.',
+        ],
+        'skipped': [
+            'Fix the preceding failure before executing this dependent step.',
+        ],
+    }
+    return table.get(signal, ['Capture current state, inspect response.data, and stop before continuing dependent steps.'])
+
+
+def _make_failure(index: int, result: dict) -> dict:
+    """Build a structured failure entry for a report."""
+    step = result.get('step', {})
+    response = result.get('response', {})
+    ast_result = result.get('assert_result', {})
+    signal = _failure_signal(result)
+    failure = {
+        'index': index,
+        'phase': step.get('phase', ''),
+        'cmd': step.get('cmd', ''),
+        'target': step.get('target', step.get('name', '')),
+        'signal': signal,
+        'response_status': response.get('status', ''),
+        'response_data': str(response.get('data', ''))[:500],
+        'expected': step.get('expected', ''),
+        'note': step.get('note', ''),
+        'recommendations': _failure_recommendations(signal),
+    }
+    if ast_result.get('message'):
+        failure['assertion'] = {
+            'expression': ast_result.get('expression', ''),
+            'source': ast_result.get('source', ''),
+            'actual': ast_result.get('actual', ''),
+            'message': ast_result.get('message', ''),
+        }
+    if result.get('capture'):
+        failure['evidence'] = {
+            'capture': result.get('capture'),
+            'capture_response': result.get('capture_response'),
+        }
+    if result.get('diagnostics'):
+        failure['diagnostics'] = result.get('diagnostics')
+    return failure
+
+
+def _make_report(results: list, total_steps: int, duration_seconds: float) -> dict:
     """从执行结果生成结构化测试报告。"""
-    import time
     passed = 0
     failed = 0
+    skipped = 0
     steps_detail = []
-    start = time.time()
+    failures = []
 
-    for r in results:
+    for index, r in enumerate(results):
         step = r.get('step', {})
         ast = r.get('assert_result', {})
-        status = 'pass' if (r['status'] == 'ok' and ast.get('passed', True)) else 'fail'
+        raw_status = r.get('status', '')
+        if raw_status == 'skipped':
+            status = 'skip'
+        else:
+            status = 'pass' if (raw_status == 'ok' and ast.get('passed', True)) else 'fail'
         passed += status == 'pass'
         failed += status == 'fail'
-        d = {'cmd': step.get('cmd', ''), 'target': step.get('target', ''), 'status': status}
+        skipped += status == 'skip'
+        d = {
+            'index': index,
+            'phase': step.get('phase', ''),
+            'cmd': step.get('cmd', ''),
+            'target': step.get('target', step.get('name', '')),
+            'status': status,
+            'response_status': r.get('response', {}).get('status', ''),
+        }
         if ast.get('message'):
             d['error'] = ast['message']
+        elif r.get('response', {}).get('status') == 'err':
+            d['error'] = str(r.get('response', {}).get('data', ''))[:200]
         steps_detail.append(d)
+        if status == 'fail':
+            failures.append(_make_failure(index, r))
 
-    dur = time.time() - start
+    solution_status = 'requires_fix' if failures else 'passed'
     return {
-        'total': total_steps, 'passed': passed, 'failed': failed,
-        'duration_seconds': round(dur, 2),
+        'total': total_steps, 'passed': passed, 'failed': failed, 'skipped': skipped,
+        'executed': passed + failed,
+        'duration_seconds': round(duration_seconds, 2),
         'success_rate': f'{passed/total_steps*100:.0f}%' if total_steps > 0 else '0%',
+        'executed_success_rate': f'{passed/(passed + failed)*100:.0f}%' if (passed + failed) > 0 else '0%',
         'steps': steps_detail,
+        'first_failure': failures[0] if failures else None,
+        'failures': failures,
+        'solution': {
+            'status': solution_status,
+            'next_mode': 'coding' if failures else 'automation_complete',
+            'summary': (
+                'Fix the first deterministic failure, then rerun this script from the failing step.'
+                if failures else
+                'No fix required. Save the passing script and report.'
+            ),
+            'recommendations': failures[0]['recommendations'] if failures else [],
+        },
     }
 
 
@@ -645,12 +2013,18 @@ def execute_automation(action: str, **kwargs) -> dict:
     Returns:
         dict 执行结果（各 action 返回格式一致）。
     """
+    requested_action = action
     if action == 'gui':
-        return execute_script(**kwargs)
+        result = execute_script(**kwargs)
     elif action == 'console':
-        return console_execute(**kwargs)
+        result = console_execute(**kwargs)
     else:
-        return {'status': 'error', 'message': f'未知 action: {action}'}
+        return {'status': 'error', 'message': f'未知 action: {action}', 'requested_action': requested_action}
+
+    if isinstance(result, dict):
+        result.setdefault('requested_action', requested_action)
+        result.setdefault('resolved_action', action)
+    return result
 
 
 def console_execute(
@@ -806,7 +2180,25 @@ def console_execute(
 def execute_script(app_path: str, script,
                    snapshots_dir: str = '',
                    wait_for_pipe: float = 10.0,
-                   keep_alive: bool = False) -> dict:
+                   keep_alive: bool = False,
+                   stop_on_failure: bool = True) -> dict:
+    """Execute one GUI automation script through the fixed Daofy pipe."""
+    with _gui_execution_lock:
+        return _execute_script_unlocked(
+            app_path,
+            script,
+            snapshots_dir=snapshots_dir,
+            wait_for_pipe=wait_for_pipe,
+            keep_alive=keep_alive,
+            stop_on_failure=stop_on_failure,
+        )
+
+
+def _execute_script_unlocked(app_path: str, script,
+                             snapshots_dir: str = '',
+                             wait_for_pipe: float = 10.0,
+                             keep_alive: bool = False,
+                             stop_on_failure: bool = True) -> dict:
     """执行自动化脚本。
 
     支持进程池复用：同一个 app_path 在 keep_alive=True 后保持运行，
@@ -818,6 +2210,7 @@ def execute_script(app_path: str, script,
         snapshots_dir: 截图输出目录（默认 docs/copyright/snapshots）
         wait_for_pipe: 等待管道超时秒数
         keep_alive: True=执行完后保持进程运行供后续复用
+        stop_on_failure: True=首个失败后停止执行后续依赖步骤，并在报告中标为 skipped
 
     Returns:
         dict 执行结果，包含 process_reused 指示是否复用了已有进程。
@@ -825,20 +2218,19 @@ def execute_script(app_path: str, script,
     if not snapshots_dir:
         snapshots_dir = str(DEFAULT_SNAPSHOTS_DIR)
     Path(snapshots_dir).mkdir(parents=True, exist_ok=True)
+    run_started = time.monotonic()
 
     # 解析脚本
-    if isinstance(script, str):
-        script = script.strip()
-        steps = json.loads(open(script, 'r', encoding='utf-8')) if os.path.isfile(script) else json.loads(script)
-    elif isinstance(script, list):
-        steps = script
-    else:
-        return {'status': 'error', 'message': 'script 须为文件路径、JSON 字符串或列表'}
+    try:
+        steps, script_metadata = _parse_gui_script(script)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as e:
+        return {'status': 'error', 'message': f'脚本解析失败: {e}'}
 
     # 获取或创建进程
     is_new, err = _ensure_process(app_path, wait_for_pipe)
     if err:
         return {'status': 'error', 'message': err}
+    _begin_pipe_session()
 
     # 新建进程时需要设置截图目录
     if is_new:
@@ -852,6 +2244,16 @@ def execute_script(app_path: str, script,
     req_index = 0
 
     for step in steps:
+        if not success and stop_on_failure:
+            results.append({
+                'step': step,
+                'command': '',
+                'response': {'status': 'skip', 'data': 'skipped_after_failure'},
+                'status': 'skipped',
+                'skip_reason': 'previous_step_failed',
+            })
+            continue
+
         cmd = step.get('cmd', '')
         target = step.get('target', step.get('name', ''))
         ms = step.get('ms', step.get('wait', 500))
@@ -859,13 +2261,243 @@ def execute_script(app_path: str, script,
         req_id = f'step_{req_index}'
         req_index += 1
         _is_formsum = False
+        callgraph_diff_baseline = None
+        callgraph_diff_compare_by = 'name'
 
         # 构造 JSON 请求
         req = {'reqId': req_id, 'cmd': cmd}
         if target:
             req['target'] = target
 
-        if cmd == 'type':
+        # ── UIA 命令路由：Python 端直接执行，不走 Delphi 管道 ──
+        _via = step.get('via', '')
+        if cmd in _UIA_PREFIX_CMDS or (_via == 'uia' and cmd in _UIA_CAPABLE_CMDS):
+            # Already inside _gui_execution_lock (acquired in execute_gui_script),
+            # so no inner lock needed — prevents RLock deadlock.
+            resp_json, step_ok, ok = _execute_uia_step(step, req, req_id)
+            results.append({
+                'step': step, 'command': json.dumps(req, ensure_ascii=False),
+                'response': resp_json,
+                'status': 'ok' if step_ok else 'error',
+                'uia_resolved': True,
+            })
+            assert_result = _check_assert(step, resp_json)
+            results[-1]['assert_result'] = assert_result
+            if not assert_result.get('passed', True):
+                results[-1]['status'] = 'assert_fail'
+                step_ok = False
+            if not step_ok:
+                _attach_failure_callgraph_diagnostic(results[-1], req_id, script_metadata)
+            if not step_ok:
+                success = False
+            time.sleep(0.3)
+            continue
+
+        if cmd in (
+            'callgraph_select_tests',
+            'callgraph_failure_diag',
+            'callgraph_boundary_check',
+            'callgraph_refactor_check',
+            'callgraph_orphan_candidates',
+            'callgraph_explain_exception',
+        ):
+            try:
+                if cmd == 'callgraph_select_tests':
+                    impact_state = _callgraph_state_from_step(step, snapshots_dir, 'impact', 'state')
+                    tests_value = step.get('tests', step.get('test_map'))
+                    local_state = _build_callgraph_test_selection(impact_state, tests_value)
+                elif cmd == 'callgraph_failure_diag':
+                    graph_state = _callgraph_state_from_step(step, snapshots_dir, 'callgraph', 'graph', 'state')
+                    failure = step.get('failure', step.get('failed_step', {}))
+                    edges = _callgraph_edges(graph_state)
+                    local_state = {
+                        'mode': 'failure_diagnostic',
+                        'failure': failure,
+                        'diagnostics': {
+                            'callgraph': {
+                                'root': graph_state.get('root', '') if isinstance(graph_state, dict) else '',
+                                'direction': graph_state.get('direction', '') if isinstance(graph_state, dict) else '',
+                                'edge_count': len(edges),
+                                'truncated': bool(graph_state.get('truncated', False)) if isinstance(graph_state, dict) else False,
+                                'error_code': graph_state.get('error_code', '') if isinstance(graph_state, dict) else '',
+                            }
+                        },
+                        'warnings': [] if edges else ['callgraph_empty_or_unavailable'],
+                    }
+                elif cmd == 'callgraph_boundary_check':
+                    graph_state = _callgraph_state_from_step(step, snapshots_dir, 'callgraph', 'graph', 'state')
+                    local_state = _build_callgraph_boundary_check(graph_state, step.get('rules', []))
+                elif cmd == 'callgraph_refactor_check':
+                    impact_state = _callgraph_state_from_step(step, snapshots_dir, 'impact', 'state')
+                    targets = _coerce_callgraph_targets(step.get('targets', step.get('functions', step.get('target'))))
+                    local_state = _build_callgraph_refactor_check(impact_state, targets)
+                elif cmd == 'callgraph_orphan_candidates':
+                    graph_state = step.get('callgraph', step.get('graph', step.get('state', {'calls': []})))
+                    if isinstance(graph_state, (str, dict, list)):
+                        graph_state = _load_callgraph_json_value(graph_state, snapshots_dir)
+                    local_state = _build_callgraph_orphan_candidates(
+                        step.get('symbols', []),
+                        graph_state,
+                        step.get('entries', step.get('entry_points', [])),
+                    )
+                else:
+                    graph_state = step.get('callgraph', step.get('graph', {'calls': []}))
+                    impact_state = step.get('impact', {})
+                    if isinstance(graph_state, (str, dict, list)):
+                        graph_state = _load_callgraph_json_value(graph_state, snapshots_dir)
+                    if isinstance(impact_state, (str, dict, list)):
+                        impact_state = _load_callgraph_json_value(impact_state, snapshots_dir)
+                    local_state = _build_callgraph_exception_explanation(
+                        step.get('stack', step.get('exception_stack')),
+                        graph_state,
+                        impact_state,
+                    )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                results.append(_callgraph_step_error(step, req, f'{cmd} input invalid: {exc}'))
+                success = False
+                time.sleep(0.3)
+                continue
+
+            results.append(_callgraph_local_result(step, req, local_state))
+            assert_result = _check_assert(step, results[-1]['response'])
+            results[-1]['assert_result'] = assert_result
+            if not assert_result.get('passed', True):
+                results[-1]['status'] = 'assert_fail'
+                success = False
+            time.sleep(0.3)
+            continue
+
+        if cmd == 'callgraph_impact':
+            targets, input_unresolved, resolved_locations = _resolve_callgraph_impact_targets(
+                step, script_metadata
+            )
+            req['targets'] = targets
+            req['direction'] = 'callers'
+            if input_unresolved:
+                req['unresolved'] = input_unresolved
+            if resolved_locations:
+                req['resolved_locations'] = resolved_locations
+
+            if not targets and not input_unresolved:
+                results.append(_callgraph_step_error(
+                    step, req, 'callgraph_impact requires functions, targets, target, file/line, or locations'))
+                success = False
+                time.sleep(0.3)
+                continue
+
+            max_depth_val = step.get('max_depth', step.get('depth', 5))
+            try:
+                max_depth_int = int(max_depth_val)
+            except (TypeError, ValueError):
+                results.append(_callgraph_step_error(
+                    step, req, 'callgraph max_depth must be an integer'))
+                success = False
+                time.sleep(0.3)
+                continue
+            if max_depth_int < 0 or max_depth_int > 20:
+                results.append(_callgraph_step_error(
+                    step, req, 'callgraph max_depth must be between 0 and 20'))
+                success = False
+                time.sleep(0.3)
+                continue
+            req['max_depth'] = str(max_depth_int)
+
+            try:
+                edge_limit_int = _callgraph_edge_limit_from_step(step)
+            except ValueError as exc:
+                results.append(_callgraph_step_error(step, req, str(exc)))
+                success = False
+                time.sleep(0.3)
+                continue
+            if edge_limit_int is not None:
+                req['edge_limit'] = str(edge_limit_int)
+
+            common_options: dict[str, str] = {
+                'direction': 'callers',
+                'max_depth': str(max_depth_int),
+            }
+            if edge_limit_int is not None:
+                common_options['edge_limit'] = str(edge_limit_int)
+            if 'project_only' in step:
+                project_only_value = '1' if _coerce_callgraph_bool(step.get('project_only')) else '0'
+                req['project_only'] = project_only_value
+                common_options['project_only'] = project_only_value
+
+            exclude_val = step.get('exclude_prefixes', step.get('exclude'))
+            if exclude_val is not None:
+                if isinstance(exclude_val, (list, tuple)):
+                    exclude_text = ','.join(str(item) for item in exclude_val)
+                else:
+                    exclude_text = str(exclude_val)
+                req['exclude_prefixes'] = exclude_text
+                common_options['exclude_prefixes'] = exclude_text
+
+            include_val = step.get('include_prefixes', step.get('include'))
+            if include_val is not None:
+                if isinstance(include_val, (list, tuple)):
+                    include_text = ','.join(str(item) for item in include_val)
+                else:
+                    include_text = str(include_val)
+                req['include_prefixes'] = include_text
+                common_options['include_prefixes'] = include_text
+
+            subcommands = []
+            target_states = []
+            for target_index, impact_target in enumerate(targets):
+                subreq = {
+                    'reqId': f'{req_id}_{target_index}',
+                    'cmd': 'callgraph',
+                    'target': impact_target,
+                    **common_options,
+                }
+                subcommands.append(subreq)
+                sub_raw = _send_command(json.dumps(subreq, ensure_ascii=False))
+                sub_json = _decode_response(sub_raw)
+                parsed_state = {}
+                if sub_json.get('data'):
+                    try:
+                        parsed = json.loads(sub_json['data'])
+                        if isinstance(parsed, dict):
+                            parsed_state = parsed
+                            sub_json['state'] = parsed_state
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                target_states.append({
+                    'target': impact_target,
+                    'status': sub_json.get('status', 'err'),
+                    'state': parsed_state,
+                    'response': sub_json,
+                })
+
+            impact_state = _build_callgraph_impact_state(
+                target_states,
+                initial_unresolved=input_unresolved,
+                resolved_locations=resolved_locations,
+            )
+            resp_json = {
+                'status': 'ok',
+                'data': json.dumps(impact_state, ensure_ascii=False),
+                'state': impact_state,
+            }
+            results.append({
+                'step': step,
+                'command': json.dumps(req, ensure_ascii=False),
+                'subcommands': subcommands,
+                'response': resp_json,
+                'status': 'ok',
+            })
+
+            assert_result = _check_assert(step, resp_json)
+            results[-1]['assert_result'] = assert_result
+            if not assert_result.get('passed', True):
+                results[-1]['status'] = 'assert_fail'
+                success = False
+            time.sleep(0.3)
+            continue
+
+        if cmd == 'click':
+            req['target'] = _target_with_client_xy(target, step)
+        elif cmd == 'type':
             req['value'] = step.get('text', step.get('value', target))
         elif cmd == 'wait':
             req['ms'] = str(ms)
@@ -900,11 +2532,17 @@ def execute_script(app_path: str, script,
                 req['target'] = step.get('name', '')
         elif cmd == 'dumpstate':
             req['target'] = step.get('name', target)
+            props_val = step.get('props', '')
+            if props_val:
+                req['props'] = props_val
         elif cmd == 'formsum':
             # formsum = dumpstate → Python 端格式化摘要
             cmd = 'dumpstate'  # 实际发往 Delphi 的是 dumpstate
             req['cmd'] = 'dumpstate'
             req['target'] = step.get('name', target)
+            props_val = step.get('props', '')
+            if props_val:
+                req['props'] = props_val
             _is_formsum = True
         elif cmd == 'waitfor':
             req['prop'] = step.get('prop', '')
@@ -932,6 +2570,145 @@ def execute_script(app_path: str, script,
             path_val = step.get('path', '')
             if path_val:
                 req['path'] = path_val
+        elif cmd in ('callgraph', 'callgraph_diff', 'callgraph_path'):
+            if cmd == 'callgraph_path':
+                source_value = step.get('source', step.get('from'))
+                target_value = step.get('target', step.get('to', target))
+                if source_value is None or str(source_value).strip() == '':
+                    results.append(_callgraph_step_error(
+                        step, req, 'callgraph_path requires source and target'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                if target_value is None or str(target_value).strip() == '':
+                    results.append(_callgraph_step_error(
+                        step, req, 'callgraph_path requires source and target'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                req['source'] = str(source_value)
+                req['target'] = str(target_value)
+
+                try:
+                    max_paths_int = _callgraph_max_paths_from_step(step)
+                except ValueError as exc:
+                    results.append(_callgraph_step_error(step, req, str(exc)))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                if max_paths_int is not None:
+                    req['max_paths'] = str(max_paths_int)
+
+            if cmd == 'callgraph_diff':
+                req['cmd'] = 'callgraph'
+                compare_by = str(step.get('compare_by', 'name')).strip().lower()
+                if compare_by not in ('name', 'addr', 'full'):
+                    results.append(_callgraph_step_error(
+                        step, req, 'callgraph_diff compare_by must be name, addr, or full'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                callgraph_diff_compare_by = compare_by
+                req['compare_by'] = compare_by
+
+                baseline_value = step.get('baseline', step.get('baseline_path'))
+                if baseline_value is None:
+                    results.append(_callgraph_step_error(
+                        step, req, 'callgraph_diff requires baseline or baseline_path'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                try:
+                    callgraph_diff_baseline = _read_callgraph_baseline(baseline_value, snapshots_dir)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    results.append(_callgraph_step_error(
+                        step, req, f'callgraph_diff baseline invalid: {exc}'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+
+            direction_val = step.get('direction', step.get('mode'))
+            if direction_val is not None:
+                direction = str(direction_val).strip().lower()
+                aliases = {
+                    'callee': 'callees',
+                    'callees': 'callees',
+                    'down': 'callees',
+                    'out': 'callees',
+                    'caller': 'callers',
+                    'callers': 'callers',
+                    'up': 'callers',
+                    'in': 'callers',
+                }
+                if direction not in aliases:
+                    results.append(_callgraph_step_error(
+                        step, req, 'callgraph direction must be callers or callees'))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                req['direction'] = aliases[direction]
+
+            if 'project_only' in step:
+                req['project_only'] = '1' if _coerce_callgraph_bool(step.get('project_only')) else '0'
+
+            exclude_val = step.get('exclude_prefixes', step.get('exclude'))
+            if exclude_val is not None:
+                if isinstance(exclude_val, (list, tuple)):
+                    req['exclude_prefixes'] = ','.join(str(item) for item in exclude_val)
+                else:
+                    req['exclude_prefixes'] = str(exclude_val)
+
+            include_val = step.get('include_prefixes', step.get('include'))
+            if include_val is not None:
+                if isinstance(include_val, (list, tuple)):
+                    req['include_prefixes'] = ','.join(str(item) for item in include_val)
+                else:
+                    req['include_prefixes'] = str(include_val)
+
+            max_depth_val = step.get('max_depth', step.get('depth'))
+            if max_depth_val is not None:
+                try:
+                    max_depth_int = int(max_depth_val)
+                except (TypeError, ValueError):
+                    resp_json = {
+                        'status': 'err',
+                        'data': 'callgraph max_depth must be an integer',
+                    }
+                    results.append({
+                        'step': step,
+                        'command': json.dumps(req, ensure_ascii=False),
+                        'response': resp_json,
+                        'status': 'error',
+                    })
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                if max_depth_int < 0 or max_depth_int > 20:
+                    resp_json = {
+                        'status': 'err',
+                        'data': 'callgraph max_depth must be between 0 and 20',
+                    }
+                    results.append({
+                        'step': step,
+                        'command': json.dumps(req, ensure_ascii=False),
+                        'response': resp_json,
+                        'status': 'error',
+                    })
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                req['max_depth'] = str(max_depth_int)
+
+            if cmd != 'callgraph_path':
+                try:
+                    edge_limit_int = _callgraph_edge_limit_from_step(step)
+                except ValueError as exc:
+                    results.append(_callgraph_step_error(step, req, str(exc)))
+                    success = False
+                    time.sleep(0.3)
+                    continue
+                if edge_limit_int is not None:
+                    req['edge_limit'] = str(edge_limit_int)
 
         cmd_str = json.dumps(req, ensure_ascii=False)
         resp_raw = _send_command(cmd_str)
@@ -942,36 +2719,88 @@ def execute_script(app_path: str, script,
 
         ok = resp_status in ('ok', 'ack')
 
-        # ── 异步命令 ack 后轮询 peekresult 取回真实结果 ──
+        # ── 异步命令 ack 后短轮询 peekresult ──
         if cmd in _ASYNC_CMDS and resp_status == 'ack':
-            _peek_timeout = 6.0
+            await_result = bool(step.get('await_result', False))
+            _peek_timeout = float(step.get(
+                'async_timeout',
+                _ASYNC_PEEK_TIMEOUT if await_result or cmd not in _UI_ASYNC_CMDS
+                else _UI_ASYNC_PEEK_TIMEOUT,
+            ))
             _poll_interval = 0.05
-            _deadline = time.time() + _peek_timeout
+            _deadline = time.time() + max(_peek_timeout, 0.0)
             while time.time() < _deadline:
                 _peek_raw = _send_command(json.dumps(
                     {"reqId": f"{req_id}_peek", "cmd": "peekresult", "target": req_id},
                     ensure_ascii=False))
                 _peek_json = _decode_response(_peek_raw)
                 if _peek_json.get('status') == 'ok':
-                    # 取到真实结果，替换 ack
                     resp_json = _peek_json
                     resp_status = 'ok'
                     ok = True
                     break
-                # 仅当 status=err + data 以 NR: 开头时继续轮询（尚未就绪）
-                if not (_peek_json.get('status') == 'err' and
+                if (_peek_json.get('status') == 'err' and
                         str(_peek_json.get('data', '')).startswith('NR:')):
-                    break  # 非预期响应，停止
-                time.sleep(_poll_interval)
+                    time.sleep(_poll_interval)
+                    continue
+                resp_json = _peek_json
+                resp_status = _peek_json.get('status', 'err')
+                ok = resp_status in ('ok', 'ack')
+                break
 
         capture_resp_json = None
         capture_ok = True
 
-        # dumpstate/dlgscan 返回的就是 JSON 字符串，存到响应的 state 字段
-        if cmd in ('dumpstate', 'dlgscan') and ok and resp_json.get('data'):
+        # dumpstate/dlgscan 返回 JSON 字符串；msgscan 检测到弹窗时把弹窗 JSON 写入 _formstate.json。
+        if cmd in ('callgraph', 'callgraph_diff', 'callgraph_path') and resp_json.get('data'):
             try:
                 parsed = json.loads(resp_json['data'])
                 resp_json['state'] = parsed
+                if cmd == 'callgraph_diff' and ok and isinstance(parsed, dict):
+                    diff_state = _diff_callgraphs(
+                        callgraph_diff_baseline,
+                        parsed,
+                        callgraph_diff_compare_by,
+                    )
+                    if step.get('save_as') is not None:
+                        try:
+                            diff_state['saved'] = _save_callgraph_snapshot(
+                                snapshots_dir,
+                                step.get('save_as'),
+                                parsed,
+                            )
+                        except (OSError, ValueError) as exc:
+                            diff_state.setdefault('warnings', []).append(
+                                f'save_as_failed: {exc}'
+                            )
+                    resp_json['callgraph'] = parsed
+                    resp_json['state'] = diff_state
+                    resp_json['data'] = json.dumps(diff_state, ensure_ascii=False)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        elif cmd in ('dumpstate', 'dlgscan') and ok and resp_json.get('data'):
+            try:
+                parsed = json.loads(resp_json['data'])
+                resp_json['state'] = parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        elif cmd == 'msgscan' and ok and resp_json.get('data') == 'OK':
+            state_path = Path(snapshots_dir) / '_formstate.json'
+            try:
+                resp_json['state'] = json.loads(
+                    state_path.read_text(encoding='utf-8-sig')
+                )
+            except (OSError, json.JSONDecodeError):
+                pass
+        # uiascan 返回 JSON 控件树 → 自动反序列化到 state 字段
+        elif cmd in ('uiascan', 'scan') and ok and resp_json.get('data'):
+            try:
+                raw = resp_json['data']
+                if isinstance(raw, str):
+                    parsed = json.loads(raw)
+                    resp_json['state'] = parsed
+                elif isinstance(raw, dict):
+                    resp_json['state'] = raw
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -1007,12 +2836,16 @@ def execute_script(app_path: str, script,
             step_ok = False
 
         if not step_ok:
+            _attach_failure_callgraph_diagnostic(results[-1], req_id, script_metadata)
             success = False
         time.sleep(0.3)
 
     # keep_alive=False：确保进程退出（脚本没 exit 则自动发送）
     if not keep_alive:
-        has_exit = any(s.get('cmd') == 'exit' for s in steps)
+        has_exit = any(
+            r.get('step', {}).get('cmd') == 'exit' and r.get('status') != 'skipped'
+            for r in results
+        )
         if not has_exit:
             _send_command(json.dumps(
                 {"reqId": "auto_exit", "cmd": "exit"}, ensure_ascii=False))
@@ -1022,13 +2855,17 @@ def execute_script(app_path: str, script,
         with _pool_lock:
             _process_pool.pop(app_path, None)
 
+    _end_pipe_session()
+
     return {
         'status': 'ok' if success else 'partial',
         'app_path': app_path,
         'snapshots_dir': snapshots_dir,
         'steps_total': len(steps),
+        'script_metadata': script_metadata,
         'process_reused': not is_new,
         'process_alive': app_path in _process_pool,
         'results': results,
-        'report': _make_report(results, len(steps)),
+        'resolved_action': 'gui',
+        'report': _make_report(results, len(steps), time.monotonic() - run_started),
     }

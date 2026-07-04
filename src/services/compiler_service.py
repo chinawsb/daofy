@@ -1023,6 +1023,9 @@ class CompilerService:
                 paths = ";".join(request.options.unit_search_paths)
                 args.append(f"/p:DCC_UnitSearchPath={paths}")
             
+            # 生成 Detailed 级别 .map 文件（供 StackTrace callgraph 解析）
+            args.append("/p:DCC_MapFile=3")
+            
             # Delphi >= XE5 (registry version >= 12.0) 时自动启用响应文件编译
             # 解决 MSBuild 命令行过长 (>32K) 导致编译失败的问题
             try:

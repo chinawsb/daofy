@@ -14,6 +14,7 @@ from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import resolve_target_platform_from_dproj
 from ..utils.file_backup import detect_encoding
+from ..services.delphi_edit_guard import record_authorized_write
 import json
 import os
 import shlex
@@ -38,8 +39,8 @@ _compiler_service: Optional[CompilerService] = None
 
 
 def _verify_tools_dir() -> Path:
-    """返回验证工具单元所在目录 (tools/daudit/)"""
-    return Path(__file__).parent.parent.parent / "tools" / "daudit"
+    """返回验证工具单元所在目录 (tools/stacktrace/)。"""
+    return Path(__file__).parent.parent.parent / "tools" / "stacktrace"
 
 
 def _compute_verify_exe_path(dproj_path: str, target_platform: str,
@@ -81,7 +82,7 @@ def _inject_verify_units(dproj_path: str) -> str:
 
     注入内容 (.dproj):
        1. DCCReference 添加 StackTrace.pas
-       2. DCC_UnitSearchPath 添加 tools/daudit/ 路径
+       2. DCC_UnitSearchPath 添加 tools/stacktrace/ 路径
        3. DCC_MapFile=3 (detailed) — 生成完整 .map 文件供堆栈解析
 
     注入内容 (.dpr):
@@ -154,6 +155,11 @@ def _inject_verify_units(dproj_path: str) -> str:
         # 已存在则设为 3
         content = re.sub(dcc_map_pattern, '<DCC_MapFile>3</DCC_MapFile>', content)
 
+    record_authorized_write(
+        dproj,
+        tool="delphi_project",
+        operation="run_verify_inject_dproj",
+    )
     dproj.write_text(content, encoding="utf-8-sig")
     logger.info("已注入 StackTrace 单元到 .dproj: %s", dproj_path)
 
@@ -215,6 +221,11 @@ def _inject_dpr_stacktrace(dproj: Path, backs: dict):
     for j, line in enumerate(inject_lines):
         lines.insert(begin_idx + 1 + j, line)
 
+    record_authorized_write(
+        dpr_path,
+        tool="delphi_project",
+        operation="run_verify_inject_dpr",
+    )
     dpr_path.write_text('\n'.join(lines), encoding='utf-8-sig')
     logger.info("已注入 TStackTraceManager 初始化到 .dpr: %s", dpr_path)
 
@@ -227,6 +238,11 @@ def _restore_dproj(dproj_path: str, backup_path: str):
 
     dproj_bak = Path(backup_path)
     if dproj_bak.exists():
+        record_authorized_write(
+            dproj_path,
+            tool="delphi_project",
+            operation="run_verify_restore_dproj",
+        )
         shutil.copy2(str(dproj_bak), str(dproj_path))
         dproj_bak.unlink()
         logger.info("已恢复原始 .dproj")
@@ -235,6 +251,11 @@ def _restore_dproj(dproj_path: str, backup_path: str):
 
     dpr_bak = backs['.dpr']
     if dpr_bak.exists():
+        record_authorized_write(
+            dproj.with_suffix('.dpr'),
+            tool="delphi_project",
+            operation="run_verify_restore_dpr",
+        )
         shutil.copy2(str(dpr_bak), str(dproj.with_suffix('.dpr')))
         dpr_bak.unlink()
         logger.info("已恢复原始 .dpr")

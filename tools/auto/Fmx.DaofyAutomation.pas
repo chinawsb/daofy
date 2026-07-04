@@ -83,8 +83,10 @@ type
 
 procedure AutoStart(const APipeName: string);
 begin
-  if TAutomationProcessorBase.Current = nil then
+  if TAutomationProcessorBase.Current = nil then begin
     TAutomationProcessor.Create(APipeName);
+    TAutomationProcessorBase.Current.Start;
+  end;
   TAutomationProcessorBase.Current.SetSSDir('');
 end;
 
@@ -506,17 +508,25 @@ end;
 { --- 控件操作 --- }
 
 function TAutomationProcessor.HandleCmdGoto(const ReqId, Target: string): string;
-var I: Integer; F: TCommonCustomForm;
+var
+  I: Integer;
+  F: TCommonCustomForm;
+  Found: Boolean;
 begin
+  Found := False;
   for I := 0 to Screen.FormCount - 1 do begin
     F := Screen.Forms[I] as TCommonCustomForm;
     if SameText(F.ClassName, Target) or SameText(F.Name, Target) then begin
       F.Show;
       F.BringToFront;
+      Found := True;
       Break;
     end;
   end;
-  Result := WriteResp(ReqId, 'ok', 'OK');
+  if Found then
+    Result := WriteResp(ReqId, 'ok', 'OK')
+  else
+    Result := WriteResp(ReqId, 'err', 'NF:' + Target);
 end;
 
 function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): string;

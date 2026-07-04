@@ -230,7 +230,7 @@ TOOL_HELP_DOCS: dict = {
         ],
     },
     "delphi_file": {
-        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作。禁止用原生 read/write/edit！",
+        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作。禁止用 apply_patch/原生 read/write/edit！",
         "description": "Delphi 文件专用操作：读/写(edits)/replace/insert/delete/格式化/备份管理/encoding转换/uses子句增删（编码检测+自动备份+DFM转换）",
         "triggers": [
             "读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码",
@@ -240,7 +240,7 @@ TOOL_HELP_DOCS: dict = {
         ],
         "file_triggers": "操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此",
         "constraints": [
-            "❌ 严禁 edit/write/bash echo 直接改 .pas/.dfm（绕过备份+编码检测）",
+            "❌ 严禁 apply_patch、edit/write、shell 重定向、PowerShell/Python 直接写入 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx（绕过备份+编码检测+edit guard）",
             "🚫 禁止对同一个文件并行写入，多处修改合并到一次 write(edits=[...])",
             "🚫 format/uses/write 标记脏，需 read 后才能再 write",
         ],
@@ -254,12 +254,13 @@ TOOL_HELP_DOCS: dict = {
             "read": "读文件，支持分段读取(start_line/end_line)或按类名/函数名定位。所有行号为 1-indexed inclusive。项目源码搜索用 search_in='project' + project_path。读取时自动清除脏标记。",
             "write": "兼容写入接口（旧语义）。接收 edits 数组，内部自动排序+累积偏移，一次性写出。edits=[{start_line:1, content:'...'}] 全量替换；edits=[{start_line:5, end_line:10, content:'...'}] 部分替换。支持 preview 预览 diff。写入后标记脏。",
             "replace": "按行范围替换。现有文件中每个 edit 必须提供非空 old_content，工具用行号+旧内容校验命中范围。",
-            "insert": "按 start_line 锚点插入。现有文件中每个 edit 必须提供非空 old_content，position=before/after。",
+            "insert": "按 start_line 锚点插入。现有文件中每个 edit 必须提供非空 old_content（单行锚点，无需带换行符），position=before/after。",
             "delete": "按行范围删除。现有文件中每个 edit 必须提供非空 old_content，content 可省略。",
             "format": "使用 pasfmt 格式化代码。格式化后标记脏。",
             "backup": "备份管理（创建/列表/恢复）",
             "encode": "文件编码转换。自动检测源编码，写入目标编码。支持 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi。自动备份。转换后标记脏。",
             "uses": "增删 uses 子句中的单元。成功后标记脏。",
+            "fix_garbled": "修复中文乱码：自动检测 U+FFFD 替换字符、缺失 UTF-8 BOM、编码误检测并修复。支持 backup 备份。",
         },
         "examples": [
             'delphi_file(action="read", file_path="Unit1.pas")                                         读文件',
@@ -270,7 +271,7 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:5,content:"新内容"}], preview=true)   预览 diff（从第5行到末尾）',
             'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"..."},{start_line:18,end_line:21,content:"..."}])  批量替换两处',
             'delphi_file(action="replace", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,old_content:"旧代码",content:"新代码"}])  按原文替换',
-            'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;\\n",content:"  NewCall;\\n"}])  锚点插入',
+            'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;",content:"  NewCall;\\n"}])  锚点插入',
             'delphi_file(action="delete", file_path="Unit1.pas", edits=[{start_line:10,end_line:12,old_content:"  OldCall;\\n  OtherCall;\\n"}])  按原文删除',
             'delphi_file(action="format", file_path="src/Unit1.pas")                                   格式化',
             'delphi_file(action="backup", file_path="Unit1.pas")                                       创建备份',
@@ -312,7 +313,7 @@ TOOL_HELP_DOCS: dict = {
                     "force": "跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断写入）",
                     "dry_run": "设为 true 时只预览 diff 不写盘（不备份、不写入、不格式化），默认 false。dry_run 不清除脏标记，后续 write 仍需 read 或 old_content。推荐使用 dry_run 替代 preview",
                     "preview": "⚠ 已废弃，请使用 dry_run 替代。当前仍作为 dry_run 的别名临时保留",
-                    "old_content": "写在每个 edit 内；将被替换区间的非空旧内容。写入前忽略字符串外空白后比较，避免行号错位",
+                    "old_content": "写在每个 edit 内；将被替换区间的非空旧内容。写入前忽略字符串外空白后比较，避免行号错位。注意：不要带尾部 \\r\\n 换行符，工具会自动忽略",
                     "allow_dirty": "跳过脏标记检查（默认 false）。优先使用每个 edit 的非空 old_content；裸 allow_dirty 风险自负",
                     "project_path": "可选；提供时限制 file_path 必须位于项目目录内",
                 },
@@ -334,14 +335,14 @@ TOOL_HELP_DOCS: dict = {
                 ],
             },
             "insert": {
-                "description": "以 start_line 指向的锚点行为基准插入内容。old_content 必填，用来校验锚点行；position=before/after。",
+                "description": "以 start_line 指向的锚点行为基准插入内容。old_content 必填，用来校验锚点行（单行内容，无需带换行符）；position=before/after。",
                 "required": ["file_path", "edits"],
                 "optional": {
                     "dry_run": "设为 true 时只预览 diff 不写盘，默认 false。推荐使用",
                     "preview": "⚠ 已废弃，请使用 dry_run",
                 },
                 "examples": [
-                    'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;\\n",content:"  NewCall;\\n"}])',
+                    'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;",content:"  NewCall;\\n"}])',
                 ],
             },
             "delete": {
@@ -818,15 +819,16 @@ TOOL_HELP_DOCS: dict = {
         "auto_unit_paths": [
             "VCL 项目 → Vcl.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
             "FMX 项目 → Fmx.DaofyAutomation.pas（自动引用 DaofyAutomation.Base / RttiAttributes / RttiDiscovery）",
-            "以上文件均在 $(DaofyRoot)\\tools\\auto\\，将此路径加入项目 Search path 即可编译",
+            "callgraph 可选诊断 → 额外 uses DaofyAutomation.CallGraph，并确保 tools\\stacktrace 在 Search path 中",
+            "核心自动化文件在 $(DaofyRoot)\\tools\\auto\\，callgraph 实现在 $(DaofyRoot)\\tools\\stacktrace\\；使用 action=prepare 自动注册所需全局搜索路径",
         ],
         "architecture": {
             "pattern": "感知 → 规划 → 执行 → 反馈（循环）",
             "brain": "大模型负责决策和规划",
             "hands": "MCP 工具负责感知和执行",
-            "see_also": "详细方法论 + 提示词模板 + 经验优化闭环 + 脚本缓存: get_coding_rules(section=\"automation\")",
+            "see_also": "脚本生成流程: MCP Resource delphi://automation/script-generation-workflow；资源索引: delphi://resources；详细方法论 + 提示词模板 + 经验优化闭环 + 脚本缓存: get_coding_rules(section=\"automation\")",
             "self_learning": (
-                "通过 experience 工具 + CODING_RULES.mdc §G 实现："
+                "通过 experience 工具 + delphi://coding-rules / get_coding_rules(section=\"automation\") 实现："
                 "测试前检索经验 → 测试中记录失败/恢复 → 测试后保存经验 → "
                 "定期合并抽象为通用模式。让大模型从每次测试中学习进化。"
             ),
@@ -835,10 +837,19 @@ TOOL_HELP_DOCS: dict = {
             "gui": {
                 "description": "通过命名管道驱动 GUI 程序执行操作并截图。",
                 "needs_auto_unit": True,
+                "stop_on_failure": "默认 true。首个失败后停止执行后续依赖步骤，并在 report.steps 中标记 skip；需要全量探索时可显式设 false。",
+                "script_shape": (
+                    "script 可为文件路径、JSON 字符串、步骤数组，或推荐的完整脚本对象 "
+                    '{"test_name":"smoke","steps":[...]}；对象内除 steps 外的字段会作为 script_metadata 返回。'
+                ),
+                "callgraph_diagnostics": (
+                    "完整脚本对象可设 callgraph_diagnostics=true，并在失败步骤声明 handler/entry/callgraph_target；"
+                    "报告会附加 diagnostics.callgraph，默认关闭。"
+                ),
                 "protocol": {
                     "transport": "命名管道 JSON 请求/响应",
                     "async_cmds": "click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type",
-                    "sync_cmds": "goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect",
+                    "sync_cmds": "goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception",
                 },
                 "commands_by_phase": {
                     "perception": {
@@ -848,6 +859,16 @@ TOOL_HELP_DOCS: dict = {
                             "dumpstate": "导出完整控件树JSON（含所有RTTI属性，定位控件路径）",
                             "formsum": "窗体摘要JSON — 从 dumpstate 提炼纯净结构：关键字段展平，Controls 嵌套层级，省 token",
                             "listwnd": "枚举所有顶层窗口（新窗口出现时获取句柄）",
+                            "callgraph": "获取函数调用关系图（direction=callees/callers；max_depth 控制 BFS；project_only/exclude_prefixes/include_prefixes 过滤；edge_limit 控制输出上限并返回 edge_count/returned_count/truncated；边包含 call_addr/call_file/call_line/category；需额外 uses DaofyAutomation.CallGraph + Detailed .map）",
+                            "callgraph_diff": "对 baseline 与当前 callgraph 做边级 added/removed/unchanged 对比（默认 compare_by=name，可选 addr/full；可用 save_as 保存快照，路径限制在 snapshots_dir；Python 侧命令，管道内仍请求 callgraph）",
+                            "callgraph_path": "查询 source 到 target 的调用路径（max_depth/max_paths/include_prefixes 控制范围；返回 found 和 paths；Delphi 侧命令）",
+                            "callgraph_impact": "变更影响分析：对 functions/targets 或 file+line/locations 批量查询 callers，汇总入口候选和 unresolved（Python 侧命令，管道内仍请求 callgraph）",
+                            "callgraph_select_tests": "根据 callgraph_impact 和测试 handler 映射推荐回归脚本（Python 侧命令）",
+                            "callgraph_failure_diag": "把失败步骤和 callgraph 摘要组合成 diagnostics.callgraph（Python 侧命令）",
+                            "callgraph_boundary_check": "按前缀规则检查架构边界违规调用（Python 侧命令）",
+                            "callgraph_refactor_check": "重构前列出受影响调用者并标注静态图盲区（Python 侧命令）",
+                            "callgraph_orphan_candidates": "从符号表和 direct call 图生成低置信孤岛候选（Python 侧命令）",
+                            "callgraph_explain_exception": "用 callgraph/impact 解释异常栈顶函数的上下游影响（Python 侧命令）",
                             "msgscan": "扫描 MessageBox 弹窗（同步，每步执行后必做）",
                             "dlgscan": "扫描文件对话框状态（同步）",
                             "rinspect": "RTTI 成员发现：列出控件的属性名+类型+方法（非属性值）",
@@ -870,10 +891,15 @@ TOOL_HELP_DOCS: dict = {
                             "dlgfile": "文件对话框输入路径（同步）",
                             "rcall": "RTTI 调用方法（异步，首选降级方案）",
                             "rset": "RTTI 设置属性值（异步）",
+                            "uiaclick": "UIA 单击（按 Name 属性匹配，步 step 添加 via:'uia' 可复用 click/goto/get 命令）",
+                            "uiagoto": "UIA 导航到控件",
+                            "uiaget": "UIA 读取控件 Name",
+                            "uiascan": "UIA 扫描控件树",
                         },
+                        "uia_note": "通过 step 中加 via:'uia' 字段可将 click/goto/get/set/wait 命令路由到 Python UIA（uiautomation 库），绕过 Delphi 管道和主线程死锁问题。当前台有 IFileDialog / DirectUI / #32770 等 Win32 消息无法穿透的对话框时，使用 UIA 命令。",
                     },
                     "verification": {
-                        "description": "验证执行结果。每步可加 assert 字段写 Python 表达式：{'cmd':'rget','target':'btnSave.Enabled','assert':\"actual=='True'\"}",
+                        "description": "验证执行结果。新脚本用 assert_expr 写 Python 表达式；自然语言预期写 expected/note：{'cmd':'rget','target':'btnSave.Enabled','assert_expr':\"actual=='True'\"}",
                         "cmds": {
                             "capture": "操作后截图对比",
                             "waitfor": "等待条件满足（控件可见/消失）",
@@ -893,11 +919,29 @@ TOOL_HELP_DOCS: dict = {
                     "dlgscan/msgscan/msgclose": "弹窗/菜单扫描与关闭（同步）",
                     "dlgclick/msgclick": "弹窗/菜单点击（异步）",
                     "rget": "RTTI 读属性值（同步）",
+                    "callgraph": "获取函数调用关系图（direction=callees/callers；max_depth 控制 BFS；project_only/exclude_prefixes/include_prefixes 过滤；edge_limit 控制输出上限并返回 edge_count/returned_count/truncated；边包含 call_addr/call_file/call_line/category）",
+                    "callgraph_diff": "对 baseline 与当前 callgraph 做边级 added/removed/unchanged 对比（默认 compare_by=name，可选 addr/full；save_as/baseline_path 限制在 snapshots_dir）",
+                    "callgraph_path": "查询 source 到 target 的调用路径，支持 max_depth/max_paths/include_prefixes",
+                    "callgraph_impact": "对变更函数或 file/line 位置批量查询 callers，汇总入口候选和 unresolved",
+                    "callgraph_select_tests": "根据 impact 和测试元数据选择建议回归脚本",
+                    "callgraph_failure_diag": "为失败步骤生成 callgraph 诊断摘要",
+                    "callgraph_boundary_check": "按前缀规则检查架构边界",
+                    "callgraph_refactor_check": "重构安全检查，输出受影响调用者和盲区提示",
+                    "callgraph_orphan_candidates": "死代码/孤岛候选，结果仅作候选不可自动删除",
+                    "callgraph_explain_exception": "异常栈扩展解释，输出上下游调用摘要",
                     "rset/rcall": "RTTI 写属性/调用方法（异步）",
                     "rinspect": "RTTI 成员发现（同步）",
                     "dlgfile/snapdir": "文件对话框/截图目录（同步）",
                     "exit": "退出进程",
+                    "uiaclick/uiagoto/uiaget/uiascan/uiaset/uiawait": "UIA 自动化（Python 端执行，按 Name/ClassName 匹配控件，不受 Delphi 管道/线程限制）",
+                    "via:'uia'": "路由字段：对 click/goto/get/set/wait 加 via:'uia' 可改用 Python UIA 执行（如 {\"cmd\":\"click\",\"target\":\"打开(&O)\",\"via\":\"uia\"}）",
                 },
+            },
+            "prepare": {
+                "description": "将 DaofyAutomation 路径注册到 Delphi 全局 Library Search Path（注册表）。一劳永逸，此后任何项目无需额外配置即可 uses DaofyAutomation。",
+                "needs_auto_unit": False,
+                "params": {},
+                "effect": "读取 HKCU\\SOFTWARE\\Embarcadero\\BDS\\{version}\\Library\\{platform} 的 Search Path，若 tools/auto/ 或 tools/stacktrace/ 不在其中则追加。影响 Win32 + Win64 双平台。",
             },
             "console": {
                 "description": "通过 subprocess stdin/stdout 驱动控制台程序交互。无需 Delphi 端改造。",
@@ -920,7 +964,7 @@ TOOL_HELP_DOCS: dict = {
                 "rtti_exception": "降级到 goto+click 操作",
             },
             "prompt_templates": (
-                "CODING_RULES.mdc §F 提供 4 个可复用的提示词模板："
+                "delphi://coding-rules / get_coding_rules(section=\"automation\") 提供 4 个可复用的提示词模板："
                 "F1=测试规划模板（从目标到步骤序列），"
                 "F2=单步执行协议（前置感知→执行→等待→验证），"
                 "F3=失败恢复模板（诊断→决策→恢复→学习），"
@@ -928,7 +972,7 @@ TOOL_HELP_DOCS: dict = {
                 "\n用法: get_coding_rules(section=\"automation\") 获取完整模板。"
             ),
             "experience_optimization": (
-                "通过 experience 工具实现持续自我进化（CODING_RULES.mdc §G）："
+                "通过 experience 工具实现持续自我进化（见 delphi://coding-rules / get_coding_rules(section=\"automation\")）："
                 "\n1) 测试前: experience/search 检索同类场景的历史经验 → 调整策略"
                 "\n2) 测试中: 遇到失败按 F3 恢复，记录学习"
                 "\n3) 测试后: experience/save 按 F4 模板保存经验（自动去重）"
@@ -936,7 +980,9 @@ TOOL_HELP_DOCS: dict = {
             ),
         },
         "examples": [
-            'automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}])',
+            'automate_delphi(action="prepare")  # ← 首次使用前先注册全局搜索路径',
+            'automate_delphi(action="gui", app_path="App.exe", script={"test_name":"main-smoke","steps":[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}]})',
+            'automate_delphi(action="gui", app_path="App.exe", stop_on_failure=true, script=[{"cmd":"rget","target":"StatusBar.Caption","assert_expr":"actual==\'OK\'"}])',
             'automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"listwnd"}])',
             'automate_delphi(action="console", app_path="Tool.exe", input="Y\\n", expect="Continue?", timeout=10)',
             'automate_delphi(action="console", app_path="Deploy.exe", input="\\n", expect="success", args=["--silent"])',
@@ -978,10 +1024,11 @@ TOOL_SHORT_DESC: dict = {
         " search_type=class(类)/function(函数)/semantic(语义)/reference(引用)/unit(单元)/all。"
         " kb_type=delphi(官方)/project(项目)/thirdparty(三方库)/document(文档)。"
         " search_in=all(默认)/delphi/project/thirdparty。"
+        " ⚠️ Delphi 代码文件(.pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc)的读写必须通过 delphi_file 工具。"
     ),
     "delphi_file": (
         "Delphi 文件专用操作: read/write(edits)/replace/insert/delete/format/backup/encode/uses。"
-        " 禁止原生 read/write/edit修改 .pas/.dfm。"
+        " 禁止 apply_patch/原生 read/write/edit修改 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx。"
         " 🚫 同文件多处修改必须合并到一次 write(edits=[...])。"
     ),
     "manage_component": (
@@ -1015,9 +1062,9 @@ TOOL_SHORT_DESC: dict = {
         "检查和更新 Daofy 版本: check(快速检查)/update(git pull)/version(当前版本)。"
     ),
     "automate_delphi": (
-        "Delphi 自动化测试: gui(命名管道GUI操作+截图)/console(stdin/stdout交互)/auto(自动检测)。"
-        " gui需链接DaofyAutomation(uses Vcl/Fmx.DaofyAutomation)；console无需改造。"
-        " 支持 keep_alive 复用进程。cmd: formsum/dumpstate/capture/goto/click/type/rget/rinspect/rcall/rset/waitfor/msgscan/listwnd/exit。"
+        "Delphi 自动化测试: gui(命名管道GUI操作+截图)/console(stdin/stdout交互)/auto(自动检测)/prepare(注册全局搜索路径)。"
+        " gui需链接DaofyAutomation(uses Vcl/Fmx.DaofyAutomation)；console无需改造；prepare一劳永逸。"
+        " 支持 keep_alive 复用进程。cmd: formsum/dumpstate/capture/goto/click/type/rget/rinspect/rcall/rset/waitfor/msgscan/listwnd/exit/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception。callgraph 需额外 uses DaofyAutomation.CallGraph，支持 edge_limit/include_prefixes/category；callgraph_path 支持 source/target/max_depth/max_paths/include_prefixes；callgraph_diff 默认 compare_by=name，可选 addr/full，save_as/baseline_path 限制在 snapshots_dir。"
     ),
     "generate_copyright": (
         "生成软著文档: generate(源代码+说明书)/validate(检查配置)/audit(审计草稿)。浏览器PDF渲染+自动校验。"
