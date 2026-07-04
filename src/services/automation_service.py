@@ -1321,11 +1321,13 @@ def _coerce_callgraph_test_specs(value: object) -> list[dict]:
             tags = item.get('tags', [])
             if isinstance(tags, str):
                 tags = [part.strip() for part in tags.split(',') if part.strip()]
+            covers = item.get('covers', item.get('functions', item.get('targets')))
             result.append({
                 **item,
                 'name': name or handler,
                 'handler': handler,
                 'tags': [str(tag) for tag in tags] if isinstance(tags, list) else [],
+                'covers': _coerce_callgraph_targets(covers),
             })
     return [item for item in result if item.get('name') or item.get('handler')]
 
@@ -1349,42 +1351,69 @@ def _impact_name_sets(impact: object) -> tuple[set[str], set[str]]:
     return callers, targets
 
 
+def _impact_caller_targets(impact: object) -> dict[str, set[str]]:
+    """Return impacted caller to changed target mapping from an impact state."""
+    result: dict[str, set[str]] = {}
+    if not isinstance(impact, dict):
+        return result
+    for entry in impact.get('entries', []):
+        if not isinstance(entry, dict):
+            continue
+        caller = str(entry.get('name') or '').strip()
+        target = str(entry.get('target') or '').strip()
+        if caller and target:
+            result.setdefault(caller, set()).add(target)
+    return result
+
+
 def _build_callgraph_test_selection(impact: object, tests: object) -> dict:
     """Select regression tests whose handler metadata intersects impact entries."""
     callers, targets = _impact_name_sets(impact)
+    caller_targets = _impact_caller_targets(impact)
     specs = _coerce_callgraph_test_specs(tests)
     selected: list[dict] = []
-    selected_handlers: set[str] = set()
+    covered_targets: set[str] = set()
 
     for spec in specs:
         handler = str(spec.get('handler') or '')
         tags = set(str(tag) for tag in spec.get('tags', []))
+        covers = set(str(name) for name in spec.get('covers', []))
         reasons: list[str] = []
         if handler and handler in callers:
             reasons.append('handler_is_impacted_entry')
+            covered_targets.update(caller_targets.get(handler, set()))
         if handler and handler in targets:
             reasons.append('handler_is_changed_target')
+            covered_targets.add(handler)
         matched_tags = sorted(tags.intersection(targets))
         if matched_tags:
             reasons.append('tag_matches_changed_target')
+            covered_targets.update(matched_tags)
+        matched_covers = sorted(covers.intersection(targets))
+        if matched_covers:
+            reasons.append('coverage_matches_changed_target')
+            covered_targets.update(matched_covers)
+        matched_entries = sorted(covers.intersection(callers))
+        if matched_entries:
+            reasons.append('coverage_matches_impacted_entry')
         if not reasons:
             continue
-        selected_handlers.add(handler)
         selected.append({
             'name': spec.get('name', handler),
             'handler': handler,
             'path': spec.get('path', spec.get('script', '')),
             'reasons': reasons,
             'matched_tags': matched_tags,
+            'matched_targets': matched_covers,
+            'matched_entries': matched_entries,
         })
 
-    covered_targets = sorted(target for target in targets if target in selected_handlers)
     return {
         'mode': 'test_selection',
         'selected': selected,
         'selected_count': len(selected),
-        'uncovered_targets': sorted(targets.difference(selected_handlers)),
-        'covered_targets': covered_targets,
+        'uncovered_targets': sorted(targets.difference(covered_targets)),
+        'covered_targets': sorted(covered_targets),
         'warnings': [] if selected else ['no_tests_selected'],
     }
 

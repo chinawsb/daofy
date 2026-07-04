@@ -1269,7 +1269,12 @@ end.
         }
         tests = [
             {"name": "save-flow", "handler": "main.TfrmMain.actSaveExecute", "path": "save.json"},
-            {"name": "other", "handler": "main.TfrmMain.Other", "path": "other.json"},
+            {
+                "name": "save-cover",
+                "handler": "main.TfrmMain.Other",
+                "path": "save-cover.json",
+                "covers": ["SaveIfModified"],
+            },
         ]
         sent_commands = []
 
@@ -1320,9 +1325,10 @@ end.
         assert sent_commands == [{"reqId": "auto_exit", "cmd": "exit"}]
 
         select_state = result["results"][0]["response"]["state"]
-        assert select_state["selected_count"] == 1
-        assert select_state["selected"][0]["name"] == "save-flow"
-        assert select_state["uncovered_targets"] == ["SaveIfModified"]
+        assert select_state["selected_count"] == 2
+        assert {item["name"] for item in select_state["selected"]} == {"save-flow", "save-cover"}
+        assert select_state["covered_targets"] == ["SaveIfModified"]
+        assert select_state["uncovered_targets"] == []
 
         failure_state = result["results"][1]["response"]["state"]
         assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 2
