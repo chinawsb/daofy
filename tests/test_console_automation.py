@@ -1260,6 +1260,12 @@ end.
                     "to_addr": "2",
                 },
                 {
+                    "from": "UI.TMainForm.ButtonClick",
+                    "from_addr": "4",
+                    "to": "Storage.Interfaces.IRepo.Save",
+                    "to_addr": "5",
+                },
+                {
                     "from": "SaveIfModified",
                     "from_addr": "3",
                     "to": "Storage.TRepo.Save",
@@ -1301,7 +1307,10 @@ end.
                             "name": "ui-no-storage",
                             "from_prefix": "UI.",
                             "to_prefix": "Storage.",
+                            "exclude_to_prefixes": ["Storage.Interfaces."],
                             "policy": "forbid",
+                            "severity": "error",
+                            "message": "UI must call storage through services",
                         }],
                     },
                     {"cmd": "callgraph_refactor_check", "impact": impact, "targets": ["SaveIfModified"]},
@@ -1331,12 +1340,15 @@ end.
         assert select_state["uncovered_targets"] == []
 
         failure_state = result["results"][1]["response"]["state"]
-        assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 2
+        assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 3
         assert failure_state["failure"]["target"] == "btnSave"
 
         boundary_state = result["results"][2]["response"]["state"]
         assert boundary_state["violation_count"] == 1
         assert boundary_state["violations"][0]["rule"] == "ui-no-storage"
+        assert boundary_state["violations"][0]["severity"] == "error"
+        assert boundary_state["violations"][0]["message"] == "UI must call storage through services"
+        assert boundary_state["violations"][0]["to"] == "Storage.TRepo.Save"
 
         refactor_state = result["results"][3]["response"]["state"]
         assert refactor_state["risk"] == "medium"

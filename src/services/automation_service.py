@@ -1429,6 +1429,13 @@ def _match_prefix(value: str, prefixes: object) -> bool:
     return any(value.startswith(str(prefix)) for prefix in prefixes)
 
 
+def _matches_configured_prefix(value: str, prefixes: object) -> bool:
+    """Return whether a non-empty prefix filter matches a value."""
+    if prefixes is None:
+        return False
+    return _match_prefix(value, prefixes)
+
+
 def _build_callgraph_boundary_check(graph: object, rules: object) -> dict:
     """Check callgraph edges against prefix-based architecture boundary rules."""
     raw_rules = rules if isinstance(rules, list) else [rules] if isinstance(rules, dict) else []
@@ -1446,8 +1453,14 @@ def _build_callgraph_boundary_check(graph: object, rules: object) -> dict:
                 continue
             if not _match_prefix(callee, rule.get('to_prefix', rule.get('to_prefixes'))):
                 continue
+            if _matches_configured_prefix(caller, rule.get('exclude_from_prefix', rule.get('exclude_from_prefixes'))):
+                continue
+            if _matches_configured_prefix(callee, rule.get('exclude_to_prefix', rule.get('exclude_to_prefixes'))):
+                continue
             violations.append({
                 'rule': rule.get('name', ''),
+                'severity': str(rule.get('severity', 'warning')),
+                'message': str(rule.get('message', '')),
                 'from': caller,
                 'to': callee,
                 'edge': edge,
