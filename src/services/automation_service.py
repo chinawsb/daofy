@@ -1569,10 +1569,24 @@ def _coerce_exception_stack(value: object) -> list[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+_CALLGRAPH_FRAME_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+')
+
+
+def _extract_callgraph_frame_name(frame: str) -> str:
+    """Extract a function-like symbol from a formatted exception frame."""
+    text = str(frame or '').strip()
+    if not text:
+        return ''
+    text = text.split('[', 1)[0].split('+', 1)[0]
+    matches = _CALLGRAPH_FRAME_RE.findall(text)
+    return matches[-1] if matches else text.strip()
+
+
 def _build_callgraph_exception_explanation(stack: object, graph: object, impact: object) -> dict:
     """Explain an exception stack with optional callgraph context."""
     frames = _coerce_exception_stack(stack)
-    top = frames[0] if frames else ''
+    top_raw = frames[0] if frames else ''
+    top = _extract_callgraph_frame_name(top_raw)
     edges = _callgraph_edges(graph)
     upstream = [
         edge for edge in edges
@@ -1591,11 +1605,17 @@ def _build_callgraph_exception_explanation(stack: object, graph: object, impact:
     return {
         'mode': 'exception_explanation',
         'top_frame': top,
+        'top_frame_raw': top_raw,
         'frames': frames,
         'upstream': upstream,
         'downstream': downstream,
         'impact_entries': impact_entries,
-        'warnings': [] if top else ['empty_stack'],
+        'summary': {
+            'upstream_count': len(upstream),
+            'downstream_count': len(downstream),
+            'impact_count': len(impact_entries),
+        },
+        'warnings': ([] if top else ['empty_stack']) + ([] if edges else ['callgraph_empty_or_unavailable']),
     }
 
 

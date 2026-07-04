@@ -1329,7 +1329,7 @@ end.
                     },
                     {
                         "cmd": "callgraph_explain_exception",
-                        "stack": ["Storage.TRepo.Save", "SaveIfModified"],
+                        "stack": ["00401000 Storage.TRepo.Save+$1 [Repo.pas:10]", "SaveIfModified"],
                         "graph": graph,
                         "impact": impact,
                     },
@@ -1383,7 +1383,9 @@ end.
 
         exception_state = result["results"][5]["response"]["state"]
         assert exception_state["top_frame"] == "Storage.TRepo.Save"
+        assert exception_state["top_frame_raw"] == "00401000 Storage.TRepo.Save+$1 [Repo.pas:10]"
         assert len(exception_state["upstream"]) == 2
+        assert exception_state["summary"]["upstream_count"] == 2
 
     def test_callgraph_rejects_out_of_range_max_depth_before_send(self, tmp_path):
         """Invalid callgraph max_depth should be reported without hitting the pipe."""
