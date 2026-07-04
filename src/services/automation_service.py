@@ -612,7 +612,33 @@ def _coerce_callgraph_locations(step: dict) -> list[dict]:
             'line': line_value,
         })
 
+    for change in _coerce_callgraph_changes(step):
+        file_value = change.get('file_path', change.get('file', change.get('path')))
+        line_value = change.get(
+            'line',
+            change.get('start_line', change.get('new_line', change.get('old_line'))),
+        )
+        if file_value is not None or line_value is not None:
+            locations.append({
+                'file': file_value,
+                'line': line_value,
+            })
+
     return locations
+
+
+def _coerce_callgraph_changes(step: dict) -> list[dict]:
+    """Normalize change records from review/diff style inputs."""
+    raw_changes = step.get('changes', step.get('changed', step.get('changed_locations')))
+    if raw_changes is None:
+        return []
+    if isinstance(raw_changes, dict):
+        raw_items = [raw_changes]
+    elif isinstance(raw_changes, (list, tuple)):
+        raw_items = list(raw_changes)
+    else:
+        return []
+    return [item for item in raw_items if isinstance(item, dict)]
 
 
 def _callgraph_project_root(step: dict, script_metadata: dict) -> Path | None:
@@ -745,6 +771,13 @@ def _resolve_callgraph_impact_targets(
 ) -> tuple[list[str], list[dict], list[dict]]:
     """Resolve explicit functions and optional file/line locations."""
     targets = _coerce_callgraph_targets(step.get('functions', step.get('targets', step.get('target'))))
+    targets.extend(_coerce_callgraph_targets(
+        step.get('changed_functions', step.get('changed_targets')),
+    ))
+    for change in _coerce_callgraph_changes(step):
+        targets.extend(_coerce_callgraph_targets(
+            change.get('function', change.get('routine', change.get('symbol', change.get('target')))),
+        ))
     unresolved: list[dict] = []
     resolved_locations: list[dict] = []
     root = _callgraph_project_root(step, script_metadata)

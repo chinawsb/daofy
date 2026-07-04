@@ -1121,6 +1121,89 @@ end.
         assert state["unresolved"][0]["line"] == 3
         assert state["unresolved"][0]["error_code"] == "no_function_at_line"
 
+    def test_callgraph_impact_accepts_diff_style_changes(self, tmp_path):
+        """callgraph_impact should accept PR/diff style change records."""
+        from src.services import automation_service
+
+        pas_source = """unit Unit1;
+
+interface
+
+implementation
+
+procedure TForm1.SaveIfModified;
+begin
+  DoSave;
+end;
+
+end.
+"""
+        source_path = tmp_path / "Unit1.pas"
+        source_path.write_text(pas_source, encoding="utf-8")
+        target_line = pas_source.splitlines().index("  DoSave;") + 1
+
+        sent_commands = []
+        responses = [
+            json.dumps({
+                "reqId": "step_0_0",
+                "status": "ok",
+                "data": json.dumps({
+                    "root": "ExplicitTarget",
+                    "direction": "callers",
+                    "calls": [],
+                    "error_code": "no_edges",
+                }),
+            }),
+            json.dumps({
+                "reqId": "step_0_1",
+                "status": "ok",
+                "data": json.dumps({
+                    "root": "TForm1.SaveIfModified",
+                    "direction": "callers",
+                    "calls": [{
+                        "from": "main.TfrmMain.actSaveExecute",
+                        "to": "TForm1.SaveIfModified",
+                    }],
+                }),
+            }),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_send(cmd):
+            sent_commands.append(json.loads(cmd))
+            return responses.pop(0)
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "callgraph_impact",
+                    "base_dir": str(tmp_path),
+                    "changes": [
+                        {"function": "ExplicitTarget"},
+                        {"file": "Unit1.pas", "start_line": target_line},
+                    ],
+                    "max_depth": 1,
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert sent_commands[0]["target"] == "ExplicitTarget"
+        assert sent_commands[1]["target"] == "TForm1.SaveIfModified"
+        state = result["results"][0]["response"]["state"]
+        assert state["targets"][0]["target"] == "ExplicitTarget"
+        assert state["targets"][0]["error_code"] == "no_edges"
+        assert state["warnings"] == [{"target": "ExplicitTarget", "warning": "no_edges"}]
+        assert state["resolved_locations"] == [{
+            "file": "Unit1.pas",
+            "line": target_line,
+            "function": "TForm1.SaveIfModified",
+        }]
+        assert state["entries"][0]["name"] == "main.TfrmMain.actSaveExecute"
+
     def test_callgraph_impact_requires_targets_before_send(self, tmp_path):
         """callgraph_impact without targets should fail locally."""
         from src.services import automation_service
