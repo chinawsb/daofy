@@ -318,3 +318,10 @@ P0a 完成必须同时满足：
 - 已验证 `StackTrace.pas`、`DaofyAutomation.CallGraph.pas` 均可 Win32/Win64 单文件编译。
 - 已验证最小 Win64 VCL GUI callgraph smoke：`SmokeEntry` callees 返回 2 条边，地址按 64 位宽度输出，并带 `SmokeMain.pas` 行号。
 - 已验证 QLangEditor Win64 Debug 真项目 callgraph：`SaveIfModified` callers 返回 3 条边，`actNewProjectExecute` callees 返回 40 条边，地址按 64 位宽度输出，并带 `main.pas` / `ProjectMgr.pas` 等源码行号。
+
+## 15. P4 接入链路核查记录
+
+- `src/tools/compile_project.py` 的 run_verify 注入目录为 `tools/stacktrace`，注入 `StackTrace.pas` 并继续调用 `TStackTraceManager.Current.EnableDefaultLogger`。
+- `tests/test_compiler_service.py` 已锁定 run_verify 注入路径必须包含 `tools\stacktrace\StackTrace.pas` 且不能包含 `tools\daudit`。
+- 发布脚本使用 `git ls-files` 打包，排除规则只排除 `tools/daudit/`；`tools/stacktrace/StackTrace.pas` 已纳入版本控制后会随 release 包自动包含。
+- 代码中与审计工具本体相关的 `daudit` 引用保留，不作为本轮 StackTrace/callgraph 迁移范围。

@@ -1529,7 +1529,7 @@ class CompilerService:
         candidate_dirs.append(project_dir / plat_dir / cfg)  # Win32/Debug
         candidate_dirs.append(project_dir)                    # 项目根目录（MSBuild 缺省输出）
 
-        # 输出产物列表（daudit 需要 .map 做堆栈解析，.drc 不需要）
+        # 输出产物列表（StackTrace/callgraph 需要 .map 做符号解析，.drc 不需要）
         extensions = ['.exe', '.dll', '.bpl', '.bpi', '.dcp', '.map']
         found: list[str] = []
 
