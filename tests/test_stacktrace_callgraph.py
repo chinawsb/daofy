@@ -592,6 +592,31 @@ def test_stacktrace_callgraph_edges_capture_callsite_location():
     assert "ResolveSourceLine(LCallSite, LEdge.CallFile, LEdge.CallLine);" in scan_body
 
 
+def test_callgraph_source_line_resolution_uses_manager_api():
+    """Callgraph should use the manager-owned line resolver instead of private tables."""
+    source = _read_repo_text("tools/stacktrace/StackTrace.pas")
+    manager_decl_start = source.index("TStackTraceManager = class")
+    manager_decl_end = source.index("TStackSnapshot = record", manager_decl_start)
+    manager_decl = source[manager_decl_start:manager_decl_end]
+    manager_impl_start = source.index("function TStackTraceManager.TryResolveSourceLine")
+    manager_impl_end = source.index("procedure TStackTraceManager.EmbedFinalize", manager_impl_start)
+    manager_impl = source[manager_impl_start:manager_impl_end]
+    tracer_decl_start = source.index("TStackTracer = class")
+    tracer_decl_end = source.index("public", tracer_decl_start)
+    tracer_decl = source[tracer_decl_start:tracer_decl_end]
+    scan_start = source.index("class procedure TStackTracer.ScanCallGraph;")
+    scan_end = source.index("class function TStackTracer.GetCallChain", scan_start)
+    scan_body = source[scan_start:scan_end]
+
+    assert "function TryResolveSourceLine(VA: NativeUInt; out AFile: string; out ALine: Integer): Boolean;" in manager_decl
+    assert "FLineEntries" in manager_impl
+    assert "FSourcePaths" in manager_impl
+    assert "ResolveSourceLine" not in tracer_decl
+    assert "LManager.TryResolveSourceLine(LCallSite, LEdge.CallFile, LEdge.CallLine)" in scan_body
+    assert "FLineEntries" not in scan_body
+    assert "FSourcePaths" not in scan_body
+
+
 def test_stacktrace_callgraph_runtime_addresses_use_nativeuint():
     """W64-1 should remove 32-bit truncation from runtime callgraph address paths."""
     source = _read_repo_text("tools/stacktrace/StackTrace.pas")

@@ -330,6 +330,7 @@ type
     procedure SetLocalVarData(const AData: TArray<TLocalVarEntry>);
     function GetMapLoadStatus: Integer;
     function GetModuleBaseAddr: NativeUInt;
+    function TryResolveSourceLine(VA: NativeUInt; out AFile: string; out ALine: Integer): Boolean;
     class function BuildExceptionContext(AException: Exception; AData: Pointer): TExceptionContext; static;
     class function FormatExceptionContext(const AContext: TExceptionContext): string; static;
     class function GetStackString(Info: Pointer): string; static;
@@ -401,7 +402,6 @@ type
     class function FindFuncAddr(const AName: string): NativeUInt; static;
     class function FormatCallGraphAddr(AAddr: NativeUInt): string; static;
     class function ResolveRelativeCallTarget(ACallSite: NativeUInt; ARel32: Integer): NativeUInt; static;
-    class function ResolveSourceLine(AAddr: NativeUInt; out AFile: string; out ALine: Integer): Boolean; static;
     class procedure ClearEdgeIndexes; static;
     class procedure AddEdgeIndex(AIndex: TEdgeIndex; AAddr: NativeUInt; AEdgeIndex: Integer); static;
     class procedure BuildEdgeIndexes; static;
@@ -3023,6 +3023,49 @@ begin
   Result := FModuleBase;
 end;
 
+function TStackTraceManager.TryResolveSourceLine(VA: NativeUInt; out AFile: string; out ALine: Integer): Boolean;
+var
+  LMapOffset: UInt64;
+  L, H, LMid: Integer;
+  LLineIdx: Integer;
+  LFileIdx: Integer;
+begin
+  Result := False;
+  AFile := '';
+  ALine := 0;
+  if FMapLoaded <> 1 then
+    Exit;
+  if (Length(FLineEntries) = 0) or (Length(FSourcePaths) = 0) then
+    Exit;
+
+  LMapOffset := RuntimeAddrToMapAddr(VA);
+  if LMapOffset = 0 then
+    Exit;
+  L := 0;
+  H := Length(FLineEntries) - 1;
+  LLineIdx := -1;
+  while L <= H do begin
+    LMid := (L + H) shr 1;
+    if FLineEntries[LMid].Addr <= LMapOffset then begin
+      LLineIdx := LMid;
+      L := LMid + 1;
+    end
+    else
+      H := LMid - 1;
+  end;
+
+  if (LLineIdx < 0) or (LMapOffset - FLineEntries[LLineIdx].Addr >= $10000) then
+    Exit;
+
+  LFileIdx := FLineEntries[LLineIdx].FileIdx;
+  if (LFileIdx < 0) or (LFileIdx >= Length(FSourcePaths)) then
+    Exit;
+
+  AFile := FSourcePaths[LFileIdx];
+  ALine := FLineEntries[LLineIdx].Line;
+  Result := True;
+end;
+
 procedure TStackTraceManager.EmbedFinalize(AProgress: TResourceSerializeProgress);
 
   procedure Log(const AStep: TResourceSerializeStep; const AMsg: string);
@@ -4886,51 +4929,6 @@ begin
       H := M - 1;
   end;
 end;
-class function TStackTracer.ResolveSourceLine(AAddr: NativeUInt; out AFile: string; out ALine: Integer): Boolean;
-var
-  LManager: TStackTraceManager;
-  LMapOffset: UInt64;
-  L, H, LMid: Integer;
-  LLineIdx: Integer;
-  LFileIdx: Integer;
-begin
-  Result := False;
-  AFile := '';
-  ALine := 0;
-  LManager := TStackTraceManager.Current;
-  if (LManager = nil) or (LManager.FMapLoaded <> 1) then
-    Exit;
-  if (Length(LManager.FLineEntries) = 0) or (Length(LManager.FSourcePaths) = 0) then
-    Exit;
-
-  LMapOffset := LManager.RuntimeAddrToMapAddr(AAddr);
-  if LMapOffset = 0 then
-    Exit;
-  L := 0;
-  H := Length(LManager.FLineEntries) - 1;
-  LLineIdx := -1;
-  while L <= H do begin
-    LMid := (L + H) shr 1;
-    if LManager.FLineEntries[LMid].Addr <= LMapOffset then begin
-      LLineIdx := LMid;
-      L := LMid + 1;
-    end
-    else
-      H := LMid - 1;
-  end;
-
-  if (LLineIdx < 0) or (LMapOffset - LManager.FLineEntries[LLineIdx].Addr >= $10000) then
-    Exit;
-
-  LFileIdx := LManager.FLineEntries[LLineIdx].FileIdx;
-  if (LFileIdx < 0) or (LFileIdx >= Length(LManager.FSourcePaths)) then
-    Exit;
-
-  AFile := LManager.FSourcePaths[LFileIdx];
-  ALine := LManager.FLineEntries[LLineIdx].Line;
-  Result := True;
-end;
-
 class function TStackTracer.ResolveAddr(AAddr: NativeUInt): string;
 var
   LStart: NativeUInt;
@@ -5066,6 +5064,7 @@ var
   LTarget: NativeUInt;
   LCallerStart: NativeUInt;
   LCalleeStart: NativeUInt;
+  LManager: TStackTraceManager;
 begin
   if FScanned then
     Exit;
@@ -5084,6 +5083,7 @@ begin
   if not LoadTextRange then
     Exit;
 
+  LManager := TStackTraceManager.Current;
   LEdges := TList<TCallEdge>.Create;
   try
     I := 0;
@@ -5103,7 +5103,8 @@ begin
             LEdge.CalleeName := ResolveSymbolName(LCalleeStart);
             LEdge.CalleeFile := '';
             LEdge.CalleeLine := 0;
-            ResolveSourceLine(LCallSite, LEdge.CallFile, LEdge.CallLine);
+            if LManager <> nil then
+              LManager.TryResolveSourceLine(LCallSite, LEdge.CallFile, LEdge.CallLine);
             LEdges.Add(LEdge);
           end;
         end;

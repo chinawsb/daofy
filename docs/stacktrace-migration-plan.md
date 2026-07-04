@@ -325,3 +325,9 @@ P0a 完成必须同时满足：
 - `tests/test_compiler_service.py` 已锁定 run_verify 注入路径必须包含 `tools\stacktrace\StackTrace.pas` 且不能包含 `tools\daudit`。
 - 发布脚本使用 `git ls-files` 打包，排除规则只排除 `tools/daudit/`；`tools/stacktrace/StackTrace.pas` 已纳入版本控制后会随 release 包自动包含。
 - 代码中与审计工具本体相关的 `daudit` 引用保留，不作为本轮 StackTrace/callgraph 迁移范围。
+
+## 16. P3 深度整合记录
+
+- `TStackTraceManager` 新增 `TryResolveSourceLine`，统一持有运行时地址到源码文件/行号的 line table 解析逻辑。
+- `TStackTracer.ScanCallGraph` 不再直接读取 `FLineEntries` / `FSourcePaths`，调用点行号通过 manager API 获取。
+- 已新增静态守卫，防止 callgraph facade 重新耦合到 manager 私有 line table。
