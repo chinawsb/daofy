@@ -7,7 +7,9 @@
 import asyncio
 import os
 from typing import Callable, Tuple, Optional
+from ..constants import TIMEOUT_PROCESS_TERMINATE
 from ..utils import get_console_encoding
+from ..utils.delphi_env import get_delphi_common_dir
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,9 +43,11 @@ class ProcessManager:
                 env = {
                     'BDS': bds_path,
                     'BDSINCLUDE': f"{bds_path}\\include",
-                    'BDSCOMMONDIR': f"C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\{bds_version}",
                     'LANGDIR': 'EN',
                 }
+                common_dir = get_delphi_common_dir(bds_version)
+                if common_dir is not None:
+                    env['BDSCOMMONDIR'] = str(common_dir)
                 logger.debug(f"设置 Delphi 环境变量: {env}")
                 return env
         return {}
@@ -136,10 +140,12 @@ class ProcessManager:
             if asyncio.iscoroutine(_r):
                 await _r
             # 带短超时的 wait，防止 communicate() 被 cancel 后 pipe 残留阻塞 wait()
-            await asyncio.wait_for(process.wait(), timeout=5)
+            await asyncio.wait_for(process.wait(), timeout=TIMEOUT_PROCESS_TERMINATE)
             logger.info(f"进程已终止")
         except asyncio.TimeoutError:
-            logger.warning(f"终止进程 wait() 超时(5秒),但进程已 kill,PID: {process.pid}")
+            logger.warning(
+                f"终止进程 wait() 超时({TIMEOUT_PROCESS_TERMINATE}秒),但进程已 kill,PID: {process.pid}"
+            )
         except ProcessLookupError:
             logger.warning(f"进程不存在,可能已终止")
         except Exception as e:

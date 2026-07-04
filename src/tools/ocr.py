@@ -99,17 +99,22 @@ def _image_diff(baseline_path: str, current_path: str,
 
 
 def _region_color(image_path: str,
-                  region: list | None = None) -> dict:
+                  region: list | None = None,
+                  threshold: float | None = None) -> dict:
     """分析图片指定区域的颜色特征。
 
     Args:
         image_path: 图片路径
         region: [x, y, w, h] 分析区域，不传则分析全图
+        threshold: 亮度阈值(0~1)。设置后将像素按亮度分为暗/亮两组，
+                   分别计算 avg_color，便于分离文字色和背景色。
 
     Returns:
-        dict: {avg_color, median_color, brightness, is_grayscale}
+        dict: {avg_color, median_color, brightness, is_grayscale,
+               dark_avg?, light_avg?, dark_count?, light_count?}
     """
-    from PIL import Image, ImageStat
+    from PIL import Image
+    import numpy as np
 
     img = Image.open(image_path).convert("RGB")
 
@@ -117,22 +122,56 @@ def _region_color(image_path: str,
         x, y, w, h = region
         img = img.crop((x, y, x + w, y + h))
 
-    stat = ImageStat.Stat(img)
-    avg = [round(v) for v in stat.mean]
-    median = [round(v) for v in stat.median]
-    stddev = stat.stddev
+    pixels = np.array(img, dtype=np.float32)
 
-    is_gray = bool(stddev and all(s < 15 for s in stddev)
-                   and max(avg) - min(avg) < 30)  # 均值也接近才判灰度
+    # 亮度加权公式: 0.299 R + 0.587 G + 0.114 B
+    brightness_map = (pixels[:, :, 0] * 0.299 +
+                      pixels[:, :, 1] * 0.587 +
+                      pixels[:, :, 2] * 0.114) / 255.0
+
+    avg = [round(float(pixels[:, :, i].mean())) for i in range(3)]
+    median = [round(float(np.median(pixels[:, :, i]))) for i in range(3)]
+    stddev = [float(pixels[:, :, i].std()) for i in range(3)]
+
+    is_gray = bool(all(s < 15 for s in stddev)
+                   and max(avg) - min(avg) < 30)
     brightness = round(sum(avg) / (255 * 3), 3)
 
-    return {
+    result = {
         "avg_color": {"r": avg[0], "g": avg[1], "b": avg[2]},
         "median_color": {"r": median[0], "g": median[1], "b": median[2]},
         "brightness": brightness,
         "is_grayscale": is_gray,
         "region": {"w": img.width, "h": img.height},
     }
+
+    # 亮度阈值分离：将像素按亮度分为暗组(文字/前景)和亮组(背景/高亮)
+    if threshold is not None:
+        dark_mask = brightness_map < threshold
+        light_mask = ~dark_mask
+
+        dark_count = int(dark_mask.sum())
+        light_count = int(light_mask.sum())
+
+        if dark_count > 0:
+            dark_avg = [round(float(pixels[:, :, i][dark_mask].mean()))
+                        for i in range(3)]
+            result["dark_avg"] = {"r": dark_avg[0], "g": dark_avg[1],
+                                  "b": dark_avg[2]}
+        result["dark_count"] = dark_count
+
+        if light_count > 0:
+            light_avg = [round(float(pixels[:, :, i][light_mask].mean()))
+                         for i in range(3)]
+            light_brightness = round(
+                (light_avg[0] * 0.299 + light_avg[1] * 0.587 +
+                 light_avg[2] * 0.114) / 255.0, 3)
+            result["light_avg"] = {"r": light_avg[0], "g": light_avg[1],
+                                   "b": light_avg[2]}
+            result["light_brightness"] = light_brightness
+        result["light_count"] = light_count
+
+    return result
 
 
 def _template_match(image_path: str, template_path: str,
@@ -251,7 +290,10 @@ def handle_ocr(arguments: dict) -> dict:
                 return {"status": "failed",
                         "error": "color 需要有效的 image_path"}
             region = arguments.get("region")
-            result = _region_color(image_path, region)
+            threshold = arguments.get("threshold")
+            if threshold is not None:
+                threshold = float(threshold)
+            result = _region_color(image_path, region, threshold)
             result.update({"status": "ok", "action": "color"})
             return result
 

@@ -25,6 +25,8 @@ from typing import Any, Dict, List, Optional
 
 from mcp.types import CallToolResult, TextContent
 
+from ..constants import TIMEOUT_AUDIT
+
 logger = logging.getLogger(__name__)
 
 # daudit.exe 路径缓存
@@ -68,7 +70,7 @@ def _run_daudit(cmd: List[str]) -> Optional[Dict]:
 
     try:
         result = subprocess.run(
-            full_cmd, capture_output=True, text=True, timeout=300,
+            full_cmd, capture_output=True, text=True, timeout=TIMEOUT_AUDIT,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         if result.returncode in (0, 1) and result.stdout.strip():
@@ -146,7 +148,7 @@ def _run_skeleton(base_dir: str, file_path: Optional[str] = None,
         with open(tmp_path, 'wb') as f:
             result = subprocess.run(
                 cmd, stdout=f, stderr=subprocess.PIPE,
-                timeout=300,
+                timeout=TIMEOUT_AUDIT,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
 

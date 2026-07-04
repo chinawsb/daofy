@@ -14,6 +14,12 @@ import winreg
 from typing import Optional
 from datetime import datetime
 from pathlib import Path
+from ..constants import (
+    REG_KEY_EMBARCADERO_BDS,
+    TIMEOUT_DELPHI_COMPILE,
+    TIMEOUT_MSBUILD_DISCOVERY,
+    TIMEOUT_PROCESS_QUERY,
+)
 from ..models.compile_request import ProjectCompileRequest, FileCompileRequest, TargetPlatform, CompileOptions, OutputType, RuntimeLibrary
 from ..models.compile_result import CompileResult, CompileStatus
 from ..models.command_args import CommandArgs
@@ -22,7 +28,10 @@ from .args_generator import ArgsGenerator
 from .process_manager import ProcessManager
 from .config_manager import ConfigManager
 from ..utils import get_console_encoding
-from ..utils.delphi_env import get_delphi_version as _get_delphi_version_env
+from ..utils.delphi_env import (
+    get_delphi_public_studio_root,
+    get_delphi_version as _get_delphi_version_env,
+)
 from ..utils.parser import OutputParser
 from ..utils.validator import Validator
 from ..utils.dproj_parser import DprojParser
@@ -68,12 +77,17 @@ class CompilerService:
         import subprocess
 
         # 方法1: 使用 vswhere.exe 查询最新 VS 的 MSBuild 路径
-        vswhere_candidates = [
-            Path(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"))
-            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
-            Path(os.environ.get("ProgramFiles", "C:\\Program Files"))
-            / "Microsoft Visual Studio" / "Installer" / "vswhere.exe",
-        ]
+        vswhere_candidates = []
+        program_files_x86 = os.environ.get("ProgramFiles(x86)")
+        if program_files_x86:
+            vswhere_candidates.append(
+                Path(program_files_x86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            )
+        program_files = os.environ.get("ProgramFiles")
+        if program_files:
+            vswhere_candidates.append(
+                Path(program_files) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            )
         for vswhere in vswhere_candidates:
             if vswhere.exists():
                 try:
@@ -84,7 +98,7 @@ class CompilerService:
                             "-requires", "Microsoft.Component.MSBuild",
                             "-find", "MSBuild\\**\\Bin\\MSBuild.exe",
                         ],
-                        capture_output=True, text=True, timeout=15,
+                        capture_output=True, text=True, timeout=TIMEOUT_MSBUILD_DISCOVERY,
                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
                     )
                     if result.returncode == 0 and result.stdout.strip():
@@ -97,14 +111,15 @@ class CompilerService:
                     logger.debug(f"vswhere 查询失败: {e}")
 
         # 方法2: 常见 VS 安装路径列表（回退方案）
-        pf86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
-        pf = os.environ.get("ProgramFiles", "C:\\Program Files")
         editions = ["BuildTools", "Community", "Professional", "Enterprise"]
         years = ["2019", "2022"]
         possible_paths = []
         for year in years:
             for edition in editions:
-                base = Path(pf86) if year == "2019" else Path(pf)
+                base_root = program_files_x86 if year == "2019" else program_files
+                if not base_root:
+                    continue
+                base = Path(base_root)
                 possible_paths.append(
                     str(base / f"Microsoft Visual Studio\\{year}\\{edition}\\MSBuild\\Current\\Bin\\MSBuild.exe")
                 )
@@ -131,7 +146,7 @@ class CompilerService:
             # 打开 Delphi 注册表项
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
-                r"SOFTWARE\Embarcadero\BDS",
+                REG_KEY_EMBARCADERO_BDS,
                 0,
                 winreg.KEY_READ | winreg.KEY_WOW64_32KEY
             )
@@ -224,7 +239,7 @@ class CompilerService:
                  "Select-Object Id, ProcessName, Path | ConvertTo-Json" % process_name],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=TIMEOUT_PROCESS_QUERY,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             
@@ -963,7 +978,7 @@ class CompilerService:
                 'path': os.environ.get('PATH', ''),
                 
                 # Delphi 环境变量
-                'bds': os.environ.get('BDS', r'C:\Program Files (x86)\Embarcadero\Studio\22.0'),
+                'bds': os.environ.get('BDS') or self._get_delphi_root_from_registry() or '',
                 'local_command': '',
                 
                 # 系统变量
@@ -1376,7 +1391,7 @@ class CompilerService:
                     delphi_version = detected
                     logger.info(f"从编译器输出检测到版本: {delphi_version}")
                 else:
-                    delphi_version = "22.0"  # 最终回退
+                    delphi_version = None
 
             args = self.args_generator.generate_for_file(
                 request.file_path,
@@ -1394,7 +1409,7 @@ class CompilerService:
             return_code, stdout, stderr = await self.process_manager.execute(
                 compiler_config.path,
                 args,
-                timeout=60  # 单文件编译超时时间较短
+                timeout=TIMEOUT_DELPHI_COMPILE  # 单文件编译超时时间较短
             )
 
             # 5. 解析输出
@@ -1549,10 +1564,10 @@ class CompilerService:
 
         # 对于 .dpk 包编译，bpl 可能输出到全局 Bpl 目录
         if proj.suffix.lower() == '.dpk' or dproj_path.suffix.lower() == '.dpk':
-            bpl_search_dirs = [
-                Path.home() / "Documents" / "Embarcadero" / "Studio",
-                Path(r"C:\Users\Public\Documents\Embarcadero\Studio"),
-            ]
+            bpl_search_dirs = [Path.home() / "Documents" / "Embarcadero" / "Studio"]
+            public_studio_root = get_delphi_public_studio_root()
+            if public_studio_root is not None:
+                bpl_search_dirs.append(public_studio_root)
             for bpl_base in bpl_search_dirs:
                 if bpl_base.exists():
                     for ver_dir in sorted(bpl_base.iterdir(), reverse=True):

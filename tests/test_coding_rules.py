@@ -6,18 +6,20 @@ Covers: section extraction, section parameter behavior, error handling
 import sys
 import pytest
 from pathlib import Path
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, mock_open
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.tools.coding_rules import (
     get_coding_rules,
+    _default_rules_candidates,
     _find_heading_ranges,
     _strip_trailing_separator,
     _extract_section,
     _extract_meta_section,
     _list_available_sections,
+    _normalize_section_name,
     SECTION_KEYS,
     META_SECTIONS,
 )
@@ -115,6 +117,10 @@ class TestExtractSection:
         assert result is not None
         assert "SQL 注入" in result
 
+    def test_normalizes_documented_dash_alias(self):
+        assert _normalize_section_name("human-collab") == "human_collab"
+        assert _normalize_section_name("delphi-file-rules") == "delphi_file_write_rule"
+
 
 class TestExtractMetaSection:
     def test_review_meta_combines_sections(self):
@@ -164,17 +170,20 @@ FAKE_USER_RULES = """## ③ 写 Delphi 代码
 
 @pytest.fixture
 def mock_default_rules():
-    """Mock config/CODING_RULES.mdc to return FAKE_DEFAULT_RULES."""
-    with patch("builtins.open", mock_open(read_data=FAKE_DEFAULT_RULES)):
-        with patch("pathlib.Path.exists", return_value=True):
-            yield
+    """Mock built-in coding-rules/ directory to return FAKE_DEFAULT_RULES."""
+    with patch(
+        "src.tools.coding_rules._read_first_existing_text",
+        return_value=(FAKE_DEFAULT_RULES, Path("src/resources/coding-rules")),
+    ):
+        yield
 
 
 @pytest.fixture
 def mock_no_rules():
     """No rules file exists."""
-    with patch("pathlib.Path.exists", return_value=False):
-        yield
+    with patch("src.tools.coding_rules._read_first_existing_text", return_value=("", None)):
+        with patch("pathlib.Path.exists", return_value=False):
+            yield
 
 
 class TestGetCodingRules:
@@ -216,19 +225,25 @@ class TestGetCodingRules:
     @pytest.mark.asyncio
     async def test_with_project_path_merges_rules(self):
         """Test that project_path merges user rules over defaults."""
-        def fake_open_side_effect(file, *args, **kwargs):
-            path_str = str(file) if hasattr(file, '__fspath__') else str(file)
-            if 'CODING_RULES.mdc' in path_str and 'config' in path_str.replace('\\', '/'):
-                return mock_open(read_data=FAKE_DEFAULT_RULES).return_value
-            return mock_open(read_data=FAKE_USER_RULES).return_value
+        with patch(
+            "src.tools.coding_rules._read_first_existing_text",
+            return_value=(FAKE_DEFAULT_RULES, Path("src/resources/coding-rules")),
+        ):
+            with patch("builtins.open", mock_open(read_data=FAKE_USER_RULES)):
+                with patch("pathlib.Path.exists", return_value=True):
+                    result = await get_coding_rules(project_path="/fake/project")
+                    text = result.content[0].text
+                    # Default rules should be included
+                    assert "规则A" in text or "工作流总览" in text
+                    assert not result.isError
 
-        with patch("builtins.open", side_effect=fake_open_side_effect):
-            with patch("pathlib.Path.exists", return_value=True):
-                result = await get_coding_rules(project_path="/fake/project")
-                text = result.content[0].text
-                # Default rules should be included
-                assert "规则A" in text or "工作流总览" in text
-                assert not result.isError
+    def test_default_rules_candidates_prefer_resources(self):
+        candidates = _default_rules_candidates()
+
+        # Now returns the coding-rules/ directory (merge-all mode)
+        assert len(candidates) == 1
+        assert candidates[0].name == "coding-rules"
+        assert candidates[0].is_dir()
 
     @pytest.mark.asyncio
     async def test_section_review_meta(self, mock_default_rules):
@@ -256,3 +271,17 @@ class TestGetCodingRules:
         result = await get_coding_rules(section="performance")
         assert result.isError
         assert "未知章节" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_live_split_resource_documented_aliases_resolve(self):
+        for section in [
+            "kb-search",
+            "kb_search",
+            "human-collab",
+            "human_collab",
+            "delphi-file-rules",
+            "delphi_file_write_rule",
+            "delphi_specific",
+        ]:
+            result = await get_coding_rules(section=section)
+            assert not result.isError, section

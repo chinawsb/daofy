@@ -4,15 +4,29 @@ Verifies that tool descriptions, CODING_RULES, and server schema
 agree on command semantics (async/sync, rget vs rinspect, etc.).
 """
 import sys, os, re, json
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# ── Helper: find CODING_RULES.mdc ──
-RULES_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "CODING_RULES.mdc")
+# ── Helper: find built-in coding rules resource ──
+ROOT = Path(__file__).parent.parent
+
+
+def _resource_markdown_files() -> list[Path]:
+    roots = [
+        ROOT / "src" / "resources" / "coding-rules",
+        ROOT / "src" / "resources" / "automation",
+    ]
+    files: list[Path] = []
+    for root in roots:
+        if root.is_file():
+            files.append(root)
+        elif root.is_dir():
+            files.extend(sorted(root.rglob("*.md")))
+    return files
 
 
 def _read_rules() -> str:
-    with open(RULES_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+    return "\n\n".join(path.read_text(encoding="utf-8") for path in _resource_markdown_files())
 
 
 class TestDocConsistency:
@@ -52,18 +66,17 @@ class TestDocConsistency:
         assert 'rinspect 确认 ' not in rules, "A0/HDPI: rinspect for value confirm"
         assert 'rinspect 读' not in rules, "rinspect for value reading"
         # Full scan
-        lines = rules.split("\n")
-        for i, line in enumerate(lines):
+        for i, line in enumerate(rules.split("\n")):
             s = line.strip()
             if any(kw in s for kw in ["成员发现", "RTTI 结构", 'cmd="rinspect"']):
+                continue
+            if any(kw in s for kw in ["不要用 `rinspect`", "不要用 rinspect", "非属性值"]):
                 continue
             # Skip table-format lines (| ... |) that describe rinspect, not suggest usage
             if s.startswith("|") and s.endswith("|"):
                 continue
-            if "rinspect" in s and any(kw in s for kw in ["检查", "验证", "读", "确认"]):
-                # "读" in "读取" is not "读" as a command for value reading
-                if "读" in kw and "读取" in s:
-                    continue
+            value_words = ["检查", "验证", "读", "确认", "BoundsRect", "left", "top", "width", "height"]
+            if "rinspect" in s and any(kw in s for kw in value_words):
                 assert False, f"L{i+1}: rinspect used for value checking: {s}"
 
     def test_coding_rules_async_list_updated(self):
@@ -73,6 +86,94 @@ class TestDocConsistency:
         assert "_async_" not in rules, "CODING_RULES should not reference _async_*.json"
         # Should mention peekresult
         assert "peekresult" in rules, "CODING_RULES should mention peekresult"
+
+    def test_automation_assert_field_is_not_documented_or_read(self):
+        """Automation scripts should expose only assert_expr, not a second assert field."""
+        scanned_files = _resource_markdown_files() + [
+            ROOT / "src" / "services" / "automation_service.py",
+        ]
+        forbidden = [
+            "legacy `assert`",
+            "or `assert`",
+            "`assert` 仅作旧脚本兼容",
+            "step.get('assert')",
+        ]
+        for path in scanned_files:
+            content = path.read_text(encoding="utf-8")
+            for text in forbidden:
+                assert text not in content, f"{path} still references {text}"
+
+    def test_automation_script_samples_do_not_use_assert_field(self):
+        """Sample scripts and skill resources must not teach the unsupported assert field."""
+        root = Path(__file__).parent.parent
+        scanned_roots = [
+            root / "src" / "resources",
+            root / ".opencode" / "skills" / "delphi-automation-workflow",
+            root / ".claude" / "skills" / "delphi-automation-workflow",
+            root / ".cursor" / "rules",
+            root / "tests" / "scripts",
+        ]
+
+        for base in scanned_roots:
+            if not base.exists():
+                continue
+            for path in base.rglob("*"):
+                if path.suffix.lower() not in {".md", ".mdc", ".json"}:
+                    continue
+                content = path.read_text(encoding="utf-8")
+                assert '"assert":' not in content, f"{path} still uses unsupported assert field"
+
+    def test_black_box_docs_forbid_direct_rtti_execution(self):
+        """Black-box script docs must not recommend rcall/rset execution."""
+        workflow = (
+            ROOT / "src" / "resources" / "automation" / "reference" / "workflow.md"
+        ).read_text(encoding="utf-8")
+        script_workflow = (
+            ROOT / "src" / "resources" / "automation" / "reference" / "script-generation-workflow.md"
+        ).read_text(encoding="utf-8")
+        script_schema = (
+            ROOT / "src" / "resources" / "automation" / "reference" / "script-schema.md"
+        ).read_text(encoding="utf-8")
+        coding_rules = "\n\n".join(
+            f.read_text(encoding="utf-8")
+            for f in sorted((ROOT / "src" / "resources" / "coding-rules").rglob("*.md"))
+        )
+
+        for content in (workflow, script_workflow, script_schema, coding_rules):
+            assert "Black-box" in content or "黑盒" in content
+            assert "black-box" in content.lower() or "黑盒" in content
+            assert "rcall" in content
+
+        assert (
+            "Black-box execution steps must not use `rcall`, `rset`" in workflow
+            or "黑盒执行步骤不得使用 `rcall`、`rset`" in workflow
+        )
+        assert (
+            "For black-box tests, do not use `rcall`, `rset`" in script_workflow
+            or ("黑盒测试说明" in script_workflow and "不得使用 RTTI 写命令" in script_workflow)
+        )
+        assert (
+            "Black-box `execute` steps must not use `rcall`, `rset`" in script_schema
+            or "黑盒 `execute` 步骤不得使用 `rcall`、`rset`" in script_schema
+        )
+        assert "直接执行业务逻辑（首选）" not in coding_rules
+        assert "首选，不依赖 UI" not in coding_rules
+
+    def test_automation_docs_store_cases_under_project_tests_by_type(self):
+        """Automation docs should save reusable cases under Tests/<test type>."""
+        scanned_files = [
+            ROOT / "src" / "resources" / "automation" / "reference" / "workflow.md",
+            ROOT / "src" / "resources" / "automation" / "reference" / "script-generation-workflow.md",
+            ROOT / "src" / "resources" / "automation" / "reference" / "script-schema.md",
+            ROOT / ".opencode" / "skills" / "delphi-automation-workflow" / "SKILL.md",
+            ROOT / ".claude" / "skills" / "delphi-automation-workflow" / "SKILL.md",
+            ROOT / ".cursor" / "rules" / "delphi-automation-workflow.mdc",
+        ]
+
+        for path in scanned_files:
+            content = path.read_text(encoding="utf-8")
+            assert "Tests\\<测试类型>" in content or "Tests/<测试类型>" in content
+            assert "tests/scripts/" not in content
 
     def test_server_schema_async_list_complete(self):
         """server.py script description should list all async cmds."""
@@ -89,7 +190,49 @@ class TestDocConsistency:
         from pathlib import Path
         server_py = Path(__file__).parent.parent / "src" / "server.py"
         content = server_py.read_text("utf-8")
-        assert "sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect)" in content
+        assert "sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception)" in content
+        assert "DaofyAutomation.CallGraph" in content
+
+    def test_automation_script_shape_is_documented_across_runtime_docs(self):
+        """The documented full script object must match execute_script support."""
+        from tool_docs import TOOL_HELP_DOCS
+
+        root = Path(__file__).parent.parent
+        server_py = root / "src" / "server.py"
+        server_content = server_py.read_text("utf-8")
+        auto_docs = TOOL_HELP_DOCS.get("automate_delphi", {})
+        gui_docs = auto_docs.get("modes", {}).get("gui", {})
+
+        assert "包含 steps 的完整脚本对象" in server_content
+        assert '"required": ["steps"]' in server_content
+        assert "完整脚本对象" in gui_docs.get("script_shape", "")
+        assert "script_metadata" in gui_docs.get("script_shape", "")
+
+    def test_delphi_file_docs_forbid_default_editors(self):
+        """Delphi edit docs must explicitly block direct agent write tools."""
+        from tool_docs import TOOL_HELP_DOCS, TOOL_SHORT_DESC
+
+        scanned_files = [
+            ROOT / "AGENTS.md",
+            ROOT / "src" / "resources" / "coding-rules" / "delphi-file-rules.md",
+        ]
+        combined = "\n".join(
+            path.read_text(encoding="utf-8") for path in scanned_files
+        )
+        delphi_docs = TOOL_HELP_DOCS.get("delphi_file", {})
+        combined += "\n" + json.dumps(delphi_docs, ensure_ascii=False)
+        combined += "\n" + TOOL_SHORT_DESC["delphi_file"]
+
+        required_terms = [
+            "delphi_file",
+            "apply_patch",
+            "PowerShell",
+            "Python",
+            ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx",
+            "edit guard",
+        ]
+        for term in required_terms:
+            assert term in combined, f"Delphi edit docs missing {term!r}"
 
     def test_rinspect_is_sync_in_all_docs(self):
         """rinspect should be sync across all doc sources (matches Pascal IsAsyncCmd)."""
@@ -102,3 +245,41 @@ class TestDocConsistency:
         assert "rinspect" not in async_cmds, f"rinspect should NOT be in async_cmds: {async_cmds}"
         sync_cmds = proto.get("sync_cmds", "")
         assert "rinspect" in sync_cmds, f"rinspect should be in sync_cmds: {sync_cmds}"
+
+    def test_coding_rule_section_references_are_valid(self):
+        """All documented get_coding_rules(section=...) examples must resolve to known keys or aliases."""
+        from src.tools.coding_rules import SECTION_ALIASES, SECTION_KEYS, META_SECTIONS
+
+        known = set(SECTION_KEYS) | set(META_SECTIONS) | set(SECTION_ALIASES) | {"list"}
+        for path in _resource_markdown_files():
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(r'get_coding_rules\(section="([^"]+)"', text):
+                section = match.group(1)
+                assert section in known, f"{path}:{text[:match.start()].count(chr(10)) + 1}: unknown section {section}"
+
+    def test_resource_markdown_path_references_exist(self):
+        """Plain .md paths in resource docs should not point to old split-file names."""
+        patterns = [
+            re.compile(r'\[[^\]]+\]\(([^)]+\.md)(?:#[^)]+)?\)'),
+            re.compile(r'(?<![\w/.-])((?:\.\./|\./|coding-rules/|automation/|debugging/|src/resources/)[\w./-]+\.md)'),
+        ]
+        for path in _resource_markdown_files():
+            text = path.read_text(encoding="utf-8")
+            for pattern in patterns:
+                for match in pattern.finditer(text):
+                    href = match.group(1).strip("`").split("#", 1)[0]
+                    if href.startswith("src/resources/"):
+                        candidates = [ROOT / href]
+                    elif href.startswith("coding-rules/"):
+                        candidates = [ROOT / "src" / "resources" / href]
+                    elif href.startswith(("automation/", "debugging/")):
+                        resources = ROOT / "src" / "resources"
+                        candidates = [
+                            path.parent / href,
+                            resources / "coding-rules" / href,
+                            resources / href,
+                        ]
+                    else:
+                        candidates = [path.parent / href]
+                    line = text[:match.start()].count("\n") + 1
+                    assert any(candidate.exists() for candidate in candidates), f"{path}:{line}: missing {href}"

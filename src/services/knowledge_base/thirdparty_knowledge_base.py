@@ -23,12 +23,14 @@ from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
 
 try:
+    from ...constants import REG_KEY_EMBARCADERO_BDS, REG_KEY_EMBARCADERO_STUDIO
     from .zvec_adapter import ZVecKnowledgeBaseAdapter
     from ...utils.logger import get_logger
     from ...utils.delphi_env import expand_delphi_path_macros, get_delphi_version, get_catalog_repository_paths
     logger = get_logger(__name__)
 except ImportError:
     # 支持直接运行测试
+    from src.constants import REG_KEY_EMBARCADERO_BDS, REG_KEY_EMBARCADERO_STUDIO
     from zvec_adapter import ZVecKnowledgeBaseAdapter
     import logging
     logger = logging.getLogger(__name__)
@@ -124,7 +126,7 @@ class ThirdPartyKnowledgeBase:
         versions = []
 
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
 
             i = 0
             while True:
@@ -195,7 +197,7 @@ class ThirdPartyKnowledgeBase:
         env_vars = {}
 
         try:
-            key_path = rf"SOFTWARE\Embarcadero\BDS\{version}\Environment Variables"
+            key_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Environment Variables"
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
 
             i = 0
@@ -314,7 +316,7 @@ class ThirdPartyKnowledgeBase:
 
         # 读取 BDS Library 路径
         try:
-            library_key_path = rf"SOFTWARE\Embarcadero\BDS\{version_key}\Library"
+            library_key_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version_key}\\Library"
             library_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, library_key_path)
             all_paths.extend(self._read_library_paths(library_key, version_key))
             winreg.CloseKey(library_key)
@@ -323,7 +325,7 @@ class ThirdPartyKnowledgeBase:
 
         # 读取 Studio Library 路径（公共库路径）
         try:
-            studio_key_path = rf"SOFTWARE\Embarcadero\Studio\{version_key}\Library"
+            studio_key_path = f"{REG_KEY_EMBARCADERO_STUDIO}\\{version_key}\\Library"
             studio_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, studio_key_path)
             all_paths.extend(self._read_library_paths(studio_key, version_key))
             winreg.CloseKey(studio_key)

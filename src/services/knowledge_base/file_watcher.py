@@ -13,8 +13,10 @@ import os
 import threading
 import time as _time
 from pathlib import Path
-from typing import Callable, Optional, Set
+from typing import Callable, Iterable, Optional, Set
 
+from src.constants import SOURCE_SCAN_EXCLUDED_DIRS, TIMEOUT_PROCESS_TERMINATE
+from src.services.delphi_edit_guard import record_external_edit
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -25,11 +27,7 @@ DELPHI_EXTENSIONS: Set[str] = {
 }
 
 # 跳过的不需要监听的目录名
-SKIP_DIR_NAMES: Set[str] = {
-    '.delphi-kb', 'thirdpart', 'vendor', 'lib', 'packages',
-    '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
-    'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs',
-}
+SKIP_DIR_NAMES: Set[str] = set(SOURCE_SCAN_EXCLUDED_DIRS)
 
 
 # ──────────────────────────────────────────────────────────
@@ -47,13 +45,14 @@ class _DelphiFileHandler:
 
     def __init__(
         self,
-        on_change: Callable[[], None],
+        on_change: Callable[[Set[str]], None],
         debounce_seconds: float = 3.0,
     ):
         self.on_change = on_change
         self.debounce_seconds = debounce_seconds
         self._timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
+        self._pending_paths: Set[str] = set()
 
     def dispatch(self, event) -> None:
         """watchdog 事件分发入口——兼容 watchdog 的 FileSystemEventHandler 约定。"""
@@ -61,11 +60,12 @@ class _DelphiFileHandler:
             return
         ext = Path(event.src_path).suffix.lower()
         if ext in DELPHI_EXTENSIONS:
-            self._debounce()
+            self._debounce(event.src_path)
 
-    def _debounce(self) -> None:
+    def _debounce(self, file_path: str) -> None:
         """重置去抖计时器：连续变更只触发一次回调。"""
         with self._lock:
+            self._pending_paths.add(file_path)
             if self._timer is not None:
                 self._timer.cancel()
             self._timer = threading.Timer(self.debounce_seconds, self._fire)
@@ -73,8 +73,12 @@ class _DelphiFileHandler:
             self._timer.start()
 
     def _fire(self) -> None:
+        with self._lock:
+            pending_paths = set(self._pending_paths)
+            self._pending_paths.clear()
+            self._timer = None
         try:
-            self.on_change()
+            self.on_change(pending_paths)
         except Exception as e:
             logger.error("文件变更回调执行失败: %s", e, exc_info=True)
 
@@ -84,6 +88,7 @@ class _DelphiFileHandler:
             if self._timer is not None:
                 self._timer.cancel()
                 self._timer = None
+            self._pending_paths.clear()
 
 
 # ──────────────────────────────────────────────────────────
@@ -232,14 +237,17 @@ class ProjectFileWatcher:
         if self._observer is not None:
             try:
                 self._observer.stop()
-                self._observer.join(timeout=5)
+                self._observer.join(timeout=TIMEOUT_PROCESS_TERMINATE)
             except Exception as e:
                 logger.debug("停止文件监听时发生非致命错误: %s", e)
             self._observer = None
             logger.info("文件变更监听已停止")
 
-    def _on_change(self) -> None:
+    def _on_change(self, changed_paths: Optional[Iterable[str]] = None) -> None:
         """文件变更触发：通过 AsyncTaskManager 提交增量 KB 构建任务（去重）。"""
+        for file_path in changed_paths or ():
+            record_external_edit(file_path, event_type="modified")
+
         try:
             from src.services.knowledge_base.async_task_manager import (
                 get_task_manager,

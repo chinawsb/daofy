@@ -25,6 +25,11 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
+from ..constants import (
+    TIMEOUT_SUBPROCESS_SHORT,
+    TIMEOUT_UPDATER_GIT_PULL,
+)
+
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -383,12 +388,12 @@ def is_git_installation() -> bool:
         if sys.platform == "win32":
             subprocess.run(
                 ["where", "git"],
-                capture_output=True, timeout=5, check=True,
+                capture_output=True, timeout=TIMEOUT_SUBPROCESS_SHORT, check=True,
             )
         else:
             subprocess.run(
                 ["which", "git"],
-                capture_output=True, timeout=5, check=True,
+                capture_output=True, timeout=TIMEOUT_SUBPROCESS_SHORT, check=True,
             )
         return True
     except (subprocess.SubprocessError, FileNotFoundError):
@@ -421,7 +426,7 @@ def git_pull_update_sync() -> dict:
             ["git", "pull"],
             cwd=str(project_root),
             capture_output=True,
-            timeout=60,
+            timeout=TIMEOUT_UPDATER_GIT_PULL,
             env=proc_env,
         )
         stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
@@ -580,7 +585,10 @@ async def git_pull_update() -> dict:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=TIMEOUT_UPDATER_GIT_PULL,
+        )
 
         stdout_text = stdout.decode("utf-8", errors="replace").strip()
         stderr_text = stderr.decode("utf-8", errors="replace").strip()

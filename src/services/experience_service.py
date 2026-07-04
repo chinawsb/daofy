@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from src.constants import SQLITE_BUSY_TIMEOUT_MS
+
 logger = logging.getLogger(__name__)
 
 # numpy 可选依赖
@@ -99,7 +101,7 @@ class ExperienceMemoryService:
         if not hasattr(self._local, 'conn') or self._local.conn is None:
             conn = sqlite3.connect(self._db_path)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             conn.row_factory = sqlite3.Row
             self._local.conn = conn
             # 确保表存在
@@ -110,6 +112,7 @@ class ExperienceMemoryService:
             except Exception:
                 conn = sqlite3.connect(self._db_path)
                 conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
                 conn.row_factory = sqlite3.Row
                 self._local.conn = conn
                 self._init_tables(conn)

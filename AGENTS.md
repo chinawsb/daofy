@@ -65,7 +65,7 @@ src/
 |------|----------------|------|
 | ① 环境检查 | `check_environment(action="check")` | 确认编译器可用 |
 | ② 编码规则 | `get_coding_rules(project_path=...)` | 获取项目编码规范 |
-| ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `config/CODING_RULES.mdc` ② 节） |
+| ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `get_coding_rules(section="kb_search")` / `delphi://coding-rules` ② 节） |
 | ④ 读源码 | `delphi_file(action="read", file_path=...)` | 读取文件确认修改点 |
 | ⑤ 写代码 | `delphi_file(action="write", edits=[...])` | 写入代码（自动备份到 __history） |
 | ⑤b 批量写 | `delphi_file(action="write", edits=[...])` | 批量写入多处（edits 顺序不限，自动备份到 __history） |
@@ -79,7 +79,7 @@ src/
 - **⑧ run_verify**: 编译成功后自动启动 exe 运行 3 秒，若进程崩溃则标记验证失败（秒级，自动结束进程）。检测到 `exception.log` 时使用 `detect_encoding`（与 delphi_file 同款 BOM/编码检测）读取内容直接嵌入 MCP 响应，无需 AI 额外调用 delphi_file。
 - **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）。独立于编译步骤，纯源码级分析。
 
-> 详细 KB 搜索策略、优先级规则、kb_type 范围、Entity Kind Codes 见 `config/CODING_RULES.mdc` ② 节。
+> 详细 KB 搜索策略、优先级规则、kb_type 范围、Entity Kind Codes 见 `get_coding_rules(section="kb_search")` / `delphi://coding-rules` ② 节。
 
 ## Code Style (Python)
 
@@ -92,7 +92,7 @@ src/
 
 ## Agent 操作硬规则
 
-> 脚本执行、字符串格式化、Python 陷阱等通用规则见 `config/CODING_RULES.mdc`「Agent 操作硬规则」。
+> 脚本执行、字符串格式化、Python 陷阱等通用规则见 `get_coding_rules(section="agent_rules")` / `delphi://coding-rules`「Agent 操作硬规则」。
 
 ### 多进程 Worker
 - **Worker 内部禁用 `print()`**：MCP 环境下 stdout 是 JSON-RPC 通信管道，worker print 破坏协议边界，构建从 8s 飙到 172s
@@ -113,9 +113,9 @@ src/
 - **同一 DB 文件所有连接用相同 journal 模式**：本项目统一使用 WAL（`PRAGMA journal_mode=WAL`），切换模式需要独占锁，运行中若有其他连接会 locked
 - 修改表结构后 `grep` 全项目旧表名/列名的所有 INSERT/DELETE/SELECT/ALTER 引用
 
-### delphi_file 工具使用规则（详见 CODING_RULES.mdc）
+### delphi_file 工具使用规则（详见 `delphi://coding-rules`）
 
-编辑 Delphi 文件时的行号规则、脏标记保护、输出格式等详细规范已迁移至 `config/CODING_RULES.mdc`，AI 应通过以下方式获取：
+编辑 Delphi 文件时的行号规则、脏标记保护、输出格式等详细规范已迁移至 MCP Resource `delphi://coding-rules`（内置源：`src/resources/coding-rules.md`），AI 应通过以下方式获取：
 
 ```python
 get_coding_rules(section="writing")                     # 写代码全部规则
@@ -130,10 +130,12 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 - 写入后文件标记为**脏**，再次 write 前必须 `read` 或 `preview`
 - write 响应中 `[s, e] → [s', e']` 的差值即为**行号偏移量**
 - ❌ 禁止使用原生 edit/write 工具修改 .pas/.dfm 文件
+- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入、IDE 默认编辑器修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ✅ Delphi 文件只能通过 `delphi_file` 或 Daofy 内部已登记的 Delphi 工具写入；跨 Agent 场景由 Daofy edit guard 记录绕过 Daofy 的写入告警
 
 ### 编译验证
 
-详见 `config/CODING_RULES.mdc` §⑤ 编译：
+详见 `get_coding_rules(section="compile")` / `delphi://coding-rules` §⑤ 编译：
 
 ## 源码审计
 
@@ -166,7 +168,7 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 
 ### Delphi 审计
 
-审计 Delphi 代码时，直接引用 `CODING_RULES.mdc` 的「审核」章节作为检查项来源：
+审计 Delphi 代码时，直接引用 `get_coding_rules(section="review")` / `delphi://coding-rules` 的「审核」章节作为检查项来源：
 
 > **检查项来源**：`get_coding_rules(section="review")` 获取完整的 Delphi 审核表
 >（一致性、完整性、资源泄露、Delphi 特有、常见错误模式、代码质量、数据转换、安全、性能）。

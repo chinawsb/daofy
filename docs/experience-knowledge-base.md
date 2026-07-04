@@ -497,12 +497,14 @@ experience(action="prune", limit=20)
 
 ### 7.5 规则联动
 
-经验被反复 hit 3 次以上的问题，应考虑升级为 `CODING_RULES.mdc` 中的正式规则，让所有 AI Agent 都能受益，而非依赖经验召回。
+经验被反复 hit 3 次以上的问题，应考虑升级为内置编码规则资源
+`src/resources/coding-rules.md`（MCP Resource: `delphi://coding-rules`）中的正式规则，
+让所有 AI Agent 都能受益，而非依赖经验召回。
 
 ```
 hit_count ≥ 3 的经验
     → 评估是否可规则化
-    → 更新 CODING_RULES.mdc 新增规则
+    → 更新 src/resources/coding-rules.md 新增规则
     → 保留经验作为参考用例
 ```
 

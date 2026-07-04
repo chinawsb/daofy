@@ -23,6 +23,17 @@ from multiprocessing import cpu_count
 
 import zvec
 
+from src.constants import (
+    CHUNK_SIZE_DOCUMENT_LINES,
+    POLL_INTERVAL_AUTOMATION,
+    TIMEOUT_DOCUMENT_ARCHIVE_EXTRACT,
+    TIMEOUT_DOCUMENT_ARCHIVE_LIST,
+    TIMEOUT_DOCUMENT_CONVERT,
+    TIMEOUT_DOCUMENT_WORKER_JOIN,
+    TIMEOUT_DOCUMENT_WORKER_RESULT,
+    TIMEOUT_NETWORK_REQUEST,
+)
+
 logger = logging.getLogger(__name__)
 
 # 默认排除的多语言子目录
@@ -269,7 +280,7 @@ class DocProcessor(DocumentProcessor):
                 text=True,
                 encoding='utf-8',
                 errors='ignore',
-                timeout=30,
+                timeout=TIMEOUT_DOCUMENT_CONVERT,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             
@@ -282,7 +293,7 @@ class DocProcessor(DocumentProcessor):
                     text=True,
                     encoding='utf-8',
                     errors='ignore',
-                    timeout=30,
+                    timeout=TIMEOUT_DOCUMENT_CONVERT,
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
                 if result.returncode != 0:
@@ -600,7 +611,7 @@ class ChmProcessor(DocumentProcessor):
             result = subprocess.run(
                 [sevenzip, 'x', '-y', f'-o{tmpdir}', str(file_path), *self.EXCLUDE_PATTERNS],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=600,
+                timeout=TIMEOUT_DOCUMENT_ARCHIVE_EXTRACT,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             if result.returncode != 0:
@@ -1450,11 +1461,11 @@ class GenericDocumentScanner:
     def _find_7zip_path() -> Optional[str]:
         """查找 7-Zip 可执行文件路径"""
         tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
-        candidates = [
-            str(tools_dir / '7z' / '7z.exe'),
-            r'C:\Program Files\7-Zip\7z.exe',
-            r'C:\Program Files (x86)\7-Zip\7z.exe',
-        ]
+        candidates = [str(tools_dir / '7z' / '7z.exe')]
+        for name in ('7z', '7z.exe'):
+            found = shutil.which(name)
+            if found:
+                candidates.append(found)
         for p in candidates:
             if Path(p).exists():
                 return p
@@ -1471,7 +1482,7 @@ class GenericDocumentScanner:
                 try:
                     result = subprocess.run(
                         [sevenzip, 'l', '-ba', str(f)],
-                        capture_output=True, text=True, timeout=60,
+                        capture_output=True, text=True, timeout=TIMEOUT_DOCUMENT_ARCHIVE_LIST,
                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
                     if result.returncode == 0:
@@ -1727,7 +1738,7 @@ class GenericDocumentScanner:
 
             while workers_remaining > 0:
                 try:
-                    item = result_queue.get(timeout=5.0)
+                    item = result_queue.get(timeout=TIMEOUT_DOCUMENT_WORKER_RESULT)
                 except mp.queues.Empty:
                     alive = sum(1 for p in workers if p.is_alive())
                     if alive == 0:
@@ -1754,7 +1765,7 @@ class GenericDocumentScanner:
                     )
 
                     content_lines = content.split('\n')
-                    chunk_sz = 5000
+                    chunk_sz = CHUNK_SIZE_DOCUMENT_LINES
                     chm_name = Path(result.get('full_path', '')).stem
                     html_path = result.get('path') or ''
                     path_val = f"{chm_name}#{html_path}" if chm_name and html_path else (html_path or chm_name)
@@ -1789,7 +1800,7 @@ class GenericDocumentScanner:
 
             # 等待所有 worker 进程退出
             for p in workers:
-                p.join(timeout=30)
+                p.join(timeout=TIMEOUT_DOCUMENT_WORKER_JOIN)
                 if p.is_alive():
                     p.terminate()
 
@@ -1819,7 +1830,7 @@ class GenericDocumentScanner:
             import gc
             gc.collect()
             import time
-            time.sleep(0.3)
+            time.sleep(POLL_INTERVAL_AUTOMATION)
             if tmp_zvec_path.exists():
                 for item in tmp_zvec_path.iterdir():
                     target = self.kb_dir / item.name
@@ -1923,9 +1934,9 @@ class GenericDocumentScanner:
                     content
                 )
 
-                # 按 5000 行切块写入 ZVec
+                # 按固定行数切块写入 ZVec
                 content_lines = content.split('\n')
-                chunk_size = 5000
+                chunk_size = CHUNK_SIZE_DOCUMENT_LINES
                 docs = []
                 for ci in range(0, len(content_lines), chunk_size):
                     chunk_lines = content_lines[ci:ci + chunk_size]
@@ -1967,7 +1978,7 @@ class GenericDocumentScanner:
                     import gc
                     gc.collect()
                     import time
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
 
                 return result
 
@@ -2060,7 +2071,7 @@ class GenericDocumentScanner:
                 # 写入 ZVec
                 title = result.get('title', '')
                 content_lines = content.split('\n')
-                chunk_size = 5000
+                chunk_size = CHUNK_SIZE_DOCUMENT_LINES
                 docs = []
                 for ci in range(0, len(content_lines), chunk_size):
                     chunk_lines = content_lines[ci:ci + chunk_size]
@@ -2095,7 +2106,7 @@ class GenericDocumentScanner:
                         headers = {
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                         }
-                        resp = requests.get(url, headers=headers, timeout=30)
+                        resp = requests.get(url, headers=headers, timeout=TIMEOUT_NETWORK_REQUEST)
                         resp.encoding = resp.apparent_encoding or 'utf-8'
                         raw_html = resp.text
                     except Exception:
@@ -2131,7 +2142,7 @@ class GenericDocumentScanner:
                                 queue.append((clean_link, depth + 1))
 
                 # 礼貌延迟
-                _time.sleep(0.3)
+                _time.sleep(POLL_INTERVAL_AUTOMATION)
 
         finally:
             # 优化索引

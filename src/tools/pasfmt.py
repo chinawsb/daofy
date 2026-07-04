@@ -17,14 +17,37 @@ from typing import Optional, Dict, Any, Tuple
 from mcp.types import CallToolResult, TextContent
 
 try:
+    from ..constants import (
+        CHUNK_SIZE_DOWNLOAD,
+        REG_KEY_EMBARCADERO_BDS,
+        TIMEOUT_NETWORK_REQUEST,
+        TIMEOUT_PASFMT,
+        TIMEOUT_PASFMT_BUILD,
+        TIMEOUT_PASFMT_GIT_CLONE,
+    )
     from ..utils.logger import get_logger
     from ..utils.file_backup import create_backup as _create_backup, detect_encoding as _detect_encoding, list_backups as _list_backups
 except ImportError:
     try:
+        from src.constants import (
+            CHUNK_SIZE_DOWNLOAD,
+            REG_KEY_EMBARCADERO_BDS,
+            TIMEOUT_NETWORK_REQUEST,
+            TIMEOUT_PASFMT,
+            TIMEOUT_PASFMT_BUILD,
+            TIMEOUT_PASFMT_GIT_CLONE,
+        )
         from src.utils.logger import get_logger
         from src.utils.file_backup import create_backup as _create_backup, detect_encoding as _detect_encoding, list_backups as _list_backups
     except ImportError:
         import logging
+        CHUNK_SIZE_DOWNLOAD = 8192
+        REG_KEY_EMBARCADERO_BDS = r"SOFTWARE\Embarcadero\BDS"
+        TIMEOUT_NETWORK_REQUEST = 30
+        TIMEOUT_PASFMT = 30
+        TIMEOUT_PASFMT_BUILD = 600
+        TIMEOUT_PASFMT_GIT_CLONE = 300
+
         def get_logger(name: str) -> logging.Logger:
             logger = logging.getLogger(name)
             if not logger.handlers:
@@ -117,6 +140,39 @@ DELPHI_VERSIONS = {
     "13": {"name": "Florence", "bpl_32": "Pasfmt_13_Florence.bpl", "bpl_64": "Pasfmt_13_Florence_64.bpl"}
 }
 
+_DELPHI_TO_BDS_REGISTRY_VERSION = {
+    "11": "22.0",
+    "12": "23.0",
+    "13": "37.0",
+}
+
+
+def _project_root() -> Path:
+    return Path(__file__).parent.parent.parent
+
+
+def _pasfmt_default_paths() -> list[str]:
+    return [str(_project_root() / "tools" / "pasfmt" / "cli" / "pasfmt.exe")]
+
+
+def _bds_registry_version(delphi_version: str) -> str:
+    return _DELPHI_TO_BDS_REGISTRY_VERSION.get(delphi_version, delphi_version)
+
+
+def _pasfmt_rad_candidate_dirs(delphi_version: str) -> list[str]:
+    project_rad_dir = str(_project_root() / "tools" / "pasfmt" / "rad")
+    possible_dirs = [project_rad_dir]
+    if sys.platform == "win32":
+        try:
+            from ..utils.delphi_env import get_delphi_root_dir
+        except ImportError:
+            from src.utils.delphi_env import get_delphi_root_dir
+
+        root_dir = get_delphi_root_dir(_bds_registry_version(delphi_version))
+        if root_dir:
+            possible_dirs.append(str(Path(root_dir) / "bin"))
+    return possible_dirs
+
 
 def set_pasfmt_path(path: str):
     """设置 pasfmt 可执行文件路径"""
@@ -146,15 +202,7 @@ def get_pasfmt_path() -> Optional[str]:
         return path_in_path
     
     # 尝试从默认安装位置获取
-    project_root = Path(__file__).parent.parent.parent
-    default_paths = [
-        str(project_root / "tools" / "pasfmt" / "cli" / "pasfmt.exe"),
-        r"C:\Program Files\pasfmt\pasfmt.exe",
-        r"C:\Program Files (x86)\pasfmt\pasfmt.exe",
-        r"C:\pasfmt\pasfmt.exe",
-        r"/usr/local/bin/pasfmt",
-        r"/usr/bin/pasfmt",
-    ]
+    default_paths = _pasfmt_default_paths()
     
     for path in default_paths:
         if os.path.exists(path):
@@ -319,7 +367,7 @@ async def format_file(
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=30,  # 30秒超时
+            timeout=TIMEOUT_PASFMT,  # 30秒超时
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
@@ -371,7 +419,12 @@ async def format_file(
             # 格式化成功
             if not in_place:
                 # 从 stdout 读取格式化后的内容
-                formatted_content = stdout
+                # pasfmt stdout 模式会输出 "filepath:\nformatted_code"，需要去掉文件名前缀
+                _lines = stdout.split('\n', 1)
+                if len(_lines) > 1 and ':' in _lines[0]:
+                    formatted_content = _lines[1]
+                else:
+                    formatted_content = stdout
                 return {
                     "status": "success",
                     "formatted": True,
@@ -497,7 +550,7 @@ async def format_code(
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=30,  # 30秒超时
+            timeout=TIMEOUT_PASFMT,  # 30秒超时
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
@@ -580,7 +633,12 @@ def _download_file(url: str, destination: str, source_name: str = "源") -> Tupl
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         
-        response = requests.get(url, headers=headers, stream=True, timeout=30)
+        response = requests.get(
+            url,
+            headers=headers,
+            stream=True,
+            timeout=TIMEOUT_NETWORK_REQUEST,
+        )
         response.raise_for_status()
         
         # 获取文件大小
@@ -592,7 +650,7 @@ def _download_file(url: str, destination: str, source_name: str = "源") -> Tupl
                 f.write(response.content)
             else:
                 downloaded = 0
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=CHUNK_SIZE_DOWNLOAD):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
@@ -952,7 +1010,8 @@ async def download_and_install_pasfmt_rad(
                 import winreg
                 
                 # Delphi 注册表路径
-                reg_path = f"Software\\Embarcadero\\BDS\\{delphi_version}.0\\Known Packages"
+                registry_version = _bds_registry_version(delphi_version)
+                reg_path = f"{REG_KEY_EMBARCADERO_BDS}\\{registry_version}\\Known Packages"
                 
                 # 打开或创建注册表项
                 try:
@@ -983,7 +1042,12 @@ async def download_and_install_pasfmt_rad(
             "bpl_filename": bpl_filename,
             "install_path": target_path,
             "registry_success": registry_success if sys.platform == "win32" else None,
-            "registry_path": f"HKEY_CURRENT_USER\\Software\\Embarcadero\\BDS\\{delphi_version}.0\\Known Packages" if sys.platform == "win32" else None,
+            "registry_path": (
+                f"HKEY_CURRENT_USER\\{REG_KEY_EMBARCADERO_BDS}\\"
+                f"{_bds_registry_version(delphi_version)}\\Known Packages"
+                if sys.platform == "win32"
+                else None
+            ),
             "registry_value": target_path if sys.platform == "win32" else None
         }
         
@@ -1017,17 +1081,7 @@ async def check_pasfmt_installation() -> CallToolResult:
         )
     else:
         # 检查可能的安装位置
-        project_root = Path(__file__).parent.parent.parent
-        default_paths = [
-            # 项目目录下的 tools/pasfmt/cli
-            str(project_root / "tools" / "pasfmt" / "cli" / "pasfmt.exe"),
-            # 传统安装位置
-            r"C:\Program Files\pasfmt\pasfmt.exe",
-            r"C:\Program Files (x86)\pasfmt\pasfmt.exe",
-            r"C:\pasfmt\pasfmt.exe",
-            "/usr/local/bin/pasfmt",
-            "/usr/bin/pasfmt",
-        ]
+        default_paths = _pasfmt_default_paths()
         
         found_paths = []
         for path in default_paths:
@@ -1042,8 +1096,7 @@ async def check_pasfmt_installation() -> CallToolResult:
             )
         else:
             # 建议安装到项目目录下的 tools/pasfmt/cli
-            project_root = Path(__file__).parent.parent.parent
-            suggested_dir = str(project_root / "tools" / "pasfmt" / "cli")
+            suggested_dir = str(_project_root() / "tools" / "pasfmt" / "cli")
             
             return CallToolResult(
                 content=[{"type": "text", "text": f"未找到 pasfmt，建议安装到: {suggested_dir}"}],
@@ -1080,19 +1133,7 @@ async def check_pasfmt_rad_installation(delphi_version: str = "11") -> Dict[str,
         bpl_files.append(version_info["bpl_64"])
     
     # 检查常见安装位置
-    possible_dirs = []
-    if sys.platform == "win32":
-        # 项目目录下的安装位置
-        project_root = Path(__file__).parent.parent.parent
-        project_rad_dir = str(project_root / "tools" / "pasfmt" / "rad")
-        
-        possible_dirs = [
-            project_rad_dir,  # 项目目录
-            rf"C:\Program Files (x86)\Embarcadero\Studio\{delphi_version}.0\bin",
-            rf"C:\Program Files\Embarcadero\Studio\{delphi_version}.0\bin",
-        ]
-    else:
-        possible_dirs = ["/usr/lib/delphi", "/usr/local/lib/delphi"]
+    possible_dirs = _pasfmt_rad_candidate_dirs(delphi_version)
     
     installed_files = []
     for bpl_file in bpl_files:
@@ -1111,7 +1152,8 @@ async def check_pasfmt_rad_installation(delphi_version: str = "11") -> Dict[str,
     if sys.platform == "win32" and installed_files:
         try:
             import winreg
-            reg_path = f"Software\\Embarcadero\\BDS\\{delphi_version}.0\\Known Packages"
+            registry_version = _bds_registry_version(delphi_version)
+            reg_path = f"{REG_KEY_EMBARCADERO_BDS}\\{registry_version}\\Known Packages"
             
             try:
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_READ)
@@ -1228,7 +1270,7 @@ async def compile_from_source(
                     ["git", "clone", "--depth", "1", repo_url, temp_dir],
                     capture_output=True,
                     text=True,
-                    timeout=300,
+                    timeout=TIMEOUT_PASFMT_GIT_CLONE,
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
                 
@@ -1245,7 +1287,7 @@ async def compile_from_source(
                         ["git", "clone", "--depth", "1", repo_mirror, temp_dir],
                         capture_output=True,
                         text=True,
-                        timeout=300,
+                        timeout=TIMEOUT_PASFMT_GIT_CLONE,
                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
                     
@@ -1300,7 +1342,7 @@ async def compile_from_source(
                         cwd=temp_dir,
                         capture_output=True,
                         text=True,
-                        timeout=600,
+                        timeout=TIMEOUT_PASFMT_BUILD,
                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
                     

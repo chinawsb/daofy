@@ -17,6 +17,7 @@ import time
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
+from src.constants import DIR_DELPHI_KB, REG_KEY_EMBARCADERO_BDS, SOURCE_SCAN_EXCLUDED_DIRS
 from src.utils.logger import get_logger
 from src.utils.dproj_parser import DprojParser
 from .delphi_chunker import chunk_file_list
@@ -42,7 +43,7 @@ class ProjectKnowledgeBase:
         self.progress_callback = progress_callback
 
         # 项目知识库目录
-        self.kb_dir = self.project_dir / ".delphi-kb"
+        self.kb_dir = self.project_dir / DIR_DELPHI_KB
         self.kb_dir.mkdir(parents=True, exist_ok=True)
 
         # ZVec 知识库适配器
@@ -64,7 +65,7 @@ class ProjectKnowledgeBase:
             import winreg
 
             # 打开 Delphi 注册表键
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
 
             # 遍历所有版本
             i = 0
@@ -187,9 +188,7 @@ class ProjectKnowledgeBase:
             extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
 
         # 需要跳过的目录名（第三方库、知识库、系统目录等）
-        skip_dir_names = {'.delphi-kb', 'thirdpart', 'vendor', 'lib', 'packages',
-                          '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
-                          'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs'}
+        skip_dir_names = SOURCE_SCAN_EXCLUDED_DIRS
 
         # 读取经过 .dproj 交叉验证的三方库路径前缀，精确跳过
         # （仅跳过那些同时出现在共享KB和.dproj三方库路径中的目录，
@@ -346,9 +345,7 @@ class ProjectKnowledgeBase:
 
         # 收集项目源码文件
         exclude_prefixes = self._get_verified_thirdparty_prefixes()
-        skip_dir_names = {'.delphi-kb', 'thirdpart', 'vendor', 'lib', 'packages',
-                          '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
-                          'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs'}
+        skip_dir_names = SOURCE_SCAN_EXCLUDED_DIRS
         delphi_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
 
         project_files: List[str] = []

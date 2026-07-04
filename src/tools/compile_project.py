@@ -20,6 +20,8 @@ import os
 import shlex
 import subprocess as _subprocess
 
+from ..constants import TIMEOUT_PROCESS_TERMINATE
+
 # 导入 install_package 中的函数（复用已有逻辑）
 try:
     from .install_package import (
@@ -636,7 +638,7 @@ async def compile_project(
 
                             proc = _subprocess.Popen([verify_exe], cwd=exe_dir)
                             try:
-                                proc.wait(timeout=5)
+                                proc.wait(timeout=TIMEOUT_PROCESS_TERMINATE)
                             except _subprocess.TimeoutExpired:
                                 proc.kill()
                                 proc.wait()

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 import json
 
+from ..constants import DEPENDENCY_SCAN_EXCLUDED_DIRS
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -120,10 +121,7 @@ class UnitDependencyAnalyzer:
             rel_str = str(rel_path).lower()
             
             # 排除的目录
-            exclude = {
-                '__recovery', '__history', 'backup', '.git', '.svn',
-                'win32', 'win64', 'debug', 'release',  # 输出目录
-            }
+            exclude = DEPENDENCY_SCAN_EXCLUDED_DIRS
             
             parts = rel_str.split(os.sep)
             for part in parts[:-1]:  # 不包括文件名

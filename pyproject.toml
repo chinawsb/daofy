@@ -61,6 +61,10 @@ ocr = [
 ocr-openvino = [
     "onnxruntime-openvino>=1.24.0",
 ]
+# 可选: Windows UIA (UI Automation) 浏览器 DOM 操作
+uia = [
+    "uiautomation>=2.0.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/chinawsb/daofy"
@@ -74,6 +78,9 @@ daofy = "src.server:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+[tool.setuptools.package-data]
+src = ["resources/*.md", "resources/automation/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

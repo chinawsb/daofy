@@ -14,6 +14,7 @@ Action 模式:
   backup      备份管理（创建/恢复/列表/对比）
   encode      文件编码转换（自动检测源编码，支持 BOM 处理，自动备份）
   uses        增删 uses 子句中的单元（命名空间冲突检测 + 自动排序）
+  fix_garbled 修复中文乱码（自动检测 U+FFFD、缺失 BOM、编码误检测等模式并修复）
 
 返回值统一为 dict，遵循项目规范:
   success: {"status": "success", "message": "...", ...}
@@ -30,8 +31,10 @@ import threading
 import uuid
 from typing import Any, Optional, Dict, List, Set
 from mcp.types import CallToolResult
+from ..constants import BUFFER_SIZE_1MB
 from ..utils.logger import get_logger
 from ..utils.file_backup import create_backup, list_backups, restore_backup, detect_encoding
+from ..services.delphi_edit_guard import record_authorized_write
 from . import pasfmt
 from .read_source_file import read_source_file as _read_file, search_and_read_file as _search_read_file
 from . import dfm_utils
@@ -217,9 +220,14 @@ def _normalize_code_for_compare(text: str) -> str:
 
 
 def _get_old_content(edit: Dict[str, Any]) -> Optional[str]:
-    """Read the old_content guard from an edit."""
+    """Read the old_content guard from an edit.
+
+    自动 strip 尾部 \\r\\n，避免 AI 从 read 输出复制时带入行尾换行符导致校验失败。
+    """
     value = edit.get("old_content")
-    return value if isinstance(value, str) else None
+    if isinstance(value, str):
+        value = value.rstrip('\r\n')
+    return value
 
 
 def _all_edits_have_old_content(edits: Any) -> bool:
@@ -272,7 +280,7 @@ async def _read_structured_anchor_lines(file_path: str) -> tuple[List[str], Opti
 
         read_enc = detect_encoding(read_path)
         with open(read_path, 'r', encoding=read_enc, newline='',
-                  buffering=1048576) as f:
+                  buffering=BUFFER_SIZE_1MB) as f:
             return f.readlines(), tmp_cleanup
     except Exception as exc:
         if tmp_cleanup:
@@ -309,7 +317,7 @@ def _make_temp_write_path(file_path: str) -> str:
 
 def _write_text_temp(temp_path: str, content: str, encoding: str) -> None:
     """Write text to a temp file and flush it before replacement."""
-    with open(temp_path, 'w', encoding=encoding, newline='', buffering=1048576) as f:
+    with open(temp_path, 'w', encoding=encoding, newline='', buffering=BUFFER_SIZE_1MB) as f:
         f.write(content)
         f.flush()
         os.fsync(f.fileno())
@@ -364,6 +372,11 @@ async def _apply_auto_format_atomically(
             backup_path = create_backup(file_path)
             if not backup_path:
                 raise RuntimeError("创建备份失败，已取消格式化")
+        record_authorized_write(
+            file_path,
+            tool="delphi_file",
+            operation="format",
+        )
         _replace_with_temp(temp_write_path, file_path)
     finally:
         if os.path.exists(temp_write_path):
@@ -522,7 +535,7 @@ async def _read_content(
                 reached_eof = True  # 跟踪是否读到文件末尾
                 line_no = 0  # 空文件时 for 循环体不会执行，需初始化
                 with open(file_path, 'r', encoding=enc, newline='',
-                          buffering=1048576) as f:
+                          buffering=BUFFER_SIZE_1MB) as f:
                     for line_no, line in enumerate(f, 1):
                         if line_no > target_end:
                             reached_eof = False
@@ -902,6 +915,39 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
+    # Normalize insert-type edits (those with position="before"/"after") into
+    # single-line replacements before passing to _handle_write_edits.
+    # Without this, an insert edit without end_line is treated as "to end of file"
+    # by the overlap detection, causing false-positive "覆盖到文件末尾" errors
+    # when mixed with later range replacements.
+    if edits and any(edit.get("position") is not None for edit in edits):
+        if not os.path.isfile(file_path):
+            return _wrap_error("新文件不支持含 position 字段的 insert 类型 edits")
+        result = await _normalize_insert_edits_for_write(
+            file_path, edits, preview=preview
+        )
+        if result is None:
+            return _wrap_error("插入编辑预处理失败")
+        err, normalized_edits, cleanup_dir = result
+        if err:
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+            return _wrap_error(err)
+        try:
+            return await _handle_write_edits(
+                file_path=file_path,
+                edits=normalized_edits,
+                backup=backup,
+                encoding=encoding,
+                auto_format=auto_format,
+                preview=preview,
+                force=force,
+                allow_dirty=allow_dirty,
+            )
+        finally:
+            if cleanup_dir:
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+
     return await _handle_write_edits(
         file_path=file_path,
         edits=edits,
@@ -912,6 +958,96 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         force=force,
         allow_dirty=allow_dirty,
     )
+
+
+async def _normalize_insert_edits_for_write(
+    file_path: str,
+    edits: List[Dict[str, Any]],
+    preview: bool = False,
+):
+    """Normalize insert-type edits (those with position field) into single-line replacements.
+
+    When action=write receives a mix of range replacements and position-based inserts,
+    this function reads the file, converts each insert edit into a single-line replacement
+    (end_line = start_line, content includes both anchor text + inserted text), so that
+    _handle_write_edits can apply them correctly with proper overlap detection.
+
+    Returns (error_msg_or_None, normalized_edits, tmp_cleanup_dir).
+    """
+    detected_encoding = detect_encoding(file_path)
+    read_path = file_path
+    tmp_cleanup = None
+    try:
+        if _is_dfm_file(file_path):
+            fmt = dfm_utils._detect_dfm_format(file_path)
+            if fmt == "binary":
+                tmp_cleanup = tempfile.mkdtemp(prefix="filetool_insert_norm_")
+                read_path = os.path.join(tmp_cleanup, os.path.basename(file_path) + ".txt")
+                conv_result = await dfm_utils.convert_dfm(file_path, read_path, to_text=True)
+                if not conv_result.get("success"):
+                    return (f"二进制 DFM 转换失败: {conv_result.get('message', '未知错误')}", edits, tmp_cleanup)
+        with open(read_path, 'r', encoding=detected_encoding, newline='', buffering=BUFFER_SIZE_1MB) as f:
+            lines = f.readlines()
+    except Exception as e:
+        return (str(e), edits, tmp_cleanup)
+
+    has_crlf = any('\r\n' in line for line in lines)
+    total_lines = len(lines)
+    normalized: List[Dict[str, Any]] = []
+
+    for i, edit in enumerate(edits):
+        position = edit.get("position")
+        if position is not None:
+            s_1 = edit.get("start_line")
+            content = edit.get("content")
+            desc = edit.get("description", f"insert #{i}")
+            old_content = _get_old_content(edit)
+
+            if s_1 is None or not isinstance(s_1, int):
+                return (f"edits[{i}] ({desc}): start_line 必须是整数", normalized, tmp_cleanup)
+            if s_1 < 1:
+                return (f"edits[{i}] ({desc}): start_line ({s_1}) 不能小于 1", normalized, tmp_cleanup)
+            if content is None:
+                return (f"edits[{i}] ({desc}): 缺少必需的 content", normalized, tmp_cleanup)
+            if position not in ("before", "after"):
+                return (f"edits[{i}] ({desc}): position 必须是 before 或 after", normalized, tmp_cleanup)
+
+            anchor_idx = s_1 - 1
+            if anchor_idx < 0 or anchor_idx >= total_lines:
+                return (f"edits[{i}] ({desc}): start_line {s_1} 超出当前总行数 {total_lines}", normalized, tmp_cleanup)
+
+            anchor_text = lines[anchor_idx]
+
+            # Validate old_content against anchor line if provided
+            if old_content is not None:
+                if _normalize_code_for_compare(old_content) != _normalize_code_for_compare(anchor_text):
+                    expected_lines = old_content.splitlines(keepends=True) or [""]
+                    return ((
+                        f"edits[{i}] ({desc}): old_content mismatch for insert anchor [{s_1}, {s_1}]\n"
+                        f"  expected: {expected_lines[0].rstrip()}\n"
+                        f"  actual: {anchor_text.rstrip()}"
+                    ), normalized, tmp_cleanup)
+
+            insert_text = _prepare_insert_content(content, has_crlf)
+            if position == "before":
+                replacement = insert_text + anchor_text
+            else:
+                anchor_for_replace = anchor_text
+                if not anchor_for_replace.endswith(('\n', '\r\n')):
+                    anchor_for_replace += '\r\n' if has_crlf else '\n'
+                replacement = anchor_for_replace + insert_text
+
+            normalized.append({
+                "start_line": s_1,
+                "end_line": s_1,
+                "content": replacement,
+                "old_content": old_content if old_content is not None else anchor_text,
+                "description": desc,
+            })
+        else:
+            normalized.append(edit)
+
+    return (None, normalized, tmp_cleanup)
 
 
 async def handle_replace(arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -1086,6 +1222,43 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
             _release_write_lock(file_path)
 
 
+def _format_unchanged_ranges(edit_results: List[Dict[str, Any]], total_lines_before: int) -> str:
+    """从 edit 结果列表推导未变区域并格式化为文本
+
+    每个 edit 之间和末尾的区域都是"未变"的，
+    标注该区间在最终文件中的偏移量，方便 AI 查表而不需要自己算。
+
+    Args:
+        edit_results: 每个 edit 记录，含 actual_start(1-indexed), inserted, delta
+        total_lines_before: 编辑前文件总行数
+
+    Returns:
+        格式如 "  未变: [1, 4] 不变, [14, 150] +3"
+        所有 edit 覆盖了全文时返回空字符串
+    """
+    parts: List[str] = []
+    cursor = 1  # 1-indexed 当前位置
+    offset = 0
+    for er in edit_results:
+        start = er["actual_start"]
+        if start > cursor:
+            off_str = "不变" if offset == 0 else f"{offset:+d}"
+            parts.append(f"[{cursor}, {start - 1}] {off_str}")
+        # 跳过被 edit 覆盖的区域
+        if er["inserted"] > 0:
+            cursor = start + er["inserted"]
+        # 删除操作不推进 cursor（没有新增内容占据位置）
+        offset += er["delta"]
+    # 末尾未变区域
+    if cursor <= total_lines_before:
+        off_str = "不变" if offset == 0 else f"{offset:+d}"
+        parts.append(f"[{cursor}, {total_lines_before}] {off_str}")
+
+    if not parts:
+        return ""
+    return f"  未变: {', '.join(parts)}"
+
+
 async def _handle_write_edits(
     file_path: str,
     edits: List[Dict],
@@ -1148,6 +1321,11 @@ async def _handle_write_edits(
             temp_write_path = _make_temp_write_path(file_path)
             try:
                 _write_text_temp(temp_write_path, content, original_encoding)
+                record_authorized_write(
+                    file_path,
+                    tool="delphi_file",
+                    operation="write",
+                )
                 _replace_with_temp(temp_write_path, file_path)
             except Exception as e:
                 if os.path.exists(temp_write_path):
@@ -1233,7 +1411,7 @@ async def _handle_write_edits(
             read_path = text_path
             read_enc = detect_encoding(read_path)
             tmp_cleanup = tmp_dir
-        with open(read_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
+        with open(read_path, 'r', encoding=read_enc, newline='', buffering=BUFFER_SIZE_1MB) as f:
             lines = f.readlines()
 
         total = len(lines)
@@ -1242,6 +1420,7 @@ async def _handle_write_edits(
 
         cumulative_offset = 0
         results = []
+        edit_results: List[Dict[str, Any]] = []
         all_success = True
 
         for s_0, e_0, c, desc, s_1, e_1, old_content in validated_edits:
@@ -1354,6 +1533,13 @@ async def _handle_write_edits(
                     f"实际行号 = 指定行号{prev_cumulative_offset:+d}"
                 )
 
+            # 收集 edit 结果，用于生成"未变区域"提示
+            edit_results.append({
+                "actual_start": adj_s_display,
+                "inserted": inserted,
+                "delta": delta,
+            })
+
         new_text = ''.join(lines)
         encoding_fallback = False
         fmt_msg = ""
@@ -1443,6 +1629,11 @@ async def _handle_write_edits(
                     if not bak_path:
                         return _wrap_error("创建备份失败，已取消写入")
 
+                record_authorized_write(
+                    file_path,
+                    tool="delphi_file",
+                    operation="write",
+                )
                 _replace_with_temp(temp_write_path, file_path)
             except Exception as ex:
                 return _wrap_error(f"写入文件失败，已取消写入: {ex}")
@@ -1473,7 +1664,7 @@ async def _handle_write_edits(
             if auto_format and not preview and os.path.isfile(file_path) and fmt_msg:
                 try:
                     with open(file_path, 'r', encoding=write_enc, newline='',
-                              buffering=1048576) as f:
+                              buffering=BUFFER_SIZE_1MB) as f:
                         new_total = sum(1 for _ in f)
                     expected_total = total + cumulative_offset
                     if new_total != expected_total:
@@ -1490,6 +1681,12 @@ async def _handle_write_edits(
             _mark_dirty(file_path)
         elif all_success:
             results.append("  ℹ preview 不清除脏标记；后续 write 仍需 read 或 old_content 校验")
+
+        # 追加"未变区域"提示（失败时不输出，因为行号已被污染）
+        if all_success and not preview:
+            unchanged = _format_unchanged_ranges(edit_results, total)
+            if unchanged:
+                results.append(unchanged)
 
         # 汇总输出
         summary = []
@@ -1606,7 +1803,7 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     try:
                         detected_enc = detect_encoding(file_path)
                         with open(file_path, 'r', encoding=detected_enc, newline='',
-                                  buffering=1048576) as f:
+                                  buffering=BUFFER_SIZE_1MB) as f:
                             original_text = f.read()
                         formatted, write_enc, encoding_fallback, backup_path = await _apply_auto_format_atomically(
                             file_path=file_path,
@@ -1723,7 +1920,7 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         # 读取文件内容
         try:
-            with open(file_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
+            with open(file_path, 'r', encoding=read_enc, newline='', buffering=BUFFER_SIZE_1MB) as f:
                 text = f.read()
         except UnicodeDecodeError:
             # 用户显式指定 from_encoding 解码失败时，自动回退到自动检测结果
@@ -1732,7 +1929,7 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     f"用户指定编码 '{read_enc}' 解码失败，回退到自动检测 '{detected_enc}'"
                 )
                 try:
-                    with open(file_path, 'r', encoding=detected_enc, newline='', buffering=1048576) as f:
+                    with open(file_path, 'r', encoding=detected_enc, newline='', buffering=BUFFER_SIZE_1MB) as f:
                         text = f.read()
                     read_enc = detected_enc
                 except UnicodeDecodeError:
@@ -1771,6 +1968,11 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
         temp_write_path = _make_temp_write_path(file_path)
         try:
             _write_text_temp(temp_write_path, text_stripped, target_enc)
+            record_authorized_write(
+                file_path,
+                tool="delphi_file",
+                operation="encode",
+            )
             _replace_with_temp(temp_write_path, file_path)
         except UnicodeEncodeError:
             if os.path.exists(temp_write_path):
@@ -1885,6 +2087,11 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if lock_err:
             return _wrap_error(lock_err)
         try:
+            record_authorized_write(
+                file_path,
+                tool="delphi_file",
+                operation="backup_restore",
+            )
             bp = restore_backup(file_path, version=version)
         finally:
             _release_write_lock(file_path)
@@ -2082,7 +2289,7 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 write_enc = encoding
 
         with open(file_path, 'r', encoding=read_enc, newline='',
-                  buffering=1048576) as f:
+                  buffering=BUFFER_SIZE_1MB) as f:
             text = f.read()
 
         # 查找 uses 子句
@@ -2174,6 +2381,11 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 if not backup_path:
                     return _wrap_error("创建备份失败，已取消写入")
 
+            record_authorized_write(
+                file_path,
+                tool="delphi_file",
+                operation="uses",
+            )
             _replace_with_temp(temp_write_path, file_path)
         except UnicodeEncodeError:
             return _wrap_error("写入文件失败，已取消写入: 编码转换失败")
@@ -2245,6 +2457,184 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
 # 主入口
 # ============================================================
 
+async def handle_fix_garbled(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    修复 Delphi 文件中的中文乱码。
+
+    Delphi 在无 BOM 时按 ANSI/GBK 解读 UTF-8 中文字节，导致编译后乱码。
+    本动作自动检测以下乱码模式并修复：
+
+    1. 无 BOM 的 UTF-8（Delphi 误读为 GBK）→ 添加 UTF-8 BOM
+    2. U+FFFD 替换字符（�）→ 尝试从残留 GBK 字节恢复原文
+    3. UTF-8 字节被存储为 GBK（双重编码）→ 反向恢复
+
+    修复步骤:
+      1. 创建备份到 __history
+      2. 扫描文件的乱码模式和位置
+      3. 根据模式应用对应修复
+      4. 返回修复汇总
+
+    Args:
+        file_path: 目标文件路径
+        backup: 是否创建备份（默认 True）
+        target_encoding: 目标编码（默认 utf-8-sig，即带 BOM 的 UTF-8）
+    """
+    import chardet
+
+    file_path = arguments.get("file_path")
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+    path_err = _validate_path(file_path, arguments.get("project_path"))
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+    backup = arguments.get("backup", True)
+    target_enc = arguments.get("target_encoding", "utf-8-sig")
+
+    # 读取原始字节
+    try:
+        with open(file_path, 'rb') as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return _wrap_error(f"文件不存在: {file_path}")
+    except PermissionError:
+        return _wrap_error(f"无权限读取: {file_path}")
+
+    fixes_applied = []
+    original_size = len(raw)
+
+    # ── 检查 1: 是否有 U+FFFD 替换字符（\xef\xbf\xbd）──
+    fffd_count = raw.count(b'\xef\xbf\xbd')
+    if fffd_count > 0:
+        fixes_applied.append(f"发现 {fffd_count} 处 U+FFFD 替换字符（�），尝试恢复…")
+
+        # 策略: 移除 FFFD 序列，将残留字节尝试按 GBK 解码
+        # U+FFFD 通常出现在「GBK→UTF-8 误读」时失效的字节被替换
+        cleaned = raw.replace(b'\xef\xbf\xbd', b'')
+        recovered_text = None
+        for enc in ['gbk', 'gb18030', 'gb2312']:
+            try:
+                decoded = cleaned.decode(enc)
+                # 检查解码结果是否含有意义的中文（4E00-9FFF 范围的字符占比）
+                cjk_count = sum(1 for c in decoded if '\u4e00' <= c <= '\u9fff')
+                total_cjk = sum(1 for c in decoded if ord(c) > 127)
+                if cjk_count > 0 and (total_cjk == 0 or cjk_count / total_cjk > 0.3):
+                    recovered_text = decoded
+                    fixes_applied.append(f"  通过 {enc} 恢复 {cjk_count} 个中文字符")
+                    break
+            except:
+                continue
+
+        if recovered_text:
+            # 重新编码为目标编码
+            raw = recovered_text.encode(target_enc)
+            fixes_applied.append(f"  已修复并重新编码为 {target_enc}")
+        else:
+            fixes_applied.append(f"  无法自动恢复 U+FFFD 内容，已跳过")
+
+    # ── 检查 2: 是否为 UTF-8 无 BOM（Delphi 可能误读为 ANSI）──
+    has_bom = raw[:3] == b'\xef\xbb\xbf'
+    is_utf16 = raw[:2] in (b'\xff\xfe', b'\xfe\xff')
+
+    if not has_bom and not is_utf16:
+        # 检测编码
+        enc_result = chardet.detect(raw)
+        detected_enc = enc_result.get('encoding', '').lower()
+        confidence = enc_result.get('confidence', 0)
+
+        if 'utf-8' in detected_enc and confidence > 0.8:
+            # 检查文件中是否有中文
+            try:
+                text = raw.decode('utf-8')
+                has_cjk = any('\u4e00' <= c <= '\u9fff' for c in text)
+                if has_cjk:
+                    raw = b'\xef\xbb\xbf' + raw
+                    fixes_applied.append(
+                        f"  编码检测为 UTF-8（置信度 {confidence:.0%})，包含中文，无 BOM → 已添加 UTF-8 BOM"
+                    )
+            except UnicodeDecodeError:
+                pass
+
+    # ── 检查 3: 编码检测为 GBK 但实际是 UTF-8（Delphi 以 ANSI 保存了 UTF-8 字节）──
+    if not has_bom and not is_utf16:
+        enc_result = chardet.detect(raw)
+        detected_enc = enc_result.get('encoding', '').lower()
+        confidence = enc_result.get('confidence', 0)
+
+        if detected_enc in ('gbk', 'gb2312', 'gb18030') and confidence > 0.6:
+            # 尝试用 UTF-8 解码，如果有意义的中文，说明是 UTF-8 被误存为 GBK
+            try:
+                text_utf8 = raw.decode('utf-8')
+                cjk_utf8 = sum(1 for c in text_utf8 if '\u4e00' <= c <= '\u9fff')
+                if cjk_utf8 > 0:
+                    # 已经是有效 UTF-8，只是编码被误检测
+                    raw = b'\xef\xbb\xbf' + raw
+                    fixes_applied.append(
+                        f"  文件被检测为 {detected_enc} 但其实是 UTF-8（含 {cjk_utf8} 个中文），"
+                        f"已添加 UTF-8 BOM 防止 Delphi 误读"
+                    )
+            except UnicodeDecodeError:
+                # 尝试反向恢复: 如果 UTF-8 字节被当作 GBK 存储，需要反向修复
+                # 即: 把当前文件按 GBK 读出的字符转回其原始 UTF-8 编码
+                pass
+
+    # ── 写入修复结果 ──
+    if not fixes_applied:
+        return {
+            "status": "success",
+            "message": f"未发现乱码问题: {os.path.basename(file_path)}（{original_size} 字节）"
+        }
+
+    # 创建备份
+    bak_path = None
+    if backup:
+        lock_err = _acquire_read_lock(file_path)
+        if not lock_err:
+            try:
+                bak_path = create_backup(file_path)
+            finally:
+                _release_read_lock(file_path)
+
+    # 写回过修复后内容
+    lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
+    try:
+        temp_path = _make_temp_write_path(file_path)
+        try:
+            with open(temp_path, 'wb') as f:
+                f.write(raw)
+            record_authorized_write(file_path, tool="delphi_file", operation="fix_garbled")
+            _replace_with_temp(temp_path, file_path)
+        except Exception as e:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            return _wrap_error(f"写入文件失败: {e}")
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+    finally:
+        _release_write_lock(file_path)
+
+    _mark_dirty(file_path)
+
+    summary = "\n".join(fixes_applied)
+    return {
+        "status": "success",
+        "message": (
+            f"修复完成: {os.path.basename(file_path)}\n"
+            f"大小: {original_size} → {len(raw)} 字节\n"
+            f"{summary}"
+        ),
+        "fixes": fixes_applied,
+    }
+
+
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_tool 主入口。
@@ -2270,5 +2660,7 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await handle_encode(arguments)
     elif action == "uses":
         return await handle_uses(arguments)
+    elif action == "fix_garbled":
+        return await handle_fix_garbled(arguments)
     else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses")
+        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled")

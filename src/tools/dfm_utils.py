@@ -13,6 +13,12 @@ import tempfile
 import subprocess
 import shutil
 from typing import Optional, Dict, Any, Set
+
+from ..constants import (
+    TIMEOUT_DFM_COMPILE,
+    TIMEOUT_DFM_COMPILER_DISCOVERY,
+    TIMEOUT_DFM_CONVERT,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -62,7 +68,7 @@ def _find_dcc32() -> Optional[str]:
     try:
         result = subprocess.run(
             [which_cmd, "dcc32.exe" if sys.platform == "win32" else "dcc32"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=TIMEOUT_DFM_COMPILER_DISCOVERY,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         if result.returncode == 0:
@@ -174,7 +180,7 @@ def _compile_dfmconv_to(exe_path: str, dcc32: str) -> bool:
         cmd = [dcc32, dpr_path, f"-E{out_dir}", "-Q", "-B"]
         logger.info(f"编译 DFM 转换器: {' '.join(cmd)}")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd, capture_output=True, text=True, timeout=TIMEOUT_DFM_COMPILE,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
 
@@ -184,7 +190,7 @@ def _compile_dfmconv_to(exe_path: str, dcc32: str) -> bool:
             cmd2 = [dcc32, dpr_path, f"-E{out_dir}", "-Q", "-B", f"-U{lib_path}"]
             logger.info(f"重试编译 DFM 转换器(带-U): {' '.join(cmd2)}")
             result = subprocess.run(
-                cmd2, capture_output=True, text=True, timeout=30,
+                cmd2, capture_output=True, text=True, timeout=TIMEOUT_DFM_COMPILE,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
 
@@ -268,7 +274,7 @@ def _run_dfmconv(exe_path: str, cmd: str, in_file: str, out_file: str) -> bool:
     try:
         result = subprocess.run(
             [exe_path, cmd, in_file, out_file],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=TIMEOUT_DFM_CONVERT,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         if result.returncode != 0:

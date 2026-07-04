@@ -14,12 +14,20 @@ PDF 渲染：
 import base64
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import json
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+from src.constants import (
+    TIMEOUT_BROWSER_DOM_RENDER,
+    TIMEOUT_BROWSER_PDF_RENDER,
+    TIMEOUT_BROWSER_VIRTUAL_TIME_BUDGET_MS,
+    TIMEOUT_NETWORK_REQUEST,
+)
 
 # ── 项目根路径（Daofy 自身） ──
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -31,17 +39,9 @@ _current_source_dir: Path = PROJECT_ROOT / 'src'
 _current_docs_dir: Path = PROJECT_ROOT / 'docs' / 'copyright'
 _current_config_file: Path = PROJECT_ROOT / 'docs' / 'copyright' / 'copyright.json'
 
-# ── 浏览器候选路径（按优先级） ──
-BROWSER_CANDIDATES = [
-    # Edge
-    r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-    r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
-    # Chrome
-    r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-    r'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    # Edge Dev/Canary
-    os.path.expandvars(r'%LOCALAPPDATA%\Microsoft\Edge SxS\Application\msedge.exe'),
-]
+# ── 浏览器候选（按优先级）：环境变量 → PATH → Windows App Paths 注册表 ──
+BROWSER_ENV_VAR = 'DAOFY_BROWSER'
+BROWSER_CANDIDATES = ('msedge', 'msedge.exe', 'chrome', 'chrome.exe', 'chromium', 'chromium.exe')
 
 # ── 运行时配置（由 _load_config 填充） ──
 _CFG = {}  # type: ignore
@@ -119,25 +119,45 @@ def _set_project_context(project_path: str | Path | None = None) -> None:
 
 # ── 工具函数 ──
 
-def detect_browser() -> str:
-    """查找系统上可用的 Chromium 系浏览器，返回 exe 路径。"""
-    for path in BROWSER_CANDIDATES:
-        if os.path.isfile(path):
-            return path
-    # 注册表查找 Edge
+def _browser_from_app_paths(app_name: str) -> str | None:
+    """从 Windows App Paths 注册表查询浏览器路径。"""
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                             r'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe')
-        path = winreg.QueryValueEx(key, '')[0]
-        winreg.CloseKey(key)
-        if os.path.isfile(path):
-            return path
-    except Exception:
-        pass
+    except ImportError:
+        return None
+
+    subkey = rf'SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{app_name}'
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            key = winreg.OpenKey(hive, subkey)
+            path = winreg.QueryValueEx(key, '')[0]
+            winreg.CloseKey(key)
+            if os.path.isfile(path):
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def detect_browser() -> str:
+    """查找系统上可用的 Chromium 系浏览器，返回 exe 路径。"""
+    configured = os.environ.get(BROWSER_ENV_VAR)
+    if configured and os.path.isfile(configured):
+        return configured
+
+    for name in BROWSER_CANDIDATES:
+        found = shutil.which(name)
+        if found:
+            return found
+
+    for app_name in ('msedge.exe', 'chrome.exe'):
+        found = _browser_from_app_paths(app_name)
+        if found:
+            return found
+
     raise RuntimeError(
-        '未找到浏览器。请安装 Edge 或 Chrome。'
-        '\n已搜索路径: ' + '\n  '.join(BROWSER_CANDIDATES)
+        '未找到浏览器。请安装 Edge/Chrome，或通过 DAOFY_BROWSER 指定浏览器可执行文件。'
+        '\n已搜索: DAOFY_BROWSER, PATH, Windows App Paths'
     )
 
 
@@ -149,7 +169,7 @@ def _load_mermaid_js() -> str:
     # 从 CDN 远程加载（降级）
     try:
         url = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'
-        resp = urllib.request.urlopen(url, timeout=30)
+        resp = urllib.request.urlopen(url, timeout=TIMEOUT_NETWORK_REQUEST)
         js = resp.read().decode('utf-8')
         # 缓存到本地
         MERMAID_JS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +335,7 @@ def html_to_pdf(html_content: str, pdf_path: str) -> tuple[bool, str]:
             f'--print-to-pdf={pdf_path}',
             file_url,
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_BROWSER_PDF_RENDER)
         stderr = result.stderr.decode('utf-8', errors='replace')[:300]
 
         if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
@@ -325,7 +345,7 @@ def html_to_pdf(html_content: str, pdf_path: str) -> tuple[bool, str]:
             return False, f'Output too small / {stderr}'
 
     except subprocess.TimeoutExpired:
-        return False, 'Timeout (60s)'
+        return False, f'Timeout ({TIMEOUT_BROWSER_PDF_RENDER}s)'
     except Exception as e:
         return False, str(e)
     finally:
@@ -363,8 +383,9 @@ def _render_mermaid_to_svg(mermaid_code: str) -> str:
 
     try:
         cmd = [browser, '--headless=new', '--disable-gpu',
-               '--virtual-time-budget=5000', '--dump-dom', file_url]
-        result = subprocess.run(cmd, capture_output=True, timeout=30)
+               f'--virtual-time-budget={TIMEOUT_BROWSER_VIRTUAL_TIME_BUDGET_MS}',
+               '--dump-dom', file_url]
+        result = subprocess.run(cmd, capture_output=True, timeout=TIMEOUT_BROWSER_DOM_RENDER)
         dom = result.stdout.decode('utf-8', errors='replace')
 
         # 在 DOM 中找 <div class="mermaid" ...> 内的 <svg>...</svg>

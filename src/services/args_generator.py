@@ -8,7 +8,9 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 根据编译选项生成 Delphi 编译器命令行参数
 """
 
-from typing import List
+import os
+from pathlib import Path
+from typing import List, Optional
 from ..models.compile_request import CompileOptions, OutputType, RuntimeLibrary, TargetPlatform
 from ..utils.logger import get_logger
 
@@ -42,8 +44,26 @@ class ArgsGenerator:
                     return expanded
         except Exception as e:
             logger.debug("忽略非致命异常: %s", str(e))
-        # 回退到硬编码路径
-        return f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/{lib_dir}/release"
+        try:
+            from ..utils.delphi_env import get_delphi_root_dir
+            root_dir = get_delphi_root_dir(delphi_version)
+            if root_dir:
+                return str(Path(root_dir) / "lib" / lib_dir / "release")
+        except Exception as e:
+            logger.debug("忽略非致命异常: %s", str(e))
+
+        program_files_x86 = os.environ.get("ProgramFiles(x86)")
+        if not program_files_x86:
+            return ""
+        return str(
+            Path(program_files_x86)
+            / "Embarcadero"
+            / "Studio"
+            / delphi_version
+            / "lib"
+            / lib_dir
+            / "release"
+        )
 
     def generate(self, project_path: str, options: CompileOptions) -> List[str]:
         """生成编译器参数列表"""
@@ -104,6 +124,9 @@ class ArgsGenerator:
         else:
             args.append('-$Y-')
 
+        # 生成 Detailed 级别 .map 文件（供 StackTrace callgraph 解析）
+        args.append('-GD')
+
         logger.debug("生成的参数: " + " ".join(args))
         return args
 
@@ -156,7 +179,7 @@ class ArgsGenerator:
     def generate_for_file(self, file_path: str, unit_search_paths: List[str] = None,
                          warning_level: int = 2, disabled_warnings: List[str] = None,
                          namespaces: List[str] = None, include_paths: List[str] = None,
-                         output_dir: str = None, delphi_version: str = "22.0",
+                         output_dir: str = None, delphi_version: Optional[str] = None,
                          conditional_defines: List[str] = None) -> List[str]:
         """生成单文件编译参数
 
@@ -168,7 +191,7 @@ class ArgsGenerator:
             namespaces: 命名空间列表 (用于解析单元名称)
             include_paths: include文件搜索路径列表
             output_dir: 输出目录 (用于存放.dcu文件)
-            delphi_version: Delphi版本号 (默认22.0 = Delphi 11 Alexandria)
+            delphi_version: Delphi版本号，默认自动检测
             conditional_defines: 条件编译符号列表
         """
         args = []
@@ -195,18 +218,20 @@ class ArgsGenerator:
             args.append('-NS' + ";".join(default_namespaces))
 
         # 添加Delphi标准库路径（按目标平台）
-        from pathlib import Path
         if unit_search_paths is None:
             unit_search_paths = []
-        delphi_lib_path = Path(self._get_platform_lib_path(delphi_version, TargetPlatform.WIN32))
-        if delphi_lib_path.exists():
-            # 将标准库路径添加到搜索路径的开头
-            unit_search_paths.insert(0, str(delphi_lib_path))
-        else:
-            # 回退到 Win32 库路径
-            fallback = Path(self._get_platform_lib_path(delphi_version, TargetPlatform.WIN32))
-            if fallback.exists():
-                unit_search_paths.insert(0, str(fallback))
+        if not delphi_version:
+            try:
+                from ..utils.delphi_env import get_delphi_version
+                delphi_version = get_delphi_version()
+            except Exception as e:
+                logger.debug("自动检测 Delphi 版本失败: %s", str(e))
+
+        if delphi_version:
+            delphi_lib_path = Path(self._get_platform_lib_path(delphi_version, TargetPlatform.WIN32))
+            if delphi_lib_path.exists():
+                # 将标准库路径添加到搜索路径的开头
+                unit_search_paths.insert(0, str(delphi_lib_path))
 
         # 单元搜索路径
         if unit_search_paths:

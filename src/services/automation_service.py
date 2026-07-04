@@ -32,6 +32,12 @@ from ctypes import wintypes
 from pathlib import Path
 from threading import Lock, RLock
 
+from ..constants import (
+    POLL_INTERVAL_AUTOMATION,
+    TIMEOUT_AUTOMATION_PIPE_MS,
+    TIMEOUT_PROCESS_TERMINATE,
+)
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEFAULT_SNAPSHOTS_DIR = PROJECT_ROOT / 'docs' / 'copyright' / 'snapshots'
 PIPE_NAME = r'\\.\pipe\daofy_auto'
@@ -121,7 +127,7 @@ GENERIC_WRITE = 0x40000000
 OPEN_EXISTING = 3
 PIPE_READMODE_MESSAGE = 2
 INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
-PIPE_TIMEOUT_MS = 5000
+PIPE_TIMEOUT_MS = TIMEOUT_AUTOMATION_PIPE_MS
 
 _k32 = ctypes.windll.kernel32
 
@@ -2269,7 +2275,7 @@ def console_execute(
             if proc.poll() is None:
                 if not keep_alive:
                     proc.kill()
-                    proc.wait(timeout=5)
+                    proc.wait(timeout=TIMEOUT_PROCESS_TERMINATE)
                 else:
                     proc.wait(timeout=timeout)
         else:
@@ -2281,7 +2287,7 @@ def console_execute(
             except subprocess.TimeoutExpired:
                 timed_out = True
                 try:
-                    out, err = proc.communicate(timeout=5)
+                    out, err = proc.communicate(timeout=TIMEOUT_PROCESS_TERMINATE)
                     stdout_buf.write(out)
                     stderr_buf.write(err)
                 except Exception:
@@ -2424,7 +2430,7 @@ def _execute_script_unlocked(app_path: str, script,
                 _attach_failure_callgraph_diagnostic(results[-1], req_id, script_metadata)
             if not step_ok:
                 success = False
-            time.sleep(0.3)
+            time.sleep(POLL_INTERVAL_AUTOMATION)
             continue
 
         if cmd in (
@@ -2490,7 +2496,7 @@ def _execute_script_unlocked(app_path: str, script,
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 results.append(_callgraph_step_error(step, req, f'{cmd} input invalid: {exc}'))
                 success = False
-                time.sleep(0.3)
+                time.sleep(POLL_INTERVAL_AUTOMATION)
                 continue
 
             results.append(_callgraph_local_result(step, req, local_state))
@@ -2499,7 +2505,7 @@ def _execute_script_unlocked(app_path: str, script,
             if not assert_result.get('passed', True):
                 results[-1]['status'] = 'assert_fail'
                 success = False
-            time.sleep(0.3)
+            time.sleep(POLL_INTERVAL_AUTOMATION)
             continue
 
         if cmd == 'callgraph_impact':
@@ -2517,7 +2523,7 @@ def _execute_script_unlocked(app_path: str, script,
                 results.append(_callgraph_step_error(
                     step, req, 'callgraph_impact requires functions, targets, target, file/line, or locations'))
                 success = False
-                time.sleep(0.3)
+                time.sleep(POLL_INTERVAL_AUTOMATION)
                 continue
 
             max_depth_val = step.get('max_depth', step.get('depth', 5))
@@ -2527,13 +2533,13 @@ def _execute_script_unlocked(app_path: str, script,
                 results.append(_callgraph_step_error(
                     step, req, 'callgraph max_depth must be an integer'))
                 success = False
-                time.sleep(0.3)
+                time.sleep(POLL_INTERVAL_AUTOMATION)
                 continue
             if max_depth_int < 0 or max_depth_int > 20:
                 results.append(_callgraph_step_error(
                     step, req, 'callgraph max_depth must be between 0 and 20'))
                 success = False
-                time.sleep(0.3)
+                time.sleep(POLL_INTERVAL_AUTOMATION)
                 continue
             req['max_depth'] = str(max_depth_int)
 
@@ -2542,7 +2548,7 @@ def _execute_script_unlocked(app_path: str, script,
             except ValueError as exc:
                 results.append(_callgraph_step_error(step, req, str(exc)))
                 success = False
-                time.sleep(0.3)
+                time.sleep(POLL_INTERVAL_AUTOMATION)
                 continue
             if edge_limit_int is not None:
                 req['edge_limit'] = str(edge_limit_int)
@@ -2627,7 +2633,7 @@ def _execute_script_unlocked(app_path: str, script,
             if not assert_result.get('passed', True):
                 results[-1]['status'] = 'assert_fail'
                 success = False
-            time.sleep(0.3)
+            time.sleep(POLL_INTERVAL_AUTOMATION)
             continue
 
         if cmd == 'click':
@@ -2713,13 +2719,13 @@ def _execute_script_unlocked(app_path: str, script,
                     results.append(_callgraph_step_error(
                         step, req, 'callgraph_path requires source and target'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 if target_value is None or str(target_value).strip() == '':
                     results.append(_callgraph_step_error(
                         step, req, 'callgraph_path requires source and target'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 req['source'] = str(source_value)
                 req['target'] = str(target_value)
@@ -2729,7 +2735,7 @@ def _execute_script_unlocked(app_path: str, script,
                 except ValueError as exc:
                     results.append(_callgraph_step_error(step, req, str(exc)))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 if max_paths_int is not None:
                     req['max_paths'] = str(max_paths_int)
@@ -2741,7 +2747,7 @@ def _execute_script_unlocked(app_path: str, script,
                     results.append(_callgraph_step_error(
                         step, req, 'callgraph_diff compare_by must be name, addr, or full'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 callgraph_diff_compare_by = compare_by
                 req['compare_by'] = compare_by
@@ -2751,7 +2757,7 @@ def _execute_script_unlocked(app_path: str, script,
                     results.append(_callgraph_step_error(
                         step, req, 'callgraph_diff requires baseline or baseline_path'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 try:
                     callgraph_diff_baseline = _read_callgraph_baseline(baseline_value, snapshots_dir)
@@ -2759,7 +2765,7 @@ def _execute_script_unlocked(app_path: str, script,
                     results.append(_callgraph_step_error(
                         step, req, f'callgraph_diff baseline invalid: {exc}'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
 
             direction_val = step.get('direction', step.get('mode'))
@@ -2779,7 +2785,7 @@ def _execute_script_unlocked(app_path: str, script,
                     results.append(_callgraph_step_error(
                         step, req, 'callgraph direction must be callers or callees'))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 req['direction'] = aliases[direction]
 
@@ -2816,7 +2822,7 @@ def _execute_script_unlocked(app_path: str, script,
                         'status': 'error',
                     })
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 if max_depth_int < 0 or max_depth_int > 20:
                     resp_json = {
@@ -2830,7 +2836,7 @@ def _execute_script_unlocked(app_path: str, script,
                         'status': 'error',
                     })
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 req['max_depth'] = str(max_depth_int)
 
@@ -2840,7 +2846,7 @@ def _execute_script_unlocked(app_path: str, script,
                 except ValueError as exc:
                     results.append(_callgraph_step_error(step, req, str(exc)))
                     success = False
-                    time.sleep(0.3)
+                    time.sleep(POLL_INTERVAL_AUTOMATION)
                     continue
                 if edge_limit_int is not None:
                     req['edge_limit'] = str(edge_limit_int)
@@ -2973,7 +2979,7 @@ def _execute_script_unlocked(app_path: str, script,
         if not step_ok:
             _attach_failure_callgraph_diagnostic(results[-1], req_id, script_metadata)
             success = False
-        time.sleep(0.3)
+        time.sleep(POLL_INTERVAL_AUTOMATION)
 
     # keep_alive=False：确保进程退出（脚本没 exit 则自动发送）
     if not keep_alive:

@@ -8,9 +8,48 @@ import os
 import re
 import logging
 import winreg
+from pathlib import Path
 from typing import Dict, Optional, List
 
+from ..constants import REG_KEY_EMBARCADERO_BDS, REG_KEY_EMBARCADERO_STUDIO
+
 logger = logging.getLogger(__name__)
+
+
+def get_public_documents_dir() -> Optional[Path]:
+    """Return the Windows Public Documents directory when it is available."""
+    public_root = os.environ.get("PUBLIC")
+    if not public_root:
+        return None
+    return Path(public_root) / "Documents"
+
+
+def get_delphi_public_studio_root() -> Optional[Path]:
+    """Return the shared Embarcadero Studio root under Public Documents."""
+    public_docs = get_public_documents_dir()
+    if public_docs is None:
+        return None
+    return public_docs / "Embarcadero" / "Studio"
+
+
+def get_delphi_common_dir(version: Optional[str] = None) -> Optional[Path]:
+    """Return $(BDSCOMMONDIR) for the requested Delphi version."""
+    if not version:
+        version = get_delphi_version()
+    if not version:
+        return None
+    root = get_delphi_public_studio_root()
+    if root is None:
+        return None
+    return root / version
+
+
+def get_delphi_bpl_dir(version: Optional[str] = None) -> Optional[Path]:
+    """Return the shared BPL output directory for the requested Delphi version."""
+    common_dir = get_delphi_common_dir(version)
+    if common_dir is None:
+        return None
+    return common_dir / "Bpl"
 
 
 def get_delphi_version() -> Optional[str]:
@@ -23,7 +62,7 @@ def get_delphi_version() -> Optional[str]:
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, 
-            r"SOFTWARE\Embarcadero\BDS"
+            REG_KEY_EMBARCADERO_BDS
         )
         
         # 枚举所有已安装的版本
@@ -68,7 +107,7 @@ def get_delphi_root_dir(version: Optional[str] = None) -> Optional[str]:
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, 
-            rf"SOFTWARE\Embarcadero\BDS\{version}"
+            f"{REG_KEY_EMBARCADERO_BDS}\\{version}"
         )
         root_dir, _ = winreg.QueryValueEx(key, "RootDir")
         winreg.CloseKey(key)
@@ -97,7 +136,7 @@ def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
     try:
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, 
-            rf"SOFTWARE\Embarcadero\BDS\{version}\Environment Variables"
+            f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Environment Variables"
         )
         
         i = 0
@@ -136,8 +175,8 @@ def get_delphi_library_paths(version: Optional[str] = None, platform: str = "Win
             return paths
 
     registries = [
-        rf"SOFTWARE\Embarcadero\BDS\{version}\Library\{platform}",
-        rf"SOFTWARE\Embarcadero\Studio\{version}\Library\{platform}",
+        f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Library\\{platform}",
+        f"{REG_KEY_EMBARCADERO_STUDIO}\\{version}\\Library\\{platform}",
     ]
 
     for reg_path in registries:
@@ -192,7 +231,8 @@ def expand_delphi_path_macros(
     
     # 获取 Delphi 根目录
     bds_root = get_delphi_root_dir(version)
-    user_docs = os.path.expanduser("~\\Documents")
+    user_docs = Path.home() / "Documents"
+    public_docs = get_public_documents_dir()
     
     # 构建默认宏字典
     macros: Dict[str, str] = {}
@@ -203,12 +243,16 @@ def expand_delphi_path_macros(
         macros['$(BDSLIB)'] = os.path.join(bds_root, 'lib')
     
     if user_docs:
-        public_docs = user_docs.replace('\\' + user_docs.split('\\')[-1], '')
-        
-        macros['$(BDSUSERDIR)'] = user_docs + '\\Embarcadero\\Studio\\' + (version or '23.0')
-        macros['$(BDSCOMMONDIR)'] = public_docs + '\\Embarcadero\\Studio\\' + (version or '23.0')
-        macros['$(BDSCatalogRepository)'] = user_docs + '\\Embarcadero\\Studio\\' + (version or '23.0') + '\\CatalogRepository'
-        macros['$(PublicDocuments)'] = public_docs
+        if version:
+            macros['$(BDSUSERDIR)'] = str(user_docs / "Embarcadero" / "Studio" / version)
+            common_dir = get_delphi_common_dir(version)
+            if common_dir is not None:
+                macros['$(BDSCOMMONDIR)'] = str(common_dir)
+            macros['$(BDSCatalogRepository)'] = str(
+                user_docs / "Embarcadero" / "Studio" / version / "CatalogRepository"
+            )
+        if public_docs is not None:
+            macros['$(PublicDocuments)'] = str(public_docs)
     
     # 添加平台宏
     macros['$(Platform)'] = platform
@@ -271,7 +315,7 @@ def get_catalog_repository_paths(version: Optional[str] = None) -> List[str]:
     
     # 获取 CatalogRepository 路径
     user_docs = os.path.expanduser("~\\Documents")
-    catalog_base = user_docs + '\\Embarcadero\\Studio\\' + (version or '23.0') + '\\CatalogRepository'
+    catalog_base = user_docs + '\\Embarcadero\\Studio\\' + version + '\\CatalogRepository'
     
     if not os.path.exists(catalog_base):
         return paths

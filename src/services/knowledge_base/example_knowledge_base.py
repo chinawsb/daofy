@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import zvec
 
+from src.constants import CHUNK_SIZE_DOCUMENT_LINES, EXAMPLE_SCAN_EXCLUDED_DIRS
 from src.utils.logger import get_logger
 from src.utils.delphi_env import get_delphi_root_dir, get_delphi_version
 
@@ -30,10 +31,7 @@ class ExampleKnowledgeBase:
     DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
 
     # 扫描时跳过的目录名（全小写，因为对比时会 lower()）
-    SKIP_DIR_NAMES = {
-        '.git', '__pycache__', 'win32', 'win64',
-        '__history', '__recovery', 'backup', '.svn', 'node_modules',
-    }
+    SKIP_DIR_NAMES = EXAMPLE_SCAN_EXCLUDED_DIRS
 
     # 三方库 Demo 兄弟目录的候选名（大小写不敏感）
     DEMO_DIR_NAMES = {
@@ -103,7 +101,7 @@ class ExampleKnowledgeBase:
             candidates.append(root / sub)
             candidates.append(root.parent / sub)  # 有时 Demo 在 RootDir 的父级
 
-        # C:\Users\Public\Documents\Embarcadero\Studio\<ver>\Samples\
+        # %PUBLIC%\Documents\Embarcadero\Studio\<ver>\Samples\
         pub = (
             Path(os.path.expanduser("~\\Documents"))
             / "Embarcadero" / "Studio" / version / "Samples"
@@ -227,7 +225,7 @@ class ExampleKnowledgeBase:
         new_files = updated_files = skipped_files = 0
         chunked_docs: List[zvec.Doc] = []
         total_in_dir = 0
-        CHUNK_LINES = 5000
+        CHUNK_LINES = CHUNK_SIZE_DOCUMENT_LINES
 
         for root, dirs, files in os.walk(demo_path):
             dirs[:] = [d for d in dirs if d.lower() not in self.SKIP_DIR_NAMES]

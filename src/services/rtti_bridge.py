@@ -21,6 +21,7 @@ import time
 from ctypes import wintypes
 from typing import Optional
 
+from src.constants import POLL_INTERVAL_AUTOMATION
 from src.services.automation_service import (
     _send_command,
     _send_command_to_pipe,
@@ -265,7 +266,7 @@ class RttiBridge:
         _, err = _ensure_process(app_path, 10.0)
         if err:
             return {"status": "error", "message": err}
-        time.sleep(0.3)  # 给管道一点时间就绪
+        time.sleep(POLL_INTERVAL_AUTOMATION)  # 给管道一点时间就绪
 
         # 发送 rtti_discover 命令
         req = {

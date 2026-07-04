@@ -11,6 +11,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 from typing import Any, Optional
 from mcp.types import CallToolResult
 
+from ..constants import DIR_DELPHI_KB, REG_KEY_EMBARCADERO_BDS
 from ..services.knowledge_base.async_task_manager import get_task_manager, TaskStatus
 from ..utils.logger import get_logger
 
@@ -61,7 +62,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         def _get_delphi_source_dirs():
             dirs = []
             try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
                 i = 0
                 while True:
                     try:
@@ -135,7 +136,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             if use_temp_build:
                 # 用时间戳创建临时目录名，避免冲突
                 temp_suffix = f"-tmp-{int(_time_mod.time())}"
-                temp_dir = old_kb_dir.parent / f".delphi-kb{temp_suffix}"
+                temp_dir = old_kb_dir.parent / f"{DIR_DELPHI_KB}{temp_suffix}"
                 # 临时用 kb_dir 指向 temp，构建到临时目录
                 project_kb.kb_dir = temp_dir
                 logger.info(

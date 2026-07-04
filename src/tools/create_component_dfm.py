@@ -60,6 +60,12 @@ import re
 import ctypes
 from ctypes import wintypes
 from typing import Optional, Dict, Any, List, Tuple, Set
+
+from ..constants import (
+    TIMEOUT_COMPONENT_CREATION_EXEC,
+    TIMEOUT_DELPHI_COMPONENT_COMPILE,
+    TIMEOUT_SUBPROCESS_SHORT,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -364,7 +370,7 @@ def _find_dcc32() -> Optional[str]:
     try:
         result = subprocess.run(
             [which_cmd, "dcc32.exe" if sys.platform == "win32" else "dcc32"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=TIMEOUT_SUBPROCESS_SHORT,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         if result.returncode == 0:
@@ -550,7 +556,10 @@ def _read_dfm_output(out_file: str) -> Dict[str, Any]:
 # 编译 & 执行
 # ============================================================
 
-def _compile_project(tmp_dir: str) -> Tuple[bool, str]:
+def _compile_project(
+    tmp_dir: str,
+    timeout: int = TIMEOUT_DELPHI_COMPONENT_COMPILE,
+) -> Tuple[bool, str]:
     """
     编译 dfmgen 项目。
 
@@ -574,7 +583,10 @@ def _compile_project(tmp_dir: str) -> Tuple[bool, str]:
         cmd = [dcc32, dpr_path, f"-E{tmp_dir}", "-Q", "-B"]
         logger.info(f"编译 DFM 生成器: {' '.join(cmd)}")
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=60,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
 
@@ -583,7 +595,10 @@ def _compile_project(tmp_dir: str) -> Tuple[bool, str]:
             cmd2 = [dcc32, dpr_path, f"-E{tmp_dir}", "-Q", "-B", f"-U{lib_path}"]
             logger.info(f"重试编译(带-U): {' '.join(cmd2)}")
             result = subprocess.run(
-                cmd2, capture_output=True, text=True, timeout=60,
+                cmd2,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
 
@@ -599,13 +614,17 @@ def _compile_project(tmp_dir: str) -> Tuple[bool, str]:
         return True, exe_path
 
     except subprocess.TimeoutExpired:
-        return False, "编译超时(60s)"
+        return False, f"编译超时({timeout}s)"
     except Exception as e:
         logger.error(f"编译异常: {e}", exc_info=True)
         return False, f"编译异常: {e}"
 
 
-def _execute_gen(exe_path: str, out_file: str, timeout: int = 15) -> Tuple[bool, str]:
+def _execute_gen(
+    exe_path: str,
+    out_file: str,
+    timeout: int = TIMEOUT_COMPONENT_CREATION_EXEC,
+) -> Tuple[bool, str]:
     """
     执行编译好的 dfmgen.exe（沙箱环境）。
 
@@ -677,8 +696,8 @@ async def generate_component_dfm(
     uses: Optional[List[str]] = None,
     type_decl: str = "",
     init_code: str = "",
-    compile_timeout: int = 60,
-    exec_timeout: int = 15,
+    compile_timeout: int = TIMEOUT_DELPHI_COMPONENT_COMPILE,
+    exec_timeout: int = TIMEOUT_COMPONENT_CREATION_EXEC,
 ) -> Dict[str, Any]:
     """
     编译+运行 Delphi 代码，通过 WriteComponent 序列化生成 DFM 文本。
@@ -754,7 +773,7 @@ async def generate_component_dfm(
             f.write(dpr_content)
 
         # 2. 编译
-        ok, msg = _compile_project(tmp_dir)
+        ok, msg = _compile_project(tmp_dir, timeout=compile_timeout)
         if not ok:
             return {"success": False, "error": msg, "stage": "compile"}
 

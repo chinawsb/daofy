@@ -1005,6 +1005,10 @@ get_coding_rules(section="list")           # 列出所有可用章节
 
 当 `project_path` 指定具体项目时，会先尝试加载该项目下的自定义规则文件（`CODING_RULES.mdc`）；若无自定义规则，则使用内置默认规则。
 
+Daofy 自带的默认规则源位于 `src/resources/coding-rules.md`，并通过 MCP Resource
+`delphi://coding-rules` 暴露给 AI Agent。项目目录下的 `CODING_RULES.mdc` 仍作为
+项目级覆盖文件名使用。
+
 ### 7.5 代码审计
 
 `project` 工具的 audit/ast/runtime 三个 action 提供代码审计功能：
@@ -2552,10 +2556,12 @@ daofy/
 │   │   ├── rtti_bridge.py
 │   │   └── knowledge_base/    # KB 模块
 │   ├── models/                # 数据模型
+│   ├── resources/             # MCP Resource 默认文档
+│   │   ├── coding-rules.md    # 内置编码规范
+│   │   └── automation/        # 自动化测试工作流资源
 │   ├── utils/                 # 工具函数
 │   └── tool_docs.py           # 工具文档
 ├── config/
-│   ├── CODING_RULES.mdc       # 编码规范
 │   └── logging_config.json    # 日志配置
 ├── tools/
 │   ├── auto/                  # DaofyAutomation 单元
@@ -2573,17 +2579,32 @@ daofy/
 
 ## 附录 D：MCP 协议资源
 
-Daofy 提供两个 MCP 资源端点：
+Daofy 通过 MCP Resources 向 AI Agent 提供稳定文档入口。Agent 应优先读取这些
+`delphi://...` URI，而不是直接依赖 `.opencode/`、`.claude/`、`.cursor/`
+等客户端专用目录。
 
 | 资源 URI | 说明 |
 |---------|------|
+| `delphi://resources` | Daofy 公开资源索引（Markdown 格式） |
 | `delphi://coding-rules` | Delphi 编码规范（Markdown 格式） |
+| `delphi://automation/workflow` | 自动化测试完整工作流 |
+| `delphi://automation/script-generation-workflow` | AI 生成自动化脚本的完整流程 |
+| `delphi://automation/script-schema` | `automate_delphi` 脚本结构与断言写法 |
+| `delphi://automation/report-schema` | 自动化测试报告结构与解读方式 |
+| `delphi://automation/repair-loop` | 失败诊断、脚本修正、代码修正与重跑闭环 |
+| `delphi://automation/inline-unit` | `tools/auto` Delphi 内联单元接入说明 |
 | `delphi://health` | 服务器健康状态（JSON 格式） |
 
 ```python
-# 查看服务器状态 → 返回版本号、运行时长、监听器状态
-# 通过 MCP resources/read 协议访问
+# 查看公开资源索引
+# 通过 MCP resources/read 访问 delphi://resources
+
+# 查看服务器状态
+# 通过 MCP resources/read 访问 delphi://health
 ```
+
+Resources 负责提供规范和流程文档；Prompts 负责启动特定工作流；Tools 负责实际
+执行编译、文件编辑、自动化测试和经验记录。
 
 ---
 

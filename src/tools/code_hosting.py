@@ -52,6 +52,18 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from ..constants import (
+    MAX_RETRIES_GIT_PUSH,
+    RETRY_INTERVAL_GIT_PUSH,
+    TIMEOUT_GIT_FETCH_PULL,
+    TIMEOUT_GIT_LOCAL_SLOW,
+    TIMEOUT_GIT_PUSH,
+    TIMEOUT_GIT_QUICK,
+    TIMEOUT_GIT_REMOTE_SYNC,
+    TIMEOUT_GIT_REV_PARSE,
+    TIMEOUT_NETWORK_REQUEST,
+)
+
 # 复用项目已有的异步任务管理器
 try:
     from ..services.knowledge_base.async_task_manager import get_task_manager
@@ -296,7 +308,7 @@ def _request(base_url, token, method, path, body=None, params=None, platform="gi
     last_exception = None
     for attempt in range(_retries):
         try:
-            with urlopen(req, timeout=30) as resp:
+            with urlopen(req, timeout=TIMEOUT_NETWORK_REQUEST) as resp:
                 raw = resp.read().decode("utf-8")
                 if resp.status == 204:
                     return {"success": True}
@@ -1183,7 +1195,7 @@ def _git_human_error(err_text: str, cmd_str: str) -> str:
     return err_text[:500]
 
 
-def _git_run(work_dir, *args, timeout=300, env=None):
+def _git_run(work_dir, *args, timeout=TIMEOUT_GIT_PUSH, env=None):
     """在指定目录执行 git 命令，返回输出。
 
     Windows 上使用 utf-8 编码解码输出，避免 gbk 解码报错。
@@ -1262,8 +1274,8 @@ def _submit_git_task(name: str, fn, **kw) -> tuple:
     return task_id, resp
 
 
-GIT_REMOTE_SYNC_TIMEOUT = 45
-GIT_REMOTE_ASYNC_TIMEOUT = 300
+GIT_REMOTE_SYNC_TIMEOUT = TIMEOUT_GIT_REMOTE_SYNC
+GIT_REMOTE_ASYNC_TIMEOUT = TIMEOUT_GIT_PUSH
 
 
 def _run_git_remote_action(action: str, work_dir: str, args: list[str], success_message: str, **kw) -> dict:
@@ -1356,7 +1368,7 @@ def _compact_git_status(raw: str) -> str:
 def _act_git_status(platform=None, **kw):
     """查看仓库状态（同步，瞬间完成）。"""
     work_dir = kw.get("dir", ".")
-    raw = _git_run(work_dir, "status", "--porcelain=v1", "-b", timeout=30)
+    raw = _git_run(work_dir, "status", "--porcelain=v1", "-b", timeout=TIMEOUT_GIT_QUICK)
     return _ok(_compact_git_status(raw))
 
 
@@ -1383,7 +1395,7 @@ def _act_git_diff(platform=None, **kw):
         args.append("--")
         args.extend(files)
 
-    raw = _git_run(work_dir, *args, timeout=30)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(_truncate_output(raw or "(no diff)", limit))
 
 
@@ -1403,7 +1415,7 @@ def _act_git_show(platform=None, **kw):
         args.append("--name-only")
     args.extend(_split_ref(ref))
 
-    raw = _git_run(work_dir, *args, timeout=30)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(_truncate_output(raw, limit))
 
 
@@ -1421,7 +1433,7 @@ def _act_git_log(platform=None, **kw):
         args.append("--")
         args.extend(files)
 
-    raw = _git_run(work_dir, *args, timeout=30)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(raw or "(no commits)")
 
 
@@ -1432,7 +1444,7 @@ def _act_git_add(platform=None, **kw):
     files = _validate_git_paths(kw.get("files", []), "git_add")
     if not files:
         return _err("specify files via 'files' parameter")
-    _git_run(work_dir, "add", "--", *files, timeout=30)
+    _git_run(work_dir, "add", "--", *files, timeout=TIMEOUT_GIT_QUICK)
     return _ok(f"staged: {' '.join(files)}")
 
 
@@ -1443,9 +1455,9 @@ def _act_git_commit(platform=None, **kw):
     msg = kw.get("message", "")
     if not msg:
         return _err("specify message via 'message' parameter")
-    _git_run(work_dir, "commit", "-m", msg, timeout=30)
+    _git_run(work_dir, "commit", "-m", msg, timeout=TIMEOUT_GIT_QUICK)
     try:
-        h = _git_run(work_dir, "rev-parse", "HEAD", timeout=10)
+        h = _git_run(work_dir, "rev-parse", "HEAD", timeout=TIMEOUT_GIT_REV_PARSE)
         return _ok(f"committed {h[:12]}: {msg}")
     except RuntimeError:
         return _ok(f"committed: {msg}")
@@ -1512,20 +1524,20 @@ def _act_git_branch(platform=None, **kw):
     if delete:
         if not branch:
             return _err("git_branch delete 需要 branch 参数")
-        _git_run(work_dir, "branch", "-d", branch, timeout=30)
+        _git_run(work_dir, "branch", "-d", branch, timeout=TIMEOUT_GIT_QUICK)
         return _ok(f"branch deleted: {branch}")
 
     if branch:
         args = ["branch", branch]
         if start_point:
             args.append(start_point)
-        _git_run(work_dir, *args, timeout=30)
+        _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
         return _ok(f"branch created: {branch}{' from ' + start_point if start_point else ''}")
 
     args = ["branch"]
     if remote:
         args.append("-a")
-    raw = _git_run(work_dir, *args, timeout=30)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(raw or "(no branches)")
 
 
@@ -1546,7 +1558,7 @@ def _act_git_switch(platform=None, **kw):
             args.append(start_point)
     else:
         args.append(branch)
-    raw = _git_run(work_dir, *args, timeout=30)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(raw or f"switched to {branch}")
 
 
@@ -1590,7 +1602,7 @@ def _act_git_restore(platform=None, **kw):
         args.extend(["--source", source])
     args.append("--")
     args.extend(files)
-    _git_run(work_dir, *args, timeout=30)
+    _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
     return _ok(f"restored: {' '.join(files)}")
 
 
@@ -1599,7 +1611,7 @@ def _act_git_unstage(platform=None, **kw):
     """取消暂存显式文件列表（同步，必须传 files）。"""
     work_dir = kw.get("dir", ".")
     files = _require_files(kw, "git_unstage")
-    _git_run(work_dir, "restore", "--staged", "--", *files, timeout=30)
+    _git_run(work_dir, "restore", "--staged", "--", *files, timeout=TIMEOUT_GIT_QUICK)
     return _ok(f"unstaged: {' '.join(files)}")
 
 
@@ -1613,7 +1625,7 @@ def _act_git_stash(platform=None, **kw):
     include_untracked = _coerce_bool(kw.get("include_untracked"), False)
 
     if op == "list":
-        raw = _git_run(work_dir, "stash", "list", timeout=30)
+        raw = _git_run(work_dir, "stash", "list", timeout=TIMEOUT_GIT_QUICK)
         return _ok(raw or "(no stashes)")
     if op in ("pop", "apply", "drop", "show"):
         ref = _validate_git_arg("ref", kw.get("ref", "stash@{0}"))
@@ -1621,7 +1633,7 @@ def _act_git_stash(platform=None, **kw):
         if op == "show":
             args.append("--stat")
         args.append(ref)
-        raw = _git_run(work_dir, *args, timeout=60)
+        raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_LOCAL_SLOW)
         return _ok(raw or f"stash {op}: {ref}")
     if op != "push":
         return _err("git_stash op 可选: push/list/pop/apply/drop/show")
@@ -1634,7 +1646,7 @@ def _act_git_stash(platform=None, **kw):
     if files:
         args.append("--")
         args.extend(files)
-    raw = _git_run(work_dir, *args, timeout=60)
+    raw = _git_run(work_dir, *args, timeout=TIMEOUT_GIT_LOCAL_SLOW)
     return _ok(raw or "stash saved")
 
 
@@ -1650,7 +1662,7 @@ def _act_git_tag(platform=None, **kw):
     if delete:
         if not tag:
             return _err("git_tag delete 需要 tag 参数")
-        _git_run(work_dir, "tag", "-d", tag, timeout=30)
+        _git_run(work_dir, "tag", "-d", tag, timeout=TIMEOUT_GIT_QUICK)
         return _ok(f"tag deleted: {tag}")
     if tag:
         args = ["tag"]
@@ -1658,9 +1670,9 @@ def _act_git_tag(platform=None, **kw):
             args.extend(["-a", tag, ref, "-m", message])
         else:
             args.extend([tag, ref])
-        _git_run(work_dir, *args, timeout=30)
+        _git_run(work_dir, *args, timeout=TIMEOUT_GIT_QUICK)
         return _ok(f"tag created: {tag}")
-    raw = _git_run(work_dir, "tag", "--list", timeout=30)
+    raw = _git_run(work_dir, "tag", "--list", timeout=TIMEOUT_GIT_QUICK)
     return _ok(raw or "(no tags)")
 
 
@@ -1728,7 +1740,7 @@ def _act_git_push(platform=None, **kw):
         args = ["push", remote]
         if branch:
             args.append(branch)
-        _git_run(work_dir, *args, timeout=120)
+        _git_run(work_dir, *args, timeout=TIMEOUT_GIT_FETCH_PULL)
         return _ok(f"pushed to {remote}{'/' + branch if branch else ''}")
 
     tid, resp = _submit_git_task("git_push", _do_push, **kw)
@@ -1748,8 +1760,8 @@ def _act_git_push_retry(platform=None, **kw):
     remote = _validate_git_arg("remote", kw.get("remote", "origin"))
     branch = _validate_git_arg("branch", kw.get("branch", ""), allow_empty=True)
     # 默认 5 分钟间隔，12 次 ≈ 1 小时
-    interval = int(kw.get("retry_interval", 300))
-    max_retries = int(kw.get("max_retries", 12))
+    interval = int(kw.get("retry_interval", RETRY_INTERVAL_GIT_PUSH))
+    max_retries = int(kw.get("max_retries", MAX_RETRIES_GIT_PUSH))
 
     def _do_retry_push(**kw2):
         progress_cb = kw2.get('_progress_callback')
@@ -1764,7 +1776,7 @@ def _act_git_push_retry(platform=None, **kw):
                 args = ["push", remote]
                 if branch:
                     args.append(branch)
-                _git_run(work_dir, *args, timeout=120)
+                _git_run(work_dir, *args, timeout=TIMEOUT_GIT_FETCH_PULL)
 
                 if progress_cb:
                     progress_cb(100, f"pushed to {remote} (attempt {attempt})")

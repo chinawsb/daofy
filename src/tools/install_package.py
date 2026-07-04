@@ -10,7 +10,12 @@ import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from mcp.types import CallToolResult
+from ..constants import REG_KEY_EMBARCADERO_BDS
 from ..services.compiler_service import CompilerService
+from ..utils.delphi_env import (
+    get_delphi_bpl_dir,
+    get_delphi_version as detect_delphi_version,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -165,9 +170,6 @@ async def _compile_single_package(
     """编译单个包项目"""
     from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform
     
-    version = _get_delphi_version()
-    bpl_dir = Path(rf"C:\Users\Public\Documents\Embarcadero\Studio\{version}\Bpl")
-    
     existing_bpl = _find_bpl_file(project_path, target_platform, build_configuration)
     
     if existing_bpl and Path(existing_bpl).exists():
@@ -254,7 +256,7 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             "duration": 0
         }
     
-    version_key = delphi_root.split('\\')[-1] if '\\' in delphi_root else "23.0"
+    version_key = Path(delphi_root).name
     public_doc = Path.home() / "Documents" / "Embarcadero" / "Studio" / version_key
     bpl_dir = public_doc / "Bpl" / _platform_to_dir(target_platform)
     dcp_dir = public_doc / "Dcp"
@@ -325,23 +327,26 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             pass
 
 
-def _get_delphi_version() -> str:
+def _get_delphi_version() -> Optional[str]:
     """从注册表获取 Delphi 版本号"""
     if _compiler_service:
         root_dir = _compiler_service._get_delphi_root_from_registry()
         if root_dir:
             return Path(root_dir).name
-    return "23.0"
+    return detect_delphi_version()
 
 
 def _find_bpl_file(project_path: str, target_platform: str, build_configuration: str) -> Optional[str]:
     """查找编译生成的 BPL 文件"""
     version = _get_delphi_version()
+    if not version:
+        return None
     
-    search_dirs = [
-        Path(rf"C:\Users\Public\Documents\Embarcadero\Studio\{version}\Bpl"),
-        Path.home() / "Documents" / "Embarcadero" / "Studio" / version / "Bpl",
-    ]
+    search_dirs = []
+    public_bpl_dir = get_delphi_bpl_dir(version)
+    if public_bpl_dir is not None:
+        search_dirs.append(public_bpl_dir)
+    search_dirs.append(Path.home() / "Documents" / "Embarcadero" / "Studio" / version / "Bpl")
     
     project_name = Path(project_path).stem
     is_runtime = '_R' in project_name
@@ -476,7 +481,7 @@ def _register_packages_to_ide(bpl_files: List[str], version: str) -> bool:
     import winreg
     
     try:
-        key_path = rf"SOFTWARE\Embarcadero\BDS\{version}\Known Packages"
+        key_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Known Packages"
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
         
         for bpl_path in bpl_files:
@@ -505,9 +510,21 @@ async def list_installed_packages() -> CallToolResult:
     output = "已安装的 Delphi 组件包:\n\n"
     
     try:
+        version = _get_delphi_version()
+        if not version:
+            return CallToolResult(
+                content=[
+                    {
+                        "type": "text",
+                        "text": "未检测到 Delphi 版本，无法读取已安装组件包",
+                    }
+                ],
+                isError=True,
+            )
+
         key = winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,
-            r"SOFTWARE\Embarcadero\BDS\22.0\Known Packages",
+            f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Known Packages",
             0,
             winreg.KEY_READ
         )

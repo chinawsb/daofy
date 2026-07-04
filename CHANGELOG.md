@@ -735,7 +735,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 编码规则查询接口
 - 新增 `get_coding_rules` 工具,用于获取 Delphi 源码编码规则
-- 支持默认编码规则（config/CODING_RULES.mdc）
+- 支持默认编码规则（当前内置源：`src/resources/coding-rules.md`；早期版本为 `config/CODING_RULES.mdc`）
 - 支持项目自定义规则（项目目录下的 CODING_RULES.mdc）
 - 用户自定义规则优先于默认规则
 - 返回规则来源、文件路径等详细信息
@@ -743,7 +743,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### 文档
 - `docs/CODING_RULES_USAGE.md` - 编码规则接口使用说明
 - `docs/INTEGRATION_TEST_REPORT.md` - 集成测试报告
-- `config/CODING_RULES.mdc` - 默认编码规则文件
+- `src/resources/coding-rules.md` - 默认编码规则文件
 
 ### Changed
 - 更新 `src/server.py` 集成编码规则工具

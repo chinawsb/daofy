@@ -30,6 +30,14 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from ..constants import (
+    CHUNK_SIZE_DOWNLOAD,
+    OCR_MAX_LONG_EDGE,
+    OCR_MAX_SHORT_EDGE,
+    TIMEOUT_NETWORK_DOWNLOAD,
+    TIMEOUT_NETWORK_DOWNLOAD_LARGE,
+)
+
 logger = logging.getLogger(__name__)
 
 # ============================================================
@@ -141,8 +149,8 @@ def _fastest_url(urls: list[str], timeout: int = 5) -> list[str]:
             start = time.time()
             r = requests.get(url, stream=True, timeout=timeout)
             r.raise_for_status()
-            # 只读取第一个 chunk（~8KB）来测量初始传输速度
-            for _ in r.iter_content(chunk_size=8192):
+            # 只读取第一个 chunk 来测量初始传输速度
+            for _ in r.iter_content(chunk_size=CHUNK_SIZE_DOWNLOAD):
                 break
             elapsed = time.time() - start
             results.append((elapsed, url))
@@ -171,10 +179,10 @@ def _download_file(
         try:
             logger.info(f"下载 {desc or '文件'} ({i+1}/{len(all_urls)}): {try_url}")
             dest.parent.mkdir(parents=True, exist_ok=True)
-            r = requests.get(try_url, stream=True, timeout=120)
+            r = requests.get(try_url, stream=True, timeout=TIMEOUT_NETWORK_DOWNLOAD)
             r.raise_for_status()
             with open(dest, "wb") as f:
-                for chunk in r.iter_content(chunk_size=8192):
+                for chunk in r.iter_content(chunk_size=CHUNK_SIZE_DOWNLOAD):
                     f.write(chunk)
             logger.info(f"下载完成: {dest}")
             return True
@@ -183,10 +191,15 @@ def _download_file(
             try:
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                r = requests.get(try_url, stream=True, timeout=120, verify=False)
+                r = requests.get(
+                    try_url,
+                    stream=True,
+                    timeout=TIMEOUT_NETWORK_DOWNLOAD,
+                    verify=False,
+                )
                 r.raise_for_status()
                 with open(dest, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=8192):
+                    for chunk in r.iter_content(chunk_size=CHUNK_SIZE_DOWNLOAD):
                         f.write(chunk)
                 logger.info(f"下载完成（无证书验证）: {dest}")
                 return True
@@ -209,15 +222,20 @@ def _download_tar_and_extract(url: str, dest_dir: Path, desc: str = "") -> bool:
         with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
             tmp_path = tmp.name
             try:
-                r = requests.get(url, stream=True, timeout=300)
+                r = requests.get(url, stream=True, timeout=TIMEOUT_NETWORK_DOWNLOAD_LARGE)
                 r.raise_for_status()
             except requests.exceptions.SSLError:
                 logger.warning(f"SSL 验证失败，尝试不验证证书: {url}")
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                r = requests.get(url, stream=True, timeout=300, verify=False)
+                r = requests.get(
+                    url,
+                    stream=True,
+                    timeout=TIMEOUT_NETWORK_DOWNLOAD_LARGE,
+                    verify=False,
+                )
                 r.raise_for_status()
-            for chunk in r.iter_content(chunk_size=8192):
+            for chunk in r.iter_content(chunk_size=CHUNK_SIZE_DOWNLOAD):
                 tmp.write(chunk)
         # 解压
         with tarfile.open(tmp_path, "r") as tar:
@@ -804,14 +822,14 @@ class OcrService:
     # ── 内部方法 ──
 
     def _det_preprocess(self, img: "np.ndarray") -> "np.ndarray":
-        """检测模型预处理。限制最长边 ≤ 2560，短边 ≥ 640，再对齐到 32 倍数。"""
+        """检测模型预处理。按配置限制边长，再对齐到 32 倍数。"""
         import cv2
         import numpy as np
 
         h, w = img.shape[:2]
         # 限制尺寸
-        max_long_edge = 2560
-        max_short_edge = 640
+        max_long_edge = OCR_MAX_LONG_EDGE
+        max_short_edge = OCR_MAX_SHORT_EDGE
         if max(h, w) > max_long_edge:
             ratio = max_long_edge / max(h, w)
             h, w = int(h * ratio), int(w * ratio)

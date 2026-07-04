@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from mcp.types import CallToolResult
 
+from src.constants import REG_KEY_EMBARCADERO_BDS
+
 logger = logging.getLogger(__name__)
 
 # 统一的知识库服务实例
@@ -45,7 +47,7 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
     """自动检测最新安装的 Delphi 帮助文档目录"""
     try:
         import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
         versions = []
         i = 0
         while True:
@@ -59,7 +61,7 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
         versions.sort(key=lambda x: float(x) if x.replace('.', '').isdigit() else 0, reverse=True)
         for ver in versions:
             try:
-                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Embarcadero\BDS\{ver}")
+                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{REG_KEY_EMBARCADERO_BDS}\\{ver}")
                 root_dir = winreg.QueryValueEx(vk, "RootDir")[0]
                 winreg.CloseKey(vk)
                 help_dir = Path(root_dir) / "Help" / "Doc"

@@ -14,6 +14,7 @@ import winreg
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
+from ..constants import REG_KEY_EMBARCADERO_BDS
 from ..models.compiler_config import CompilerConfig, ConfigFile
 from ..models.compile_history import CompileHistoryEntry, HistoryFile
 from ..utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
@@ -407,8 +408,8 @@ class ConfigManager:
         # 配合下方 "version not in installations" 跳过逻辑,
         # 同版本号时 HKCU 的路径会胜出, HKLM 跳过.
         registry_roots = [
-            (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS", "HKCU"),
-            (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Embarcadero\BDS", "HKLM"),
+            (winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS, "HKCU"),
+            (winreg.HKEY_LOCAL_MACHINE, REG_KEY_EMBARCADERO_BDS, "HKLM"),
         ]
 
         for hive, subkey, hive_name in registry_roots:

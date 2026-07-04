@@ -35,6 +35,7 @@ from .pas_decl_parser import (
 from . import dfm_utils
 from . import create_component_dfm as _gen_mod
 from . import file_tool
+from ..services.delphi_edit_guard import record_authorized_write
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -360,6 +361,11 @@ async def _sync_pas_for_add(
         pass
 
     try:
+        record_authorized_write(
+            target_pas,
+            tool="manage_component",
+            operation="sync_pas_add",
+        )
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
     except OSError as e:
@@ -436,6 +442,11 @@ def _sync_pas_for_remove(
         pass
 
     try:
+        record_authorized_write(
+            target_pas,
+            tool="manage_component",
+            operation="sync_pas_remove",
+        )
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
     except OSError as e:
@@ -507,6 +518,11 @@ def _sync_pas_for_modify(
         pass
 
     try:
+        record_authorized_write(
+            target_pas,
+            tool="manage_component",
+            operation="sync_pas_modify",
+        )
         with open(target_pas, 'w', encoding='utf-8', newline='') as f:
             f.write(new_pas)
     except OSError as e:
@@ -562,11 +578,21 @@ async def _write_dfm_file(file_path: str, new_text: str, original_text: str) -> 
             try:
                 with open(tmp_text, 'w', encoding='utf-8') as f:
                     f.write(new_text)
+                record_authorized_write(
+                    file_path,
+                    tool="manage_component",
+                    operation="write_dfm",
+                )
                 await dfm_utils.convert_dfm(tmp_text, file_path, to_text=False)
             finally:
                 if os.path.isfile(tmp_text):
                     os.remove(tmp_text)
         else:
+            record_authorized_write(
+                file_path,
+                tool="manage_component",
+                operation="write_dfm",
+            )
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(new_text)
     except OSError as e:

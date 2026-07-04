@@ -1,116 +1,147 @@
-"""
-技能文件分发脚本
+"""Distribute Codex/Claude/Cursor skill files from authoritative sources."""
 
-从权威源 .opencode/skills/delphi-rtti-bridge/SKILL.md
-自动生成各平台所需格式（Claude Code、Cursor、Windsurf）。
-
-用法:
-    python scripts/build-skills.py           # 分发所有平台
-    python scripts/build-skills.py --platform claude-code  # 只分发指定平台
-    python scripts/build-skills.py --check    # 只检查不写入
-"""
+from __future__ import annotations
 
 import argparse
-import os
-import shutil
 import sys
+from pathlib import Path
 
-SKILL_SOURCE = ".opencode/skills/delphi-rtti-bridge"
-REFS_SOURCE = os.path.join(SKILL_SOURCE, "references")
 
-PLATFORMS = {
-    "claude-code": {
-        "dir": ".claude/skills/delphi-rtti-bridge",
-        "files": {
-            "SKILL.md": "SKILL.md",
-        },
-    },
-    "cursor": {
-        "dir": ".cursor/rules",
-        "files": {
-            "SKILL.md": "delphi-rtti-bridge.mdc",
-        },
-    },
-    "windsurf": {
-        "dir": ".",
-        "files": {
-            "SKILL.md": ".windsurfrules",
+SKILLS_ROOT = Path(".opencode/skills")
+DEFAULT_SKILL = "delphi-rtti-bridge"
+
+RESOURCE_BACKED_SKILLS = {
+    "delphi-automation-workflow": {
+        "skill": Path("src/resources/automation/workflow.md"),
+        "references": {
+            "script-generation-workflow.md": Path("src/resources/automation/script-generation-workflow.md"),
+            "script-schema.md": Path("src/resources/automation/script-schema.md"),
+            "report-schema.md": Path("src/resources/automation/report-schema.md"),
+            "repair-loop.md": Path("src/resources/automation/repair-loop.md"),
+            "inline-unit.md": Path("src/resources/automation/inline-unit.md"),
         },
     },
 }
 
+PLATFORMS = {
+    "opencode": {
+        "dir": ".opencode/skills/{skill}",
+        "skill_file": "SKILL.md",
+        "copy_refs": True,
+    },
+    "claude-code": {
+        "dir": ".claude/skills/{skill}",
+        "skill_file": "SKILL.md",
+        "copy_refs": True,
+    },
+    "cursor": {
+        "dir": ".cursor/rules",
+        "skill_file": "{skill}.mdc",
+        "copy_refs": False,
+    },
+    "windsurf": {
+        "dir": ".",
+        "skill_file": ".windsurfrules",
+        "copy_refs": False,
+    },
+}
 
-def distribute_single(platform: str, dry_run: bool = False) -> bool:
-    """分发到单个平台。"""
-    if platform not in PLATFORMS:
-        print(f"  ✗ 未知平台: {platform}")
+
+def _skill_source_path(skill: str) -> Path:
+    """Return the authoritative skill file for a skill."""
+    resource_spec = RESOURCE_BACKED_SKILLS.get(skill)
+    if resource_spec:
+        return resource_spec["skill"]
+    return SKILLS_ROOT / skill / "SKILL.md"
+
+
+def _reference_sources(skill: str) -> dict[str, Path]:
+    """Return authoritative reference files for a skill."""
+    resource_spec = RESOURCE_BACKED_SKILLS.get(skill)
+    if resource_spec:
+        return resource_spec["references"]
+
+    refs_dir = SKILLS_ROOT / skill / "references"
+    if not refs_dir.is_dir():
+        return {}
+    return {
+        path.name: path
+        for path in sorted(refs_dir.iterdir())
+        if path.is_file()
+    }
+
+
+def _copy_file(src_path: Path, dst_path: Path, dry_run: bool) -> bool:
+    """Copy one file or print the planned copy."""
+    if not src_path.is_file():
+        print(f"  x missing source: {src_path}")
         return False
-
-    cfg = PLATFORMS[platform]
-    target_dir = cfg["dir"]
-
     if dry_run:
-        print(f"  → {platform}: 将写入 {target_dir}/")
-        for src_rel, dst_name in cfg["files"].items():
-            src_path = os.path.join(SKILL_SOURCE, src_rel)
-            dst_path = os.path.join(target_dir, dst_name)
-            print(f"    {src_path} → {dst_path}")
+        print(f"    {src_path} -> {dst_path}")
         return True
 
-    os.makedirs(target_dir, exist_ok=True)
-
-    for src_rel, dst_name in cfg["files"].items():
-        src_path = os.path.join(SKILL_SOURCE, src_rel)
-        dst_path = os.path.join(target_dir, dst_name)
-
-        if not os.path.isfile(src_path):
-            print(f"  ✗ 源文件不存在: {src_path}")
-            continue
-
-        shutil.copy2(src_path, dst_path)
-        print(f"  ✓ {platform} → {dst_path}")
-
-    # 也复制 references/ 目录到目标（仅 claude-code）
-    if platform == "claude-code":
-        refs_target = os.path.join(target_dir, "references")
-        if os.path.isdir(REFS_SOURCE):
-            os.makedirs(refs_target, exist_ok=True)
-            for fname in os.listdir(REFS_SOURCE):
-                src = os.path.join(REFS_SOURCE, fname)
-                if os.path.isfile(src):
-                    shutil.copy2(src, os.path.join(refs_target, fname))
-                    print(f"  ✓ {platform} refs → {refs_target}/{fname}")
-
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    dst_path.write_bytes(src_path.read_bytes())
+    print(f"  ok {dst_path}")
     return True
 
 
-def main():
+def distribute_single(skill: str, platform: str, dry_run: bool = False) -> bool:
+    """Distribute one skill to one platform."""
+    if platform not in PLATFORMS:
+        print(f"  x unknown platform: {platform}")
+        return False
+
+    cfg = PLATFORMS[platform]
+    target_dir = Path(cfg["dir"].format(skill=skill))
+    skill_source = _skill_source_path(skill)
+    target_skill = target_dir / cfg["skill_file"].format(skill=skill)
+
+    if dry_run:
+        print(f"  -> {platform}: {target_dir}/")
+
+    success = _copy_file(skill_source, target_skill, dry_run)
+
+    if cfg["copy_refs"]:
+        refs_target = target_dir / "references"
+        for fname, src_path in _reference_sources(skill).items():
+            success = _copy_file(src_path, refs_target / fname, dry_run) and success
+
+    return success
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="分发 Delphi RTTI Bridge 技能文件到各平台"
+        description="Distribute skill files to client-specific locations."
     )
     parser.add_argument(
-        "--platform", "-p",
+        "--platform",
+        "-p",
         choices=list(PLATFORMS.keys()) + ["all"],
         default="all",
-        help="目标平台（默认 all）",
+        help="Target platform.",
     )
     parser.add_argument(
-        "--check", "-c",
+        "--skill",
+        "-s",
+        default=DEFAULT_SKILL,
+        help=f"Skill name. Default: {DEFAULT_SKILL}.",
+    )
+    parser.add_argument(
+        "--check",
+        "-c",
         action="store_true",
-        help="仅预览不写入",
+        help="Preview copies without writing.",
     )
     args = parser.parse_args()
 
-    print(f"{'[预览] ' if args.check else ''}分发 delphi-rtti-bridge 技能:")
+    prefix = "[check] " if args.check else ""
+    print(f"{prefix}distribute {args.skill}:")
 
-    platforms = list(PLATFORMS.keys()) if args.platform == "all" else [args.platform]
-    success = all(distribute_single(p, dry_run=args.check) for p in platforms)
+    platforms = list(PLATFORMS) if args.platform == "all" else [args.platform]
+    success = all(distribute_single(args.skill, platform, args.check) for platform in platforms)
 
-    if args.check:
-        print("\n预览完成，使用 --check 不带参数实际写入")
-    else:
-        print(f"\n{'全部完成' if success else '部分失败'}")
-
+    print("\nall done" if success else "\ncompleted with errors")
     return 0 if success else 1
 
 

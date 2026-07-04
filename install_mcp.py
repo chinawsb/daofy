@@ -310,6 +310,18 @@ def _write_config(config_path: str, data: dict, config_type: str) -> None:
         write_json(config_path, data)
 
 
+def _file_has_mcp(config_path: str, config_type: str) -> bool:
+    """检查配置文件是否含 daofy 或 legacy MCP Server（容错读取）。"""
+    if not config_path or not os.path.exists(config_path):
+        return False
+    try:
+        data = _read_config(config_path, config_type)
+        node = data.get(_mcp_node_key(config_type), {})
+        return MCP_SERVER_NAME in node or LEGACY_SERVER_NAME in node
+    except Exception:
+        return False
+
+
 def is_mcp_configured(config_path: str, server_name: str, config_type: str) -> bool:
     if not os.path.exists(config_path):
         return False
@@ -394,6 +406,7 @@ def _detect_path(paths: list[str], agent_name: str = "") -> str | None:
         "Trae": ["trae cn", "trae-cn"],
         "TRAE SOLO CN": ["trae solo", "solo cn"],
         "Claude Desktop": ["claude"],
+        "Claude Code": ["claude code", "claude-code", "anthropic"],
         "CodeArts Agent": ["codearts"],
         "Cursor": ["cursor"],
         "OpenCode": ["opencode"],
@@ -672,6 +685,34 @@ AGENT_DEFINITIONS = {
         ],
         "experimental": True,  # extension\local\mcp.json 含元数据，重写会清空 identifier/source
     },
+    "Claude Code": {
+        # Anthropic Claude Code CLI — 终端编码代理
+        # 安装方式: npm install -g @anthropic-ai/claude-code
+        # MCP 配置位置（注意：不是 ~/.claude/settings.json，那只存 env/权限/hooks/model）：
+        #   全局(user scope) → ~/.claude.json 顶层 mcpServers 键
+        #   项目(project scope) → <project>/.mcp.json 顶层 mcpServers 键
+        # 文档: https://docs.anthropic.com/en/docs/claude-code/mcp
+        "config_type": "ClaudeCode",
+        "modes": ["global", "project"],
+        "doc_url": "https://docs.anthropic.com/en/docs/claude-code/mcp",
+        "config_path": lambda: os.path.join(_userprofile(), ".claude.json"),
+        "project_config_relpath": ".mcp.json",
+        # 旧版本脚本曾错误写入 settings.json（Claude Code 实际不读），需在卸载时一并清理
+        "legacy_config_path": lambda: os.path.join(_userprofile(), ".claude", "settings.json"),
+        "legacy_project_config_relpath": os.path.join(".claude", "settings.json"),
+        "detect_paths": lambda: [
+            # npm 全局安装的 claude（优先 .cmd 以便 Windows 执行）
+            os.path.join(_env("APPDATA"), "npm", "claude"),
+            os.path.join(_env("APPDATA"), "npm", "claude.cmd"),
+            os.path.join(_env("LOCALAPPDATA"), "npm", "claude"),
+            os.path.join(_env("LOCALAPPDATA"), "npm", "claude.cmd"),
+        ],
+        "detect_command": lambda: shutil.which("claude") is not None,
+        "detect_npm": lambda: (
+            os.path.exists(os.path.join(_env("APPDATA"), "npm", "node_modules", "@anthropic-ai", "claude-code"))
+            or os.path.exists(os.path.join(_env("LOCALAPPDATA"), "npm", "node_modules", "@anthropic-ai", "claude-code"))
+        ),
+    },
 }
 
 
@@ -745,18 +786,13 @@ def detect_agents() -> list[dict]:
         # 4. 配置文件存在时，检查是否有 MCP 配置（但仅作为"已配置"标记，
         #    不作为"已安装"的唯一依据——必须有可执行文件才算已安装）
         config_path = defn["config_path"]()
-        was_configured = False
-        if os.path.exists(config_path):
-            try:
-                if _is_toml_config(defn["config_type"]):
-                    data = _read_config(config_path, defn["config_type"])
-                else:
-                    data = read_json(config_path)
-                node_key = _mcp_node_key(defn["config_type"])
-                node = data.get(node_key, {})
-                was_configured = MCP_SERVER_NAME in node or LEGACY_SERVER_NAME in node
-            except Exception:
-                pass
+        was_configured = _file_has_mcp(config_path, defn["config_type"])
+
+        # 旧版脚本可能写到了 legacy 路径（如 Claude Code 的 settings.json），一并视为已配置
+        legacy_config_fn = defn.get("legacy_config_path")
+        legacy_config_path = legacy_config_fn() if callable(legacy_config_fn) else None
+        if legacy_config_path and _file_has_mcp(legacy_config_path, defn["config_type"]):
+            was_configured = True
 
         experimental = defn.get("experimental", False)
         results.append({
@@ -767,6 +803,8 @@ def detect_agents() -> list[dict]:
             "config_type": defn["config_type"],
             "modes": defn.get("modes", ["global"]),
             "project_config_relpath": defn.get("project_config_relpath", ""),
+            "legacy_config_path": legacy_config_path,
+            "legacy_project_config_relpath": defn.get("legacy_project_config_relpath", ""),
             "doc_url": defn["doc_url"],
             "experimental": experimental,
             "was_configured": was_configured,  # 曾配置过 MCP（即使应用已卸载）
@@ -803,6 +841,25 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
         }
         # OpenCode 的 command 是数组，没有单独的 args 和 cwd
         # type 字段 Optional，local 是默认值
+        return base
+
+    if config_type == "ClaudeCode":
+        # Claude Code 格式：JSON，mcpServers 键，需要 type: stdio 字段
+        #   全局(user scope) → ~/.claude.json 顶层 mcpServers
+        #   项目(project scope) → <project>/.mcp.json 顶层 mcpServers
+        # 注意：Claude Code 不从 ~/.claude/settings.json 读取 MCP（仅 env/权限/hooks/model）
+        base = {
+            "type": "stdio",
+            "command": "daofy" if use_pip else python_exe,
+            "args": [] if use_pip else [server_script],
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+        }
+        if not use_pip:
+            base["cwd"] = cwd
         return base
 
     if _is_toml_config(config_type):
@@ -853,11 +910,21 @@ def _get_process_pids(exe_name: str) -> list[str]:
 
     特殊处理 .cmd/.bat 包装器：实际进程可能是 cmd.exe 或 node.exe，
     此时搜索包含 exe_name 命令行的进程作为兜底。
+    特殊处理无扩展名的情况（npm shell 脚本包装器）：实际进程是 exe_name.exe。
     """
     pids = _get_process_pids_by_image(exe_name)
-    if not pids and (exe_name.lower().endswith(".cmd") or exe_name.lower().endswith(".bat")):
-        # .cmd/.bat 包装器：实际进程可能是 cmd.exe / node.exe，按命令行搜索
-        pids = _get_process_pids_by_cmdline(exe_name)
+
+    if not pids and sys.platform == "win32":
+        if "." not in exe_name:
+            # npm 包装器如 claude → 实际进程是 claude.exe
+            pids = _get_process_pids_by_image(exe_name + ".exe")
+        elif exe_name.lower().endswith((".cmd", ".bat")):
+            # .cmd/.bat 包装器：先按 .exe 搜索（实际进程名），再按命令行兜底
+            stem = os.path.splitext(exe_name)[0]
+            pids = _get_process_pids_by_image(stem + ".exe")
+            if not pids:
+                pids = _get_process_pids_by_cmdline(exe_name)
+
     return pids
 
 
@@ -932,12 +999,21 @@ def _restart_agent(agent: dict) -> bool:
     if not exe_path or not os.path.isfile(exe_path):
         return False
 
+    # Windows 上 npm 全局安装的 CLI（如 claude）是无扩展名的 shell 脚本，
+    # subprocess.Popen 无法直接执行，需使用 .cmd 包装器
+    if sys.platform == "win32" and "." not in os.path.basename(exe_path):
+        cmd_path = exe_path + ".cmd"
+        exe_path = cmd_path if os.path.isfile(cmd_path) else exe_path
+
     exe_name = os.path.basename(exe_path)
     pids = _get_process_pids(exe_name)
     if not pids:
-        # 没有运行中的进程，直接启动
+        # 没有运行中的进程，直接启动（新窗口）
         try:
-            subprocess.Popen([exe_path])
+            if sys.platform == "win32":
+                subprocess.Popen([exe_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen([exe_path])
             return True
         except Exception:
             return False
@@ -956,19 +1032,27 @@ def _restart_agent(agent: dict) -> bool:
     time.sleep(1)
 
     # 按原参数启动（不依赖 cwd，WMI 的 WorkingDirectory 不可靠）
+    # 使用 CREATE_NEW_CONSOLE 在新窗口中启动，避免影响当前窗口后续内容
     try:
         if proc_info and proc_info.get("command_line"):
             if sys.platform == "win32":
-                subprocess.Popen(proc_info["command_line"], shell=True)
+                subprocess.Popen(proc_info["command_line"], shell=True,
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:
                 import shlex
                 subprocess.Popen(shlex.split(proc_info["command_line"]))
         else:
-            subprocess.Popen([exe_path])
+            if sys.platform == "win32":
+                subprocess.Popen([exe_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen([exe_path])
         return True
     except Exception:
         try:
-            subprocess.Popen([exe_path])
+            if sys.platform == "win32":
+                subprocess.Popen([exe_path], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen([exe_path])
             return True
         except Exception:
             return False
@@ -1037,7 +1121,8 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     # 按过滤器筛选
     if agent_filter != "All":
         filter_map = {
-            "Claude": "Claude Desktop", "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
+            "Claude": "Claude Desktop", "ClaudeCode": "Claude Code",
+            "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
@@ -1105,9 +1190,17 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     if agent_filter != "All":
         # target 和 agents 已在之前的 agent_filter 检查中筛选完毕
         selected = [a for a in installed_agents if a["name"] == target]
-        # 自动推断 implied_mode
+        # 自动推断 implied_mode：
+        #   仅支持 project → project
+        #   双模式且显式给了 --project-dir → project（用户意图明确）
+        #   否则 → global
         for a in selected:
-            a["_implied_mode"] = "project" if "project" in a["modes"] and "global" not in a["modes"] else "global"
+            if "project" in a["modes"] and "global" not in a["modes"]:
+                a["_implied_mode"] = "project"
+            elif "project" in a["modes"] and project_dir:
+                a["_implied_mode"] = "project"
+            else:
+                a["_implied_mode"] = "global"
     else:
         if len(display_items) <= 1:
             selected = [a for a, _ in display_items]
@@ -1289,24 +1382,48 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
 
     agents = detect_agents()
 
-    # 如果 CLI 指定了 project_dir，预先设置配置文件路径（但不改变 installed 状态）
-    # 这样项目级 Agent 会在选择时显示正确的配置路径，但需要用户主动选择才安装
-    if project_dir:
-        for a in agents:
-            if "project" in a["modes"]:
-                rel_path = _get_project_relative_config_path(a["name"], a)
-                if rel_path:
-                    a["config_path"] = os.path.join(project_dir, rel_path)
+    def _resolve_row(agent: dict, mode: str) -> dict:
+        """为 (agent, mode) 生成独立 dict 副本，解析该模式下的真实配置路径。
 
-    # 只显示尚有 MCP 配置可卸载的 Agent（应用已装但无配置的无需列出）
+        避免在共享 dict 上原地改 config_path 导致 global/project 行互相污染。
+        同时解析 legacy 路径（旧脚本可能写错位置，卸载时一并清理）。
+        """
+        entry = dict(agent)
+        entry["_implied_mode"] = mode
+        if mode == "project":
+            rel_path = _get_project_relative_config_path(agent["name"], agent)
+            if project_dir and rel_path:
+                entry["config_path"] = os.path.join(project_dir, rel_path)
+            legacy_rel = agent.get("legacy_project_config_relpath")
+            entry["legacy_config_path"] = (
+                os.path.join(project_dir, legacy_rel) if project_dir and legacy_rel else None
+            )
+        return entry
+
+    def _row_configured(row: dict) -> bool:
+        """该行对应的配置文件（含 legacy）里是否真有 daofy/legacy MCP。"""
+        return (
+            _file_has_mcp(row["config_path"], row["config_type"])
+            or _file_has_mcp(row.get("legacy_config_path"), row["config_type"])
+        )
+
+    # 只显示尚有 MCP 配置可卸载的 Agent。
+    #   global 行：直接按真实文件判断
+    #   project 行：已知 project_dir 时按项目文件判断；未知时回退到 agent 级 was_configured
+    #              （让用户先选中，再提示输入目录）
     display_items: list[tuple[dict, str]] = []
     for a in agents:
-        if "global" in a["modes"] and a.get("was_configured"):
-            display_items.append((a, "global"))
+        if "global" in a["modes"]:
+            row = _resolve_row(a, "global")
+            if _row_configured(row):
+                display_items.append((row, "global"))
     project_start = len(display_items) + 1
     for a in agents:
-        if "project" in a["modes"] and a.get("was_configured"):
-            display_items.append((a, "project"))
+        if "project" in a["modes"]:
+            row = _resolve_row(a, "project")
+            shown = _row_configured(row) if project_dir else a.get("was_configured")
+            if shown:
+                display_items.append((row, "project"))
 
     if not display_items:
         info("没有需要卸载的 AI Agent")
@@ -1348,7 +1465,8 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
     # 交互选择
     if agent_filter != "All":
         filter_map = {
-            "Claude": "Claude Desktop", "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
+            "Claude": "Claude Desktop", "ClaudeCode": "Claude Code",
+            "Trae": "Trae", "TRAE SOLO": "TRAE SOLO CN", "CodeArts": "CodeArts Agent",
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
@@ -1356,9 +1474,21 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Codex": "Codex CLI",
         }
         target = filter_map.get(agent_filter, agent_filter)
-        selected = [a for a in agents if a["name"] == target and a.get("was_configured")]
-        for a in selected:
-            a["_implied_mode"] = "project" if "project" in a["modes"] and "global" not in a["modes"] else "global"
+        selected = []
+        for a in agents:
+            if a["name"] != target:
+                continue
+            # 双模式且显式给了 --project-dir → 按 project 卸载（用户意图明确）
+            if "project" in a["modes"] and "global" not in a["modes"]:
+                mode = "project"
+            elif "project" in a["modes"] and project_dir:
+                mode = "project"
+            else:
+                mode = "global"
+            row = _resolve_row(a, mode)
+            # 已知配置路径时按真实文件判断；project 模式未给目录时回退 was_configured
+            if _row_configured(row) or (mode == "project" and not project_dir and a.get("was_configured")):
+                selected.append(row)
     else:
         if len(display_items) <= 1:
             selected_with_modes = display_items
@@ -1419,11 +1549,17 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             rel_path = _get_project_relative_config_path(a["name"], a)
             if rel_path:
                 a["config_path"] = os.path.join(project_dir, rel_path)
+            legacy_rel = a.get("legacy_project_config_relpath")
+            if legacy_rel:
+                a["legacy_config_path"] = os.path.join(project_dir, legacy_rel)
 
-    # 过滤出实际已配置的 Agent
+    # 过滤出实际已配置的 Agent（含 legacy 路径）
     to_uninstall = []
     for a in selected:
-        configured = is_mcp_configured_any(a["config_path"], a["config_type"])
+        configured = (
+            is_mcp_configured_any(a["config_path"], a["config_type"])
+            or _file_has_mcp(a.get("legacy_config_path"), a["config_type"])
+        )
         if not configured:
             if a["_implied_mode"] == "project" and "global" not in a["modes"]:
                 warn(f"{a['name']} 在 {a['config_path']} 未找到 MCP 配置，跳过")
@@ -1456,10 +1592,18 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
     for a in to_uninstall:
         info(f"正在卸载 {a['name']}...")
         removed_any = False
-        for sn in (MCP_SERVER_NAME, LEGACY_SERVER_NAME):
-            if is_mcp_configured(a["config_path"], sn, a["config_type"]):
-                if remove_mcp_config(a["config_path"], sn, a["config_type"]):
-                    removed_any = True
+        # 清理主配置文件 + legacy 路径（旧脚本可能写错位置，如 Claude Code 的 settings.json）
+        paths_to_clean = [a["config_path"]]
+        legacy = a.get("legacy_config_path")
+        if legacy:
+            paths_to_clean.append(legacy)
+        for cfg_path in paths_to_clean:
+            for sn in (MCP_SERVER_NAME, LEGACY_SERVER_NAME):
+                if is_mcp_configured(cfg_path, sn, a["config_type"]):
+                    if remove_mcp_config(cfg_path, sn, a["config_type"]):
+                        removed_any = True
+                        if cfg_path == legacy:
+                            info(f"  已清理旧版残留配置: {cfg_path}")
         if removed_any:
             success(f"已从 {a['name']} 移除 MCP Server 配置")
             success_count += 1
@@ -1793,7 +1937,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Daofy for Delphi 安装/卸载脚本")
     parser.add_argument("--uninstall", action="store_true", help="卸载模式")
     parser.add_argument("--agent", default="All",
-                        choices=["Claude", "Trae", "CodeArts", "Cursor", "OpenCode",
+                        choices=["Claude", "ClaudeCode", "Trae", "CodeArts", "Cursor", "OpenCode",
                                  "Windsurf", "Cline", "Roo", "Tongyi", "Doubao",
                                  "Kimi", "ChatGLM", "Qoder", "QoderCN", "All"],
                         help="指定 AI Agent")

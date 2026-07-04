@@ -11,12 +11,15 @@
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Optional
+
+from ..constants import TIMEOUT_ARCHIVE_7Z
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +42,11 @@ _LOG_FILE_PREFIX = "delphi_mcp"
 
 # 缓存配置
 _log_config: Optional[LogConfig] = None
+
+
+def _log_nonfatal(message: str, exc: Exception) -> None:
+    """Log best-effort cleanup errors without requiring module logger setup."""
+    logging.getLogger("delphi_mcp").debug(message, str(exc))
 
 
 def _get_project_root() -> Path:
@@ -64,7 +72,7 @@ def _load_log_config() -> LogConfig:
             config.archive_old_logs = data.get("archive_old_logs", config.archive_old_logs)
             config.keep_days = int(data.get("keep_days", config.keep_days))
         except Exception as e:
-            logger.debug("忽略非致命异常: %s", str(e))
+            _log_nonfatal("忽略非致命异常: %s", e)
     _log_config = config
     return config
 
@@ -91,13 +99,10 @@ def _find_7z_path() -> Optional[str]:
     builtin = _get_project_root() / "tools" / "7z" / "7z.exe"
     if builtin.exists():
         return str(builtin)
-    # 系统安装路径
-    for path in [
-        r"C:\Program Files\7-Zip\7z.exe",
-        r"C:\Program Files (x86)\7-Zip\7z.exe",
-    ]:
-        if Path(path).exists():
-            return path
+    for name in ("7z", "7z.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
     return None
 
 
@@ -165,25 +170,25 @@ def archive_old_logs(log_dir: Optional[str] = None) -> None:
                 try:
                     log_file.unlink()
                 except Exception as e:
-                    logger.debug("忽略非致命异常: %s", str(e))
+                    _log_nonfatal("忽略非致命异常: %s", e)
                 continue
 
             # 用 7z 压缩
             try:
                 result = subprocess.run(
                     [seven_z, "a", "-t7z", "-mx=5", str(archive_name), str(log_file)],
-                    capture_output=True, text=True, timeout=120,
+                    capture_output=True, text=True, timeout=TIMEOUT_ARCHIVE_7Z,
                 )
                 if result.returncode == 0 and archive_name.exists():
                     log_file.unlink()
             except Exception as e:
-                logger.debug("忽略非致命异常: %s", str(e))
+                _log_nonfatal("忽略非致命异常: %s", e)
     finally:
         # 释放锁
         try:
             lock_file.unlink()
         except Exception as e:
-            logger.debug("忽略非致命异常: %s", str(e))
+            _log_nonfatal("忽略非致命异常: %s", e)
 
 
 # ---------------------------------------------------------------------------

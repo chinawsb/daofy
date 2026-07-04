@@ -16,6 +16,7 @@ import sqlite3
 import logging
 import locale
 from mcp.types import CallToolResult
+from ..constants import DIR_DELPHI_KB
 from ..utils.file_backup import detect_encoding
 from .project_knowledge_base import get_project_kb
 
@@ -52,7 +53,7 @@ def _get_kb_db_path(kb_service) -> Path:
 def _search_project_kb_db(project_path: str, file_path: str) -> Optional[Path]:
     """在项目知识库 SQLite 中搜索文件"""
     try:
-        kb_dir = Path(project_path).parent / ".delphi-kb"
+        kb_dir = Path(project_path).parent / DIR_DELPHI_KB
         db_file = kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return None

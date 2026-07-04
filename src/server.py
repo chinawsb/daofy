@@ -16,7 +16,6 @@ import winreg
 import logging as _logging
 from pathlib import Path
 from typing import Any, Optional
-import io
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['PYTHONUTF8'] = '1'
@@ -25,8 +24,10 @@ os.environ['PYTHONUTF8'] = '1'
 # TextIOWrapper 可能失败。失败时跳过不影响子进程通信。
 if __name__ != '__mp_main__':
     try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
-        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding='utf-8', errors='replace', line_buffering=False)
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding='utf-8', errors='replace', line_buffering=False)
     except Exception:
         import logging as _logging
         _logger = _logging.getLogger(__name__)
@@ -36,6 +37,13 @@ if __name__ != '__mp_main__':
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
+
+from src.constants import (
+    REG_KEY_EMBARCADERO_BDS,
+    TIMEOUT_AUTOMATION_GUI,
+    TIMEOUT_EXPERIENCE_TOOL,
+    TIMEOUT_GENERATE_COPYRIGHT,
+)
 
 # ============================================================
 # multiprocessing 子进程保护
@@ -52,6 +60,7 @@ if _is_multiprocessing_child:
 else:
 
     from mcp.server import Server
+    from mcp.server.lowlevel.server import ReadResourceContents
     from mcp.server.stdio import stdio_server
     from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
@@ -86,6 +95,11 @@ else:
     from src.tools.coding_rules import get_coding_rules as _get_coding_rules
     from src.tools.tool_help import get_tool_help
     from src.tools.experience import experience as _experience
+    from src.mcp_resources import (
+        available_public_resources,
+        build_public_resource_index,
+        get_public_resource_text,
+    )
     from src.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
@@ -120,7 +134,7 @@ else:
 def _auto_detect_delphi_help_dir() -> Optional[str]:
     """自动检测最新安装的 Delphi 帮助文档目录"""
     try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
         versions = []
         i = 0
         while True:
@@ -134,7 +148,7 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
         versions.sort(key=lambda x: float(x) if x.replace('.', '').isdigit() else 0, reverse=True)
         for ver in versions:
             try:
-                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Embarcadero\BDS\{ver}")
+                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{REG_KEY_EMBARCADERO_BDS}\\{ver}")
                 root_dir = winreg.QueryValueEx(vk, "RootDir")[0]
                 winreg.CloseKey(vk)
                 help_dir = Path(root_dir) / "Help" / "Doc"
@@ -149,11 +163,14 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
 
     # 注册表失败，尝试默认路径（版本号与注册表一致：37.0=Delphi13, 23.0=Delphi12, 22.0=Delphi11...）
     # 只有 17.0 (XE) 及以上版本使用此目录结构
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if not program_files_x86:
+        return None
     for ver in ["37.0", "23.0", "22.0", "21.0", "20.0", "19.0", "18.0", "17.0"]:
-        path = rf"C:\Program Files (x86)\Embarcadero\Studio\{ver}\Help\Doc"
-        if Path(path).exists():
+        path = Path(program_files_x86) / "Embarcadero" / "Studio" / ver / "Help" / "Doc"
+        if path.exists():
             logger.info(f"使用默认帮助目录: {path}")
-            return path
+            return str(path)
     return None
 
 
@@ -233,10 +250,168 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
     return None
 
 
+# ============================================================
+# Delphi 文件读写尾注 — 提醒 AI 使用 delphi_file 工具
+# ============================================================
+# 以下工具返回结果时将追加尾注，防止 AI 绕过 delphi_file 直接读写 .pas/.dfm 等文件
+_DELPHI_FILE_FOOTNOTE_TOOLS: set = {
+    "delphi_kb",
+    "delphi_project",
+    "manage_component",
+    "check_environment",
+    "get_coding_rules",
+    "code_hosting",
+}
+
+
+_DELPHI_FILE_FOOTNOTE_TEXT = "\n\n---\n⚠️ Delphi 文件需用 `delphi_file` 读写"
+
+# action → 需要尾注的操作集合
+_DELPHI_FILE_FOOTNOTE_ACTIONS: dict[str, set[str]] = {
+    "delphi_kb":          {"search", "read", "stats"},
+    "delphi_project":     {"info", "ast", "audit", "compile", "compile_file"},
+    "check_environment":  {"detect"},
+    "code_hosting":       {"git_clone", "git_pull", "git_merge", "git_checkout"},
+}
+
+
+def _get_delphi_file_footnote(name: str, arguments: dict) -> Optional[str]:
+    """对可能涉及 Delphi 文件操作的工具返回尾注，提醒使用 delphi_file。"""
+    if name not in _DELPHI_FILE_FOOTNOTE_TOOLS:
+        return None
+    # manage_component 和 get_coding_rules 无 action 限制
+    if name in ("manage_component", "get_coding_rules"):
+        return _DELPHI_FILE_FOOTNOTE_TEXT
+    action = arguments.get("action", "")
+    if name in _DELPHI_FILE_FOOTNOTE_ACTIONS and action in _DELPHI_FILE_FOOTNOTE_ACTIONS[name]:
+        return _DELPHI_FILE_FOOTNOTE_TEXT
+    return None
+
+
+def _build_mcp_resource_list(root: Path = project_root) -> list:
+    """Build MCP Resource objects exposed by Daofy."""
+    resources = [
+        Resource(
+            uri="delphi://resources",
+            name="resources",
+            title="Daofy public resource index",
+            description="Index of stable Daofy MCP resource URIs for AI agents.",
+            mimeType="text/markdown",
+        )
+    ]
+    for spec in available_public_resources(root):
+        resources.append(Resource(
+            uri=spec.uri,
+            name=spec.name,
+            title=spec.title,
+            description=spec.description,
+            mimeType=spec.mime_type,
+        ))
+    resources.append(Resource(
+        uri="delphi://health",
+        name="health",
+        title="Daofy 服务器状态",
+        description="服务器运行状态、版本号、文件监听器状态等健康检查信息",
+        mimeType="application/json"
+    ))
+    return resources
+
+
+def _compute_uptime_seconds(start_time: float) -> float:
+    """Return non-negative uptime for monotonic and legacy epoch start times."""
+    if start_time <= 0:
+        return 0.0
+
+    monotonic_now = time.monotonic()
+    uptime = monotonic_now - start_time
+    if uptime < 0:
+        uptime = time.time() - start_time
+    return max(0.0, uptime)
+
+
+def _read_mcp_resource(uri: str, root: Path = project_root):
+    """Read one MCP Resource exposed by Daofy."""
+    from pydantic import AnyUrl  # 延迟导入，避免启动时额外加载
+
+    uri = str(uri)
+
+    if uri == "delphi://resources":
+        return ReadResourceResult(
+            contents=[TextResourceContents(
+                uri=AnyUrl(uri),
+                mimeType="text/markdown",
+                text=build_public_resource_index(root),
+            )]
+        )
+
+    if uri.startswith("delphi://automation/") or uri == "delphi://coding-rules":
+        try:
+            mime_type, content = get_public_resource_text(uri, root)
+            return ReadResourceResult(
+                contents=[TextResourceContents(
+                    uri=AnyUrl(uri),
+                    mimeType=mime_type,
+                    text=content
+                )]
+            )
+        except FileNotFoundError as e:
+            return ReadResourceResult(
+                contents=[TextResourceContents(
+                    uri=AnyUrl(uri),
+                    mimeType="text/plain",
+                    text=str(e),
+                )]
+            )
+        except KeyError:
+            pass
+
+    if uri == "delphi://health":
+        import json as _json
+        uptime = _compute_uptime_seconds(_server_start_time)
+        watcher_running = (
+            _project_file_watcher is not None
+        ) if '_project_file_watcher' in globals() else False
+        health = {
+            "version": __version__,
+            "uptime_seconds": round(uptime, 1),
+            "uptime": f"{int(uptime // 3600)}h{int((uptime % 3600) // 60)}m{int(uptime % 60)}s",
+            "file_watcher_active": watcher_running,
+        }
+        try:
+            from src.services.delphi_edit_guard import snapshot_status
+            health["edit_guard"] = snapshot_status()
+        except Exception as e:
+            health["edit_guard"] = {
+                "enabled": False,
+                "error": str(e),
+            }
+        return ReadResourceResult(
+            contents=[TextResourceContents(
+                uri=AnyUrl(uri),
+                mimeType="application/json",
+                text=_json.dumps(health, ensure_ascii=False, indent=2)
+            )]
+        )
+
+    raise ValueError(f"未知资源: {uri}")
+
+
+def _read_mcp_resource_contents(uri: str, root: Path = project_root) -> list:
+    """Read one resource in the shape expected by mcp.server.Server."""
+    result = _read_mcp_resource(uri, root)
+    return [
+        ReadResourceContents(
+            content=content.text,
+            mime_type=content.mimeType,
+        )
+        for content in result.contents
+    ]
+
+
 async def run_server():
     """运行 MCP Server"""
     global _server_start_time
-    _server_start_time = time.time()
+    _server_start_time = time.monotonic()
     logger.info(f"启动 Daofy v{__version__}")
     logger.info(f"{__copyright__}")
 
@@ -249,10 +424,9 @@ async def run_server():
     logger.info("编译服务初始化完成")
 
     # 初始化知识库服务（ZVec 引擎）
-    import winreg
     delphi_source_dirs = []
     try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
         i = 0
         while True:
             try:
@@ -396,7 +570,7 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码"},
                         "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
 
                         # ---- [read] 参数 ----
@@ -740,9 +914,9 @@ async def run_server():
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["auto", "gui", "console"],
+                            "enum": ["auto", "gui", "console", "prepare"],
                             "default": "auto",
-                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元, VCL: tools\\auto\\Vcl.DaofyAutomation.pas, FMX: tools\\auto\\Fmx.DaofyAutomation.pas), console=subprocess控制台交互(无需Delphi端改造)",
+                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元), console=subprocess控制台交互(无需Delphi端改造), prepare=将DaofyAutomation路径注册到Delphi全局搜索路径",
                         },
                         "app_path": {
                             "type": "string",
@@ -752,11 +926,19 @@ async def run_server():
                         "script": {
                             "anyOf": [
                                 {"type": "string"},
-                                {"type": "array", "items": {"type": "object"}}
+                                {"type": "array", "items": {"type": "object"}},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "steps": {"type": "array", "items": {"type": "object"}}
+                                    },
+                                    "required": ["steps"],
+                                }
                             ],
-                            "description": "[gui] JSON 脚本（JSON 字符串、文件路径 或 命令对象数组）。"
-                                           " 格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
-                                            " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/formsum/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type)立即返回ACK；sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect)阻塞等待。",
+                            "description": "[gui] JSON 脚本（JSON 字符串、文件路径、命令对象数组，或包含 steps 的完整脚本对象）。"
+                                           " 推荐格式: {\"test_name\":\"smoke\",\"steps\":[{\"cmd\":\"goto\",\"target\":\"TMainForm\"}, ...]}"
+                                           " 简写格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
+                                            " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/formsum/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type)立即返回ACK；sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception)阻塞等待。callgraph 为可选诊断命令，支持 direction=callees/callers、project_only、exclude_prefixes、include_prefixes、edge_limit，并返回 edge_count/returned_count/truncated，边包含 call_addr/call_file/call_line/category/from_category/to_category；callgraph_path 支持 source/target/max_depth/max_paths/include_prefixes，返回 found 和 paths；callgraph_diff 默认 compare_by=name，可选 addr/full；callgraph_impact 为 Python 侧影响分析命令，支持 functions/targets 或 file+line/locations，批量查询 callers；其他 callgraph_* 为 Python 侧用途层命令；Delphi 端需额外 uses DaofyAutomation.CallGraph 并生成 Detailed .map。",
                         },
                         "snapshots_dir": {
                             "type": "string",
@@ -794,8 +976,13 @@ async def run_server():
                             "default": False,
                             "description": "True=执行完后保持进程运行供后续复用，False=执行完退出（默认）",
                         },
+                        "stop_on_failure": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "[gui] True=首个失败后停止执行后续依赖步骤，并在报告中标记 skipped；False=继续执行全部步骤",
+                        },
                     },
-                    "required": ["app_path"],
+                    "required": [],
                 }
             ),
 
@@ -1122,7 +1309,7 @@ async def run_server():
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(_experience, **arguments),
-                timeout=30,
+                timeout=TIMEOUT_EXPERIENCE_TOOL,
             )
             return result
         except asyncio.TimeoutError:
@@ -1293,7 +1480,7 @@ async def run_server():
         try:
             result = await asyncio.wait_for(
                 asyncio.to_thread(_generate_copyright, **arguments),
-                timeout=300,
+                timeout=TIMEOUT_GENERATE_COPYRIGHT,
             )
             return result
         except asyncio.TimeoutError:
@@ -1301,22 +1488,147 @@ async def run_server():
         except Exception as e:
             return {"status": "failed", "message": f"generate_copyright failed: {e}"}
 
+    def _auto_paths() -> list[str]:
+        """返回需要注册到 Delphi 搜索路径的目录列表。"""
+        root = Path(__file__).resolve().parent.parent
+        return [
+            str(root / "tools" / "auto"),
+            str(root / "tools" / "stacktrace"),
+        ]
+
+    def _register_path_for_platform(key, reg_path: str, path: str, platform: str, results: list[dict]):
+        """将单个路径注册到指定平台的 Delphi 搜索路径。"""
+        try:
+            search_path, _ = winreg.QueryValueEx(key, "Search Path")
+            paths = search_path.split(";")
+
+            if path in paths:
+                results.append({
+                    "platform": platform, "status": "already_present",
+                    "path": path,
+                })
+            else:
+                clean_path = search_path.rstrip(";")
+                new_path = clean_path + ";" + path if clean_path else path
+                winreg.SetValueEx(key, "Search Path", 0, winreg.REG_SZ, new_path)
+                results.append({
+                    "platform": platform, "status": "added",
+                    "path": path,
+                })
+        except Exception as e:
+            results.append({
+                "platform": platform, "status": "error",
+                "path": path,
+                "message": f"写入搜索路径失败: {e}",
+            })
+
+    def _register_daofy_auto(version: str, platforms: list[str] | None = None) -> list[dict]:
+        """将 DaofyAutomation + StackTrace 路径写入 Delphi 全局搜索路径（注册表）。"""
+        if platforms is None:
+            platforms = ["Win32", "Win64"]
+
+        reg_paths = _auto_paths()
+        results: list[dict] = []
+
+        for platform in platforms:
+            reg_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Library\\{platform}"
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    reg_path,
+                    0,
+                    winreg.KEY_READ | winreg.KEY_WRITE,
+                )
+            except FileNotFoundError:
+                for p in reg_paths:
+                    results.append({
+                        "platform": platform, "status": "skipped",
+                        "path": p,
+                        "message": f"注册表路径不存在: HKCU\\{reg_path}",
+                    })
+                continue
+            except PermissionError:
+                for p in reg_paths:
+                    results.append({
+                        "platform": platform, "status": "error",
+                        "path": p,
+                        "message": "权限不足，无法写入注册表",
+                    })
+                continue
+            except Exception as e:
+                for p in reg_paths:
+                    results.append({
+                        "platform": platform, "status": "error",
+                        "path": p,
+                        "message": f"打开注册表失败: {e}",
+                    })
+                continue
+
+            try:
+                for p in reg_paths:
+                    _register_path_for_platform(key, reg_path, p, platform, results)
+            finally:
+                try:
+                    winreg.CloseKey(key)
+                except Exception:
+                    pass
+
+        return results
+
     async def _handle_automate_delphi(arguments: dict) -> dict:
         """处理 automate_delphi 工具调用（自动检测或按 action 路由）。"""
         import asyncio
-        action = arguments.get("action", "auto")
+        requested_action = arguments.get("action", "auto")
+        action = requested_action
+
+        # ── prepare：注册 DaofyAutomation 到 Delphi 全局搜索路径 ──
+        if action == "prepare":
+            try:
+                from src.utils.delphi_env import get_delphi_version as _get_dv
+                version = _get_dv()
+            except ImportError:
+                version = None
+
+            if not version:
+                return {
+                    "action": "prepare", "status": "error",
+                    "message": "未检测到已安装的 Delphi 编译器",
+                }
+
+            results = _register_daofy_auto(version)
+            added = sum(1 for r in results if r["status"] == "added")
+            already = sum(1 for r in results if r["status"] == "already_present")
+            errors = sum(1 for r in results if r["status"] == "error")
+            skipped = sum(1 for r in results if r["status"] == "skipped")
+
+            return {
+                "action": "prepare",
+                "delphi_version": version,
+                "daofy_auto_paths": _auto_paths(),
+                "results": results,
+                "status": "success" if errors == 0 else "partial",
+                "message": (
+                    f"Delphi {version}: 新增 {added} 个平台, "
+                    f"已存在 {already} 个平台"
+                    + (f", {skipped} 个跳过" if skipped else "")
+                    + (f", {errors} 个失败" if errors else "")
+                ),
+            }
+
         app_path = arguments.get("app_path", "")
         keep_alive = _coerce_bool(arguments.get("keep_alive", False))
+        stop_on_failure = _coerce_bool(arguments.get("stop_on_failure", True))
+        subsystem = None
 
         if not app_path:
             return {"status": "error", "message": "缺少必需参数: app_path"}
 
         # auto 检测：读 PE 头 Subsystem
         if action == "auto":
-            subsys = _detect_exe_subsystem(app_path)
-            if subsys == IMAGE_SUBSYSTEM_WINDOWS_CUI:
+            subsystem = _detect_exe_subsystem(app_path)
+            if subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI:
                 action = "console"
-            elif subsys == IMAGE_SUBSYSTEM_WINDOWS_GUI:
+            elif subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI:
                 action = "gui"
             else:
                 # 无法检测时默认 gui（保持兼容）
@@ -1338,9 +1650,13 @@ async def run_server():
                                       script=script,
                                       snapshots_dir=snapshots_dir,
                                       wait_for_pipe=wait_timeout,
-                                      keep_alive=keep_alive),
-                    timeout=300,
+                                      keep_alive=keep_alive,
+                                      stop_on_failure=stop_on_failure),
+                    timeout=TIMEOUT_AUTOMATION_GUI,
                 )
+                result.setdefault("requested_action", requested_action)
+                result.setdefault("resolved_action", action)
+                result.setdefault("detected_subsystem", subsystem)
                 return result
             except asyncio.TimeoutError:
                 return {
@@ -1368,6 +1684,9 @@ async def run_server():
                                       args=args),
                     timeout=max(timeout + 10, 120),
                 )
+                result.setdefault("requested_action", requested_action)
+                result.setdefault("resolved_action", action)
+                result.setdefault("detected_subsystem", subsystem)
                 return result
             except asyncio.TimeoutError:
                 return {
@@ -1502,6 +1821,18 @@ async def run_server():
                     if isinstance(msg, str):
                         result['message'] = msg + "\n\n" + hint
 
+            # P2b: Delphi 文件读写尾注
+            footnote = _get_delphi_file_footnote(name, arguments)
+            if footnote:
+                if isinstance(result, CallToolResult):
+                    if result.content and hasattr(result.content[0], 'text'):
+                        # 避免重复添加（后续 serialize 时还会嵌入一次）
+                        result.content[0].text = result.content[0].text + footnote
+                elif isinstance(result, dict):
+                    msg = result.get('message', '')
+                    if isinstance(msg, str):
+                        result['message'] = msg + footnote
+
             # P3: API 调用日志（排除注入的 _on_complete 回调，防止 json.dumps 序列化函数报错）
             _log_args = {k: v for k, v in arguments.items() if k != '_on_complete'}
             log_api_call(logger, name, _log_args, result)
@@ -1579,75 +1910,16 @@ async def run_server():
             )
 
     # 注册 MCP 资源
-    _resources_dir = project_root / "config"
 
     @server.list_resources()
     async def list_resources():
         """列出可用资源"""
-        resources = []
-        coding_rules_path = _resources_dir / "CODING_RULES.mdc"
-        if coding_rules_path.exists():
-            resources.append(Resource(
-                uri="delphi://coding-rules",
-                name="CODING_RULES",
-                title="Delphi 编码规范",
-                description="Delphi 源码编码规则，包含命名规范、格式化、类型声明顺序、修改/审核代码规则等",
-                mimeType="text/markdown"
-            ))
-        resources.append(Resource(
-            uri="delphi://health",
-            name="health",
-            title="Daofy 服务器状态",
-            description="服务器运行状态、版本号、文件监听器状态等健康检查信息",
-            mimeType="application/json"
-        ))
-        return resources
+        return _build_mcp_resource_list(project_root)
 
     @server.read_resource()
     async def read_resource(uri: str):
         """读取资源内容"""
-        from pydantic import AnyUrl  # pydantic import 延迟以避免不必要的依赖加载
-
-        if uri == "delphi://coding-rules":
-            rules_path = _resources_dir / "CODING_RULES.mdc"
-            if rules_path.exists():
-                with open(rules_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                return ReadResourceResult(
-                    contents=[TextResourceContents(
-                        uri=AnyUrl(uri),
-                        mimeType="text/markdown",
-                        text=content
-                    )]
-                )
-            return ReadResourceResult(
-                contents=[TextResourceContents(
-                    uri=AnyUrl(uri),
-                    text="编码规则文件不存在"
-                )]
-            )
-
-        if uri == "delphi://health":
-            import json as _json
-            uptime = time.monotonic() - _server_start_time
-            watcher_running = (
-                _project_file_watcher is not None
-            ) if '_project_file_watcher' in dir() else False
-            health = {
-                "version": __version__,
-                "uptime_seconds": round(uptime, 1),
-                "uptime": f"{int(uptime // 3600)}h{int((uptime % 3600) // 60)}m{int(uptime % 60)}s",
-                "file_watcher_active": watcher_running,
-            }
-            return ReadResourceResult(
-                contents=[TextResourceContents(
-                    uri=AnyUrl(uri),
-                    mimeType="application/json",
-                    text=_json.dumps(health, ensure_ascii=False, indent=2)
-                )]
-            )
-
-        raise ValueError(f"未知资源: {uri}")
+        return _read_mcp_resource_contents(uri, project_root)
 
     # ============================================================
     # MCP 提示词注册
@@ -1827,7 +2099,8 @@ async def run_server():
                                 f"- 弹窗优先处理 — 操作后立即 `msgscan`\n"
                                 f"- 失败时诊断→决策→恢复→学习\n\n"
                                 f"---\n"
-                                f"开始前，请先执行 `get_coding_rules(section=\"automation\")` "
+                                f"开始前，请先读取 MCP Resource `delphi://automation/workflow`，"
+                                f"再执行 `get_coding_rules(section=\"automation\")` "
                                 f"加载完整的方法论和提示词模板。"
                             ),
                         ),
@@ -1881,7 +2154,9 @@ async def run_server():
                                 f"| ... | ... | ... | ... |\n\n"
                                 f"### 步骤 5（可选）：整合到测试规划\n"
                                 f"使用 `prompts/get automate-test-plan` 将分析结果嵌入完整测试规划。\n\n"
-                                f"完整方法论见 `get_coding_rules(section=\"automation\")` §H"
+                                f"完整脚本生成流程见 MCP Resource "
+                                f"`delphi://automation/script-generation-workflow`，"
+                                f"方法论见 `get_coding_rules(section=\"automation\")` §H"
                             ),
                         ),
                     ),
@@ -1916,7 +2191,8 @@ async def run_server():
                                 f"完整角色定义见 `get_coding_rules(section=\"automation\")` §F0\n"
                                 f"代码感知方法论见 §H\n{code_analysis_step}"
                                 f"\n\n### 阶段 1：加载方法论\n"
-                                f"执行 `get_coding_rules(section=\"automation\")` 获取完整的"
+                                f"读取 `delphi://automation/script-generation-workflow`，并执行 "
+                                f"`get_coding_rules(section=\"automation\")` 获取完整的"
                                 f"感知·规划·执行·反馈架构、提示词模板(F)和经验优化闭环(G)\n\n"
                                 f"### 阶段 2：检索经验\n"
                                 f"```\n"
@@ -1936,7 +2212,8 @@ async def run_server():
                                 f"| ... | ... | ... | ... | ... | ... | ... |\n\n"
                                 f"### 阶段 5：确认后执行\n"
                                 f"每步严格按 `感知→执行→验证` 循环，失败即停不继续后续\n\n"
-                                f"详细模板见 `get_coding_rules(section=\"automation\")` §F1"
+                                f"详细模板见 MCP Resource `delphi://automation/script-schema` "
+                                f"和 `get_coding_rules(section=\"automation\")` §F1"
                             ),
                         ),
                     ),
@@ -1969,7 +2246,8 @@ async def run_server():
                                 f"4. **验证** — `msgscan` 确认无弹窗；`capture`/`rget`/`ocr` 确认结果\n"
                                 f"   - 一致 → 标记完成\n"
                                 f"   - 不一致 → 切换到失败恢复流程\n\n"
-                                f"详细协议见 `get_coding_rules(section=\"automation\")` §F2"
+                                f"详细协议见 MCP Resource `delphi://automation/script-schema` "
+                                f"和 `get_coding_rules(section=\"automation\")` §F2"
                             ),
                         ),
                     ),
@@ -2008,7 +2286,8 @@ async def run_server():
                                 f"恢复后保存经验：\n"
                                 f"`experience(action=\"save\", problem=\"{signal} in {expected}\", "
                                 f"solution=\"...恢复方法...\", tags=[\"automation\", \"failure_recovery\"])`\n\n"
-                                f"完整恢复模板见 `get_coding_rules(section=\"automation\")` §F3"
+                                f"完整恢复模板见 MCP Resource `delphi://automation/repair-loop` "
+                                f"和 `get_coding_rules(section=\"automation\")` §F3"
                             ),
                         ),
                     ),
@@ -2081,7 +2360,8 @@ async def run_server():
                                 f"    file_path=\"tests/scripts/<test_name>.json\",\n"
                                 f"    content=<script_json>)\n"
                                 f"```\n"
-                                f"详细格式见 `get_coding_rules(section=\"automation\")` §I2\n\n"
+                                f"详细格式见 MCP Resource `delphi://automation/script-schema` "
+                                f"和 `get_coding_rules(section=\"automation\")` §I2\n\n"
                                 f"### 3. 角色切换\n"
                                 f"自动化测试会话已结束。\n"
                                 f"角色从 **Delphi UI 自动化测试专家** 切回 **Delphi 开发专家**。\n"

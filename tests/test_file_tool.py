@@ -2887,3 +2887,183 @@ async def test_write_edits_preview_with_force():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@pytest.mark.asyncio
+async def test_write_edits_mixed_with_position_insert():
+    """action=write 混合 range replacement + position insert 应正确写入.
+
+    Regression: insert edit with position (无 end_line) 被 overlap 检测判为"覆盖到文件末尾"，
+    与后续 range replacement 冲突。需在 handle_write 中预归一化为单行 replacement。
+    模拟用户真实场景: uses 替换 + 中间插入新函数 + 底部修改, 各自独立不重叠。
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "MixedInsert.pas")
+        _make_file(file_path, (
+            "unit Test;\n"
+            "interface\n"
+            "uses\n"
+            "  Windows,\n"
+            "  Messages,\n"
+            "  SysUtils;\n"
+            "implementation\n"
+            "procedure Foo;\n"
+            "begin\n"
+            "end;\n"
+            "procedure Bar;\n"
+            "begin\n"
+            "end;\n"
+            "end.\n"
+        ))
+
+        # 模拟用户场景: 替换 uses, 在 Bar 前插入新增函数, 替换底部 end 行
+        # edits 顺序任意 (内部按 start_line 排序)
+        result = await handle_file_tool({
+            "action": "write",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [
+                {
+                    "start_line": 4,
+                    "end_line": 5,
+                    "content": "  Winapi.CommCtrl,\n  Winapi.Messages,\n",
+                    "description": "替换 uses 子句中几行",
+                },
+                {
+                    "start_line": 11,
+                    "position": "before",
+                    "content": "procedure Helper;\nbegin\nend;\n",
+                    "description": "在 Bar 前插入 Helper",
+                },
+                    {
+                        "start_line": 14,
+                        "end_line": 14,
+                        "content": "  final;\nend.\n",
+                        "description": "替换 end. 行",
+                    },
+                ],
+            })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "Winapi.CommCtrl" in content, "uses 替换应生效"
+        assert "Winapi.Messages" in content
+        assert "procedure Helper" in content, "插入的 Helper 应存在"
+        assert "procedure Foo" in content, "Foo 应保留"
+        assert "procedure Bar" in content, "Bar 应保留"
+        assert "final;\nend." in content or "final;\nend.\n" in content, "底部 end. 替换应生效"
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_edits_mixed_with_position_after():
+    """action=write 混合 range replacement + position=after insert."""
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "MixedInsertAfter.pas")
+        _make_file(file_path, (
+            "unit Test;\n"
+            "interface\n"
+            "var\n"
+            "  X: Integer;\n"
+            "implementation\n"
+            "procedure Foo;\n"
+            "begin\n"
+            "end;\n"
+            "end.\n"
+        ))
+
+        result = await handle_file_tool({
+            "action": "write",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [
+                {
+                    "start_line": 4,
+                    "end_line": 4,
+                    "content": "  Y: Integer;\n  Z: string;\n",
+                    "description": "替换变量声明",
+                },
+                {
+                    "start_line": 6,
+                    "position": "after",
+                    "content": "\nprocedure Bar;\nbegin\nend;\n",
+                    "description": "在 Foo 后插入 Bar",
+                },
+            ],
+        })
+        _assert_success(result)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "Y: Integer" in content and "Z: string" in content
+        assert "procedure Foo" in content
+        assert "procedure Bar" in content
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@pytest.mark.asyncio
+async def test_write_edits_mixed_three_edits_raw_describe_user_scenario():
+    """精确模拟用户报告的场景: 替换 + 插入 + 替换, edits 送 action=write.
+
+    原始报错: "区间重叠: edit#1 (start=374) 覆盖到文件末尾，与 edit#2 (start=945) 重叠"
+    测试三个非重叠 range replacement + position insert 不应被误判为重叠。
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
+    try:
+        file_path = os.path.join(tmp_dir, "UserScenario.pas")
+        _make_file(file_path, (
+            "unit Test;\n"
+            "interface\n"
+            "uses\n"
+            "  Windows;\n"
+            "type\n"
+            "  TFoo = class\n"
+            "    procedure A;\n"
+            "  end;\n"
+            "implementation\n"
+            "\n"
+            "procedure TFoo.A;\n"
+            "begin\n"
+            "end;\n"
+            "\n"
+            "procedure Legacy;\n"
+            "begin\n"
+            "end;\n"
+            "\n"
+            "end.\n"
+        ))
+
+        # 编辑1: 替换 uses (line 4)
+        # 编辑2: 在 Legacy 前插入新函数 (line 15, position=before)  
+        # 编辑3: 替换 TFoo.A 过程体 (lines 11-12)
+        result = await handle_file_tool({
+            "action": "write",
+            "file_path": file_path,
+            "backup": False,
+            "edits": [
+                {
+                    "start_line": 4,
+                    "end_line": 4,
+                    "content": "  Winapi.CommCtrl,\n  Winapi.Messages,\n",
+                    "description": "替换 uses",
+                },
+                {
+                    "start_line": 15,
+                    "position": "before",
+                    "content": "procedure NewFunc;\nbegin\nend;\n",
+                    "description": "在 Legacy 前插入新函数",
+                },
+                {
+                    "start_line": 11,
+                    "end_line": 12,
+                    "content": "begin\n  Legacy;\n  NewFunc;\nend;\n",
+                    "description": "替换 TFoo.A 过程体",
+                },
+            ],
+        })
+        _assert_success(result)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)

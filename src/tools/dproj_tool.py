@@ -16,6 +16,7 @@ from datetime import datetime
 from mcp.types import CallToolResult, TextContent
 from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
+from ..services.delphi_edit_guard import record_authorized_write
 
 logger = get_logger(__name__)
 
@@ -36,6 +37,76 @@ def _require(val: Optional[str], name: str = "param") -> str:
     if val is None:
         raise ValueError(f"{name} is required")
     return val
+
+
+def _guarded_write_text(file_path: str | Path, content: str, *, encoding: str) -> None:
+    path = Path(file_path)
+    record_authorized_write(
+        path,
+        tool="delphi_project",
+        operation="write_text",
+    )
+    path.write_text(content, encoding=encoding)
+
+
+def _guarded_tree_write(
+    tree: ET.ElementTree,
+    file_path: str | Path,
+    *,
+    encoding: str = "utf-8",
+    xml_declaration: bool = True,
+) -> None:
+    record_authorized_write(
+        file_path,
+        tool="delphi_project",
+        operation="write_xml",
+    )
+    tree.write(file_path, encoding=encoding, xml_declaration=xml_declaration)
+
+
+_PLATFORM_NAME_MAP = {
+    "win32": "Win32",
+    "win64": "Win64",
+    "osx32": "OSX32",
+    "osx64": "OSX64",
+    "osxarm64": "OSXarm64",
+    "iosdevice32": "iOSDevice32",
+    "iosdevice64": "iOSDevice64",
+    "iossimulator": "iOSSimulator",
+    "android": "Android",
+    "android64": "Android64",
+    "linux64": "Linux64",
+}
+
+
+def _normalize_platform_name(platform: Any) -> str:
+    """Normalize common platform spellings to Delphi/MSBuild names."""
+    text = str(platform).strip()
+    key = text.replace("-", "").replace("_", "").lower()
+    return _PLATFORM_NAME_MAP.get(key, text)
+
+
+def _coerce_platforms(platforms: Any) -> Optional[List[str]]:
+    """Coerce a string/list platform argument into normalized platform names."""
+    if platforms is None:
+        return None
+
+    if isinstance(platforms, str):
+        raw_items = re.split(r"[,;]", platforms)
+    else:
+        try:
+            raw_items = list(platforms)
+        except TypeError:
+            raw_items = [platforms]
+
+    normalized: List[str] = []
+    for item in raw_items:
+        if item is None:
+            continue
+        name = _normalize_platform_name(item)
+        if name and name not in normalized:
+            normalized.append(name)
+    return normalized or None
 
 
 def _backup_file(file_path: str) -> Optional[str]:
@@ -362,7 +433,7 @@ def _dpk_add_contains(dpk_path: str, source_file: str, unit_name: str) -> Option
         new_line = f"{indent}{unit_name} in '{source_file}'{suffix}"
         lines.insert(insert_idx, new_line)
 
-    Path(dpk_path).write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    _guarded_write_text(dpk_path, "\n".join(lines) + "\n", encoding="utf-8-sig")
     return backup_path
 
 
@@ -431,7 +502,7 @@ def _dpk_remove_contains(dpk_path: str, source_file: str) -> Optional[str]:
         if last_line.endswith(","):
             new_lines[last_contains_idx] = last_line[:-1] + ";"
 
-    Path(dpk_path).write_text("\n".join(new_lines) + "\n", encoding="utf-8-sig")
+    _guarded_write_text(dpk_path, "\n".join(new_lines) + "\n", encoding="utf-8-sig")
     return backup_path
 
 
@@ -504,7 +575,7 @@ def _dpk_add_requires(dpk_path: str, package_name: str) -> Optional[str]:
         suffix = ";" if is_last else ","
         lines.insert(insert_idx, f"  {package_name}{suffix}")
 
-    Path(dpk_path).write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    _guarded_write_text(dpk_path, "\n".join(lines) + "\n", encoding="utf-8-sig")
     return backup_path
 
 
@@ -537,7 +608,7 @@ def _dpk_remove_requires(dpk_path: str, package_name: str) -> Optional[str]:
                 break
 
     new_lines = [line for i, line in enumerate(lines) if i not in remove_set]
-    Path(dpk_path).write_text("\n".join(new_lines) + "\n", encoding="utf-8-sig")
+    _guarded_write_text(dpk_path, "\n".join(new_lines) + "\n", encoding="utf-8-sig")
     return backup_path
 
 
@@ -916,7 +987,7 @@ def _generate_form_pas(project_dir: str, form_name: str, framework_type: str) ->
             f"end.\n"
         )
 
-    file_path.write_text(pas_content, encoding="utf-8-sig")
+    _guarded_write_text(file_path, pas_content, encoding="utf-8-sig")
     return str(file_path)
 
 
@@ -947,7 +1018,7 @@ def _generate_form_dfm(project_dir: str, form_name: str, framework_type: str) ->
         dfm_content += "  TextHeight = 13\n"
     dfm_content += "end\n"
 
-    file_path.write_text(dfm_content, encoding="utf-8-sig")
+    _guarded_write_text(file_path, dfm_content, encoding="utf-8-sig")
     return str(file_path)
 
 
@@ -995,7 +1066,7 @@ def _generate_dpr(
     dpr_content += "  Application.Run;\n"
     dpr_content += "end.\n"
 
-    dpr_path.write_text(dpr_content, encoding="utf-8-sig")
+    _guarded_write_text(dpr_path, dpr_content, encoding="utf-8-sig")
     return str(dpr_path)
 
 
@@ -1040,19 +1111,33 @@ async def _handle_create(
     if not project_version:
         try:
             from ..services.config_manager import ConfigManager
+            from ..utils.delphi_env import get_delphi_version
             from ..utils.delphi_versions import registry_to_project_version
             cm = ConfigManager()
             newest = cm.get_newest_compiler()
             if newest and newest.registry_version:
                 project_version = registry_to_project_version(newest.registry_version)
-            else:
-                project_version = "22.0"
+            if not project_version:
+                registry_version = get_delphi_version()
+                if registry_version:
+                    project_version = registry_to_project_version(registry_version)
         except Exception as exc:
-            logger.warning(f"自动检测编译器版本失败，使用默认值 22.0: {exc}")
-            project_version = "22.0"
+            logger.warning(f"自动检测编译器版本失败: {exc}")
+
+    if not project_version:
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text="未检测到 Delphi ProjectVersion，请传入 project_version 参数",
+                )
+            ],
+            isError=True,
+        )
 
     if not configs:
         configs = ["Debug", "Release"]
+    platforms = _coerce_platforms(platforms)
     if not platforms:
         platforms = ["Win32"]
     if namespace is None:
@@ -1202,7 +1287,7 @@ async def _handle_create(
         imp_dp.set("Condition", "Exists('$(MSBuildProjectName).deployproj')")
 
     tree = ET.ElementTree(root)
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
 
     # ── 生成 Form 单元桩代码（仅在用户显式传入 form_units 时） ──
     project_dir = str(Path(project_path).parent)
@@ -1235,7 +1320,7 @@ async def _handle_create(
             generated_files.append(dfm_path)
 
         # 重写 .dproj（更新 sources 后）
-        tree.write(project_path, encoding="utf-8", xml_declaration=True)
+        _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
 
         # 生成 .dpr（仅当不存在时）
         dpr_path = _generate_dpr(
@@ -1510,7 +1595,7 @@ async def _handle_set(
             isError=False,
         )
 
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
 
     loc = ""
     if config or platform:
@@ -1582,7 +1667,7 @@ async def _handle_add_config(
         _find_or_create(new_pg, "DCC_DebugInfoInExe").text = "true" if debug_info else "false"
         set_count += 1
 
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
 
     detail = f"从 {base_config} 复制" if base_config else f"默认设置"
     return CallToolResult(
@@ -1623,7 +1708,7 @@ async def _handle_remove_config(project_path: str, config_name: str) -> CallTool
     for group in groups:
         root.remove(group)
 
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
     return CallToolResult(
         content=[
             TextContent(
@@ -1706,7 +1791,7 @@ async def _handle_add_source(
             except Exception as e:
                 dpk_result = f"\n⚠️ .dpk contains 同步失败: {e}"
 
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
     return CallToolResult(
         content=[
             TextContent(
@@ -1756,7 +1841,7 @@ async def _handle_remove_source(project_path: str, source_file: str) -> CallTool
             isError=True,
         )
 
-    tree.write(project_path, encoding="utf-8", xml_declaration=True)
+    _guarded_tree_write(tree, project_path, encoding="utf-8", xml_declaration=True)
 
     # 同步 .dpk contains（如果是 Package 项目）
     dpk_result = ""
@@ -1799,6 +1884,7 @@ async def dproj_tool(
     configs: Optional[List[str]] = None,
     sources: Optional[List[str]] = None,
     platforms: Optional[List[str]] = None,
+    target_platform: Optional[str] = None,
     property_name: Optional[str] = None,
     value: Optional[str] = None,
     config: Optional[str] = None,
@@ -1837,7 +1923,7 @@ async def dproj_tool(
             namespace=namespace,
             configs=configs,
             sources=sources,
-            platforms=platforms,
+            platforms=platforms or ([target_platform] if target_platform else ([platform] if platform else None)),
             form_units=form_units,
         ),
         "info": lambda: _handle_info(project_path=project_path or ""),
