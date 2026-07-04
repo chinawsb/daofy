@@ -156,7 +156,7 @@
 #### P2.2 黑盒失败报告附加调用图
 
 **问题**: UI 自动化失败时，当前报告能说明失败步骤，但不能直接展示相关代码影响面。  
-**状态**: 已实施。脚本启用 `callgraph_diagnostics=true` 且失败步骤带 `handler` / `entry` / `callgraph_target` 时，失败报告会附加 callgraph 摘要。  
+**状态**: 已实施并有回归测试。脚本启用 `callgraph_diagnostics=true` 且失败步骤带 `handler` / `entry` / `callgraph_target` 时，失败报告会附加 callgraph 摘要；callgraph 查询失败时只追加 warning，不覆盖原始 UI 失败原因。  
 **修改点**:
 
 - 自动化报告生成逻辑增加可选 `diagnostics.callgraph`。
