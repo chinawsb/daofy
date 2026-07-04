@@ -1478,20 +1478,42 @@ def _build_callgraph_refactor_check(impact: object, targets: list[str]) -> dict:
     """Build a conservative refactor safety summary from impact data."""
     callers, impacted_targets = _impact_name_sets(impact)
     target_set = set(targets) or impacted_targets
+    impact_targets = {
+        str(item.get('target'))
+        for item in (impact.get('targets', []) if isinstance(impact, dict) else [])
+        if isinstance(item, dict) and item.get('target')
+    }
+    unresolved = [
+        item for item in (impact.get('unresolved', []) if isinstance(impact, dict) else [])
+        if isinstance(item, dict)
+    ]
     impacted = [
         entry for entry in (impact.get('entries', []) if isinstance(impact, dict) else [])
         if isinstance(entry, dict) and (not target_set or str(entry.get('target', '')) in target_set)
     ]
+    affected_targets = {str(entry.get('target')) for entry in impacted if entry.get('target')}
+    missing_targets = sorted(target_set.difference(impact_targets).difference(affected_targets))
+    risk = 'high' if unresolved else 'medium' if impacted else 'low'
+    warnings = [
+        'static_direct_call_graph_only',
+        'virtual_methods_events_rtti_may_be_missing',
+    ]
+    if unresolved:
+        warnings.append('impact_has_unresolved_targets')
+    if missing_targets:
+        warnings.append('targets_not_seen_in_impact')
     return {
         'mode': 'refactor_check',
         'targets': sorted(target_set),
         'impacted_callers': sorted(callers),
         'impacted_entries': impacted,
-        'risk': 'medium' if impacted else 'low',
-        'warnings': [
-            'static_direct_call_graph_only',
-            'virtual_methods_events_rtti_may_be_missing',
-        ],
+        'affected_count': len(impacted),
+        'affected_targets': sorted(affected_targets),
+        'missing_targets': missing_targets,
+        'unresolved': unresolved,
+        'safe_to_refactor': not impacted and not unresolved,
+        'risk': risk,
+        'warnings': warnings,
     }
 
 

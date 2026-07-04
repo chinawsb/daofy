@@ -1352,6 +1352,10 @@ end.
 
         refactor_state = result["results"][3]["response"]["state"]
         assert refactor_state["risk"] == "medium"
+        assert refactor_state["safe_to_refactor"] is False
+        assert refactor_state["affected_count"] == 1
+        assert refactor_state["affected_targets"] == ["SaveIfModified"]
+        assert refactor_state["unresolved"] == []
         assert "main.TfrmMain.actSaveExecute" in refactor_state["impacted_callers"]
 
         orphan_state = result["results"][4]["response"]["state"]
