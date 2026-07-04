@@ -1271,6 +1271,12 @@ end.
                     "to": "Storage.TRepo.Save",
                     "to_addr": "2",
                 },
+                {
+                    "from": "Tests.TSaveTests.TestSave",
+                    "from_addr": "6",
+                    "to": "TestOnlyProc",
+                    "to_addr": "7",
+                },
             ],
         }
         tests = [
@@ -1316,9 +1322,10 @@ end.
                     {"cmd": "callgraph_refactor_check", "impact": impact, "targets": ["SaveIfModified"]},
                     {
                         "cmd": "callgraph_orphan_candidates",
-                        "symbols": ["SaveIfModified", "UnusedProc", "Storage.TRepo.Save"],
+                        "symbols": ["SaveIfModified", "UnusedProc", "TestOnlyProc", "Storage.TRepo.Save"],
                         "entries": ["SaveIfModified"],
                         "graph": graph,
+                        "test_prefixes": ["Tests."],
                     },
                     {
                         "cmd": "callgraph_explain_exception",
@@ -1340,7 +1347,7 @@ end.
         assert select_state["uncovered_targets"] == []
 
         failure_state = result["results"][1]["response"]["state"]
-        assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 3
+        assert failure_state["diagnostics"]["callgraph"]["edge_count"] == 4
         assert failure_state["failure"]["target"] == "btnSave"
 
         boundary_state = result["results"][2]["response"]["state"]
@@ -1359,11 +1366,20 @@ end.
         assert "main.TfrmMain.actSaveExecute" in refactor_state["impacted_callers"]
 
         orphan_state = result["results"][4]["response"]["state"]
-        assert orphan_state["candidates"] == [{
-            "name": "UnusedProc",
-            "confidence": "low",
-            "reason": "not_seen_as_callee_in_direct_callgraph",
-        }]
+        assert orphan_state["candidates"] == [
+            {
+                "name": "UnusedProc",
+                "confidence": "low",
+                "reason": "not_seen_as_callee_in_direct_callgraph",
+                "callers": [],
+            },
+            {
+                "name": "TestOnlyProc",
+                "confidence": "low",
+                "reason": "only_called_by_tests",
+                "callers": ["Tests.TSaveTests.TestSave"],
+            },
+        ]
 
         exception_state = result["results"][5]["response"]["state"]
         assert exception_state["top_frame"] == "Storage.TRepo.Save"

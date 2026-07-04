@@ -1517,24 +1517,41 @@ def _build_callgraph_refactor_check(impact: object, targets: list[str]) -> dict:
     }
 
 
-def _build_callgraph_orphan_candidates(symbols: object, graph: object, entries: object) -> dict:
+def _build_callgraph_orphan_candidates(
+    symbols: object,
+    graph: object,
+    entries: object,
+    test_prefixes: object = None,
+) -> dict:
     """Find no-caller candidates from a supplied symbol list and callgraph edges."""
     symbol_names = _coerce_callgraph_targets(symbols)
     entry_names = set(_coerce_callgraph_targets(entries))
-    called = {str(edge.get('to', '')) for edge in _callgraph_edges(graph) if edge.get('to')}
+    incoming: dict[str, set[str]] = {}
+    for edge in _callgraph_edges(graph):
+        caller = str(edge.get('from', '')).strip()
+        callee = str(edge.get('to', '')).strip()
+        if caller and callee:
+            incoming.setdefault(callee, set()).add(caller)
     candidates = []
     for symbol in symbol_names:
-        if symbol in entry_names or symbol in called:
+        if symbol in entry_names:
             continue
+        callers = incoming.get(symbol, set())
+        if callers and not all(_matches_configured_prefix(caller, test_prefixes) for caller in callers):
+            continue
+        reason = 'only_called_by_tests' if callers else 'not_seen_as_callee_in_direct_callgraph'
         candidates.append({
             'name': symbol,
             'confidence': 'low',
-            'reason': 'not_seen_as_callee_in_direct_callgraph',
+            'reason': reason,
+            'callers': sorted(callers),
         })
     return {
         'mode': 'orphan_candidates',
         'candidates': candidates,
         'candidate_count': len(candidates),
+        'symbol_count': len(symbol_names),
+        'entry_count': len(entry_names),
         'warnings': [
             'candidate_only_not_safe_to_delete',
             'events_exports_virtual_methods_and_rtti_may_be_missing',
@@ -2436,6 +2453,7 @@ def _execute_script_unlocked(app_path: str, script,
                         step.get('symbols', []),
                         graph_state,
                         step.get('entries', step.get('entry_points', [])),
+                        step.get('test_prefixes', step.get('test_prefix')),
                     )
                 else:
                     graph_state = step.get('callgraph', step.get('graph', {'calls': []}))
