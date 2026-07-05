@@ -170,7 +170,6 @@ def _normalize_code_for_compare(text: str) -> str:
         elif state in ("line_comment", "brace_comment", "paren_comment"):
             # ── 注释内: 空白折叠为单空格 ──
             if state == "line_comment" and ch in "\r\n":
-                result.append(ch)
                 state = "code"
                 prev_was_space = False
             elif state == "brace_comment" and ch == "}":
