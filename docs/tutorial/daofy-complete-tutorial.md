@@ -338,10 +338,10 @@ check_environment(action="check")    # 确认环境状态
 # → 编译器未找到
 check_environment(action="detect")   # 从注册表检测
 # → 开始编译
-project(action="compile", ...)
+delphi_project(action="compile", ...)
 
 # 编译失败时
-project(action="compile")   # 失败
+delphi_project(action="compile")   # 失败
 check_environment(action="check")   # 确认编译器状态
 check_environment(action="detect")  # 重新检测后重试
 ```
@@ -530,10 +530,10 @@ delphi_kb(action="build_embedding", async_mode=True)
 
 ```python
 # 最简调用 — 自动检测项目类型和配置
-project(action="compile", project_path="Project.dproj")
+delphi_project(action="compile", project_path="Project.dproj")
 
 # 完整参数编译
-project(action="compile",
+delphi_project(action="compile",
     project_path="App.dproj",
     build_configuration="Release",
     target_platform="win64",
@@ -544,7 +544,7 @@ project(action="compile",
     output_path=".\\Build\\Release")
 
 # 编译后运行验证（检测运行时崩溃）
-project(action="compile",
+delphi_project(action="compile",
     project_path="App.dproj",
     run_verify=True)
 ```
@@ -574,10 +574,10 @@ project(action="compile",
 ### 5.5 单文件语法检查
 
 ```python
-project(action="compile_file", project_path="Unit1.pas")
+delphi_project(action="compile_file", project_path="Unit1.pas")
 
 # 带搜索路径
-project(action="compile_file",
+delphi_project(action="compile_file",
     project_path="Unit1.pas",
     unit_search_paths=["..\\Shared"],
     conditional_defines=["TEST"])
@@ -587,12 +587,12 @@ project(action="compile_file",
 
 ```python
 # 最简创建
-project(action="create",
+delphi_project(action="create",
     project_path="MyApp.dproj",
     main_source="MyApp.dpr")
 
 # 带 Form 桩代码
-project(action="create",
+delphi_project(action="create",
     project_path="MyApp.dproj",
     main_source="MyApp.dpr",
     framework_type="VCL",
@@ -604,10 +604,10 @@ project(action="create",
 
 ```python
 # 读取项目信息
-project(action="info", project_path="Project.dproj")
+delphi_project(action="info", project_path="Project.dproj")
 
 # 修改属性
-project(action="set",
+delphi_project(action="set",
     project_path="Project.dproj",
     property_name="DCC_Define",
     value="DEBUG;TEST",
@@ -615,14 +615,14 @@ project(action="set",
     platform="Win32")
 
 # 添加编译配置
-project(action="add_config",
+delphi_project(action="add_config",
     project_path="Project.dproj",
     config_name="Staging",
     base_config="Debug",
     defines=["STAGING"])
 
 # 删除编译配置
-project(action="remove_config",
+delphi_project(action="remove_config",
     project_path="Project.dproj",
     config_name="Staging")
 ```
@@ -631,12 +631,12 @@ project(action="remove_config",
 
 ```python
 # 添加源文件
-project(action="add_source",
+delphi_project(action="add_source",
     project_path="Project.dproj",
     source_file="Unit1.pas")
 
 # 删除源文件
-project(action="remove_source",
+delphi_project(action="remove_source",
     project_path="Project.dproj",
     source_file="Unit1.pas")
 ```
@@ -645,7 +645,7 @@ project(action="remove_source",
 
 ```python
 # 常见排查流程
-project(action="compile")  失败
+delphi_project(action="compile")  失败
 check_environment(action="check")   # 确认编译器状态
 # → 检查 DCC_UnitSearchPath 是否包含需要的三方库路径
 # → 确认目标平台（win32/win64）编译器可用
@@ -1015,23 +1015,23 @@ Daofy 自带的默认规则源位于 `src/resources/coding-rules.md`，并通过
 
 ```python
 # ⭐ 代码骨架提取（最省 token）
-project(action="ast", base_dir="src")
+delphi_project(action="ast", base_dir="src")
 
 # 单文件骨架提取
-project(action="ast", file_path="Unit1.pas")
+delphi_project(action="ast", file_path="Unit1.pas")
 
 # 运行 50+ 静态分析规则
-project(action="audit", base_dir="src")
+delphi_project(action="audit", base_dir="src")
 
 # 单文件指定严重级别
-project(action="audit",
+delphi_project(action="audit",
     file_path="Unit1.pas",
     rules="P0",
     severity="warning",
     output_format="report")
 
 # 运行时注册检查（检测遗漏 uses 单元）
-project(action="runtime", base_dir="src")
+delphi_project(action="runtime", base_dir="src")
 ```
 
 ### 7.6 审计工作流
@@ -1440,7 +1440,7 @@ code_hosting(action="create_token",
 # 日常开发提交
 # ═══════════════════════════════════════════════
 delphi_file(action="write", ...)              # 编写代码
-project(action="compile", ...)                # 编译验证
+delphi_project(action="compile", ...)                # 编译验证
 
 # 查看变更并提交
 code_hosting(action="git_diff", stat=True)     # 查看变更概览
@@ -1455,7 +1455,7 @@ code_hosting(action="list_issues", repo="myorg/myproject", state="open", labels=
 # → 创建分支修复
 git_switch(branch="fix/login-crash", create=True)
 # 修复代码
-project(action="compile", ...)                # 编译验证
+delphi_project(action="compile", ...)                # 编译验证
 code_hosting(action="git_add", files=["src/login.pas"])
 code_hosting(action="git_commit", message="fix: #42 login crash")
 code_hosting(action="git_switch", branch="main")       # 切回主分支
@@ -2338,7 +2338,7 @@ delphi_file(action="read", file_path="Unit1.pas")
 
 ```python
 # 增大 timeout 参数
-project(action="compile", project_path="Project.dproj", timeout=900)
+delphi_project(action="compile", project_path="Project.dproj", timeout=900)
 ```
 
 ### 18.2 知识库存储位置
@@ -2372,7 +2372,7 @@ delphi_kb(query="TStringList")               # ③ 搜索 API 定义
 delphi_file(action="read", file_path=...)    # ④ 读源码确认修改点
 delphi_file(action="write", edits=[...])     # ⑤ 写代码
 delphi_file(action="format", file_path=...)  # ⑥ 格式化
-project(action="compile", project_path=...)  # ⑦ 编译验证
+delphi_project(action="compile", project_path=...)  # ⑦ 编译验证
 get_coding_rules(section="review")           # ⑧ 审查代码
 code_hosting(action="git_add", files=["."])  # ⑨ 提交代码
 code_hosting(action="git_commit", ...)       # ⑩ 创建提交
@@ -2435,10 +2435,10 @@ delphi_kb(action="build", kb_type="project")                 # 构建项目 KB
 ### 编译与审计
 
 ```python
-project(action="compile", project_path="App.dproj")          # 编译项目
-project(action="compile_file", project_path="Unit1.pas")     # 语法检查
-project(action="ast", base_dir="src")                        # 代码骨架
-project(action="audit", base_dir="src")                      # 代码审计
+delphi_project(action="compile", project_path="App.dproj")          # 编译项目
+delphi_project(action="compile_file", project_path="Unit1.pas")     # 语法检查
+delphi_project(action="ast", base_dir="src")                        # 代码骨架
+delphi_project(action="audit", base_dir="src")                      # 代码审计
 ```
 
 ### 文件操作

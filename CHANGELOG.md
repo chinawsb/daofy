@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026.06.22] - 2026-06-22
 
+### Added
+
+- **`delphi_rtti` 工具**: RTTI 桥接 — 通过 Enhanced RTTI 发现和调用 Delphi 应用的 published 方法（三步法：guide/discover/call）。包括 `DaofyAutomation.RttiDiscovery.pas` 能力发现单元、`src/services/rtti_bridge.py` 桥接服务（5 分钟缓存）、`src/tools/delphi_rtti.py` MCP handler。
+- **`generate_copyright` 工具**: 软著文档自动生成（源代码/说明书/摘要，PDF 浏览器渲染+自动校验）。重构为通用工具，移除 Daofy 硬编码。
+- **`daofy_update` 工具**: Daofy 自身版本检查和更新管理（check/update/version），支持 git pull 自动更新和 pip 升级提示。
+- **`layout_audit` 工具**: 静态 DFM UI 布局审计 — 检测控件重叠、越界、对齐不一致、TabOrder 视觉顺序偏差等 AI 常见布局问题。
+- **`agent_skill_installer` 服务**: MCP Server 启动时自动同步 Daofy Agent Skill 到用户级共享目录（`%USERPROFILE%\.agents\skills\daofy\SKILL.md`），强化 delphi_file/code_hosting 路由规则。
+- **示例知识库支持**: `kb_type="example"` 全文搜索 Delphi 官方 Demos/Samples 和三方库 Demos/Tests。
+- **Callgraph 诊断链**: 统一 stacktrace callgraph 诊断、异常解释增强、test selection coverage、boundary rule exceptions、refactor checks 保守模式、orphan candidates 分类、diff-style impact analysis、failure diagnostic coverage 记录。
+- **`project` 工具描述标注【仅限 Delphi】**: 防止非 Delphi 用户在 AI 工具调用时误触。
+
 ### Changed
 
 - **`project` → `delphi_project` 重命名**: 工具名从 `project` 改为 `delphi_project`，防止非 Delphi 用户在 AI 工具调用时误触。更新 server.py、tool_docs、tests 中所有引用。
 - **`HTMLProcessor`/`WebDocumentProcessor` 移除 BeautifulSoup**: html2text 已自带跳过 script/style，BS4 的 tag.decompose() 和 sections/code_examples 提取在 ZVec 中不存储，属于无用计算。改用正则 `<title>` 提取标题。构建时间从 17:41 → 10:24（-41%）。
 - **`scan_directory` 改为生产者-消费者模式**: ProcessPoolExecutor 替换为 `mp.Process` + `mp.Queue(maxsize=200)`，worker 逐条放入队列，主进程实时消费写入 ZVec，内存峰值从天降至 KB 级。
+- **扫描器重组为固定 worker 池**: 生产者-消费者进一步优化，预清理首行重复警告。
 - **文档知识库存储引擎**: SQLite FTS5 → ZVec 全文索引，文档存储路径 `data/document-knowledge-base/` 不再包含 SQLite 文件。`example_knowledge_base`/`thirdparty_knowledge_base` 同步迁移。
 - **`scan_generic_documents.py` 缩减**: +230/-620 行，移除 FTS5 写入、SQLite 备份/恢复、偏移量计算等废弃逻辑。
+- **`tool_docs.py` 迁至 `src/`**: 从 `src/config/tool_docs.py` 移到 `src/tool_docs.py`，更新所有 import。
+- **`generate_copyright` 通用化**: 移除 Daofy 硬编码依赖，改为通用软著文档生成工具。
+- **`DaofyAutomation` rget/rcall/waitfor 增加索引属性 [Index] 支持**: 支持通过 `object[Index]` 语法访问集合元素。
+- **自动化资源文件结构化**: `src/resources/automation/` 目录按 reference/scenarios 分层组织，新增 `script-schema.md`、`l-layout.md` 等文档。
+- **文档同步**: README 补充 `generate_copyright`/`daofy_update` 工具列表，AGENTS.md 补齐 services 清单，docs/ 中全部 `project()` → `delphi_project()` 修复。
+- **新建 Delphi 文件统一使用 utf-8-sig 编码**: 避免中文注释在旧版 IDE 中显示乱码。
+- **`src/config/` 移出版本控制**: `compilers.json` 等本地配置不再跟踪，避免开发环境差异导致的提交冲突。
+- **`benchmarks/` 移出版本控制**: 性能基准测试目录不再跟踪。
+- **`automation_service` 重构**: console/gui 模式拆分，支持 `proc_async` 异步进程读取，提升交互测试稳定性。
+- **`delphi_edit_guard` DFM 脏标记增强**: 跨文件引用追踪，防止编辑行号错位。
+- **Coding-rules 模块化拆分**: `src/resources/coding-rules/` 按 writing/review/compile/format/debugging 等独立文件组织，共 20 个 section。
 
 ### Fixed
 
@@ -22,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`add_web_document` 调用不存在的 `col.close()`**: ZVec Collection 无 close() 方法，改为 `del col + gc.collect() + sleep`。
 - **进度回调百分比错误**: 传 2 参数 `(processed, total)` 被 `update_progress` 误识别为"单数值百分比"。改为传 3 参数触发 `(current, total, message)` 分支正确计算。
 - **`HTMLProcessor` 中 `file_path.stem` 不支持 str 参数**: 当 process() 被直接传入字符串路径时报 `'str' object has no attribute 'stem'`。改为 `Path(file_path).stem`。
+- **dcc32 直编路径修复**: 优先读取同目录 `.dproj` 的 `DCC_ExeOutput` / `DCC_DcuOutput` 确定输出路径；合并 BDS+Studio 注册表配置单元的 IDE 全局搜索路径。
+- **异常退出日志丢失**: 进程退出前强制 flush 日志，避免最后一条日志因缓冲未写入。
 
 ### Removed
 

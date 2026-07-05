@@ -145,7 +145,7 @@ AI 从"给建议"变成"帮你做"。
 ② delphi_kb(TFDConnection)  → 查 API 签名
 ③ delphi_kb(TFDQuery)       → 查参数绑定
 ④ delphi_file(action="write", edits=[...]) → 生成代码（自动备份）
-⑤ project(action="compile") → 编译验证
+⑤ delphi_project(action="compile") → 编译验证
 ```
 
 > 💡 不是凭记忆写，而是先查 KB 确认 API
@@ -383,10 +383,10 @@ AI: 列出所有注册的 BPL 包
 ② delphi_kb(TJSON*)                      → 搜索 API 确认签名
 ③ delphi_file(action="write", edits=[...]) → 写入代码（自动备份到 __history）
 ④ delphi_file(action="format")           → 格式化代码
-⑤ project(action="compile")              → 编译验证
-⑥ project(action="compile", run_verify=True) → 运行验证（捕获 CreateForm 阶段崩溃）
+⑤ delphi_project(action="compile")              → 编译验证
+⑥ delphi_project(action="compile", run_verify=True) → 运行验证（捕获 CreateForm 阶段崩溃）
 ⑦ get_coding_rules(section="review")      → 审计
-⑧ project(action="runtime")              → 运行时注册检查（遗漏 uses 检测）
+⑧ delphi_project(action="runtime")              → 运行时注册检查（遗漏 uses 检测）
 ⑨ experience(action="save")              → 保存经验（AI 自动去重）
 ⑩ 清理 + 确认备份
 ```
@@ -421,7 +421,7 @@ StackTrace.pas
 ## run_verify 工作流
 
 ```
-project(action="compile", run_verify=True)
+delphi_project(action="compile", run_verify=True)
 
 ① inject_verify_units()
    ├── 备份 .dproj / .dpr
@@ -454,7 +454,7 @@ project(action="compile", run_verify=True)
 **编译通过 ≠ 运行正常** — 组件运行时注册可能缺失
 
 ```
-project(action="runtime", project_path="App.dproj")
+delphi_project(action="runtime", project_path="App.dproj")
 ```
 
 **检查原理：**
@@ -497,7 +497,7 @@ employee-input/
 - SQLite DB 自动创建在 exe 同级目录
 - DBGrid 列表（只读）+ DBEdit 编辑面板（左右分栏）
 - UTF-8 BOM 编码 — 消除 `W1057` 隐式字符串转换警告
-- `project(action="compile", run_verify=True)` — 编译 → 运行验证 一键通过
+- `delphi_project(action="compile", run_verify=True)` — 编译 → 运行验证 一键通过
 
 ---
 

@@ -143,19 +143,19 @@ check_environment(action="check")    → 确认环境状态
   ↓ 编译器未找到
 check_environment(action="detect")   → 从注册表检测
   ↓
-project(action="compile", ...)       → 开始编译
+delphi_project(action="compile", ...)       → 开始编译
 ```
 
 ### 编译失败时
 
 ```
-project(action="compile")  失败
+delphi_project(action="compile")  失败
   ↓
 check_environment(action="check")   → 确认编译器状态
   ↓ 编译器不可用
 check_environment(action="detect")  → 重新检测
   ↓
-project(action="compile")  重试
+delphi_project(action="compile")  重试
 ```
 
 ### 安装格式化工具

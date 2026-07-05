@@ -322,7 +322,7 @@ AI 会搜索 Delphi 源码知识库，返回 `TStringList` 的完整信息：继
 
 ##### 第 4 步：编译验证
 
-- AI 调用 `project(action="compile", project_path="DatabaseManager.pas")` → 一次通过 ✅
+- AI 调用 `delphi_project(action="compile", project_path="DatabaseManager.pas")` → 一次通过 ✅
 
 #### 旁白
 
@@ -352,7 +352,7 @@ FireDAC 的参数体系非常庞大：`TFDConnection` 的 driver 选择、`Param
 用户: 编译当前项目，Debug 模式，Win32 平台
 ```
 
-- AI 调用 `project(action="compile", project_path="Project1.dproj", build_configuration="Debug", target_platform="win32")`
+- AI 调用 `delphi_project(action="compile", project_path="Project1.dproj", build_configuration="Debug", target_platform="win32")`
 - 展示编译过程输出：编译事件、编译参数、编译结果
 
 #### 旁白
@@ -375,7 +375,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 用户: 检查 Unit1.pas 的语法
 ```
 
-- AI 调用 `project(action="compile", project_path="Unit1.pas")`
+- AI 调用 `delphi_project(action="compile", project_path="Unit1.pas")`
 - 展示语法检查结果
 
 #### 旁白
@@ -487,7 +487,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
   - CalculateTotal: 魔法数值改为常量定义
   - GetUserCount: 简化逻辑
   - ExportData: 删除未使用的 LValue 变量
-- AI 调用 `project(action="compile", project_path="review-demo/LegacyData.pas")` — 编译验证修复后的代码
+- AI 调用 `delphi_project(action="compile", project_path="review-demo/LegacyData.pas")` — 编译验证修复后的代码
 
 ##### Phase 4：提交修复并关闭工单
 
@@ -605,8 +605,8 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 ```
 
 - AI 逐个文件编辑修改
-- 每次修改后调用 `project(action="compile", project_path="当前文件.pas")` 做语法检查
-- 全部修改完成后，调用 `project(action="compile", project_path="项目.dproj")` 做全项目编译验证，确保跨文件类型引用正确
+- 每次修改后调用 `delphi_project(action="compile", project_path="当前文件.pas")` 做语法检查
+- 全部修改完成后，调用 `delphi_project(action="compile", project_path="项目.dproj")` 做全项目编译验证，确保跨文件类型引用正确
 - 编译通过后，调用 `delphi_file(action="format")` 格式化代码
 - 展示最终编译通过的确认
 
@@ -816,8 +816,8 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 - AI 发现 `ProjectGroup.groupproj` 文件，解析项目依赖关系
 - AI 按构建顺序编译：
-  - 第 1 步：`project(action="compile", project_path="LibProject/LibUtils.dproj", build_configuration="Debug")` → ✅
-  - 第 2 步：`project(action="compile", project_path="AppProject/MainApp.dproj", build_configuration="Debug")` → ✅
+  - 第 1 步：`delphi_project(action="compile", project_path="LibProject/LibUtils.dproj", build_configuration="Debug")` → ✅
+  - 第 2 步：`delphi_project(action="compile", project_path="AppProject/MainApp.dproj", build_configuration="Debug")` → ✅
 - 展示编译输出：两个项目依次编译成功
 
 ```
@@ -942,7 +942,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 用户: 编译 compile-error-demo/ErrorCode.pas，如果有错误分析并修复
 ```
 
-- AI 调用 `project(action="compile", project_path="compile-error-demo/ErrorCode.pas")`
+- AI 调用 `delphi_project(action="compile", project_path="compile-error-demo/ErrorCode.pas")`
 - 编译错误：
   ```
   [dcc32 Error] ErrorCode.pas(28): E2511 Type parameter 'TCustomKey' must have a comparer
@@ -1038,7 +1038,7 @@ AI 的做法跟人类完全不同：
 用户: 编译项目检查语法
 ```
 
-- AI 调用 `project(action="compile", project_path="JsonConfigManager.pas")`
+- AI 调用 `delphi_project(action="compile", project_path="JsonConfigManager.pas")`
 - 如果编译失败，AI 自动修复并重新编译
 - 展示编译成功
 

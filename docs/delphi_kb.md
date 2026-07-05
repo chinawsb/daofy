@@ -1,6 +1,6 @@
 # Delphi Knowledge Base — 知识库搜索与管理
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 版本：v1.1 | 最后更新：2026-07-05
 
 ---
 
@@ -53,6 +53,7 @@ Delphi 源码: 2,798 文件, 163,737 类, 300,228 函数, 260 MB
 | `project` | 项目自有代码 | `<项目目录>/.delphi-kb/` | ✅（或自动检测） |
 | `thirdparty` | 第三方组件 | `data/thirdparty-knowledge-base/` | ❌ |
 | `document` | 通用文档 | `data/document-knowledge-base/` | ❌ |
+| `example` | 示例代码 | `data/example-knowledge-base/` | ❌ |
 | `all`（默认） | 全部 | — | — |
 
 ### 2.2 项目路径自动检测
@@ -72,10 +73,14 @@ delphi_kb(query="TfrmMain", kb_type="project", project_path="C:/MyProject/Projec
 
 ### 2.3 存储结构
 
+> ⚠️ v2026.06.22 起所有知识库已从 SQLite FTS5 迁移到 **ZVec 向量引擎**。仅经验知识库 (`experience`) 保留 SQLite。
+
 每个知识库目录包含：
-- `documents.sqlite` / `knowledge_base.sqlite` — SQLite 数据库
+- `*.zvec/` — ZVec 向量数据库目录（文档/示例/项目/三方库知识库）
 - `config.json` — 配置文件（首次构建自动生成）
 - 知识库配置支持自定义数据库、源码路径、构建参数
+
+经验知识库 (`data/experience-knowledge-base/`) 仍使用 `experiences.sqlite`，不包含 ZVec 目录。
 
 ---
 

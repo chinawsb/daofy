@@ -694,7 +694,7 @@ tools.append(Tool(
 ))
 
 # 在 call_tool() 中分发:
-# project(action="audit", ...) 路由到 run_audit(arguments)
+# delphi_project(action="audit", ...) 路由到 run_audit(arguments)
 ```
 
 > **注意**: 2026.05 重构后，`run_audit`、`compile_project`、`dproj_tool` 已合并为 `project` 工具，

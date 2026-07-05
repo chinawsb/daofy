@@ -1,6 +1,6 @@
 # Get Coding Rules — 获取 Delphi 编码规范
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 版本：v1.1 | 最后更新：2026-07-05
 
 ---
 
@@ -63,10 +63,21 @@ get_coding_rules(section="agent_rules")
 |---------|------|---------|
 | `workflow` | 工作流总览 | 首次接触项目时先看这个了解整体流程 |
 | `writing` | Delphi 代码编写规则（命名/格式/泛型） | 写/改代码前必看 |
-| `review` | 编译后审查代码（含完整审核表） | 完成代码后审查 |
-| `ui_layout` | UI 布局规范与审计 | 生成或修改 Delphi 窗体后检查布局质量 |
+| `review` / `review-guide` / `review-table` | 编译后审查代码（含完整审核表） | 完成代码后审查 |
+| `ui_layout` / `ui_testing` | UI 布局规范与审计 | 生成或修改 Delphi 窗体后检查布局质量 |
 | `safety` | 安全敏感操作规则 | 涉及注册表、进程、文件操作时 |
 | `agent_rules` | Agent 操作硬规则 | 了解 AI 的行为限制 |
+| `compile` | 编译规则与参数说明 | 编译项目前查看 DCC 参数含义 |
+| `format` | 代码格式化规则（pasfmt） | 格式化前查看格式化配置 |
+| `cleanup` | 清理规则 | 代码清理时查看清理策略 |
+| `kb_search` | 知识库搜索策略 | 使用 delphi_kb 搜索前查看搜索优先级 |
+| `kb_rebuild` | 知识库重建规则 | 重建知识库时查看重建流程 |
+| `debugging` | Delphi 调试完整方法论（12 子章节） | 遇到编译/运行时错误时查看 |
+| `console-testing` | 控制台测试规则 | 使用 automate_delphi console 模式时 |
+| `experience` | 经验记忆使用规则 | 保存/搜索 AI 经验时 |
+| `maintenance` | 维护规则 | 项目维护时查看维护策略 |
+| `planning` | 规划规则 | 开始新功能前查看规划策略 |
+| `human-collab` | 人机协作规范 | 需要用户介入时查看协作流程 |
 
 ### 规则优先级
 
@@ -95,7 +106,7 @@ delphi_file(action="write", ...)              # ⑤ 写代码
     ↓
 delphi_file(action="format", ...)             # ⑥ 格式化
     ↓
-project(action="compile", ...)                # ⑦ 编译验证
+delphi_project(action="compile", ...)                # ⑦ 编译验证
     ↓
 get_coding_rules(section="review")            # ⑧ 审查代码
 ```
@@ -107,7 +118,7 @@ get_coding_rules(section="review")            # ⑧ 审查代码
 get_coding_rules(section="workflow")
 
 # 再了解代码结构
-project(action="ast", base_dir="src")
+delphi_project(action="ast", base_dir="src")
 ```
 
 ---

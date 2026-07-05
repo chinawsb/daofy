@@ -1,6 +1,6 @@
-# Project — 项目全生命周期管理
+# Delphi Project — 项目全生命周期管理
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 版本：v1.1 | 最后更新：2026-07-05
 
 ---
 
@@ -20,7 +20,7 @@
 
 ## 1. 概述
 
-`project` 是 Daofy 中最核心的工具，提供 Delphi 项目的**全生命周期管理**——从创建项目、配置编译选项、执行编译，到代码审计。它合并了原有的 `compile_project`、`dproj_tool`、`run_audit` 三个工具的功能。
+`delphi_project` 是 Daofy 中最核心的工具，提供 Delphi 项目的**全生命周期管理**——从创建项目、配置编译选项、执行编译，到代码审计。它合并了原有的 `compile_project`、`dproj_tool`、`run_audit` 三个工具的功能。
 
 **一句话**：所有 Delphi 项目的编译、配置、审计操作都通过此工具完成。
 
@@ -65,10 +65,10 @@
 
 ```python
 # 最简调用 — 自动检测项目类型和配置
-project(action="compile", project_path="Project.dproj")
+delphi_project(action="compile", project_path="Project.dproj")
 
 # 带参数的完整编译
-project(action="compile",
+delphi_project(action="compile",
     project_path="App.dproj",
     build_configuration="Release",
     target_platform="win64",
@@ -114,10 +114,10 @@ project(action="compile",
 编译单个 .pas 文件进行语法检查，不生成可执行文件。
 
 ```python
-project(action="compile_file", project_path="Unit1.pas")
+delphi_project(action="compile_file", project_path="Unit1.pas")
 
 # 带搜索路径
-project(action="compile_file",
+delphi_project(action="compile_file",
     project_path="Unit1.pas",
     unit_search_paths=["..\Shared"],
     conditional_defines=["TEST"])
@@ -128,7 +128,7 @@ project(action="compile_file",
 不实际执行编译，只显示将要使用的编译器路径和完整命令行参数。
 
 ```python
-project(action="dry_run", project_path="Project.dproj", build_configuration="Release")
+delphi_project(action="dry_run", project_path="Project.dproj", build_configuration="Release")
 ```
 
 ---
@@ -140,7 +140,7 @@ project(action="dry_run", project_path="Project.dproj", build_configuration="Rel
 读取 `.dproj` 文件的完整结构化信息：编译配置、源文件列表、资源文件、编译事件等。
 
 ```python
-project(action="info", project_path="Project.dproj")
+delphi_project(action="info", project_path="Project.dproj")
 ```
 
 ### 4.2 `create` — 创建项目
@@ -149,12 +149,12 @@ project(action="info", project_path="Project.dproj")
 
 ```python
 # 最简创建
-project(action="create",
+delphi_project(action="create",
     project_path="MyApp.dproj",
     main_source="MyApp.dpr")
 
 # 带 Form 桩代码
-project(action="create",
+delphi_project(action="create",
     project_path="MyApp.dproj",
     main_source="MyApp.dpr",
     framework_type="VCL",
@@ -182,7 +182,7 @@ project(action="create",
 
 ```python
 # 设置条件编译符号
-project(action="set",
+delphi_project(action="set",
     project_path="Project.dproj",
     property_name="DCC_Define",
     value="DEBUG;TEST",
@@ -194,7 +194,7 @@ project(action="set",
 
 ```python
 # 从现有配置复制创建 Staging 配置
-project(action="add_config",
+delphi_project(action="add_config",
     project_path="Project.dproj",
     config_name="Staging",
     base_config="Debug",
@@ -202,7 +202,7 @@ project(action="add_config",
     optimize=True)
 
 # 删除配置
-project(action="remove_config",
+delphi_project(action="remove_config",
     project_path="Project.dproj",
     config_name="Staging")
 ```
@@ -211,18 +211,18 @@ project(action="remove_config",
 
 ```python
 # 添加源文件到项目
-project(action="add_source",
+delphi_project(action="add_source",
     project_path="Project.dproj",
     source_file="Unit1.pas")
 
 # 添加为主源文件
-project(action="add_source",
+delphi_project(action="add_source",
     project_path="Project.dproj",
     source_file="MyApp.dpr",
     main_source_flag=True)
 
 # 删除源文件
-project(action="remove_source",
+delphi_project(action="remove_source",
     project_path="Project.dproj",
     source_file="Unit1.pas")
 ```
@@ -237,10 +237,10 @@ project(action="remove_source",
 
 ```python
 # 提取整个项目的代码骨架
-project(action="ast", base_dir="src")
+delphi_project(action="ast", base_dir="src")
 
 # 提取单个文件的骨架
-project(action="ast", file_path="Unit1.pas")
+delphi_project(action="ast", file_path="Unit1.pas")
 ```
 
 ### 5.2 `audit` — 静态分析
@@ -249,10 +249,10 @@ project(action="ast", file_path="Unit1.pas")
 
 ```python
 # 全量审计
-project(action="audit", base_dir="src")
+delphi_project(action="audit", base_dir="src")
 
 # 单文件指定严重级别
-project(action="audit",
+delphi_project(action="audit",
     file_path="Unit1.pas",
     rules="P0",
     severity="warning",
@@ -274,7 +274,7 @@ project(action="audit",
 扫描 `.pas`/`.dfm` 中组件类名，匹配 `runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元。独立于编译步骤，纯源码级分析。
 
 ```python
-project(action="runtime", base_dir="src")
+delphi_project(action="runtime", base_dir="src")
 ```
 
 ### 5.4 `layout` — UI 布局审计
@@ -282,8 +282,8 @@ project(action="runtime", base_dir="src")
 扫描 `.dfm` 控件坐标和属性，检测 AI 生成界面常见的布局问题：控件重叠、越界、同列 Left 不一致、垂直间距不一致、文本标签与字段未对齐、文本标签-字段间距异常、TabOrder 与视觉顺序不一致。审计基于几何关系和 DFM 属性推断，不依赖固定控件类型名单。
 
 ```python
-project(action="layout", base_dir="src")
-project(action="layout", file_path="MainForm.dfm", output_format="json")
+delphi_project(action="layout", base_dir="src")
+delphi_project(action="layout", file_path="MainForm.dfm", output_format="json")
 ```
 
 `layout` 不需要 daudit；二进制 DFM 会尽量临时转换为文本，不修改原文件。静态审计通过后，再用 `automate_delphi` 做运行时 BoundsRect、截图和跨 DPI 验证。
@@ -295,7 +295,7 @@ project(action="layout", file_path="MainForm.dfm", output_format="json")
 ### 日常编译
 
 ```
-project(action="compile", project_path="Project.dproj")
+delphi_project(action="compile", project_path="Project.dproj")
   ↓ 成功 → 完成
   ↓ 失败 → check_environment(action="check")
           → 调整参数 → 重新 compile
@@ -304,33 +304,33 @@ project(action="compile", project_path="Project.dproj")
 ### 创建新项目
 
 ```
-project(action="create", project_path="NewApp.dproj", main_source="NewApp.dpr", form_units=["MainForm"])
+delphi_project(action="create", project_path="NewApp.dproj", main_source="NewApp.dpr", form_units=["MainForm"])
   ↓
-project(action="info", project_path="NewApp.dproj")          # 确认配置
+delphi_project(action="info", project_path="NewApp.dproj")          # 确认配置
   ↓
-project(action="compile", project_path="NewApp.dproj")       # 验证可编译
+delphi_project(action="compile", project_path="NewApp.dproj")       # 验证可编译
 ```
 
 ### 代码审计流程
 
 ```
-project(action="ast", base_dir="src")                         # 了解代码结构
+delphi_project(action="ast", base_dir="src")                         # 了解代码结构
   ↓
 delphi_file(action="read", ...)                                # 查看具体文件
   ↓
-project(action="audit", base_dir="src")                        # 运行静态分析
+delphi_project(action="audit", base_dir="src")                        # 运行静态分析
   ↓
 AI 解读结果 → 排除误报 → 生成修复建议
   ↓
-delphi_file(action="write", ...) → project(action="compile")  # 修复后验证编译
+delphi_file(action="write", ...) → delphi_project(action="compile")  # 修复后验证编译
 ```
 
 ### 修改编译配置
 
 ```
-project(action="set", property_name="DCC_Define", value="RELEASE", config="Release")
+delphi_project(action="set", property_name="DCC_Define", value="RELEASE", config="Release")
   ↓
-project(action="compile", project_path="Project.dproj", build_configuration="Release")  # 验证
+delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release")  # 验证
 ```
 
 ---
@@ -364,7 +364,7 @@ project(action="compile", project_path="Project.dproj", build_configuration="Rel
 AI Agent
     │
     ▼
-project(action="compile"|"info"|"audit"|...)
+delphi_project(action="compile"|"info"|"audit"|...)
     │
     ▼
 ┌─────────────────────────────────────┐
