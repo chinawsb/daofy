@@ -14,8 +14,11 @@ import os
 import time
 import winreg
 import logging as _logging
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Optional
+
+import anyio
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['PYTHONUTF8'] = '1'
@@ -45,6 +48,20 @@ from src.constants import (
     TIMEOUT_GENERATE_COPYRIGHT,
 )
 
+MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
+
+关键工具路由规则：
+- 看到 Delphi 源码或工程文件路径（.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx）时，读取和修改都必须使用 MCP `delphi_file`。不要使用客户端/Agent 内置 Read/Edit/Write、apply_patch、shell 重定向、PowerShell 或 Python 直接读写这些文件。
+- 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")` 获取规则；用 `delphi_kb` 查 API/项目符号；用 `delphi_project` 做 compile/audit/layout/runtime 验证。
+- 所有 Git 操作必须使用 `code_hosting`，不要在 shell 中直接运行 git。
+- 不确定工具用法时，先调用 `tool_help(tool_name=...)` 或 `get_coding_rules(...)`。
+"""
+
+MCP_SERVER_DESCRIPTION = (
+    "Daofy for Delphi MCP Server，提供 Delphi 项目编译、知识库搜索、"
+    "安全文件读写、自动化测试和审计工具。"
+)
+
 # ============================================================
 # multiprocessing 子进程保护
 # Windows spawn模式下,子进程会重新导入 __main__ 模块(即本文件),
@@ -61,13 +78,20 @@ else:
 
     from mcp.server import Server
     from mcp.server.lowlevel.server import ReadResourceContents
+    from mcp.server.session import (
+        InitializationState,
+        SUPPORTED_PROTOCOL_VERSIONS,
+        ServerSession,
+    )
     from mcp.server.stdio import stdio_server
+    import mcp.types as mcp_types
     from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
     from src.services.knowledge_base.zvec_adapter import ZVecKnowledgeBaseAdapter
     from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+    from src.services.agent_skill_installer import install_daofy_agent_skills
     from src.tools.project import handle_project as _handle_project
     # project 模块统一管理编译器服务，保留别名供初始化用
     from src.tools.compile_project import set_compiler_service as sp1
@@ -129,6 +153,78 @@ else:
 
     # 初始化日志
     logger = init_default_logger()
+
+
+    class DaofyServerSession(ServerSession):
+        """ServerSession with MCP 2025-11-25 serverInfo.description metadata."""
+
+        async def _received_request(self, responder):
+            match responder.request.root:
+                case mcp_types.InitializeRequest(params=params):
+                    requested_version = params.protocolVersion
+                    self._initialization_state = InitializationState.Initializing
+                    self._client_params = params
+                    with responder:
+                        await responder.respond(
+                            mcp_types.ServerResult(
+                                mcp_types.InitializeResult(
+                                    protocolVersion=requested_version
+                                    if requested_version in SUPPORTED_PROTOCOL_VERSIONS
+                                    else mcp_types.LATEST_PROTOCOL_VERSION,
+                                    capabilities=self._init_options.capabilities,
+                                    serverInfo=mcp_types.Implementation(
+                                        name=self._init_options.server_name,
+                                        title="Daofy for Delphi",
+                                        version=self._init_options.server_version,
+                                        websiteUrl=self._init_options.website_url,
+                                        icons=self._init_options.icons,
+                                        description=MCP_SERVER_DESCRIPTION,
+                                    ),
+                                    instructions=self._init_options.instructions,
+                                )
+                            )
+                        )
+                    self._initialization_state = InitializationState.Initialized
+                case _:
+                    await super()._received_request(responder)
+
+
+    async def _run_mcp_server(server, read_stream, write_stream) -> None:
+        """Run the MCP server with Daofy initialize metadata."""
+        initialization_options = server.create_initialization_options()
+        async with AsyncExitStack() as stack:
+            lifespan_context = await stack.enter_async_context(server.lifespan(server))
+            session = await stack.enter_async_context(
+                DaofyServerSession(
+                    read_stream,
+                    write_stream,
+                    initialization_options,
+                    stateless=False,
+                )
+            )
+
+            task_support = (
+                server._experimental_handlers.task_support
+                if server._experimental_handlers
+                else None
+            )
+            if task_support is not None:
+                task_support.configure_session(session)
+                await stack.enter_async_context(task_support.run())
+
+            async with anyio.create_task_group() as tg:
+                try:
+                    async for message in session.incoming_messages:
+                        logger.debug("Received message: %s", message)
+                        tg.start_soon(
+                            server._handle_message,
+                            message,
+                            session,
+                            lifespan_context,
+                            False,
+                        )
+                finally:
+                    tg.cancel_scope.cancel()
 
 
 def _auto_detect_delphi_help_dir() -> Optional[str]:
@@ -254,6 +350,31 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
 # Delphi 文件读写尾注 — 提醒 AI 使用 delphi_file 工具
 # ============================================================
 # 以下工具返回结果时将追加尾注，防止 AI 绕过 delphi_file 直接读写 .pas/.dfm 等文件
+def _redact_env_argument(value: Any) -> Any:
+    """Return a log-safe summary for env/environment argument values."""
+    if not isinstance(value, dict):
+        return "<redacted-env>"
+    return {
+        "count": len(value),
+        "names": sorted(str(key) for key in value),
+    }
+
+
+def _redact_sensitive_arguments(value: Any) -> Any:
+    """Recursively redact sensitive values from tool-call arguments."""
+    if isinstance(value, dict):
+        redacted: dict = {}
+        for key, item in value.items():
+            if str(key) in {"env", "environment"}:
+                redacted[key] = _redact_env_argument(item)
+            else:
+                redacted[key] = _redact_sensitive_arguments(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_sensitive_arguments(item) for item in value]
+    return value
+
+
 _DELPHI_FILE_FOOTNOTE_TOOLS: set = {
     "delphi_kb",
     "delphi_project",
@@ -264,7 +385,11 @@ _DELPHI_FILE_FOOTNOTE_TOOLS: set = {
 }
 
 
-_DELPHI_FILE_FOOTNOTE_TEXT = "\n\n---\n⚠️ Delphi 文件需用 `delphi_file` 读写"
+_DELPHI_FILE_FOOTNOTE_TEXT = (
+    "\n\n---\n"
+    "⚠️ Delphi 文件需用 `delphi_file` 读写；即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx，"
+    "也不要用 Agent 内置 Read/Edit/Write、apply_patch 或 shell。"
+)
 
 # action → 需要尾注的操作集合
 _DELPHI_FILE_FOOTNOTE_ACTIONS: dict[str, set[str]] = {
@@ -415,6 +540,12 @@ async def run_server():
     logger.info(f"启动 Daofy v{__version__}")
     logger.info(f"{__copyright__}")
 
+    # 尽力同步 Daofy Agent Skill。失败不影响 MCP Server 启动。
+    try:
+        install_daofy_agent_skills()
+    except Exception:
+        logger.warning("同步 Daofy Agent Skill 失败（不影响正常运行）", exc_info=True)
+
     # 初始化配置管理器
     config_manager = ConfigManager()
     logger.info("配置管理器初始化完成")
@@ -490,7 +621,11 @@ async def run_server():
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
-    server = Server("daofy-for-delphi")
+    server = Server(
+        "daofy-for-delphi",
+        version=__version__,
+        instructions=MCP_SERVER_INSTRUCTIONS,
+    )
     logger.info("MCP Server 实例创建完成")
 
     # ============================================================
@@ -512,7 +647,7 @@ async def run_server():
                             "type": "string",
                             "enum": ["compile", "compile_file", "dry_run", "info", "create",
                                      "set", "add_config", "remove_config", "add_source",
-                                     "remove_source", "audit", "ast", "runtime"],
+                                     "remove_source", "audit", "ast", "runtime", "layout"],
                             "description": "操作类型。先 tool_help('delphi_project') 查看各 action 的参数说明。"
                         },
                         "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk/.pas)"},
@@ -570,8 +705,8 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码"},
-                        "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码。工具路由规则：看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 时，即使只是读取，也必须使用 delphi_file，不要用 Agent 内置 Read/Edit/Write、apply_patch 或 shell。"},
+                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc；读取或修改这些文件都应路由到 delphi_file"},
 
                         # ---- [read] 参数 ----
                         "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
@@ -971,6 +1106,18 @@ async def run_server():
                             "description": "[console] 额外命令行参数",
                         },
                         # ── 公共参数 ──
+                        "env": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {"type": "number"},
+                                    {"type": "boolean"},
+                                    {"type": "null"},
+                                ]
+                            },
+                            "description": "[gui/console] Temporary environment variables for the tested child process. Values are not persisted; null unsets a variable. GUI scripts may also declare top-level env/environment.",
+                        },
                         "keep_alive": {
                             "type": "boolean",
                             "default": False,
@@ -1618,6 +1765,7 @@ async def run_server():
         app_path = arguments.get("app_path", "")
         keep_alive = _coerce_bool(arguments.get("keep_alive", False))
         stop_on_failure = _coerce_bool(arguments.get("stop_on_failure", True))
+        env = arguments.get("env", None)
         subsystem = None
 
         if not app_path:
@@ -1651,7 +1799,8 @@ async def run_server():
                                       snapshots_dir=snapshots_dir,
                                       wait_for_pipe=wait_timeout,
                                       keep_alive=keep_alive,
-                                      stop_on_failure=stop_on_failure),
+                                      stop_on_failure=stop_on_failure,
+                                      env=env),
                     timeout=TIMEOUT_AUTOMATION_GUI,
                 )
                 result.setdefault("requested_action", requested_action)
@@ -1681,7 +1830,8 @@ async def run_server():
                                       expect=expect,
                                       timeout=timeout,
                                       keep_alive=keep_alive,
-                                      args=args),
+                                      args=args,
+                                      env=env),
                     timeout=max(timeout + 10, 120),
                 )
                 result.setdefault("requested_action", requested_action)
@@ -1834,7 +1984,9 @@ async def run_server():
                         result['message'] = msg + footnote
 
             # P3: API 调用日志（排除注入的 _on_complete 回调，防止 json.dumps 序列化函数报错）
-            _log_args = {k: v for k, v in arguments.items() if k != '_on_complete'}
+            _log_args = _redact_sensitive_arguments(
+                {k: v for k, v in arguments.items() if k != '_on_complete'}
+            )
             log_api_call(logger, name, _log_args, result)
 
             import json as _json
@@ -1901,7 +2053,7 @@ async def run_server():
                     'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
                 }
             }
-            log_api_call(logger, name, arguments, {"error": str(e)})
+            log_api_call(logger, name, _redact_sensitive_arguments(arguments), {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
             import json as _json
             return CallToolResult(
@@ -2565,10 +2717,10 @@ async def run_server():
     # 启动服务器
     logger.info("MCP Server 启动完成,准备接收请求...")
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
+        await _run_mcp_server(
+            server,
             read_stream,
             write_stream,
-            server.create_initialization_options()
         )
 
 

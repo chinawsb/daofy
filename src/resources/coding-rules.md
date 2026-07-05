@@ -118,6 +118,7 @@ delphi_file(action="read", file_path="...", start_line=100, limit=200)          
 
 ### 文件编码检查（修改前必做）
 - **修改任何 Delphi 源文件前，必须先确认文件编码，避免中文乱码。**
+- **工具路由规则**：看到 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx` 路径时，读取和修改都必须使用 MCP `delphi_file`；不要用 Agent 内置 `Read/Edit/Write`、`apply_patch`、shell 重定向或 Python 直接操作。
 - ⭐ 优先使用 `delphi_file(action="read", file_path=...)` 读取文件（自动检测编码、支持 BOM/UTF-16/GBK，无需手动处理）
 - `delphi_file` 不可用时（如直接在 bash/python 脚本中操作文件），降级到手动检测：
   ```python
@@ -137,8 +138,8 @@ delphi_file(action="read", file_path="...", start_line=100, limit=200)          
 - `delphi_file(action="write", backup=True)` **默认开启自动备份**，写入前自动在 `__history` 目录创建备份，无需手动调用
 - 备份文件命名: `文件名.~版本号~`（与 Delphi IDE 兼容）
 - 二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原
-- ❌ 禁止直接使用原生 edit/write 工具修改 .pas/.dfm 文件而不通过 delphi_file 进行备份
-- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入、IDE 默认编辑器修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止直接使用 Agent 内置 `Read/Edit/Write`、原生 edit/write 工具、IDE 默认编辑器读取或修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
 - ✅ Delphi 文件必须通过 `delphi_file` 或 Daofy 内部已登记的 Delphi 工具写入；Daofy edit guard 会在文件监听启用时记录绕过 Daofy 的外部写入告警
 - 手动备份/恢复/列表:
   ```python

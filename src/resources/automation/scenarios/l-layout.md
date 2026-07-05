@@ -11,6 +11,8 @@
 
 **背景**：布局问题在 Delphi GUI 中极难通过编译发现。典型场景：Label 与 Edit 错位、不同 DPI 下间距变形、`Align`/`Anchors` 属性配置错误导致控件重叠、中文字符撑开 Label 导致挤压相邻控件。RTTI 取 `BoundsRect` 是像素级精确手段，远优于截图肉眼判断。
 
+**静态前置**：运行时采集前，先用 `delphi_project(action="layout", base_dir="...")` 审计 DFM 里的重叠、越界、同列对齐、Label-字段间距和 TabOrder。静态通过后再用本场景验证真实运行效果和跨 DPI 稳定性。
+
 ##### L1. 采集控件位置 — `rget` / `dumpstate` 走管道 RTTI
 
 ```python

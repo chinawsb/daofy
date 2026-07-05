@@ -3,6 +3,8 @@
 
 ## delphi_file 写入规则
 
+**工具路由规则**：看到 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx` 路径时，读取和修改都必须使用 MCP `delphi_file`。不要用 Agent 内置 `Read/Edit/Write`、`apply_patch`、shell 重定向或 Python 直接读写这些文件。
+
 **行号统一 1-indexed 左闭右闭。** write 统一使用 `edits=[...]`。
 
 ```python

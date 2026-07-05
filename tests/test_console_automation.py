@@ -181,6 +181,43 @@ class TestConsoleExecute:
         assert result["status"] == "error"
         assert result["exit_code"] == 42
 
+    def test_console_env_is_passed_and_redacted(self):
+        """Temporary env should reach the child process without echoing values in the result."""
+        script = (
+            'import os, sys; '
+            'sys.stdout.write("HAS_ENV=" + str(os.environ.get("DAOFY_ENV_TEST") == "secret-value"))'
+        )
+        result = console_execute(
+            app_path=sys.executable,
+            timeout=5,
+            args=["-c", script],
+            env={"DAOFY_ENV_TEST": "secret-value"},
+        )
+
+        assert result["status"] == "ok"
+        assert "HAS_ENV=True" in result["stdout"]
+        assert result["env"] == {"count": 1, "names": ["DAOFY_ENV_TEST"]}
+        result_without_stdout = dict(result)
+        result_without_stdout["stdout"] = ""
+        assert "secret-value" not in json.dumps(result_without_stdout, ensure_ascii=False)
+
+    def test_console_env_null_unsets_variable(self, monkeypatch):
+        """A null env value should remove an inherited variable for the child process."""
+        monkeypatch.setenv("DAOFY_ENV_UNSET_TEST", "present")
+        script = (
+            'import os, sys; '
+            'sys.stdout.write("HAS_ENV=" + str("DAOFY_ENV_UNSET_TEST" in os.environ))'
+        )
+        result = console_execute(
+            app_path=sys.executable,
+            timeout=5,
+            args=["-c", script],
+            env={"DAOFY_ENV_UNSET_TEST": None},
+        )
+
+        assert result["status"] == "ok"
+        assert "HAS_ENV=False" in result["stdout"]
+
 
 # ═══════════════════════════════════════════════════════════════
 # execute_automation 统一入口
@@ -298,6 +335,112 @@ class TestGuiScriptResultHandling:
 
         assert result["status"] == "ok"
         assert result["script_metadata"]["test_name"] == "bom"
+
+    def test_gui_script_top_level_env_is_passed_and_redacted(self, tmp_path):
+        """A full GUI script object may declare temporary env without leaking values."""
+        from src.services import automation_service
+
+        captured_env = {}
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_ensure(app_path, wait_for_pipe, env_overrides=None):
+            captured_env.update(env_overrides or {})
+            return False, ""
+
+        with mock.patch.object(automation_service, "_ensure_process", side_effect=fake_ensure), \
+                mock.patch.object(automation_service, "_send_command", side_effect=lambda _: responses.pop(0)), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script={
+                    "test_name": "env-redaction",
+                    "env": {"DAOFY_ENV_TEST": "secret-value"},
+                    "steps": [{"cmd": "listwnd"}],
+                },
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert captured_env == {"DAOFY_ENV_TEST": "secret-value"}
+        assert result["script_metadata"]["env"] == {"count": 1, "names": ["DAOFY_ENV_TEST"]}
+        assert result["env"] == {"count": 1, "names": ["DAOFY_ENV_TEST"]}
+        assert "secret-value" not in json.dumps(result, ensure_ascii=False)
+
+    def test_gui_env_argument_overrides_script_env(self, tmp_path):
+        """The explicit tool env argument should override top-level script env."""
+        from src.services import automation_service
+
+        captured_env = {}
+        responses = [
+            json.dumps({"reqId": "step_0", "status": "ok", "data": "OK"}),
+            json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
+        ]
+
+        def fake_ensure(app_path, wait_for_pipe, env_overrides=None):
+            captured_env.update(env_overrides or {})
+            return False, ""
+
+        with mock.patch.object(automation_service, "_ensure_process", side_effect=fake_ensure), \
+                mock.patch.object(automation_service, "_send_command", side_effect=lambda _: responses.pop(0)), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script={
+                    "test_name": "env-merge",
+                    "env": {"DAOFY_ENV_TEST": "from-script", "KEEP_ME": "yes"},
+                    "steps": [{"cmd": "listwnd"}],
+                },
+                env={"DAOFY_ENV_TEST": "from-argument"},
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert captured_env == {
+            "DAOFY_ENV_TEST": "from-argument",
+            "KEEP_ME": "yes",
+        }
+
+    def test_gui_process_pool_restarts_when_env_changes(self):
+        """A keep-alive GUI process should not be reused for a different env."""
+        from src.services import automation_service
+
+        app_path = r"C:\fake\dummy.exe"
+        launched = []
+
+        def fake_popen(cmd, cwd=None, env=None):
+            proc = mock.Mock()
+            proc.poll.return_value = None
+            proc.kill = mock.Mock()
+            proc.wait = mock.Mock()
+            proc.env = env or {}
+            launched.append(proc)
+            return proc
+
+        with mock.patch.object(automation_service.subprocess, "Popen", side_effect=fake_popen), \
+                mock.patch.object(automation_service, "_wait_for_pipe", return_value=True):
+            try:
+                first = automation_service._ensure_process(
+                    app_path, 0.1, {"DAOFY_ENV_TEST": "one"}
+                )
+                second = automation_service._ensure_process(
+                    app_path, 0.1, {"DAOFY_ENV_TEST": "one"}
+                )
+                third = automation_service._ensure_process(
+                    app_path, 0.1, {"DAOFY_ENV_TEST": "two"}
+                )
+            finally:
+                automation_service._kill_process(app_path)
+
+        assert first == (True, "")
+        assert second == (False, "")
+        assert third == (True, "")
+        assert len(launched) == 2
+        assert launched[0].kill.called
+        assert launched[0].env["DAOFY_ENV_TEST"] == "one"
+        assert launched[1].env["DAOFY_ENV_TEST"] == "two"
 
     def test_pipe_session_reopens_after_io_failure(self):
         """A failed persistent pipe handle should be discarded before retrying."""

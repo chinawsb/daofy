@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from mcp.types import CallToolResult, TextContent
 
 from ..constants import TIMEOUT_AUDIT
+from .layout_audit import run_layout_audit
 
 logger = logging.getLogger(__name__)
 
@@ -477,21 +478,22 @@ def _format_runtime_report(findings: List[Dict]) -> str:
 
 
 async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
-    """执行 Delphi 代码审计 / AST 语法解析 / Runtime 注册检查
+    """执行 Delphi 代码审计 / AST 语法解析 / Runtime 注册检查 / UI 布局审计
 
     参数:
         base_dir:   审计基准目录 — 审计/AST解析/runtime检查时查找项目及源码的根路径
         file_path:    单文件路径（ast 模式可选，优先于 base_dir）
-        mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）、"runtime"（运行时注册检查）
+        mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）、
+                      "runtime"（运行时注册检查）、"layout"（UI 布局审计）
         severity:     最低严重级别，默认 "suggestion"（仅 audit 模式）
         output_format: 输出格式，默认 "report"。可选 "json"
 
     返回:
         结构化 CallToolResult
     """
-    base_dir = arguments.get("base_dir", "").strip()
-    file_path = arguments.get("file_path", "").strip() or None
-    mode = arguments.get("mode", "audit")
+    base_dir = str(arguments.get("base_dir", "") or "").strip()
+    file_path = str(arguments.get("file_path", "") or "").strip() or None
+    mode = arguments.get("mode") or arguments.get("action") or "audit"
     severity = arguments.get("severity", "suggestion")
     output_format = arguments.get("output_format", "report")
 
@@ -528,6 +530,10 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
                 )],
                 isError=True,
             )
+
+    # ── UI 布局审计模式（不需要 daudit）──
+    if mode == "layout":
+        return await run_layout_audit(arguments)
 
     # ── Runtime 注册检查模式（不需要 daudit）──
     if mode == "runtime":

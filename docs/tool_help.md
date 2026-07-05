@@ -36,8 +36,8 @@
 ### 基础调用
 
 ```python
-# 获取 project 工具的完整帮助
-tool_help(tool_name="project")
+# 获取 delphi_project 工具的完整帮助
+tool_help(tool_name="delphi_project")
 
 # 获取 delphi_file 工具的完整帮助
 tool_help(tool_name="delphi_file")

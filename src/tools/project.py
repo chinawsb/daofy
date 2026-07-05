@@ -53,6 +53,7 @@ _ACTIONS = {
     "audit": "audit",
     "ast": "audit",
     "runtime": "audit",
+    "layout": "audit",
 }
 
 _DISABLED_WARNINGS = {"W1000"}  # 默认禁用的警告
@@ -82,7 +83,7 @@ async def handle_project(**kwargs) -> Any:
             return await _handle_dproj(action, kwargs)
 
         # ── run_audit 系列 ──
-        elif action in ("audit", "ast", "runtime"):
+        elif action in ("audit", "ast", "runtime", "layout"):
             return await _handle_audit(kwargs)
 
         else:

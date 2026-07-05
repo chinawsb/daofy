@@ -289,8 +289,13 @@ The following configs apply to users who installed via git clone. Replace the pa
 | `manage_component` | Manage DFM components: add/remove/modify/create + PAS auto-sync |
 | `code_hosting` | Unified operations for Gitea/GitHub/GitLab/Gitee/GitCode + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
+| `daofy_update` | Check Daofy version updates, execute git pull (check/update/version), async background tasks |
 | `tool_help` | Get full documentation for any tool (on-demand: params/examples/workflows) |
+| `generate_copyright` | Generate copyright registration docs: source code/manual/summary (PDF browser render + auto-verify) |
+| `automate_delphi` | Delphi GUI/Console automation testing — script-driven (click/type/waitfor/rget/capture), GUI named pipe & console modes, `keep_alive` process reuse |
+| `delphi_rtti` | Delphi RTTI bridge — discover and call Delphi app runtime capabilities via RTTI (3-step: discover/call/guide) |
 | `experience` | Memory management: save/search/update/merge/delete AI problem-solving experience; prune low-value entries; rebuild_embedding for records missing vectors after model load |
+| `ocr` | Image analysis: text recognition(recognize)/textbox(detect)/screenshot diff(diff)/color analysis(color)/icon match(match) |
 
 ## Knowledge Base
 

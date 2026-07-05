@@ -19,6 +19,7 @@ r"""
 
 import ast
 import ctypes
+import hashlib
 import io
 import json
 import os
@@ -120,6 +121,7 @@ _pool_lock = Lock()
 _gui_execution_lock = RLock()  # RLock 允许同线程重入，防止 UIA 路由死锁
 _pipe_session = threading.local()
 PROCESS_KEEPALIVE_TIMEOUT = 300  # 5 分钟无使用则自动清理
+_ENV_METADATA_KEYS = ('environment', 'env')
 
 # ── Windows API ──
 GENERIC_READ = 0x80000000
@@ -162,6 +164,87 @@ _WaitNP.restype = wintypes.BOOL
 
 _GetLastError = _k32.GetLastError
 _GetLastError.restype = wintypes.DWORD
+
+
+def _normalize_env_overrides(env_overrides: object) -> dict[str, str | None]:
+    """Normalize temporary child-process environment overrides."""
+    if env_overrides in (None, ''):
+        return {}
+    if not isinstance(env_overrides, dict):
+        raise TypeError('env must be an object mapping variable names to values')
+
+    normalized: dict[str, str | None] = {}
+    for raw_name, raw_value in env_overrides.items():
+        name = str(raw_name).strip()
+        if not name:
+            raise ValueError('env variable name cannot be empty')
+        if '=' in name or '\0' in name:
+            raise ValueError('env variable name cannot contain "=" or NUL')
+        if raw_value is None:
+            normalized[name] = None
+        elif isinstance(raw_value, (str, int, float, bool)):
+            normalized[name] = str(raw_value)
+        else:
+            raise TypeError('env values must be strings, numbers, booleans, or null')
+    return normalized
+
+
+def _merge_env_overrides(*env_sources: object) -> dict[str, str | None]:
+    """Merge multiple temporary environment override sources."""
+    merged: dict[str, str | None] = {}
+    for source in env_sources:
+        merged.update(_normalize_env_overrides(source))
+    return merged
+
+
+def _remove_env_key(process_env: dict[str, str], name: str) -> None:
+    """Remove an environment variable, respecting Windows case-insensitivity."""
+    process_env.pop(name, None)
+    if os.name == 'nt':
+        lower_name = name.lower()
+        for existing in list(process_env):
+            if existing.lower() == lower_name:
+                process_env.pop(existing, None)
+
+
+def _build_process_env(env_overrides: dict[str, str | None]) -> dict[str, str]:
+    """Build the child process environment without mutating os.environ."""
+    process_env = os.environ.copy()
+    for name, value in env_overrides.items():
+        if value is None:
+            _remove_env_key(process_env, name)
+        else:
+            process_env[name] = value
+    return process_env
+
+
+def _env_fingerprint(env_overrides: dict[str, str | None]) -> str:
+    """Return a stable process-pool key without exposing values."""
+    if not env_overrides:
+        return 'base'
+    payload = json.dumps(
+        sorted(env_overrides.items()),
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+
+
+def _env_report(env_overrides: dict[str, str | None]) -> dict:
+    """Return a report-safe environment summary without values."""
+    return {
+        'count': len(env_overrides),
+        'names': sorted(env_overrides),
+    }
+
+
+def _redact_script_metadata(script_metadata: dict) -> dict:
+    """Redact sensitive environment values from returned script metadata."""
+    redacted = dict(script_metadata)
+    for key in _ENV_METADATA_KEYS:
+        if key in redacted:
+            redacted[key] = _env_report(_normalize_env_overrides(redacted[key]))
+    return redacted
 
 
 # ── 共享管道原语 ──
@@ -2009,51 +2092,74 @@ def _format_form_summary(state: dict) -> dict:
     return out
 
 
-def _ensure_process(app_path: str, wait_for_pipe: float) -> tuple[bool, str]:
-    """确保 app_path 对应的进程在运行。返回 (是否新建, 错误信息)。"""
+def _ensure_process(
+    app_path: str,
+    wait_for_pipe: float,
+    env_overrides: dict[str, str | None] | None = None,
+) -> tuple[bool, str]:
+    """Ensure the GUI test process is running with the requested environment."""
     _cleanup_stale_processes()
+    try:
+        normalized_env = _normalize_env_overrides(env_overrides)
+    except (TypeError, ValueError) as exc:
+        return True, f'env invalid: {exc}'
+    env_fingerprint = _env_fingerprint(normalized_env)
 
     with _pool_lock:
         if app_path in _process_pool:
             entry = _process_pool[app_path]
             if entry['proc'].poll() is None:
-                entry['last_used'] = time.time()
-                return False, ''  # 复用已有进程
-            # 进程已死，移除
+                if entry.get('env_fingerprint', 'base') == env_fingerprint:
+                    entry['last_used'] = time.time()
+                    return False, ''
+                try:
+                    entry['proc'].kill()
+                    wait_proc = getattr(entry['proc'], 'wait', None)
+                    if callable(wait_proc):
+                        wait_proc(timeout=TIMEOUT_PROCESS_TERMINATE)
+                except Exception:
+                    pass
             del _process_pool[app_path]
 
-    # 启动新进程（锁外执行，避免阻塞其他线程）
     try:
         proc = subprocess.Popen(
             [app_path],
             cwd=os.path.dirname(app_path) or None,
+            env=_build_process_env(normalized_env),
         )
     except Exception as e:
-        return True, f'启动失败: {e}'
+        return True, f'launch failed: {e}'
 
     if not _wait_for_pipe(wait_for_pipe):
         try:
             proc.kill()
         except Exception:
             pass
-        return True, f'Delphi 程序未在 {wait_for_pipe}s 内创建管道'
+        return True, f'Delphi process did not create the automation pipe within {wait_for_pipe}s'
 
-    # 双重检查：锁内确认其他线程未提前注册同一 app_path
     with _pool_lock:
         if app_path in _process_pool:
-            # 其他线程已注册，关掉我们新建的进程，复用它
+            existing = _process_pool[app_path]
+            if (
+                existing['proc'].poll() is None and
+                existing.get('env_fingerprint', 'base') == env_fingerprint
+            ):
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                existing['last_used'] = time.time()
+                return False, ''
             try:
-                proc.kill()
+                existing['proc'].kill()
             except Exception:
                 pass
-            _process_pool[app_path]['last_used'] = time.time()
-            return False, ''
         _process_pool[app_path] = {
             'proc': proc,
             'last_used': time.time(),
+            'env_fingerprint': env_fingerprint,
         }
     return True, ''
-
 
 def _kill_process(app_path: str):
     """强制终止指定进程。"""
@@ -2072,26 +2178,44 @@ _console_pool: dict[str, dict] = {}
 _console_pool_lock = Lock()
 
 
+def _console_args_fingerprint(extra_args: list[str] | None) -> str:
+    """Return a stable key for console command-line arguments."""
+    payload = json.dumps(extra_args or [], ensure_ascii=False, separators=(',', ':'))
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]
+
+
+def _console_pool_key(
+    app_path: str,
+    extra_args: list[str] | None,
+    env_overrides: dict[str, str | None],
+) -> str:
+    """Build a console process-pool key isolated by args and environment."""
+    args_key = _console_args_fingerprint(extra_args)
+    env_key = _env_fingerprint(env_overrides)
+    return f'console:{app_path}|args={args_key}|env={env_key}'
+
+
 def _console_ensure_process(
     app_path: str,
     extra_args: list[str] | None = None,
-) -> tuple[bool, str]:
-    """确保控制台进程在运行，返回 (是否新建, 错误信息)。
-
-    与 GUI 进程池分离，独立管理。
-    """
+    env_overrides: dict[str, str | None] | None = None,
+) -> tuple[bool, str, str]:
+    """Ensure a console process is running with the requested environment."""
     _cleanup_stale_console_processes()
-    key = f'console:{app_path}'
+    try:
+        normalized_env = _normalize_env_overrides(env_overrides)
+    except (TypeError, ValueError) as exc:
+        return True, f'env invalid: {exc}', ''
+    key = _console_pool_key(app_path, extra_args, normalized_env)
 
     with _console_pool_lock:
         if key in _console_pool:
             entry = _console_pool[key]
             if entry['proc'].poll() is None:
                 entry['last_used'] = time.time()
-                return False, ''  # 复用
+                return False, '', key
             del _console_pool[key]
 
-    # 启动新进程
     cmd = [app_path]
     if extra_args:
         cmd.extend(extra_args)
@@ -2102,20 +2226,21 @@ def _console_ensure_process(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=os.path.dirname(app_path) or None,
+            env=_build_process_env(normalized_env),
         )
     except Exception as e:
-        return True, f'启动失败: {e}'
+        return True, f'launch failed: {e}', key
 
     with _console_pool_lock:
         _console_pool[key] = {
             'proc': proc,
             'last_used': time.time(),
         }
-    return True, ''
+    return True, '', key
 
 
 def _cleanup_stale_console_processes():
-    """清理超时未用的控制台进程。"""
+    """Clean up idle console processes."""
     now = time.time()
     with _console_pool_lock:
         stale = [k for k, v in _console_pool.items()
@@ -2128,9 +2253,8 @@ def _cleanup_stale_console_processes():
                 pass
 
 
-def _console_kill_process(app_path: str):
-    """强制终止指定控制台进程。"""
-    key = f'console:{app_path}'
+def _console_kill_pool_entry(key: str) -> None:
+    """Kill one console process-pool entry by key."""
     with _console_pool_lock:
         entry = _console_pool.pop(key, None)
     if entry:
@@ -2140,7 +2264,23 @@ def _console_kill_process(app_path: str):
             pass
 
 
-# ── 公共入口 ──
+def _console_kill_process(app_path: str):
+    """Kill all console process-pool entries for an app path."""
+    prefix = f'console:{app_path}|'
+    with _console_pool_lock:
+        entries = [
+            _console_pool.pop(key)
+            for key in list(_console_pool)
+            if key.startswith(prefix)
+        ]
+    for entry in entries:
+        try:
+            entry['proc'].kill()
+        except Exception:
+            pass
+
+
+# Public entry points
 
 def execute_automation(action: str, **kwargs) -> dict:
     """统一的自动化入口，按 action 分发。
@@ -2174,6 +2314,7 @@ def console_execute(
     timeout: float = 30.0,
     keep_alive: bool = False,
     args: list[str] | None = None,
+    env: dict[str, object] | None = None,
 ) -> dict:
     """执行控制台程序交互。
 
@@ -2189,11 +2330,15 @@ def console_execute(
         dict: {status, stdout, stderr, exit_code, matched, timed_out}
     """
 
-    is_new, err = _console_ensure_process(app_path, args)
+    try:
+        env_overrides = _normalize_env_overrides(env)
+    except (TypeError, ValueError) as exc:
+        return {'status': 'error', 'message': f'env invalid: {exc}'}
+
+    is_new, err, key = _console_ensure_process(app_path, args, env_overrides)
     if err:
         return {'status': 'error', 'message': err}
 
-    key = f'console:{app_path}'
     with _console_pool_lock:
         entry = _console_pool.get(key)
     if not entry:
@@ -2295,13 +2440,13 @@ def console_execute(
 
     except Exception as e:
         if not keep_alive:
-            _console_kill_process(app_path)
+            _console_kill_pool_entry(key)
         return {'status': 'error', 'message': f'控制台交互失败: {e}'}
 
     exit_code = proc.poll()
 
     if not keep_alive:
-        _console_kill_process(app_path)
+        _console_kill_pool_entry(key)
     else:
         with _console_pool_lock:
             if key in _console_pool:
@@ -2314,6 +2459,8 @@ def console_execute(
         'exit_code': exit_code if exit_code is not None else -1,
         'matched': matched,
         'timed_out': timed_out,
+        'process_reused': not is_new,
+        'env': _env_report(env_overrides),
     }
 
 
@@ -2321,7 +2468,8 @@ def execute_script(app_path: str, script,
                    snapshots_dir: str = '',
                    wait_for_pipe: float = 10.0,
                    keep_alive: bool = False,
-                   stop_on_failure: bool = True) -> dict:
+                   stop_on_failure: bool = True,
+                   env: dict[str, object] | None = None) -> dict:
     """Execute one GUI automation script through the fixed Daofy pipe."""
     with _gui_execution_lock:
         return _execute_script_unlocked(
@@ -2331,6 +2479,7 @@ def execute_script(app_path: str, script,
             wait_for_pipe=wait_for_pipe,
             keep_alive=keep_alive,
             stop_on_failure=stop_on_failure,
+            env=env,
         )
 
 
@@ -2338,7 +2487,8 @@ def _execute_script_unlocked(app_path: str, script,
                              snapshots_dir: str = '',
                              wait_for_pipe: float = 10.0,
                              keep_alive: bool = False,
-                             stop_on_failure: bool = True) -> dict:
+                             stop_on_failure: bool = True,
+                             env: dict[str, object] | None = None) -> dict:
     """执行自动化脚本。
 
     支持进程池复用：同一个 app_path 在 keep_alive=True 后保持运行，
@@ -2367,7 +2517,16 @@ def _execute_script_unlocked(app_path: str, script,
         return {'status': 'error', 'message': f'脚本解析失败: {e}'}
 
     # 获取或创建进程
-    is_new, err = _ensure_process(app_path, wait_for_pipe)
+    try:
+        env_overrides = _merge_env_overrides(
+            script_metadata.get('environment'),
+            script_metadata.get('env'),
+            env,
+        )
+    except (TypeError, ValueError) as e:
+        return {'status': 'error', 'message': f'env invalid: {e}'}
+
+    is_new, err = _ensure_process(app_path, wait_for_pipe, env_overrides)
     if err:
         return {'status': 'error', 'message': err}
     _begin_pipe_session()
@@ -3003,7 +3162,8 @@ def _execute_script_unlocked(app_path: str, script,
         'app_path': app_path,
         'snapshots_dir': snapshots_dir,
         'steps_total': len(steps),
-        'script_metadata': script_metadata,
+        'script_metadata': _redact_script_metadata(script_metadata),
+        'env': _env_report(env_overrides),
         'process_reused': not is_new,
         'process_alive': app_path in _process_pool,
         'results': results,

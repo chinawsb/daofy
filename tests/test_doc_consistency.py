@@ -11,6 +11,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 ROOT = Path(__file__).parent.parent
 
 
+def test_server_log_argument_redaction_redacts_nested_env():
+    """Tool-call logging must not expose temporary env values."""
+    from server import _redact_sensitive_arguments
+
+    redacted = _redact_sensitive_arguments({
+        "env": {"DEEPSEEK_API_KEY": "secret-value"},
+        "script": {
+            "test_name": "llm",
+            "environment": {"OTHER_KEY": "other-secret"},
+            "steps": [{"cmd": "listwnd"}],
+        },
+    })
+
+    assert redacted["env"] == {"count": 1, "names": ["DEEPSEEK_API_KEY"]}
+    assert redacted["script"]["environment"] == {"count": 1, "names": ["OTHER_KEY"]}
+    assert "secret-value" not in json.dumps(redacted, ensure_ascii=False)
+    assert "other-secret" not in json.dumps(redacted, ensure_ascii=False)
+
+
 def _resource_markdown_files() -> list[Path]:
     roots = [
         ROOT / "src" / "resources" / "coding-rules",

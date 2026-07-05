@@ -23,7 +23,13 @@ src/
 ├── tools/                 # MCP tool implementations (delphi_file, code_hosting, delphi_project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
-│   └── knowledge_base/    # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
+│   ├── automation_service.py     # Delphi GUI/Console 自动化测试服务
+│   ├── copyright_service.py      # 软著文档生成服务
+│   ├── delphi_edit_guard.py      # Delphi 文件编辑保护（脏标记检测）
+│   ├── experience_service.py     # AI 经验记忆管理服务
+│   ├── ocr_service.py            # 图像分析服务
+│   ├── rtti_bridge.py            # Delphi RTTI 桥接服务
+│   └── knowledge_base/           # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
 ├── models/                # Pydantic/dataclass models
 └── utils/                 # Utilities (delphi_env, dproj_parser, validator, logger)
 ```
@@ -129,9 +135,10 @@ get_coding_rules(section="delphi_file_usage_tips")      # 使用建议
 - 行号统一为 **1-indexed 左闭右闭**，`write` 统一使用 `edits=[...]`
 - 写入后文件标记为**脏**，再次 write 前必须 `read` 或 `preview`
 - write 响应中 `[s, e] → [s', e']` 的差值即为**行号偏移量**
-- ❌ 禁止使用原生 edit/write 工具修改 .pas/.dfm 文件
-- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入、IDE 默认编辑器修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
-- ✅ Delphi 文件只能通过 `delphi_file` 或 Daofy 内部已登记的 Delphi 工具写入；跨 Agent 场景由 Daofy edit guard 记录绕过 Daofy 的写入告警
+- ❌ 禁止使用 Agent 内置 `Read/Edit/Write`、原生 edit/write、IDE 默认编辑器读取或修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ✅ Delphi 文件的读取和写入只能通过 `delphi_file` 或 Daofy 内部已登记的 Delphi 工具；`list_tools()` 中的 `delphi_file` 描述是跨 Agent 的首要路由提示
+- ⚠️ `DAOFY_EDIT_GUARD=strict` 只是后验兜底：它依赖 Daofy 文件监听器检测外部写入，不能阻止内置工具抢先改文件
 
 ### 编译验证
 

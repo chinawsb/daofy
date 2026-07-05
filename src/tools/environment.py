@@ -7,6 +7,7 @@
 from typing import Dict, Any, List, Optional
 from mcp.types import CallToolResult
 from ..services.config_manager import ConfigManager
+from ..services.delphi_edit_guard import snapshot_status
 from ..utils.validator import Validator
 from ..utils.logger import get_logger
 
@@ -92,6 +93,21 @@ async def check_environment(arguments: dict = None) -> CallToolResult:
             output += f"  {i}. {path}\n"
         if len(thirdparty_paths) > 10:
             output += f"  ... 还有 {len(thirdparty_paths) - 10} 个\n"
+
+        guard = snapshot_status()
+        output += "\nDelphi edit guard:\n"
+        output += f"  enabled: {guard['enabled']}\n"
+        output += f"  mode: {guard['mode']}\n"
+        output += f"  strict_blocks: {guard['strict_blocks']}\n"
+        output += f"  recent_unauthorized_count: {guard['recent_unauthorized_count']}\n"
+        for item in guard["recent_unauthorized_edits"][:5]:
+            output += f"  - {item['path']} ({item['event_type']}, age_ms={item.get('age_ms', 0)})\n"
+        if guard["recent_unauthorized_count"] > 5:
+            output += f"  ... 还有 {guard['recent_unauthorized_count'] - 5} 条\n"
+        output += (
+            "  note: strict mode blocks delphi_project compile after the watcher "
+            "detects non-Daofy Delphi file writes.\n"
+        )
 
         return CallToolResult(content=[{"type": "text", "text": output}])
 

@@ -80,7 +80,11 @@ where = ["."]
 include = ["src*"]
 
 [tool.setuptools.package-data]
-src = ["resources/*.md", "resources/automation/*.md"]
+src = [
+    "resources/*.md",
+    "resources/automation/*.md",
+    "resources/agent-skills/daofy/*.md",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

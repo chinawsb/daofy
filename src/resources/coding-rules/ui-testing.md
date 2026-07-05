@@ -5,6 +5,8 @@
 
 编译通过（可选 run_verify）后，对 GUI 程序进行交互操作和截图验证。
 
+> AI 生成或修改 DFM 后，先执行 `delphi_project(action="layout", base_dir="...")` 做静态布局审计；通过后再进入本章的运行时 UI 验证。
+
 ### 启用流程
 
 首次接入 → 按 [../automation/scenarios/base.md](../automation/scenarios/base.md) 的「启用流程」操作（前置判断 → 修改 .dpr → 编译 → 冒烟验证）。

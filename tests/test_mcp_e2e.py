@@ -12,6 +12,10 @@ MCP 端到端协议测试 — 工具注册 / 分发 / 错误处理一致性
 
 import re
 import json
+import os
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -64,6 +68,16 @@ class TestToolRegistrationConsistency:
             desc = TOOL_SHORT_DESC[name]
             assert len(desc) > 10, f"{name} TOOL_SHORT_DESC too short: {desc!r}"
 
+    def test_delphi_file_short_desc_routes_builtin_file_tools(self):
+        """list_tools 的 delphi_file 描述必须约束 Agent 内置 Read/Edit/Write。"""
+        desc = TOOL_SHORT_DESC["delphi_file"]
+        assert "Read/Edit/Write" in desc
+        assert "Delphi 文件专用" in desc
+        assert "读取" in desc
+        assert ".pas" in desc
+        assert ".dfm" in desc
+        assert "apply_patch" in desc
+
     def test_tool_names_deduplicated(self):
         """TOOL_NAMES 无重复条目"""
         assert len(TOOL_NAMES) == len(set(TOOL_NAMES)), "TOOL_NAMES has duplicates"
@@ -94,6 +108,83 @@ class TestServerDispatch:
     """
 
     SERVER_PATH = Path(__file__).parent.parent / "src" / "server.py"
+
+    def test_initialize_instructions_are_registered(self):
+        """MCP initialize 响应必须携带 instructions，供客户端注入系统上下文。"""
+        source = self.SERVER_PATH.read_text(encoding="utf-8")
+        assert "MCP_SERVER_INSTRUCTIONS" in source
+        assert "MCP_SERVER_DESCRIPTION" in source
+        assert "instructions=MCP_SERVER_INSTRUCTIONS" in source
+        assert "version=__version__" in source
+        assert "description=MCP_SERVER_DESCRIPTION" in source
+
+        instructions_start = source.find("MCP_SERVER_INSTRUCTIONS")
+        instructions_block = source[instructions_start:instructions_start + 1200]
+        assert "Read/Edit/Write" in instructions_block
+        assert "delphi_file" in instructions_block
+        assert "code_hosting" in instructions_block
+        assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in instructions_block
+
+    def test_raw_initialize_response_includes_description_and_instructions(self):
+        """Raw JSON-RPC initialize must expose serverInfo.description and instructions."""
+        env = os.environ.copy()
+        env.update({
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "DAOFY_AGENT_SKILL_INSTALL": "off",
+        })
+        proc = subprocess.Popen(
+            [sys.executable, str(self.SERVER_PATH)],
+            cwd=str(self.SERVER_PATH.parent.parent),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+        request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "pytest-init-probe", "version": "0.1"},
+            },
+        }
+        try:
+            assert proc.stdin is not None
+            assert proc.stdout is not None
+            proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+            proc.stdin.flush()
+            line = ""
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                line = proc.stdout.readline()
+                if line:
+                    break
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.05)
+            assert line, "Daofy server did not return an initialize response"
+            payload = json.loads(line)
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+
+        result = payload["result"]
+        assert result["instructions"]
+        assert "delphi_file" in result["instructions"]
+        assert result["serverInfo"]["description"]
+        assert "Delphi 项目编译" in result["serverInfo"]["description"]
 
     @classmethod
     def _extract_list_tool_names(cls) -> set:
@@ -334,6 +425,13 @@ class TestToolSchemaCompleteness:
         after = rest.split('"force"', 1)[1][:400]
         assert '"type": "boolean"' in after, "force 应声明为 boolean"
         assert '"default": False' in after, "force 默认值应为 False"
+
+    def test_delphi_file_schema_mentions_builtin_read_edit_write(self):
+        """schema 描述也要给客户端路由模型明确提示，读取 Delphi 文件也走 delphi_file。"""
+        block = self._extract_tool_block("delphi_file")
+        assert "Read/Edit/Write" in block
+        assert "即使只是读取" in block
+        assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in block
 
     def test_handler_arguments_match_schema_known_gaps_only(self):
         """回归检查：本次用户反馈的具体 schema 缺失已全部修复

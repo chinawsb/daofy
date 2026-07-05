@@ -50,7 +50,7 @@ resources/automation/
 | I. 右键菜单 | [scenarios/i-context-menu.md](scenarios/i-context-menu.md) | 右键弹出与菜单项选择 |
 | J. DirectUI 弹窗 | [scenarios/j-directui.md](scenarios/j-directui.md) | IFileDialog/TTaskDialog/uia.xxx 命令 |
 | K. 文本完整性 | [scenarios/k-text-completeness.md](scenarios/k-text-completeness.md) | OCR 检测截断/省略号/DPI |
-| L. 布局对齐 | [scenarios/l-layout.md](scenarios/l-layout.md) | 左对齐/间距/重叠检测 |
+| L. 布局对齐 | [scenarios/l-layout.md](scenarios/l-layout.md) | 静态 layout 审计后，运行时左对齐/间距/重叠/DPI 检测 |
 | M. 控件定位策略 | [scenarios/m-control-targeting.md](scenarios/m-control-targeting.md) | 坐标校准/DPI 系数 |
 | N. 等待策略 | [scenarios/n-wait-strategy.md](scenarios/n-wait-strategy.md) | 条件等待替代固定延时 |
 | O. 控件重建安全 | [scenarios/o-control-rebuild.md](scenarios/o-control-rebuild.md) | Rescan 后控件重建等待 |

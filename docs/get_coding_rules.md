@@ -43,6 +43,7 @@ get_coding_rules(section="workflow")
 get_coding_rules(section="writing")
 get_coding_rules(section="review")
 get_coding_rules(section="safety")
+get_coding_rules(section="ui_layout")
 get_coding_rules(section="agent_rules")
 ```
 
@@ -63,6 +64,7 @@ get_coding_rules(section="agent_rules")
 | `workflow` | 工作流总览 | 首次接触项目时先看这个了解整体流程 |
 | `writing` | Delphi 代码编写规则（命名/格式/泛型） | 写/改代码前必看 |
 | `review` | 编译后审查代码（含完整审核表） | 完成代码后审查 |
+| `ui_layout` | UI 布局规范与审计 | 生成或修改 Delphi 窗体后检查布局质量 |
 | `safety` | 安全敏感操作规则 | 涉及注册表、进程、文件操作时 |
 | `agent_rules` | Agent 操作硬规则 | 了解 AI 的行为限制 |
 

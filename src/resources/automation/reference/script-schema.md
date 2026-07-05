@@ -22,9 +22,19 @@ MCP resource URI: `delphi://automation/script-schema`。
   "test_name": "customer-create-smoke",
   "test_level": "black-box",
   "callgraph_diagnostics": false,
+  "env": {
+    "DEEPSEEK_API_KEY": "temporary value for this run"
+  },
   "steps": []
 }
 ```
+
+`env` / `environment` are optional top-level script fields for temporary child-process
+environment overrides. They are applied only when the tested application process is
+started, are not persisted to User/Machine environment variables, and returned reports
+redact values to `{count, names}`. Passing `null` unsets an inherited variable for the
+tested process. With `keep_alive=true`, a cached tested process is reused only when the
+requested environment is the same; changing `env` restarts the tested process.
 
 测试级别说明：
 - `black-box` — 通过可见 UI 入口的真实用户工作流。

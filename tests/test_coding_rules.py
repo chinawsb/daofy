@@ -281,6 +281,8 @@ class TestGetCodingRules:
             "human_collab",
             "delphi-file-rules",
             "delphi_file_write_rule",
+            "ui-layout",
+            "ui_layout",
             "delphi_specific",
         ]:
             result = await get_coding_rules(section=section)

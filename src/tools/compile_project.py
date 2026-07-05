@@ -14,7 +14,10 @@ from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import resolve_target_platform_from_dproj
 from ..utils.file_backup import detect_encoding
-from ..services.delphi_edit_guard import record_authorized_write
+from ..services.delphi_edit_guard import (
+    external_edit_block_message,
+    record_authorized_write,
+)
 import json
 import os
 import shlex
@@ -484,6 +487,13 @@ async def compile_project(
         )
 
     try:
+        block_message = external_edit_block_message(project_path)
+        if block_message:
+            return CallToolResult(
+                content=[{"type": "text", "text": block_message}],
+                isError=True,
+            )
+
         # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
         if not target_platform or target_platform == "win32":
             target_platform = resolve_target_platform_from_dproj(project_path)

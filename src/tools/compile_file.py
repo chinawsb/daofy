@@ -14,6 +14,7 @@ from ..services.compiler_service import CompilerService
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import DprojParser
 from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
+from ..services.delphi_edit_guard import external_edit_block_message
 
 logger = get_logger(__name__)
 
@@ -133,6 +134,13 @@ async def compile_file(
             return CallToolResult(
                 content=[{"type": "text", "text": f"文件不存在: {file_path}"}],
                 isError=True
+            )
+
+        block_message = external_edit_block_message(file_path_obj)
+        if block_message:
+            return CallToolResult(
+                content=[{"type": "text", "text": block_message}],
+                isError=True,
             )
 
         file_dir = file_path_obj.parent

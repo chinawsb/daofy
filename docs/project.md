@@ -28,7 +28,7 @@
 |--------|------|
 | **编译** | `.dproj`/`.dpr`/`.dpk` 项目编译、.pas 语法检查、参数预览 |
 | **配置** | 读取/创建/修改 `.dproj` 配置、增删源文件、增删编译配置 |
-| **审计** | AST 骨架提取、50+ 静态分析规则、运行时注册检查 |
+| **审计** | AST 骨架提取、50+ 静态分析规则、运行时注册检查、DFM UI 布局审计 |
 
 ### 硬约束
 
@@ -53,6 +53,7 @@
 | `audit` | 运行 50+ 静态分析规则 | — |
 | `ast` | ⭐ 代码骨架提取（最省 token） | `base_dir` |
 | `runtime` | 运行时注册检查 | — |
+| `layout` | 静态 DFM UI 布局审计 | `base_dir` 或 `file_path` |
 
 ---
 
@@ -275,6 +276,17 @@ project(action="audit",
 ```python
 project(action="runtime", base_dir="src")
 ```
+
+### 5.4 `layout` — UI 布局审计
+
+扫描 `.dfm` 控件坐标和属性，检测 AI 生成界面常见的布局问题：控件重叠、越界、同列 Left 不一致、垂直间距不一致、文本标签与字段未对齐、文本标签-字段间距异常、TabOrder 与视觉顺序不一致。审计基于几何关系和 DFM 属性推断，不依赖固定控件类型名单。
+
+```python
+project(action="layout", base_dir="src")
+project(action="layout", file_path="MainForm.dfm", output_format="json")
+```
+
+`layout` 不需要 daudit；二进制 DFM 会尽量临时转换为文本，不修改原文件。静态审计通过后，再用 `automate_delphi` 做运行时 BoundsRect、截图和跨 DPI 验证。
 
 ---
 

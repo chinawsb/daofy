@@ -50,8 +50,18 @@ class ExternalEditEvent:
 
 def is_guard_enabled() -> bool:
     """Return whether external edit detection is enabled."""
+    return get_guard_mode() not in {"0", "false", "off", "disabled", "disable"}
+
+
+def get_guard_mode() -> str:
+    """Return the normalized edit-guard mode."""
     mode = os.environ.get("DAOFY_EDIT_GUARD", "warn").strip().lower()
-    return mode not in {"0", "false", "off", "disabled", "disable"}
+    return mode or "warn"
+
+
+def is_strict_mode() -> bool:
+    """Return True when unauthorized edits should block guarded workflows."""
+    return is_guard_enabled() and get_guard_mode() in {"strict", "block", "fail"}
 
 
 def is_delphi_path(file_path: str | os.PathLike[str]) -> bool:
@@ -60,6 +70,25 @@ def is_delphi_path(file_path: str | os.PathLike[str]) -> bool:
 
 def _normalize_path(file_path: str | os.PathLike[str]) -> str:
     return os.path.abspath(os.path.realpath(os.fspath(file_path)))
+
+
+def _scope_root(scope_path: Optional[str | os.PathLike[str]]) -> Optional[str]:
+    if scope_path is None:
+        return None
+    normalized = _normalize_path(scope_path)
+    if os.path.isdir(normalized):
+        return normalized
+    return os.path.dirname(normalized)
+
+
+def _is_under(path: str, root: Optional[str]) -> bool:
+    if root is None:
+        return True
+    try:
+        rel = os.path.relpath(path, root)
+    except ValueError:
+        return False
+    return rel == "." or not rel.startswith("..")
 
 
 def record_authorized_write(
@@ -175,11 +204,71 @@ def snapshot_status() -> dict:
 
     return {
         "enabled": is_guard_enabled(),
-        "mode": os.environ.get("DAOFY_EDIT_GUARD", "warn").strip().lower() or "warn",
+        "mode": get_guard_mode(),
+        "strict_blocks": is_strict_mode(),
         "pending_authorized_writes": len(pending),
         "recent_unauthorized_count": len(events),
         "recent_unauthorized_edits": events,
     }
+
+
+def recent_unauthorized_edits(
+    scope_path: Optional[str | os.PathLike[str]] = None,
+) -> list[dict]:
+    """Return recent unauthorized Delphi edits, optionally limited to a root."""
+    root = _scope_root(scope_path)
+    now_wall = time.time()
+    with _LOCK:
+        events = []
+        for item in _UNAUTHORIZED_EVENTS:
+            if not _is_under(item.path, root):
+                continue
+            data = asdict(item)
+            data["age_ms"] = max(0, int((now_wall - item.detected_at) * 1000))
+            events.append(data)
+    return events
+
+
+def external_edit_block_message(
+    scope_path: Optional[str | os.PathLike[str]] = None,
+) -> Optional[str]:
+    """Return a blocking error message when strict mode sees external edits."""
+    if not is_strict_mode():
+        return None
+    events = recent_unauthorized_edits(scope_path)
+    if not events:
+        return None
+
+    scope = _scope_root(scope_path) or "<全部>"
+    lines = [
+        "Delphi 编辑保护已阻止本次操作。",
+        "",
+        "原因：检测到最近有 Delphi 源码文件绕过 Daofy 工具被修改。",
+        f"检查范围：{scope}",
+        "",
+        "检测到的文件：",
+    ]
+    event_names = {
+        "created": "已创建",
+        "deleted": "已删除",
+        "modified": "已修改",
+        "moved": "已移动",
+    }
+    for event in events[:10]:
+        age_ms = event.get("age_ms")
+        age = f"，距今 {age_ms}ms" if age_ms is not None else ""
+        event_type = str(event.get("event_type", "modified"))
+        event_name = event_names.get(event_type, event_type)
+        lines.append(f"- {event['path']}（{event_name}{age}）")
+    if len(events) > 10:
+        lines.append(f"- ... 还有 {len(events) - 10} 个文件")
+    lines.extend([
+        "",
+        "请使用 `delphi_file` 或 Daofy 已登记的 Delphi 工具读写 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 文件。",
+        "如果这次外部修改是有意为之，请先检查或回退这些改动；确认工作区干净后重启 MCP Server。",
+        "如只需记录告警而不阻断，请设置 `DAOFY_EDIT_GUARD=warn`；如需关闭检测，请设置 `DAOFY_EDIT_GUARD=off`。",
+    ])
+    return "\n".join(lines)
 
 
 def reset_guard_state() -> None:

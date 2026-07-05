@@ -30,6 +30,7 @@ get_coding_rules(section="human_collab")  # 六步法总纲
 ## 自动化测试
 ```
 方法论(AI框架) → get_coding_rules(section="automation")
+布局审计 → get_coding_rules(section="ui_layout")  # DFM 静态布局规范 + delphi_project(action="layout")
 工具参考 → read_mcp_resource("delphi://automation/script-schema")
 ```
 

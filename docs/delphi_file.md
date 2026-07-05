@@ -4,6 +4,25 @@
 
 `delphi_file` 是 Daofy 中用于读写 Delphi 源文件和表单文件的专用工具。支持 `.pas`、`.dpr`、`.dpk`、`.dfm`、`.fmx`、`.inc`、`.dproj`，自动处理编码检测、`__history` 备份、DFM/FMX 二进制转换和同文件读写互斥。
 
+工具路由规则：AI Agent 看到 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx` 路径时，即使只是读取，也应调用 MCP `delphi_file`。不要使用 Agent 内置 `Read/Edit/Write`、`apply_patch`、shell 或 Python 直接读写这些文件。
+
+## Agent Skill 自动同步
+
+MCP Server 启动时会尽力同步 Daofy 提供的 Agent Skill 到用户级共享目录：
+
+```text
+%USERPROFILE%\.agents\skills\daofy\SKILL.md
+```
+
+该 skill 用于支持 Agent Skills 的客户端，强化 Delphi 文件必须走 `delphi_file`、Git 必须走 `code_hosting` 的路由规则。同步过程会写入 `.daofy_skill_manifest.json` 记录托管文件哈希；后续启动时如果包内 skill 有更新，会在已安装文件未被用户手动修改的情况下自动更新。若检测到用户修改过已安装文件，Daofy 会跳过该文件并记录告警，不会覆盖用户内容。
+
+可通过环境变量控制：
+
+| 变量 | 说明 |
+|------|------|
+| `DAOFY_AGENT_SKILL_INSTALL=off` | 关闭启动时 Agent Skill 自动同步 |
+| `DAOFY_AGENT_SKILLS_DIR=<path>` | 指定共享 skills 根目录，默认 `%USERPROFILE%\.agents\skills` |
+
 ## Action 速查
 
 | Action | 用途 |
