@@ -1,6 +1,6 @@
 # Daofy Update — Daofy 自身更新管理
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 版本：v1.1 | 最后更新：2026-07-05
 
 ---
 
@@ -91,7 +91,7 @@ daofy_update(action="version")
 ### 收到更新通知
 
 ```
-AI: "检测到 Daofy 有新版本 v2026.06.22，当前版本 v2026.06.13。是否需要更新？"
+AI: "检测到 Daofy 有新版本 v2026.07.05，当前版本 v2026.06.22。是否需要更新？"
 用户: "更新吧"
 AI: daofy_update(action="check")       # 确认版本
      daofy_update(action="update")      # 执行更新
@@ -113,7 +113,7 @@ daofy_update(action="check")
 ```python
 # 1. 检查版本
 daofy_update(action="check")
-# → 返回：当前 v2026.06.13，最新 v2026.06.22，安装方式 pip
+# → 返回：当前 v2026.06.22，最新 v2026.07.05，安装方式 pip
 
 # 2. 手动更新
 # pip install --upgrade daofy-for-delphi

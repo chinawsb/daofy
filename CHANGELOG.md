@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.07.05] - 2026-07-05
+
+### Added
+
+- **文档全量同步**: docs/ 中全部 `project(action=...)` → `delphi_project(action=...)`；project.md/delphi_kb.md/get_coding_rules.md 内容与实现对齐；tutorial 文档同步修正。
+
+### Changed
+
+- **版本号**: v2026.06.22 → v2026.07.05
+
 ## [2026.06.22] - 2026-06-22
 
 ### Added

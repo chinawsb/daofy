@@ -310,7 +310,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                 compilers = result.get('compilers') or result.get('data')
                 if compilers and len(compilers) > 0:
                     return ("hint: environment ready, "
-                            "use project(action='compile') to verify")
+                            "use delphi_project(action='compile') to verify")
                 else:
                     return ("hint: no compiler detected, "
                             "check Delphi installation, "
@@ -396,7 +396,7 @@ _DELPHI_FILE_FOOTNOTE_ACTIONS: dict[str, set[str]] = {
     "delphi_kb":          {"search", "read", "stats"},
     "delphi_project":     {"info", "ast", "audit", "compile", "compile_file"},
     "check_environment":  {"detect"},
-    "code_hosting":       {"git_clone", "git_pull", "git_merge", "git_checkout"},
+    "code_hosting":       {"git_clone", "git_pull", "git_merge", "git_switch"},
 }
 
 
@@ -2742,6 +2742,18 @@ def _cleanup_resources():
         _cleanup_exp()
     except Exception:
         logger.warning("清理经验库时发生异常", exc_info=True)
+    try:
+        from src.tools.knowledge_base import (
+            get_knowledge_base_service, get_thirdparty_knowledge_base_service,
+        )
+        _kb = get_knowledge_base_service()
+        if _kb is not None and hasattr(_kb, 'close'):
+            _kb.close()
+        _tpb = get_thirdparty_knowledge_base_service()
+        if _tpb is not None and hasattr(_tpb, 'close'):
+            _tpb.close()
+    except Exception:
+        logger.warning("清理知识库服务时发生异常", exc_info=True)
     global _project_file_watcher
     if _project_file_watcher is not None:
         try:

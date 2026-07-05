@@ -1018,6 +1018,7 @@ TOOL_NAMES: list = [
     "delphi_project",
     "delphi_kb",
     "delphi_file",
+    "file_tool",  # delphi_file 旧名兼容别名
     "manage_component",
     "check_environment",
     "async_task",
@@ -1044,7 +1045,7 @@ TOOL_SHORT_DESC: dict = {
     "delphi_kb": (
         "搜 Delphi API/项目代码/文档。"
         " search_type=class(类)/function(函数)/semantic(语义)/reference(引用)/unit(单元)/all。"
-        " kb_type=delphi(官方)/project(项目)/thirdparty(三方库)/document(文档)。"
+        " kb_type=delphi(官方)/project(项目)/thirdparty(三方库)/document(文档)/example(示例代码)。"
         " search_in=all(默认)/delphi/project/thirdparty。"
         " ⚠️ 具体 Delphi 代码文件(.pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc)的读取/修改必须通过 delphi_file，不要用 Agent 内置 Read/Edit/Write。"
     ),

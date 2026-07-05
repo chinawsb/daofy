@@ -414,7 +414,12 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.06.22 (最新)
+### v2026.07.05 (最新)
+
+- **文档全量同步**: 全部 docs 与实现对齐——`project()` → `delphi_project()`、ZVec 存储结构、kb_type 补全、section 索引扩展、tutorial 同步修复
+- **CHANGELOG 补全**: v2026.06.22 遗漏的 Added/Fixed/Removed 条目已补录
+
+### v2026.06.22
 
 - **工具名重命名**: `project` → `delphi_project`，防止非 Delphi 用户误触
 - **`delphi_rtti` 工具**: Delphi RTTI 桥接 — 通过 Enhanced RTTI 发现和调用 Delphi 应用的 published 方法（三步法：guide/discover/call）
