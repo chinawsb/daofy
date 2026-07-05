@@ -172,6 +172,8 @@ def _normalize_code_for_compare(text: str) -> str:
             if state == "line_comment" and ch in "\r\n":
                 state = "code"
                 prev_was_space = False
+                # 注释结束到下一个 token 之间保留词边界（统一 \r\n 和 \n 的行为）
+                _append_word_boundary_if_needed(result, _next_non_space(text, i + 1))
             elif state == "brace_comment" and ch == "}":
                 result.append(ch)
                 state = "code"
