@@ -1,0 +1,3 @@
+2026-06-30 09:40:35.407 scan_edge_content.py[84] <module> -> Find Control Timeout(10s): {Name: '百度一下'}
+2026-06-30 09:40:52.042 scan_edge_content.py[84] <module> -> Find Control Timeout(10s): {Name: '输入关键词'}
+2026-06-30 09:41:08.525 scan_edge_content.py[84] <module> -> 
