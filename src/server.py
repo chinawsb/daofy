@@ -376,6 +376,7 @@ def _redact_sensitive_arguments(value: Any) -> Any:
 
 
 _DELPHI_FILE_FOOTNOTE_TOOLS: set = {
+    "delphi_file",
     "delphi_kb",
     "delphi_project",
     "manage_component",
@@ -404,8 +405,8 @@ def _get_delphi_file_footnote(name: str, arguments: dict) -> Optional[str]:
     """对可能涉及 Delphi 文件操作的工具返回尾注，提醒使用 delphi_file。"""
     if name not in _DELPHI_FILE_FOOTNOTE_TOOLS:
         return None
-    # manage_component 和 get_coding_rules 无 action 限制
-    if name in ("manage_component", "get_coding_rules"):
+    # manage_component, get_coding_rules, delphi_file 无 action 限制
+    if name in ("manage_component", "get_coding_rules", "delphi_file"):
         return _DELPHI_FILE_FOOTNOTE_TEXT
     action = arguments.get("action", "")
     if name in _DELPHI_FILE_FOOTNOTE_ACTIONS and action in _DELPHI_FILE_FOOTNOTE_ACTIONS[name]:
