@@ -2692,10 +2692,14 @@ def _grep_search_fulltext(
     匹配结果按行号区间呈现。
 
     filter/exclude 作用于整个匹配文本。
+
+    Returns:
+        matches: [{L<N> 或 L<N>*: line_content, ...}, ...] 每项为一个 match group
+        output:  人类可读文本
     """
     filename = os.path.basename(file_path)
     total = 0
-    matches: List[Dict[str, Any]] = []
+    match_groups: List[Dict[str, str]] = []
     lines = content.splitlines(keepends=True)
     total_lines = len(lines)
 
@@ -2715,72 +2719,36 @@ def _grep_search_fulltext(
 
         start_line = content[:m.start()].count('\n') + 1
         end_line = content[:m.end()].count('\n') + 1
-        match_lines = matched_text.splitlines()
         start_idx = start_line - 1
         end_idx = end_line - 1
 
-        # 构建上下文
-        ctx_lines: List[Dict[str, Any]] = []
-
-        # 上文
         ctx_start = max(0, start_idx - context)
-        for ci in range(ctx_start, start_idx):
-            ctx_lines.append({
-                "lineno": ci + 1,
-                "line": lines[ci].rstrip('\r\n'),
-                "type": "context",
-            })
-        # 匹配行
-        for j, ml in enumerate(match_lines):
-            ctx_lines.append({
-                "lineno": start_line + j,
-                "line": ml,
-                "type": "match",
-            })
-        # 下文
         ctx_end = min(total_lines, end_idx + context + 1)
-        for ci in range(end_idx + 1, ctx_end):
-            ctx_lines.append({
-                "lineno": ci + 1,
-                "line": lines[ci].rstrip('\r\n'),
-                "type": "context",
-            })
 
-        entry: Dict[str, Any] = {
-            "lineno": start_line,
-            "line": match_lines[0].rstrip('\r\n') if match_lines else "",
-            "context": ctx_lines if context > 0 else None,
-            "span_lines": list(range(start_line, end_line + 1)),
-        }
-        if start_line != end_line:
-            entry["end_lineno"] = end_line
-            entry["matched_text"] = matched_text
-        matches.append(entry)
+        group: Dict[str, str] = {}
+        for ci in range(ctx_start, ctx_end):
+            key = f"L{ci + 1}" + ("*" if start_idx <= ci <= end_idx else "")
+            group[key] = lines[ci].rstrip('\r\n')
+        match_groups.append(group)
 
-    # 输出格式化
+    # output: 人类可读格式
     output_parts = [f"文件: {filename}（编码: {enc}，共 {total} 处匹配）"]
-    for entry in matches:
-        if "end_lineno" in entry:
-            output_parts.append(f"  行 {entry['lineno']}-{entry['end_lineno']}:")
-        else:
-            output_parts.append(f"  行 {entry['lineno']}:")
-        if entry.get("context"):
-            for ctx in entry["context"]:
-                prefix = "  >" if ctx["type"] == "context" else "  *"
-                output_parts.append(f"    {prefix} 行 {ctx['lineno']}: {ctx['line']}")
-        else:
-            output_parts.append(f"    > {entry['line']}")
+    for g in match_groups:
+        for k, v in g.items():
+            output_parts.append(f"  {k}:{v}")
         output_parts.append("")
 
     if total == 0:
         output_parts.append("  （无匹配）")
 
+    output = "\n".join(output_parts)
+
     return {
         "status": "success",
         "message": f"{filename}: {total} 处匹配",
         "total": total,
-        "matches": matches,
-        "output": "\n".join(output_parts),
+        "matches": match_groups,
+        "output": output,
     }
 
 
@@ -2808,14 +2776,13 @@ def _grep_search(
         enc: 文件编码
 
     Returns:
-        {"status": "success", "matches": [...], "total": int, ...}
+        matches: [{L<N> 或 L<N>*: line_content, ...}, ...] 每项为一个 match group
+        output:  人类可读文本
     """
     filename = os.path.basename(file_path)
     total = 0
-    matches: List[Dict[str, Any]] = []
+    match_groups: List[Dict[str, str]] = []
     total_lines = len(lines)
-    # 记录已包含在 context 中的行号，防止重复输出
-    seen_context_lines: Set[int] = set()
 
     for i, line in enumerate(lines):
         line_stripped = line.rstrip('\r\n')
@@ -2831,65 +2798,31 @@ def _grep_search(
             total -= 1  # 超出 limit 的匹配计数去掉
             break
 
-        lineno = i + 1  # 1-indexed
-
-        # 收集匹配行上下文
-        ctx_lines: List[Dict[str, Any]] = []
-        # 上文
         ctx_start = max(0, i - context)
-        for ci in range(ctx_start, i):
-            if ci not in seen_context_lines:
-                seen_context_lines.add(ci)
-                ctx_lines.append({
-                    "lineno": ci + 1,
-                    "line": lines[ci].rstrip('\r\n'),
-                    "type": "context",
-                })
-        # 匹配行本身
-        ctx_lines.append({
-            "lineno": lineno,
-            "line": line_stripped,
-            "type": "match",
-        })
-        seen_context_lines.add(i)
-        # 下文
         ctx_end = min(total_lines, i + context + 1)
-        for ci in range(i + 1, ctx_end):
-            if ci not in seen_context_lines:
-                seen_context_lines.add(ci)
-                ctx_lines.append({
-                    "lineno": ci + 1,
-                    "line": lines[ci].rstrip('\r\n'),
-                    "type": "context",
-                })
+        group: Dict[str, str] = {}
+        for ci in range(ctx_start, ctx_end):
+            key = f"L{ci + 1}" + ("*" if ci == i else "")
+            group[key] = lines[ci].rstrip('\r\n')
+        match_groups.append(group)
 
-        matches.append({
-            "lineno": lineno,
-            "line": line_stripped,
-            "context": ctx_lines if context > 0 else None,
-        })
+    # output: 人类可读格式
+    output_parts = [f"文件: {filename}（编码: {enc}，共 {total} 处匹配）"]
+    for g in match_groups:
+        for k, v in g.items():
+            output_parts.append(f"  {k}:{v}")
+        output_parts.append("")
 
-    # 生成输出文本
-    total_line_count = total  # 实际匹配数
-    output_parts = [f"文件: {filename}（编码: {enc}，共 {total_line_count} 处匹配）"]
-    for m in matches:
-        output_parts.append(f"  行 {m['lineno']}: {m['line']}")
-        if context > 0 and m["context"]:
-            for ctx in m["context"]:
-                prefix = "  >" if ctx["type"] == "context" else "  *"
-                output_parts.append(f"  {prefix} 行 {ctx['lineno']}: {ctx['line']}")
-            output_parts.append("")  # 空行分隔
-
-    if total_line_count == 0:
+    if total == 0:
         output_parts.append("  （无匹配）")
 
     output = "\n".join(output_parts)
 
     return {
         "status": "success",
-        "message": f"{filename}: {total_line_count} 处匹配",
-        "total": total_line_count,
-        "matches": matches,
+        "message": f"{filename}: {total} 处匹配",
+        "total": total,
+        "matches": match_groups,
         "output": output,
     }
 
