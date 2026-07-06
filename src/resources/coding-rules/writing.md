@@ -1,4 +1,4 @@
-<!-- @when: 写 Delphi 代码前，确认编码/命名/格式规范 -->
+﻿<!-- @when: 写 Delphi 代码前，确认编码/命名/格式规范 -->
 <!-- @chain: before=delphi-file-rules.md, after=workflow.md -->
 
 ## ③ 写 Delphi 代码
@@ -7,14 +7,14 @@
 
 ### 文件编码（修改前必做）
 - 修改前先确认文件编码，避免中文乱码
-- 看到 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx` 路径时，读取和修改都必须路由到 MCP `delphi_file`；不要使用 Agent 内置 `Read/Edit/Write`、`apply_patch`、shell 或 Python 直接操作
+- Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置 `Read/Edit/Write/grep`
 - ⭐ 优先用 `delphi_file(action="read", file_path=...)`（自动检测编码/BOM/GBK）
 - 写回时保持原始编码；新建文件统一 `utf-8-sig`（UTF-8 with BOM，消除 W1057 警告）
 - 含 BOM 的文件保留 BOM
 
 ### 自动备份
 - `delphi_file(action="write", backup=True)` 默认自动备份到 `__history/`
-- ❌ 禁止直接用 Agent 内置 Read/Edit/Write、shell/Python 修改 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止直接用 Agent 内置 Read/Edit/Write/grep、shell/Python 修改/搜索 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
 - 手动操作：
   ```python
   delphi_file(action="backup", file_path="src/Unit1.pas")                                # 手动备份

@@ -10,6 +10,8 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 支持从全局知识库（官方源码、第三方库）和项目知识库中定位文件
 """
 
+import os
+import re
 from typing import Any, Optional
 from pathlib import Path
 import sqlite3
@@ -302,6 +304,74 @@ async def read_source_file(arguments: Any) -> CallToolResult:
         )
 
 
+def _extract_result_file_path(result: dict) -> Optional[str]:
+    """从 KB 搜索结果中提取文件路径"""
+    file_info = result.get('file')
+    if isinstance(file_info, dict):
+        path = file_info.get('full_path') or file_info.get('path')
+        if path:
+            return path
+    return result.get('full_path') or result.get('relative_path')
+
+
+def _read_file_for_function(file_path: str, function_name: str, max_lines: int) -> CallToolResult:
+    """同步读取文件并用正则查找函数定义"""
+    for enc in ('utf-8', 'gbk', 'utf-8-sig'):
+        try:
+            with open(file_path, 'r', encoding=enc, errors='replace') as f:
+                content = f.read()
+            break
+        except (FileNotFoundError, UnicodeDecodeError, UnicodeError):
+            continue
+    else:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"无法以 utf-8/gbk 编码读取文件: {file_path}"}],
+            isError=True
+        )
+
+    lines = content.splitlines()
+    total_lines = len(lines)
+
+    pattern = re.compile(
+        r'(?:procedure|function|constructor|destructor)\s+' + re.escape(function_name) + r'\b',
+        re.IGNORECASE
+    )
+
+    found = [i for i, line in enumerate(lines, 1) if pattern.search(line)]
+
+    if not found:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"在文件 '{os.path.basename(file_path)}' 中未找到函数/过程 '{function_name}'"}],
+            isError=True
+        )
+
+    line = found[0]
+    read_start = max(1, line - 5)
+    read_end = min(total_lines, read_start + max_lines - 1)
+    selected = lines[read_start - 1:read_end]
+
+    output = f"文件: {file_path} (第 {read_start}-{read_end} 行, 共 {total_lines} 行)\n"
+    output += "=" * 60 + "\n\n"
+    for i, ln in enumerate(selected, start=read_start):
+        line_num = str(i).rjust(len(str(total_lines)))
+        output += f"{line_num} | {ln}\n"
+
+    if read_end < total_lines:
+        output += f"\n... (还有 {total_lines - read_end} 行未显示) ...\n"
+
+    return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+async def _search_function_in_file(
+    file_path: str,
+    function_name: str,
+    max_lines: int = 100,
+) -> CallToolResult:
+    """回退策略：直接读文件，用正则查找函数定义行号，返回上下文"""
+    import asyncio
+    return await asyncio.to_thread(_read_file_for_function, file_path, function_name, max_lines)
+
+
 async def search_and_read_file(arguments: Any) -> CallToolResult:
     """
     搜索并读取文件
@@ -310,6 +380,7 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
     
     Args:
         arguments: 包含以下参数:
+            - file_path: 指定文件路径（可选，指定后按路径过滤 KB 结果，无匹配时回退到直接 grep 文件）
             - type_name: 类型名称（类、record、interface，可选）
             - record_name: record 类型名称（可选，与 type_name 二选一）
             - function_name: 函数名（可选）
@@ -331,6 +402,7 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
     start_line = arguments.get("start_line", 1)
     max_lines = arguments.get("max_lines", 100)
     project_path = arguments.get("project_path")
+    file_path = arguments.get("file_path")
     
     # 兼容旧参数名 class_name
     if not type_name and arguments.get("class_name"):
@@ -425,6 +497,20 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
                 if function_name:
                     results.extend(thirdparty_kb_service.search_by_function_name(function_name))
         
+        # 如果指定了 file_path，按路径过滤 KB 结果，确保返回匹配指定文件的记录
+        if file_path and results:
+            target = os.path.abspath(file_path).lower()
+            filtered = [
+                r for r in results
+                if _extract_result_file_path(r)
+                and os.path.abspath(_extract_result_file_path(r)).lower() == target
+            ]
+            if filtered:
+                results = filtered
+            elif function_name and os.path.exists(file_path):
+                # 指定了文件但 KB 中无匹配 → 回退到直接 grep 文件
+                return await _search_function_in_file(file_path, function_name, max_lines)
+
         if not results:
             search_term = search_name or function_name
             return CallToolResult(

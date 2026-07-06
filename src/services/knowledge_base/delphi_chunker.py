@@ -14,6 +14,7 @@ import re
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from src.utils.file_backup import detect_encoding
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,10 @@ def chunk_delphi_file(file_path: str) -> List[Dict]:
           - end_line: 结束行号
           - file_path: 原始文件路径
     """
-    # ── 读取文件 ──
+    # ── 读取文件（自动检测编码） ──
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        enc = detect_encoding(file_path)
+        with open(file_path, 'r', encoding=enc, errors='replace') as f:
             raw_text = f.read()
     except Exception as e:
         logger.warning(f"读取文件失败: {file_path}: {e}")

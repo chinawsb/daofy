@@ -14,7 +14,9 @@ DFM↔PAS 同步规则:
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from ..utils.file_backup import detect_encoding
 
 from .dfm_parser import (
     DfmComponent,
@@ -318,8 +320,9 @@ async def _sync_pas_for_add(
     new_comp: DfmComponent,
     root: DfmComponent,
 ) -> Optional[Dict[str, Any]]:
+    enc = detect_encoding(target_pas)
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_text = f.read()
     except OSError as e:
         logger.warning("读取 PAS 文件失败: %s", e)
@@ -355,7 +358,7 @@ async def _sync_pas_for_add(
     # 写入前行数，用于计算偏移量
     pas_before = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_before = sum(1 for _ in f)
     except OSError:
         pass
@@ -366,39 +369,16 @@ async def _sync_pas_for_add(
             tool="manage_component",
             operation="sync_pas_add",
         )
-        with open(target_pas, 'w', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'w', encoding=enc, newline='') as f:
             f.write(new_pas)
     except OSError as e:
         logger.warning("写入 PAS 文件失败: %s", e)
         return {"status": "failed", "message": str(e)}
 
-    pas_after = 0
-    try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
-            pas_after = sum(1 for _ in f)
-    except OSError:
-        pass
-
-    add_uses = collect_all_units(new_comp)
-    added_units = []
-    for unit in add_uses:
-        try:
-            result = await file_tool.handle_uses({
-                "file_path": target_pas,
-                "uses_action": "add",
-                "unit_name": unit,
-                "uses_section": "interface",
-                "backup": False,
-            })
-            if result.get("status") == "success":
-                added_units.append(unit)
-        except Exception as e:
-            logger.warning("添加单元 %s 失败: %s", unit, e)
-
     # 重新计算 uses 添加后的行数（handle_uses 也会改变行数）
     pas_final = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_final = sum(1 for _ in f)
     except OSError:
         pass
@@ -418,8 +398,9 @@ def _sync_pas_for_remove(
     component_name: str,
     removed_events: List[tuple],
 ) -> Optional[Dict[str, Any]]:
+    enc = detect_encoding(target_pas)
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_text = f.read()
     except OSError as e:
         logger.warning("读取 PAS 文件失败: %s", e)
@@ -436,7 +417,7 @@ def _sync_pas_for_remove(
 
     pas_before = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_before = sum(1 for _ in f)
     except OSError:
         pass
@@ -447,7 +428,7 @@ def _sync_pas_for_remove(
             tool="manage_component",
             operation="sync_pas_remove",
         )
-        with open(target_pas, 'w', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'w', encoding=enc, newline='') as f:
             f.write(new_pas)
     except OSError as e:
         logger.warning("写入 PAS 文件失败: %s", e)
@@ -455,7 +436,7 @@ def _sync_pas_for_remove(
 
     pas_after = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_after = sum(1 for _ in f)
     except OSError:
         pass
@@ -476,8 +457,9 @@ def _sync_pas_for_modify(
     component_name: str,
     class_name: str = "",
 ) -> Optional[Dict[str, Any]]:
+    enc = detect_encoding(target_pas)
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_text = f.read()
     except OSError as e:
         logger.warning("读取 PAS 文件失败: %s", e)
@@ -512,7 +494,7 @@ def _sync_pas_for_modify(
 
     pas_before = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_before = sum(1 for _ in f)
     except OSError:
         pass
@@ -523,7 +505,7 @@ def _sync_pas_for_modify(
             tool="manage_component",
             operation="sync_pas_modify",
         )
-        with open(target_pas, 'w', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'w', encoding=enc, newline='') as f:
             f.write(new_pas)
     except OSError as e:
         logger.warning("写入 PAS 文件失败: %s", e)
@@ -531,7 +513,7 @@ def _sync_pas_for_modify(
 
     pas_after = 0
     try:
-        with open(target_pas, 'r', encoding='utf-8', newline='') as f:
+        with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_after = sum(1 for _ in f)
     except OSError:
         pass

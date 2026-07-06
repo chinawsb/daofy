@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tool 完整文档字典 — 供 tool_help 工具按需查询
 
 每个工具包含：简介、触发词、协作链、全部 action 说明、示例、降级策略等。
@@ -246,7 +246,7 @@ TOOL_HELP_DOCS: dict = {
         ],
     },
     "delphi_file": {
-        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用读写入口。看到这些扩展名，即使只是读取，也不要用 Agent 内置 Read/Edit/Write、apply_patch 或 shell。",
+        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用读写/搜索/替换入口。Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。",
         "description": "Delphi 文件专用操作：读/写(edits)/replace/insert/delete/格式化/备份管理/encoding转换/uses子句增删（编码检测+自动备份+DFM转换）。AI 工具路由规则：读取或修改 Delphi 文件都必须选 delphi_file。",
         "triggers": [
             "读文件、查看源码、打开文件、cat、Agent内置Read、built-in Read、写代码、编辑文件、改代码、修改代码、Agent内置Edit/Write",
@@ -256,7 +256,7 @@ TOOL_HELP_DOCS: dict = {
         ],
         "file_triggers": "看到 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc 文件路径时必须用此；读取也算",
         "constraints": [
-            "❌ 严禁用 Agent/IDE 客户端内置 Read/Edit/Write、apply_patch、shell 重定向、PowerShell/Python 直接读写 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx（绕过编码检测、备份、DFM转换、edit guard）",
+            "❌ Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep",
             "🚫 禁止对同一个文件并行写入，多处修改合并到一次 write(edits=[...])",
             "🚫 format/uses/write 标记脏，需 read 后才能再 write",
         ],
@@ -276,6 +276,7 @@ TOOL_HELP_DOCS: dict = {
             "backup": "备份管理（创建/列表/恢复）",
             "encode": "文件编码转换。自动检测源编码，写入目标编码。支持 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi。自动备份。转换后标记脏。",
             "uses": "增删 uses 子句中的单元。成功后标记脏。",
+            "grep": "正则搜索+多级过滤+替换。pattern 支持行内 /xxx/i 语法指定 flag。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace 参数切换为替换模式（preview 默认 True）。context/count 控制输出。多行 flag(/m)或 dotall(/s)自动切换全文搜索。",
             "fix_garbled": "修复中文乱码：自动检测 U+FFFD 替换字符、缺失 UTF-8 BOM、编码误检测并修复。支持 backup 备份。",
         },
         "examples": [
@@ -294,6 +295,9 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
             'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)   恢复',
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                          正则搜索(不区分大小写)',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/^procedure/m", context=2)             多行模式+上下文的搜索',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", preview=True)  替换预览',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")                       添加 UTF-8 BOM',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="gbk")                             转为 GBK',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8", from_encoding="gbk")      指定 GBK→UTF-8',
@@ -1047,12 +1051,12 @@ TOOL_SHORT_DESC: dict = {
         " search_type=class(类)/function(函数)/semantic(语义)/reference(引用)/unit(单元)/all。"
         " kb_type=delphi(官方)/project(项目)/thirdparty(三方库)/document(文档)/example(示例代码)。"
         " search_in=all(默认)/delphi/project/thirdparty。"
-        " ⚠️ 具体 Delphi 代码文件(.pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc)的读取/修改必须通过 delphi_file，不要用 Agent 内置 Read/Edit/Write。"
+        " ⚠️ Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"
     ),
     "delphi_file": (
         "Delphi 文件专用读写入口: read/write(edits)/replace/insert/delete/format/backup/encode/uses。"
         " 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 时，即使只是读取也用本工具。"
-        " 禁止 Agent 内置 Read/Edit/Write、apply_patch、shell 直接读写这些文件。"
+        " Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。"
         " 🚫 同文件多处修改必须合并到一次 write(edits=[...])。"
     ),
     "manage_component": (

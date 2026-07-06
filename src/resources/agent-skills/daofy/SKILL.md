@@ -1,4 +1,4 @@
----
+﻿---
 name: daofy
 description: >-
   Daofy for Delphi MCP 路由规则。处理 Delphi 源码、DFM、工程文件、Daofy MCP 工具、
@@ -18,10 +18,8 @@ description: >-
 
 ## 强制路由
 
-- 看到 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx` 路径时，读取和修改都使用 MCP
-  `delphi_file`。
-- 不要用 Agent 内置 `Read/Edit/Write`、原生 edit/write、`apply_patch`、shell
-  重定向、PowerShell 或 Python 直接读写这些 Delphi 文件。
+- Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置
+  `Read/Edit/Write/grep`。
 - 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")`。
 - API、类、函数或项目符号不确定时，先用 `delphi_kb` 查询。
 - 修改后用 `delphi_project(action="compile")` 验证；涉及 UI/DFM 布局时，用

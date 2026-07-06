@@ -617,6 +617,7 @@ async def _read_content(
 
 async def _search_and_read(
     search_type: str,
+    file_path: Optional[str] = None,
     type_name: Optional[str] = None,
     record_name: Optional[str] = None,
     function_name: Optional[str] = None,
@@ -627,6 +628,7 @@ async def _search_and_read(
 ) -> Dict[str, Any]:
     """按类名/函数名搜索并读取文件"""
     args = {
+        "file_path": file_path,
         "type_name": type_name,
         "record_name": record_name,
         "function_name": function_name,
@@ -675,6 +677,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if search_type != "path":
         return await _search_and_read(
             search_type=search_type,
+            file_path=file_path,
             type_name=arguments.get("type_name") or arguments.get("class_name"),
             record_name=arguments.get("record_name"),
             function_name=arguments.get("function_name"),
@@ -2636,6 +2639,598 @@ async def handle_fix_garbled(arguments: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ============================================================
+# Grep — 正则搜索/替换
+# ============================================================
+
+# /pattern/flags 格式中单字符 → re 常量
+_CHAR_FLAG_MAP: Dict[str, int] = {
+    "i": re.IGNORECASE,
+    "m": re.MULTILINE,
+    "s": re.DOTALL,
+}
+
+# 匹配 /pattern/flags 格式（如 /TMyClass/i、/^procedure/m）
+_PATTERN_FLAGS_RE = re.compile(r'^/(.+)/([a-z]*)$')
+
+
+def _parse_inline_flags(pattern_str: str) -> tuple[str, int]:
+    """解析 /pattern/flags 行内语法。
+
+    返回 (实际正则, 解析出的 flags)。
+    如果不以 / 开头，原样返回 pattern_str，flags=0。
+    """
+    m = _PATTERN_FLAGS_RE.match(pattern_str)
+    if not m:
+        return pattern_str, 0
+    inner, flag_str = m.group(1), m.group(2)
+    flags = 0
+    for ch in flag_str:
+        mapped = _CHAR_FLAG_MAP.get(ch)
+        if mapped is None:
+            if ch != 'g':
+                raise ValueError(f"不支持的 flag 字符: '{ch}'（支持: i/m/s/g）")
+            continue
+        flags |= mapped
+    return inner, flags
+
+
+def _grep_search_fulltext(
+    file_path: str,
+    compiled: re.Pattern,
+    content: str,
+    filter_compiled: Optional[re.Pattern],
+    exclude_compiled: Optional[re.Pattern],
+    context: int,
+    count: int,
+    enc: str,
+) -> Dict[str, Any]:
+    """
+    全文搜索 — 使用 re.finditer 在全部内容上批量匹配。
+
+    支持跨行匹配（通过 pattern 编译时的 DOTALL/MULTILINE flag 实现）。
+    匹配结果按行号区间呈现。
+
+    filter/exclude 作用于整个匹配文本。
+    """
+    filename = os.path.basename(file_path)
+    total = 0
+    matches: List[Dict[str, Any]] = []
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
+
+    for m in re.finditer(compiled, content):
+        matched_text = m.group()
+
+        # filter/exclude 在整个匹配文本上检查
+        if filter_compiled and not filter_compiled.search(matched_text):
+            continue
+        if exclude_compiled and exclude_compiled.search(matched_text):
+            continue
+
+        total += 1
+        if total > count:
+            total -= 1
+            break
+
+        start_line = content[:m.start()].count('\n') + 1
+        end_line = content[:m.end()].count('\n') + 1
+        match_lines = matched_text.splitlines()
+        start_idx = start_line - 1
+        end_idx = end_line - 1
+
+        # 构建上下文
+        ctx_lines: List[Dict[str, Any]] = []
+
+        # 上文
+        ctx_start = max(0, start_idx - context)
+        for ci in range(ctx_start, start_idx):
+            ctx_lines.append({
+                "lineno": ci + 1,
+                "line": lines[ci].rstrip('\r\n'),
+                "type": "context",
+            })
+        # 匹配行
+        for j, ml in enumerate(match_lines):
+            ctx_lines.append({
+                "lineno": start_line + j,
+                "line": ml,
+                "type": "match",
+            })
+        # 下文
+        ctx_end = min(total_lines, end_idx + context + 1)
+        for ci in range(end_idx + 1, ctx_end):
+            ctx_lines.append({
+                "lineno": ci + 1,
+                "line": lines[ci].rstrip('\r\n'),
+                "type": "context",
+            })
+
+        entry: Dict[str, Any] = {
+            "lineno": start_line,
+            "line": match_lines[0].rstrip('\r\n') if match_lines else "",
+            "context": ctx_lines if context > 0 else None,
+            "span_lines": list(range(start_line, end_line + 1)),
+        }
+        if start_line != end_line:
+            entry["end_lineno"] = end_line
+            entry["matched_text"] = matched_text
+        matches.append(entry)
+
+    # 输出格式化
+    output_parts = [f"文件: {filename}（编码: {enc}，共 {total} 处匹配）"]
+    for entry in matches:
+        if "end_lineno" in entry:
+            output_parts.append(f"  行 {entry['lineno']}-{entry['end_lineno']}:")
+        else:
+            output_parts.append(f"  行 {entry['lineno']}:")
+        if entry.get("context"):
+            for ctx in entry["context"]:
+                prefix = "  >" if ctx["type"] == "context" else "  *"
+                output_parts.append(f"    {prefix} 行 {ctx['lineno']}: {ctx['line']}")
+        else:
+            output_parts.append(f"    > {entry['line']}")
+        output_parts.append("")
+
+    if total == 0:
+        output_parts.append("  （无匹配）")
+
+    return {
+        "status": "success",
+        "message": f"{filename}: {total} 处匹配",
+        "total": total,
+        "matches": matches,
+        "output": "\n".join(output_parts),
+    }
+
+
+def _grep_search(
+    file_path: str,
+    compiled: re.Pattern,
+    lines: List[str],
+    filter_compiled: Optional[re.Pattern],
+    exclude_compiled: Optional[re.Pattern],
+    context: int,
+    count: int,
+    enc: str,
+) -> Dict[str, Any]:
+    """
+    对 lines 逐行执行多级正则搜索。
+
+    Args:
+        file_path: 文件路径（仅用于输出）
+        compiled: 主 pattern 编译对象
+        lines: 文件各行（带换行符保留）
+        filter_compiled: 二级过滤 pattern（可选，行必须也匹配）
+        exclude_compiled: 排除 pattern（可选，行必须不匹配）
+        context: 上下文行数（前后各 N 行）
+        count: 最大返回结果数
+        enc: 文件编码
+
+    Returns:
+        {"status": "success", "matches": [...], "total": int, ...}
+    """
+    filename = os.path.basename(file_path)
+    total = 0
+    matches: List[Dict[str, Any]] = []
+    total_lines = len(lines)
+    # 记录已包含在 context 中的行号，防止重复输出
+    seen_context_lines: Set[int] = set()
+
+    for i, line in enumerate(lines):
+        line_stripped = line.rstrip('\r\n')
+        if not compiled.search(line_stripped):
+            continue
+        if filter_compiled and not filter_compiled.search(line_stripped):
+            continue
+        if exclude_compiled and exclude_compiled.search(line_stripped):
+            continue
+
+        total += 1
+        if total > count:
+            total -= 1  # 超出 limit 的匹配计数去掉
+            break
+
+        lineno = i + 1  # 1-indexed
+
+        # 收集匹配行上下文
+        ctx_lines: List[Dict[str, Any]] = []
+        # 上文
+        ctx_start = max(0, i - context)
+        for ci in range(ctx_start, i):
+            if ci not in seen_context_lines:
+                seen_context_lines.add(ci)
+                ctx_lines.append({
+                    "lineno": ci + 1,
+                    "line": lines[ci].rstrip('\r\n'),
+                    "type": "context",
+                })
+        # 匹配行本身
+        ctx_lines.append({
+            "lineno": lineno,
+            "line": line_stripped,
+            "type": "match",
+        })
+        seen_context_lines.add(i)
+        # 下文
+        ctx_end = min(total_lines, i + context + 1)
+        for ci in range(i + 1, ctx_end):
+            if ci not in seen_context_lines:
+                seen_context_lines.add(ci)
+                ctx_lines.append({
+                    "lineno": ci + 1,
+                    "line": lines[ci].rstrip('\r\n'),
+                    "type": "context",
+                })
+
+        matches.append({
+            "lineno": lineno,
+            "line": line_stripped,
+            "context": ctx_lines if context > 0 else None,
+        })
+
+    # 生成输出文本
+    total_line_count = total  # 实际匹配数
+    output_parts = [f"文件: {filename}（编码: {enc}，共 {total_line_count} 处匹配）"]
+    for m in matches:
+        output_parts.append(f"  行 {m['lineno']}: {m['line']}")
+        if context > 0 and m["context"]:
+            for ctx in m["context"]:
+                prefix = "  >" if ctx["type"] == "context" else "  *"
+                output_parts.append(f"  {prefix} 行 {ctx['lineno']}: {ctx['line']}")
+            output_parts.append("")  # 空行分隔
+
+    if total_line_count == 0:
+        output_parts.append("  （无匹配）")
+
+    output = "\n".join(output_parts)
+
+    return {
+        "status": "success",
+        "message": f"{filename}: {total_line_count} 处匹配",
+        "total": total_line_count,
+        "matches": matches,
+        "output": output,
+    }
+
+
+async def _grep_replace(
+    file_path: str,
+    compiled: re.Pattern,
+    replace: str,
+    content: str,
+    enc: str,
+    preview: bool,
+    use_fulltext: bool = False,
+) -> Dict[str, Any]:
+    """
+    对文件内容执行正则替换。
+
+    Args:
+        file_path: 文件路径
+        compiled: 编译后的 pattern
+        replace: 替换文本
+        content: 原文件内容
+        enc: 文件编码
+        preview: True=仅预览不写盘
+        use_fulltext: True=全文替换（支持跨行），False=逐行替换
+
+    Returns:
+        preview=True: {"status": "success", "preview": True, "diff": [...], ...}
+        preview=False: {"status": "success", "replaced": int, ...}
+    """
+    if use_fulltext:
+        # ── 全文替换（支持跨行匹配）──
+        new_content, replaced_count = compiled.subn(replace, content)
+
+        if replaced_count == 0:
+            return {"status": "success", "message": "无匹配，未做任何替换", "replaced": 0}
+
+        # 收集每条匹配的位置信息
+        change_list = []
+        for m in re.finditer(compiled, content):
+            start_line = content[:m.start()].count('\n') + 1
+            end_line = content[:m.end()].count('\n') + 1
+            change_list.append({
+                "start_lineno": start_line,
+                "end_lineno": end_line,
+                "matched": m.group(),
+            })
+
+        if preview:
+            output_parts = [
+                f"文件: {os.path.basename(file_path)}（编码: {enc}）",
+                f"预览替换: {replaced_count} 处",
+            ]
+            for c in change_list:
+                if c["start_lineno"] == c["end_lineno"]:
+                    output_parts.append(f"  行 {c['start_lineno']}: {c['matched']}")
+                else:
+                    output_parts.append(f"  行 {c['start_lineno']}-{c['end_lineno']}: {c['matched']}")
+            output_parts.append("（预览模式，文件未修改。设 preview=False 执行实际替换）")
+
+            return {
+                "status": "success",
+                "message": f"预览：将替换 {replaced_count} 处",
+                "preview": True,
+                "replaced": replaced_count,
+                "changes": change_list,
+                "output": "\n".join(output_parts),
+            }
+
+        # 实际写入
+        bak_path = None
+        lock_err = _acquire_read_lock(file_path)
+        if not lock_err:
+            try:
+                bak_path = create_backup(file_path)
+            finally:
+                _release_read_lock(file_path)
+
+        lock_err = _acquire_write_lock(file_path)
+        if lock_err:
+            return _wrap_error(lock_err)
+        try:
+            temp_path = _make_temp_write_path(file_path)
+            try:
+                _write_text_temp(temp_path, new_content, enc)
+                record_authorized_write(file_path, tool="delphi_file", operation="grep_replace")
+                _replace_with_temp(temp_path, file_path)
+            except Exception as e:
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+                return _wrap_error(f"写入文件失败: {e}")
+            finally:
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+        finally:
+            _release_write_lock(file_path)
+
+        _mark_dirty(file_path)
+        return {
+            "status": "success",
+            "message": (
+                f"替换完成: {os.path.basename(file_path)}\n"
+                f"共替换 {replaced_count} 处\n"
+                f"编码: {enc}"
+                + (f"\n备份: {os.path.basename(bak_path)}" if bak_path else "")
+            ),
+            "replaced": replaced_count,
+            "changes": change_list,
+        }
+
+    # ── 逐行替换（向后兼容）──
+    lines = content.splitlines(keepends=True)
+    replaced_count = 0
+    change_list: List[Dict[str, Any]] = []
+
+    for i, line in enumerate(lines):
+        new_line, n = compiled.subn(replace, line)
+        if n > 0:
+            replaced_count += n
+            change_list.append({
+                "lineno": i + 1,
+                "old": line.rstrip('\r\n'),
+                "new": new_line.rstrip('\r\n'),
+                "count": n,
+            })
+            lines[i] = new_line
+
+    if replaced_count == 0:
+        return {
+            "status": "success",
+            "message": "无匹配，未做任何替换",
+            "replaced": 0,
+        }
+
+    if preview:
+        # 仅预览
+        diff_lines = []
+        for ch in change_list:
+            diff_lines.append(f"  行 {ch['lineno']}: {ch['old']}")
+            diff_lines.append(f"       → {ch['new']}")
+            diff_lines.append("")
+        output = (
+            f"文件: {os.path.basename(file_path)}（编码: {enc}）\n"
+            f"预览替换: {replaced_count} 处\n"
+        )
+        if diff_lines:
+            output += "\n".join(diff_lines)
+        output += "\n（预览模式，文件未修改。设 preview=False 执行实际替换）"
+
+        return {
+            "status": "success",
+            "message": f"预览：将替换 {replaced_count} 处",
+            "preview": True,
+            "replaced": replaced_count,
+            "changes": change_list,
+            "output": output,
+        }
+
+    # ── 实际写入 ──
+    # 备份
+    bak_path = None
+    lock_err = _acquire_read_lock(file_path)
+    if not lock_err:
+        try:
+            bak_path = create_backup(file_path)
+        finally:
+            _release_read_lock(file_path)
+
+    # 写入
+    new_content = "".join(lines)
+    lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
+    try:
+        temp_path = _make_temp_write_path(file_path)
+        try:
+            _write_text_temp(temp_path, new_content, enc)
+            record_authorized_write(file_path, tool="delphi_file", operation="grep_replace")
+            _replace_with_temp(temp_path, file_path)
+        except Exception as e:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            return _wrap_error(f"写入文件失败: {e}")
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+    finally:
+        _release_write_lock(file_path)
+
+    _mark_dirty(file_path)
+
+    changed_lines = len(change_list)
+    return {
+        "status": "success",
+        "message": (
+            f"替换完成: {os.path.basename(file_path)}\n"
+            f"共替换 {replaced_count} 处（{changed_lines} 行）\n"
+            f"编码: {enc}"
+            + (f"\n备份: {os.path.basename(bak_path)}" if bak_path else "")
+        ),
+        "replaced": replaced_count,
+        "changed_lines": changed_lines,
+        "changes": change_list,
+    }
+
+
+async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    处理 grep action — 正则搜索 + 多级过滤 + 替换。
+
+    搜索模式（不传 replace）:
+        delphi_file(
+            action="grep",
+            file_path="Unit1.pas",
+            pattern="/TMyClass\b/i",       # 主搜索模式（/表达式/flags）
+            filter_pattern="TForm",         # 二级过滤（可选，AND）
+            exclude_pattern="deprecated",   # 排除模式（可选，NOT）
+            context=2,                      # 上下文行数（默认 0）
+            count=200,                      # 最大返回结果数（默认 200）
+        )
+
+    替换模式（传 replace）:
+        delphi_file(
+            action="grep",
+            file_path="Unit1.pas",
+            pattern="/TMyClass\b/i",
+            replace="TNewClass",
+            preview=True,                   # 默认 True，预览不写盘
+        )
+
+    flags 行内语法:
+        pattern="/TMyClass/im" → /表达式/flag字符
+        flag 字符: i=ignore_case, m=multiline, s=dot_all, g=忽略（Python 默认全局）
+        multiline/dot_all 启用全文搜索模式，匹配可跨行。
+        无 flags 字符时保持逐行搜索（向后兼容）。
+        filter_pattern/exclude_pattern 继承主 pattern 的 flags，也可单独写行内语法覆盖。
+
+    多级过滤说明:
+        逐行模式: pattern + filter_pattern + exclude_pattern 作用于同一行
+        全文模式: pattern + filter_pattern + exclude_pattern 作用于整个匹配文本
+    """
+    file_path = arguments.get("file_path")
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+
+    pattern_str = arguments.get("pattern")
+    if not pattern_str:
+        return _wrap_error("请提供 pattern 参数（正则表达式）")
+
+    path_err = _validate_path(file_path, arguments.get("project_path"))
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+
+    # ── 解析 /pattern/flags 行内 flags ──
+    try:
+        inner_pattern, inline_flags = _parse_inline_flags(pattern_str)
+    except ValueError as e:
+        return _wrap_error(str(e))
+
+    use_fulltext = bool(inline_flags & (re.MULTILINE | re.DOTALL))
+
+    # ── 编译 patterns ──
+    # filter/exclude 继承主 pattern 的 flags，也可单独写行内语法覆盖
+    try:
+        compiled = re.compile(inner_pattern, inline_flags)
+    except re.error as e:
+        return _wrap_error(f"pattern 正则编译失败: {e}")
+
+    filter_str = arguments.get("filter_pattern")
+    filter_compiled: Optional[re.Pattern] = None
+    if filter_str:
+        try:
+            inner_filter, filter_inline = _parse_inline_flags(filter_str)
+            filter_compiled = re.compile(inner_filter, inline_flags | filter_inline)
+        except re.error as e:
+            return _wrap_error(f"filter_pattern 正则编译失败: {e}")
+
+    exclude_str = arguments.get("exclude_pattern")
+    exclude_compiled: Optional[re.Pattern] = None
+    if exclude_str:
+        try:
+            inner_exclude, exclude_inline = _parse_inline_flags(exclude_str)
+            exclude_compiled = re.compile(inner_exclude, inline_flags | exclude_inline)
+        except re.error as e:
+            return _wrap_error(f"exclude_pattern 正则编译失败: {e}")
+
+    replace = arguments.get("replace")
+    preview = arguments.get("preview", True)
+    if not isinstance(preview, bool):
+        return _wrap_error("preview 必须是布尔值")
+    context = arguments.get("context", 0)
+    if not isinstance(context, int) or context < 0:
+        return _wrap_error("context 必须是非负整数")
+    count = arguments.get("count", 200)
+    if not isinstance(count, int) or count < 1:
+        count = 200
+
+    # ── 检查 .dfm / .fmx ──
+    if _is_dfm_file(file_path):
+        return _wrap_error(f"grep 不支持 DFM/FMX 文件（可能为二进制格式），请使用 read action 读取")
+
+    # ── 读取文件 ──
+    enc = detect_encoding(file_path)
+    if not enc:
+        enc = "utf-8"
+    try:
+        with open(file_path, 'r', encoding=enc, errors='replace') as f:
+            content = f.read()
+    except FileNotFoundError:
+        return _wrap_error(f"文件不存在: {file_path}")
+    except PermissionError:
+        return _wrap_error(f"无权限读取: {file_path}")
+    except Exception as e:
+        return _wrap_error(f"读取文件失败: {e}")
+
+    if replace is not None:
+        # ── 替换模式 ──
+        return await _grep_replace(file_path, compiled, replace, content, enc, preview,
+                                   use_fulltext=use_fulltext)
+    elif use_fulltext:
+        # ── 全文搜索 ──
+        return _grep_search_fulltext(file_path, compiled, content,
+                                     filter_compiled, exclude_compiled, context, count, enc)
+    else:
+        # ── 逐行搜索（向后兼容） ──
+        lines = content.splitlines(keepends=True)
+        return _grep_search(file_path, compiled, lines,
+                            filter_compiled, exclude_compiled, context, count, enc)
+
+
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_tool 主入口。
@@ -2663,5 +3258,7 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await handle_uses(arguments)
     elif action == "fix_garbled":
         return await handle_fix_garbled(arguments)
+    elif action == "grep":
+        return await handle_grep(arguments)
     else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled")
+        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled, grep")

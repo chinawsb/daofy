@@ -1,4 +1,4 @@
-"""
+﻿"""
 Daofy 主程序
 
 版权所有 (C) 吉林省左右软件开发有限公司
@@ -51,7 +51,7 @@ from src.constants import (
 MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
 
 关键工具路由规则：
-- 看到 Delphi 源码或工程文件路径（.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx）时，读取和修改都必须使用 MCP `delphi_file`。不要使用客户端/Agent 内置 Read/Edit/Write、apply_patch、shell 重定向、PowerShell 或 Python 直接读写这些文件。
+- Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。
 - 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")` 获取规则；用 `delphi_kb` 查 API/项目符号；用 `delphi_project` 做 compile/audit/layout/runtime 验证。
 - 所有 Git 操作必须使用 `code_hosting`，不要在 shell 中直接运行 git。
 - 不确定工具用法时，先调用 `tool_help(tool_name=...)` 或 `get_coding_rules(...)`。
@@ -387,8 +387,8 @@ _DELPHI_FILE_FOOTNOTE_TOOLS: set = {
 
 _DELPHI_FILE_FOOTNOTE_TEXT = (
     "\n\n---\n"
-    "⚠️ Delphi 文件需用 `delphi_file` 读写；即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx，"
-    "也不要用 Agent 内置 Read/Edit/Write、apply_patch 或 shell。"
+    "⚠️ Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，"
+    "不要用内置 Read/Edit/Write/grep。"
 )
 
 # action → 需要尾注的操作集合
@@ -705,7 +705,7 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码。工具路由规则：看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 时，即使只是读取，也必须使用 delphi_file，不要用 Agent 内置 Read/Edit/Write、apply_patch 或 shell。"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持多级过滤+预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
                         "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc；读取或修改这些文件都应路由到 delphi_file"},
 
                         # ---- [read] 参数 ----
@@ -765,6 +765,15 @@ async def run_server():
                         "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[uses] add=添加, remove=删除"},
                         "unit_name": {"type": "string", "description": "[uses] 单元名，如 Vcl.Dialogs"},
                         "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[uses] 所在区域: interface/implementation"},
+
+                        # ---- [grep] 参数 ----
+                        "pattern": {"type": "string", "description": "[grep] 正则搜索模式（必需）"},
+                        "filter_pattern": {"type": "string", "description": "[grep] 二级过滤模式（可选，同一行/匹配文本必须也匹配此模式）"},
+                        "exclude_pattern": {"type": "string", "description": "[grep] 排除模式（可选，同一行/匹配文本必须不匹配此模式）"},
+                        "replace": {"type": "string", "description": "[grep] 替换文本（可选，不传=搜索模式，传了=替换模式）"},
+                        "preview": {"type": "boolean", "default": True, "description": "[grep] 替换模式下的预览开关（默认 True，不写盘）"},
+                        "context": {"type": "integer", "default": 0, "description": "[grep] 上下文行数（默认 0）"},
+                        "count": {"type": "integer", "default": 200, "description": "[grep] 最大返回结果数（默认 200）"},
                     }
                 }
             ),

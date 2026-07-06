@@ -28,6 +28,7 @@ from src.constants import (
     TIMEOUT_BROWSER_VIRTUAL_TIME_BUDGET_MS,
     TIMEOUT_NETWORK_REQUEST,
 )
+from src.utils.file_backup import detect_encoding
 
 # ── 项目根路径（Daofy 自身） ──
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -627,7 +628,8 @@ def _read_source_chunks(file_entries: list[str], section_prefix: str,
             print(f'    ⚠ 文件不存在: {full_path}')
             continue
 
-        with open(str(full_path), 'r', encoding='utf-8', errors='replace') as f:
+        src_enc = detect_encoding(str(full_path))
+        with open(str(full_path), 'r', encoding=src_enc, errors='replace') as f:
             raw_lines = f.readlines()
 
         # 保留末尾换行符，去掉最后的空串
