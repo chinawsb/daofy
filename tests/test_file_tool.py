@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 测试 file_tool 集成 — src/tools/file_tool.py
@@ -473,6 +473,19 @@ async def test_main_entry_write():
 
 
 @pytest.mark.asyncio
+async def test_main_entry_rejects_removed_preview_param():
+    result = await handle_file_tool({
+        "action": "write",
+        "file_path": "test.pas",
+        "preview": True,
+        "edits": [{"start_line": 1, "content": "unit Test;\nbegin\nend.\n"}],
+    })
+    _assert_error(result)
+    assert "preview" in result["message"]
+    assert "dry_run" in result["message"]
+
+
+@pytest.mark.asyncio
 async def test_main_entry_backup():
     tmp_dir = tempfile.mkdtemp()
     file_path = os.path.join(tmp_dir, "test.pas")
@@ -792,9 +805,9 @@ async def test_write_partial_failure_does_not_modify_file():
 
 
 @pytest.mark.asyncio
-async def test_failed_preview_keeps_dirty_guard():
+async def test_failed_dry_run_keeps_dirty_guard():
     tmp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(tmp_dir, "failed_preview_dirty.pas")
+    file_path = os.path.join(tmp_dir, "failed_dry_run_dirty.pas")
     _make_file(file_path, "A\nB\nC\n")
     try:
         first = await handle_write({
@@ -804,13 +817,13 @@ async def test_failed_preview_keeps_dirty_guard():
         })
         _assert_success(first)
 
-        preview = await handle_write({
+        dry_run = await handle_write({
             "file_path": file_path,
             "backup": False,
-            "preview": True,
+            "dry_run": True,
             "edits": [{"start_line": 99, "end_line": 99, "content": "Y\n"}],
         })
-        _assert_error(preview)
+        _assert_error(dry_run)
 
         second = await handle_write({
             "file_path": file_path,
@@ -824,9 +837,9 @@ async def test_failed_preview_keeps_dirty_guard():
 
 
 @pytest.mark.asyncio
-async def test_successful_preview_keeps_dirty_guard():
+async def test_successful_dry_run_keeps_dirty_guard():
     tmp_dir = tempfile.mkdtemp()
-    file_path = os.path.join(tmp_dir, "successful_preview_dirty.pas")
+    file_path = os.path.join(tmp_dir, "successful_dry_run_dirty.pas")
     _make_file(file_path, "A\nB\nC\n")
     try:
         first = await handle_write({
@@ -836,14 +849,14 @@ async def test_successful_preview_keeps_dirty_guard():
         })
         _assert_success(first)
 
-        preview = await handle_write({
+        dry_run = await handle_write({
             "file_path": file_path,
             "backup": False,
-            "preview": True,
+            "dry_run": True,
             "edits": [{"start_line": 1, "end_line": 1, "content": "Z\n"}],
         })
-        _assert_success(preview)
-        assert "preview 不清除脏标记" in preview["message"]
+        _assert_success(dry_run)
+        assert "dry_run 不清除脏标记" in dry_run["message"]
 
         second = await handle_write({
             "file_path": file_path,
@@ -2638,8 +2651,8 @@ async def test_write_edits_multiline_content():
 
 
 @pytest.mark.asyncio
-async def test_write_partial_preview_no_file_change():
-    """write 部分写入 preview=True 时不应修改文件"""
+async def test_write_partial_dry_run_no_file_change():
+    """write 部分写入 dry_run=True 时不应修改文件"""
     tmp_dir = tempfile.mkdtemp(prefix="test_write_")
     try:
         file_path = os.path.join(tmp_dir, "Unit1.pas")
@@ -2650,18 +2663,18 @@ async def test_write_partial_preview_no_file_change():
             "file_path": file_path,
             "edits": [{"start_line": 2, "end_line": 3, "content": "replaced\nnewline\n"}],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
         with open(file_path, "r", encoding="utf-8") as f:
-            assert f.read() == original, "preview 模式修改了文件!"
+            assert f.read() == original, "dry_run 模式修改了文件!"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_partial_preview_diff_in_message():
-    """write 部分写入 preview=True 时返回 - / + diff"""
+async def test_write_partial_dry_run_diff_in_message():
+    """write 部分写入 dry_run=True 时返回 - / + diff"""
     tmp_dir = tempfile.mkdtemp(prefix="test_write_")
     try:
         file_path = os.path.join(tmp_dir, "Demo.pas")
@@ -2671,21 +2684,21 @@ async def test_write_partial_preview_diff_in_message():
             "file_path": file_path,
             "edits": [{"start_line": 2, "end_line": 2, "content": "BBB\n"}],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
         msg = result["message"]
-        assert "preview" in msg, f"应标记 preview, got: {msg}"
+        assert "dry_run" in msg, f"应标记 dry_run, got: {msg}"
         assert "- L2: bbb" in msg, f"缺失删除行标记: {msg}"
         assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
         with open(file_path, "r", encoding="utf-8") as f:
-            assert f.read() == "aaa\nbbb\nccc\n", "preview 不应改文件"
+            assert f.read() == "aaa\nbbb\nccc\n", "dry_run 不应改文件"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_full_preview_new_file():
+async def test_write_full_dry_run_new_file():
     """write 全量预览：新建文件时不写盘"""
     tmp_dir = tempfile.mkdtemp(prefix="test_write_")
     try:
@@ -2693,10 +2706,10 @@ async def test_write_full_preview_new_file():
         result = await handle_write({
             "file_path": file_path,
             "edits": [{"start_line": 1, "content": "unit New;\nbegin\nend.\n"}],
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
-        assert "preview" in result["message"]
+        assert "dry_run" in result["message"]
         assert "would create" in result["message"]
         assert not os.path.isfile(file_path), "预览不应创建文件"
     finally:
@@ -2704,7 +2717,7 @@ async def test_write_full_preview_new_file():
 
 
 @pytest.mark.asyncio
-async def test_write_full_preview_existing_file():
+async def test_write_full_dry_run_existing_file():
     """write 全量预览：已有文件时不写盘，返回大小变化"""
     tmp_dir = tempfile.mkdtemp(prefix="test_write_")
     try:
@@ -2713,11 +2726,11 @@ async def test_write_full_preview_existing_file():
         result = await handle_write({
             "file_path": file_path,
             "edits": [{"start_line": 1, "content": "new content\n"}],
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
-        assert "preview" in result["message"]
-        assert "preview: true" in result["message"] or "未写入磁盘" in result["message"]
+        assert "dry_run" in result["message"]
+        assert "dry_run: true" in result["message"] or "未写入磁盘" in result["message"]
         with open(file_path, "r", encoding="utf-8") as f:
             assert f.read() == "old content\n", "预览不应改文件"
     finally:
@@ -2725,8 +2738,8 @@ async def test_write_full_preview_existing_file():
 
 
 @pytest.mark.asyncio
-async def test_write_partial_preview_no_backup():
-    """write 部分写入 preview=True 不应创建备份"""
+async def test_write_partial_dry_run_no_backup():
+    """write 部分写入 dry_run=True 不应创建备份"""
     tmp_dir = tempfile.mkdtemp(prefix="test_write_")
     try:
         file_path = os.path.join(tmp_dir, "NoBak.pas")
@@ -2736,17 +2749,17 @@ async def test_write_partial_preview_no_backup():
             "file_path": file_path,
             "edits": [{"start_line": 1, "end_line": 1, "content": "X\n"}],
             "backup": True,
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
-        assert not os.path.exists(history_dir), "preview 不应创建备份"
+        assert not os.path.exists(history_dir), "dry_run 不应创建备份"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_edits_preview_no_file_change():
-    """preview=True 时不应修改文件内容"""
+async def test_write_edits_dry_run_no_file_change():
+    """dry_run=True 时不应修改文件内容"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Unit1.pas")
@@ -2759,19 +2772,19 @@ async def test_write_edits_preview_no_file_change():
                 {"start_line": 1, "end_line": 3, "content": "replaced\nnewline\n", "description": "替换中间"},
             ],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
         # 文件不应变化
         with open(file_path, "r", encoding="utf-8") as f:
-            assert f.read() == original, "preview 模式修改了文件!"
+            assert f.read() == original, "dry_run 模式修改了文件!"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_edits_preview_diff_in_message():
-    """preview=True 时消息中应包含 diff 预览 ( - / + 行)"""
+async def test_write_edits_dry_run_diff_in_message():
+    """dry_run=True 时消息中应包含 diff 预览 ( - / + 行)"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Demo.pas")
@@ -2783,21 +2796,21 @@ async def test_write_edits_preview_diff_in_message():
                 {"start_line": 2, "end_line": 2, "content": "BBB\n", "description": "改 bbb"},
             ],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
         })
         _assert_success(result)
         msg = result["message"]
-        assert "preview:" in msg or "preview" in msg, f"应标记 preview, got: {msg}"
+        assert "dry_run:" in msg or "dry_run" in msg, f"应标记 dry_run, got: {msg}"
         assert "- L2: bbb" in msg, f"缺失删除行标记: {msg}"
         assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
-        assert "preview: true" in msg or "preview" in msg, f"缺失 preview 标记: {msg}"
+        assert "dry_run: true" in msg or "dry_run" in msg, f"缺失 dry_run 标记: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_edits_preview_no_backup():
-    """preview=True 时不应创建备份文件"""
+async def test_write_edits_dry_run_no_backup():
+    """dry_run=True 时不应创建备份文件"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "NoBak.pas")
@@ -2810,38 +2823,38 @@ async def test_write_edits_preview_no_backup():
             "edits": [
                 {"start_line": 1, "end_line": 1, "content": "X\n", "description": "改首行"},
             ],
-            "backup": True,   # backup=True 但 preview=True 应跳过备份
-            "preview": True,
+            "backup": True,   # backup=True 但 dry_run=True 应跳过备份
+            "dry_run": True,
         })
         _assert_success(result)
         # __history 不应被创建
-        assert not os.path.exists(history_dir), "preview 模式不应创建备份"
+        assert not os.path.exists(history_dir), "dry_run 模式不应创建备份"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @pytest.mark.asyncio
-async def test_write_edits_preview_same_result_as_actual_write():
-    """preview 输出的 diff 应与实际写入内容一致"""
+async def test_write_edits_dry_run_same_result_as_actual_write():
+    """dry_run 输出的 diff 应与实际写入内容一致"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "Check.pas")
         _make_file(file_path, "a\nb\nc\nd\ne\n")
 
-        # 先 preview
-        preview = await handle_write({
+        # 先 dry_run
+        dry_run = await handle_write({
             "file_path": file_path,
             "edits": [
                 {"start_line": 2, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
             ],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
         })
-        _assert_success(preview)
+        _assert_success(dry_run)
 
         # 读回原始内容确认文件未变
         with open(file_path, "r", encoding="utf-8") as f:
-            assert f.read() == "a\nb\nc\nd\ne\n", "preview 不应改文件"
+            assert f.read() == "a\nb\nc\nd\ne\n", "dry_run 不应改文件"
 
         # 实际写入
         actual = await handle_write({
@@ -2850,7 +2863,7 @@ async def test_write_edits_preview_same_result_as_actual_write():
                 {"start_line": 2, "end_line": 4, "content": "B\nC\nD\n", "description": "改中间3行"},
             ],
             "backup": False,
-            "preview": False,
+            "dry_run": False,
         })
         _assert_success(actual)
 
@@ -2862,8 +2875,8 @@ async def test_write_edits_preview_same_result_as_actual_write():
 
 
 @pytest.mark.asyncio
-async def test_write_edits_preview_with_force():
-    """preview 与 force 可同时使用: 预览时跳过重复行检测"""
+async def test_write_edits_dry_run_with_force():
+    """dry_run 与 force 可同时使用: 预览时跳过重复行检测"""
     tmp_dir = tempfile.mkdtemp(prefix="test_batch_")
     try:
         file_path = os.path.join(tmp_dir, "ForcePrev.pas")
@@ -2876,13 +2889,13 @@ async def test_write_edits_preview_with_force():
                 {"start_line": 1, "end_line": 1, "content": "aaa\n", "description": "内容首行与 old 相同"},
             ],
             "backup": False,
-            "preview": True,
+            "dry_run": True,
             "force": True,
         })
         _assert_success(result)
         # 文件仍不应变化
         with open(file_path, "r", encoding="utf-8") as f:
-            assert f.read() == "aaa\nbbb\nccc\n", "force+preview 也不应改文件"
+            assert f.read() == "aaa\nbbb\nccc\n", "force+dry_run 也不应改文件"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

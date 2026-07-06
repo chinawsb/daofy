@@ -1,4 +1,4 @@
-﻿---
+---
 name: daofy
 description: >-
   Daofy for Delphi MCP 路由规则。处理 Delphi 源码、DFM、工程文件、Daofy MCP 工具、
@@ -8,7 +8,7 @@ description: >-
 ---
 
 <!-- daofy-managed-skill: true -->
-<!-- daofy-managed-skill-version: 2026.07.05.1 -->
+<!-- daofy-managed-skill-version: 2026.07.07.1 -->
 
 # Daofy for Delphi
 
@@ -25,6 +25,28 @@ description: >-
 - 修改后用 `delphi_project(action="compile")` 验证；涉及 UI/DFM 布局时，用
   `delphi_project(action="layout")` 做布局审计。
 - 所有 Git 操作使用 `code_hosting`，不要在 shell 里直接运行 `git`。
+
+## 客户端包装
+
+- 直接暴露 MCP 工具的客户端：调用 `delphi_file` 时只传 Daofy 参数，例如
+  `action/file_path/start_line/end_line`。
+- Trae 等只暴露 `run_mcp` 的客户端：外层传 `server_name` 和 `tool_name`，内层
+  `args` 才放 Daofy 参数；`server_name` 是该客户端 MCP 配置里的 Daofy 服务别名，
+  按实际配置填写，不是 Daofy 固定值；不要把 `server_name/tool_name` 混进
+  `delphi_file` 的参数对象。
+
+```python
+run_mcp({
+  "server_name": "<client-configured-daofy-server-name>",
+  "tool_name": "delphi_file",
+  "args": {
+    "action": "read",
+    "file_path": "C:\\path\\Unit1.pas",
+    "start_line": 1,
+    "end_line": 100
+  }
+})
+```
 
 ## 工作流
 

@@ -266,9 +266,15 @@ TOOL_HELP_DOCS: dict = {
             "1-indexed 行号（参数和输出一致），脏标记机制",
         ],
         "workflow": "get_coding_rules → delphi_file(read)规划修改→ replace/insert/delete/write(edits=[...])一次性写出 → format → compile。write/replace/insert/delete/format/uses 标记脏，需 read 或 old_content 校验后才能继续写。不同文件可并行。",
+        "client_wrappers": [
+            "直接暴露 MCP 工具的客户端：调用 delphi_file 时只传 Daofy 参数，例如 action/file_path/start_line/end_line。",
+            "Trae 等只暴露 run_mcp 的客户端：外层传 server_name 和 tool_name，内层 args 才放 Daofy 参数；server_name 是该客户端 MCP 配置里的 Daofy 服务别名，按实际配置填写，不是 Daofy 固定值。",
+            "不要把 server_name/tool_name 混进 delphi_file 的参数对象，也不要把 action/file_path/start_line/end_line 平铺到 run_mcp 外层。",
+            'Trae 示例：run_mcp({"server_name":"<client-configured-daofy-server-name>","tool_name":"delphi_file","args":{"action":"read","file_path":"C:\\\\path\\\\Unit1.pas","start_line":1,"end_line":100}})',
+        ],
         "actions": {
             "read": "读文件，支持分段读取(start_line/end_line)或按类名/函数名定位。所有行号为 1-indexed inclusive。项目源码搜索用 search_in='project' + project_path。读取时自动清除脏标记。",
-            "write": "兼容写入接口（旧语义）。接收 edits 数组，内部自动排序+累积偏移，一次性写出。edits=[{start_line:1, content:'...'}] 全量替换；edits=[{start_line:5, end_line:10, content:'...'}] 部分替换。支持 preview 预览 diff。写入后标记脏。",
+            "write": "兼容写入接口（旧语义）。接收 edits 数组，内部自动排序+累积偏移，一次性写出。edits=[{start_line:1, content:'...'}] 全量替换；edits=[{start_line:5, end_line:10, content:'...'}] 部分替换。支持 dry_run 预览 diff。写入后标记脏。",
             "replace": "按行范围替换。现有文件中每个 edit 必须提供非空 old_content，工具用行号+旧内容校验命中范围。",
             "insert": "按 start_line 锚点插入。现有文件中每个 edit 必须提供非空 old_content（单行锚点，无需带换行符），position=before/after。",
             "delete": "按行范围删除。现有文件中每个 edit 必须提供非空 old_content，content 可省略。",
@@ -276,7 +282,7 @@ TOOL_HELP_DOCS: dict = {
             "backup": "备份管理（创建/列表/恢复）",
             "encode": "文件编码转换。自动检测源编码，写入目标编码。支持 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi。自动备份。转换后标记脏。",
             "uses": "增删 uses 子句中的单元。成功后标记脏。",
-            "grep": "正则搜索+多级过滤+替换。pattern 支持行内 /xxx/i 语法指定 flag。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace 参数切换为替换模式（preview 默认 True）。context/count 控制输出。多行 flag(/m)或 dotall(/s)自动切换全文搜索。",
+            "grep": "正则搜索+多级过滤+替换。pattern 支持行内 /xxx/i 语法指定 flag。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace 参数切换为替换模式（dry_run 默认 True）。context/count 控制输出。多行 flag(/m)或 dotall(/s)自动切换全文搜索。",
             "fix_garbled": "修复中文乱码：自动检测 U+FFFD 替换字符、缺失 UTF-8 BOM、编码误检测并修复。支持 backup 备份。",
         },
         "examples": [
@@ -285,7 +291,7 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="read", file_path="Unit1.pas", start_line=5, end_line=15)              读取第5~15行',
             'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:1,content:"unit ..."}])             全量替换',
             'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:10,end_line:12,content:"替换内容"}])  部分替换第10~12行',
-            'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:5,content:"新内容"}], preview=true)   预览 diff（从第5行到末尾）',
+            'delphi_file(action="write", file_path="src/Unit1.pas", edits=[{start_line:5,content:"新内容"}], dry_run=true)   预览 diff（从第5行到末尾）',
             'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"..."},{start_line:18,end_line:21,content:"..."}])  批量替换两处',
             'delphi_file(action="replace", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,old_content:"旧代码",content:"新代码"}])  按原文替换',
             'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;",content:"  NewCall;\\n"}])  锚点插入',
@@ -297,7 +303,7 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
             'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                          正则搜索(不区分大小写)',
             'delphi_file(action="grep", file_path="Unit1.pas", pattern="/^procedure/m", context=2)             多行模式+上下文的搜索',
-            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", preview=True)  替换预览',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)  替换预览',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")                       添加 UTF-8 BOM',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="gbk")                             转为 GBK',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8", from_encoding="gbk")      指定 GBK→UTF-8',
@@ -331,8 +337,7 @@ TOOL_HELP_DOCS: dict = {
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
                     "auto_format": "写入后自动调用 pasfmt 格式化，默认 false。返回的偏移量已包含格式化造成的行数变化",
                     "force": "跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断写入）",
-                    "dry_run": "设为 true 时只预览 diff 不写盘（不备份、不写入、不格式化），默认 false。dry_run 不清除脏标记，后续 write 仍需 read 或 old_content。推荐使用 dry_run 替代 preview",
-                    "preview": "⚠ 已废弃，请使用 dry_run 替代。当前仍作为 dry_run 的别名临时保留",
+                    "dry_run": "设为 true 时只预览 diff 不写盘（不备份、不写入、不格式化），默认 false。dry_run 不清除脏标记，后续 write 仍需 read 或 old_content。",
                     "old_content": "写在每个 edit 内；将被替换区间的非空旧内容。写入前忽略字符串外空白后比较，避免行号错位。注意：不要带尾部 \\r\\n 换行符，工具会自动忽略",
                     "allow_dirty": "跳过脏标记检查（默认 false）。优先使用每个 edit 的非空 old_content；裸 allow_dirty 风险自负",
                     "project_path": "可选；提供时限制 file_path 必须位于项目目录内",
@@ -340,7 +345,7 @@ TOOL_HELP_DOCS: dict = {
                 "examples": [
                     'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,content:"新行"},{start_line:18,end_line:21,content:"新行"}])',
                     'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,old_content:"旧行",content:"新行"}])',
-                    'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"新代码"}], preview=true)',
+                    'delphi_file(action="write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"新代码"}], dry_run=true)',
                 ],
             },
             "replace": {
@@ -348,7 +353,6 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["file_path", "edits"],
                 "optional": {
                     "dry_run": "设为 true 时只预览 diff 不写盘，默认 false。推荐使用",
-                    "preview": "⚠ 已废弃，请使用 dry_run",
                 },
                 "examples": [
                     'delphi_file(action="replace", file_path="Unit1.pas", edits=[{start_line:5,end_line:7,old_content:"旧代码",content:"新代码"}])',
@@ -359,7 +363,6 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["file_path", "edits"],
                 "optional": {
                     "dry_run": "设为 true 时只预览 diff 不写盘，默认 false。推荐使用",
-                    "preview": "⚠ 已废弃，请使用 dry_run",
                 },
                 "examples": [
                     'delphi_file(action="insert", file_path="Unit1.pas", edits=[{start_line:10,position:"before",old_content:"  OldCall;",content:"  NewCall;\\n"}])',
@@ -370,7 +373,6 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["file_path", "edits"],
                 "optional": {
                     "dry_run": "设为 true 时只预览 diff 不写盘，默认 false。推荐使用",
-                    "preview": "⚠ 已废弃，请使用 dry_run",
                 },
                 "examples": [
                     'delphi_file(action="delete", file_path="Unit1.pas", edits=[{start_line:10,end_line:12,old_content:"旧代码"}])',
@@ -393,7 +395,7 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "from_encoding": "源编码（auto=自动检测，推荐始终用 auto；如需显式指定，请确保编码名称准确无误，否则会导致解码失败或乱码）",
                     "backup": "转换前是否备份到 __history（默认 true）",
-                    "preview": "预览模式: 只输出转换信息不写盘（默认 false）",
+                    "dry_run": "预览模式: 只输出转换信息不写盘（默认 false）",
                 },
                 "examples": [
                     'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")',
@@ -1022,7 +1024,6 @@ TOOL_NAMES: list = [
     "delphi_project",
     "delphi_kb",
     "delphi_file",
-    "file_tool",  # delphi_file 旧名兼容别名
     "manage_component",
     "check_environment",
     "async_task",
@@ -1056,7 +1057,8 @@ TOOL_SHORT_DESC: dict = {
     "delphi_file": (
         "Delphi 文件专用读写入口: read/write(edits)/replace/insert/delete/format/backup/encode/uses。"
         " 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 时，即使只是读取也用本工具。"
-        " Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。"
+        " Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep/apply_patch/PowerShell/Python。"
+        " 内置工具和外部写入只能由 edit guard 事后兜底，不能作为主编辑路径。"
         " 🚫 同文件多处修改必须合并到一次 write(edits=[...])。"
     ),
     "manage_component": (

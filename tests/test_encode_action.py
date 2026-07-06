@@ -8,7 +8,7 @@
   - utf-8 → gbk (编码转换)
   - gbk → utf-8 (反向转换)
   - utf-8 → utf-16 (跨编码族)
-  - 预览模式 (preview=true)
+  - 预览模式 (dry_run=true)
   - 不存在的文件
   - 不支持的文件类型
   - 无效的目标编码
@@ -144,7 +144,7 @@ class TestEncodeAction:
         finally:
             _cleanup(path)
 
-    def test_preview_mode(self):
+    def test_dry_run_mode(self):
         """预览模式不应修改文件"""
         content = "unit TestUnit;\ninterface\nimplementation\nend.\n"
         path = _make_temp_pas(content, "utf-8")
@@ -152,11 +152,11 @@ class TestEncodeAction:
             result = await_result(handle_encode({
                 "file_path": path,
                 "to_encoding": "gbk",
-                "preview": True,
+                "dry_run": True,
                 "backup": False,
             }))
             assert result["status"] == "success"
-            assert "preview" in result["message"].lower()
+            assert "dry_run" in result["message"].lower()
             # 文件内容不应改变
             read_content, enc = _read_file(path)
             assert enc == "utf-8"

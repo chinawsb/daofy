@@ -253,6 +253,25 @@ class TestDocConsistency:
         for term in required_terms:
             assert term in combined, f"Delphi edit docs missing {term!r}"
 
+    def test_delphi_file_docs_explain_trae_run_mcp_wrapper(self):
+        """delphi_file help must separate Trae wrapper params from tool params."""
+        from tool_docs import TOOL_HELP_DOCS
+
+        delphi_docs = TOOL_HELP_DOCS.get("delphi_file", {})
+        combined = json.dumps(delphi_docs, ensure_ascii=False)
+
+        required_terms = [
+            "run_mcp",
+            "server_name",
+            "tool_name",
+            "args",
+            "服务别名",
+            "不是 Daofy 固定值",
+            "不要把 server_name/tool_name 混进",
+        ]
+        for term in required_terms:
+            assert term in combined, f"delphi_file docs missing Trae wrapper term {term!r}"
+
     def test_rinspect_is_sync_in_all_docs(self):
         """rinspect should be sync across all doc sources (matches Pascal IsAsyncCmd)."""
         from tool_docs import TOOL_HELP_DOCS

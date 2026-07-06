@@ -51,7 +51,7 @@ from src.constants import (
 MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
 
 关键工具路由规则：
-- Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。
+- Delphi 文件(.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx)必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。
 - 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")` 获取规则；用 `delphi_kb` 查 API/项目符号；用 `delphi_project` 做 compile/audit/layout/runtime 验证。
 - 所有 Git 操作必须使用 `code_hosting`，不要在 shell 中直接运行 git。
 - 不确定工具用法时，先调用 `tool_help(tool_name=...)` 或 `get_coding_rules(...)`。
@@ -706,8 +706,8 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持多级过滤+预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
-                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc；读取或修改这些文件都应路由到 delphi_file"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
+                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx；读取或修改这些文件都应路由到 delphi_file，即使只是读取也不要用内置 Read/Edit/Write/grep"},
 
                         # ---- [read] 参数 ----
                         "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
@@ -743,7 +743,7 @@ async def run_server():
                         "encoding": {"type": "string", "default": "auto", "description": "[read/write/replace/insert/delete/uses] 读/写编码: auto/utf-8/gbk/utf-16，默认 auto。read 时指定可覆盖自动检测结果"},
                         "auto_format": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
                         "backup": {"type": "boolean", "default": True, "description": "[write/replace/insert/delete/uses] 写入前自动备份到 __history（建议保持 true）"},
-                        "preview": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 预览模式: 只算 diff 不写盘，不清除脏标记"},
+                        "dry_run": {"type": "boolean", "description": "[write/replace/insert/delete/format/encode/grep] true=只预览/检查不写盘；grep 替换默认 true，其他 action 默认 false"},
                         "force": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断）"},
                         "allow_dirty": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过脏标记检查（默认 false）。优先为每个 edit 提供 old_content；仅确认行号准确时才设 true"},
 
@@ -752,7 +752,6 @@ async def run_server():
                         "code": {"type": "string", "description": "[format/code] 待格式化的代码文本"},
                         "config_path": {"type": "string", "description": "[format] pasfmt 配置文件路径(高级)"},
                         "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "[format] uses风格: compact=一行, pasfmt_default=每行一个"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "[format] true=仅检查不修改"},
 
                         # ---- [backup] 参数 ----
                         "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[backup] 子操作: create/list/restore"},
@@ -772,7 +771,6 @@ async def run_server():
                         "filter_pattern": {"type": "string", "description": "[grep] 二级过滤模式（可选，同一行/匹配文本必须也匹配此模式）"},
                         "exclude_pattern": {"type": "string", "description": "[grep] 排除模式（可选，同一行/匹配文本必须不匹配此模式）"},
                         "replace": {"type": "string", "description": "[grep] 替换文本（可选，不传=搜索模式，传了=替换模式）"},
-                        "preview": {"type": "boolean", "default": True, "description": "[grep] 替换模式下的预览开关（默认 True，不写盘）"},
                         "context": {"type": "integer", "default": 0, "description": "[grep] 上下文行数（默认 0）"},
                         "count": {"type": "integer", "default": 200, "description": "[grep] 最大返回结果数（默认 200）"},
                     }

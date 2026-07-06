@@ -410,6 +410,7 @@ class TestToolSchemaCompleteness:
         assert "非空" in old_content_desc, "old_content schema must document non-empty guard requirement"
         assert '"expected_old_hash"' not in block, "delphi_file schema must not expose removed expected_old_hash"
         assert '"base_file_sha256"' not in block, "delphi_file schema must not expose removed base_file_sha256"
+        assert '"preview"' not in block, "delphi_file schema must not expose removed preview parameter"
         # 提取 edits 之后到 # format 段之前的内容
         rest = block[edits_idx:]
         # 截到 # format 注释或下个 # action 段（避免误匹配其他工具的 force 字段）
@@ -421,6 +422,7 @@ class TestToolSchemaCompleteness:
             "force 是 write 参数（跳过连续重复行检测），"
             "MCP 客户端会因 schema mismatch 静默丢弃该参数。"
         )
+        assert '"dry_run"' in rest, "delphi_file schema must expose dry_run for write previews"
         # 验证类型/默认值与 handler 一致
         after = rest.split('"force"', 1)[1][:400]
         assert '"type": "boolean"' in after, "force 应声明为 boolean"

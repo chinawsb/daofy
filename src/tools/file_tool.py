@@ -172,8 +172,9 @@ def _normalize_code_for_compare(text: str) -> str:
             if state == "line_comment" and ch in "\r\n":
                 state = "code"
                 prev_was_space = False
-                # 注释结束到下一个 token 之间保留词边界（统一 \r\n 和 \n 的行为）
-                _append_word_boundary_if_needed(result, _next_non_space(text, i + 1))
+                # Line comments end at newline; keep that boundary meaningful.
+                if not result or result[-1] != "\n":
+                    result.append("\n")
             elif state == "brace_comment" and ch == "}":
                 result.append(ch)
                 state = "code"
@@ -850,12 +851,19 @@ def _clear_dirty(file_path: str) -> None:
         _dirty_files.discard(normalized)
 
 
-def _check_dirty(file_path: str, preview: bool = False) -> None:
+def _reject_removed_preview_argument(arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Reject the removed delphi_file preview parameter before it can imply a write."""
+    if "preview" in arguments:
+        return _wrap_error("preview 参数已删除，请使用 dry_run=true 预览，或 dry_run=false 执行实际修改")
+    return None
+
+
+def _check_dirty(file_path: str, dry_run: bool = False) -> None:
     """
     检查文件是否脏（上次修改后未重读/预览）。
-    如果 dirty 且不是 preview 模式，抛异常阻止写入。
+    如果 dirty 且不是 dry_run 模式，抛异常阻止写入。
     """
-    if preview:
+    if dry_run:
         return
     normalized = os.path.abspath(file_path)
     with _dirty_lock:
@@ -863,7 +871,7 @@ def _check_dirty(file_path: str, preview: bool = False) -> None:
             raise RuntimeError(
                 f"文件 {os.path.basename(normalized)} 上次写入后行号可能已变化。"
                 "请先调用 read 获取最新行号，或为每个 edit 提供 old_content 原文校验，"
-                "或使用 preview=true 预览本次修改。"
+                "或使用 dry_run=true 预览本次修改。"
                 "基于最新行号规划 edits 后重新发起 write。"
             )
 
@@ -884,7 +892,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - 自动检测并保持原始编码
       - DFM 文件自动处理：二进制 DFM 自动转文本→编辑→转回二进制
       - 支持 auto_format 写入后自动格式化代码
-      - 支持 dry_run 预览 diff 不写盘（preview 已废弃，作为别名临时保留）
+      - 支持 dry_run 预览 diff 不写盘
 
     行号均为 1-indexed 左闭右闭:
       edits=[{start_line:5, end_line:10}]  → 替换第 5~10 行
@@ -893,21 +901,23 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     ⚠️ 脏标记保护:
        每次写入（含 auto_format）后文件行号会变化。
-       在重新 read 文件或 preview 确认前，不允许对同一文件再次写入，
+       在重新 read 文件或 dry_run 确认前，不允许对同一文件再次写入，
        防止 AI 使用过期行号导致错位改写。
        续重行检测已降级为警告，不再阻断写入。
 
        old_content + 每个 edit 的原文校验通过时，可安全跳过脏标记。
        allow_dirty=true 可绕过脏标记检查（风险自负）。
     """
+    removed_preview = _reject_removed_preview_argument(arguments)
+    if removed_preview:
+        return removed_preview
+
     file_path = arguments.get("file_path")
     edits = arguments.get("edits")
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
     auto_format = arguments.get("auto_format", False)
-    preview = arguments.get("preview", False) or arguments.get("dry_run", False)
-    if arguments.get("preview", False):
-        logger.warning("delphi_file: preview 参数已废弃，请使用 dry_run 替代")
+    dry_run = arguments.get("dry_run", False)
     force = arguments.get("force", False)
     allow_dirty = arguments.get("allow_dirty", False)
     if not file_path:
@@ -928,7 +938,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not os.path.isfile(file_path):
             return _wrap_error("新文件不支持含 position 字段的 insert 类型 edits")
         result = await _normalize_insert_edits_for_write(
-            file_path, edits, preview=preview
+            file_path, edits, dry_run=dry_run
         )
         if result is None:
             return _wrap_error("插入编辑预处理失败")
@@ -944,7 +954,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 backup=backup,
                 encoding=encoding,
                 auto_format=auto_format,
-                preview=preview,
+                dry_run=dry_run,
                 force=force,
                 allow_dirty=allow_dirty,
             )
@@ -958,7 +968,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         backup=backup,
         encoding=encoding,
         auto_format=auto_format,
-        preview=preview,
+        dry_run=dry_run,
         force=force,
         allow_dirty=allow_dirty,
     )
@@ -967,7 +977,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 async def _normalize_insert_edits_for_write(
     file_path: str,
     edits: List[Dict[str, Any]],
-    preview: bool = False,
+    dry_run: bool = False,
 ):
     """Normalize insert-type edits (those with position field) into single-line replacements.
 
@@ -1071,14 +1081,16 @@ async def handle_delete(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
 async def _handle_structured_write_action(arguments: Dict[str, Any], action: str) -> Dict[str, Any]:
     """Normalize replace/insert/delete actions to the existing edit engine."""
+    removed_preview = _reject_removed_preview_argument(arguments)
+    if removed_preview:
+        return removed_preview
+
     file_path = arguments.get("file_path")
     edits = arguments.get("edits")
     backup = arguments.get("backup", True)
     encoding = arguments.get("encoding", "auto")
     auto_format = arguments.get("auto_format", False)
-    preview = arguments.get("preview", False) or arguments.get("dry_run", False)
-    if arguments.get("preview", False):
-        logger.warning("delphi_file: preview 参数已废弃，请使用 dry_run 替代")
+    dry_run = arguments.get("dry_run", False)
     force = arguments.get("force", False)
     allow_dirty = arguments.get("allow_dirty", False)
 
@@ -1093,7 +1105,7 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
-    if preview:
+    if dry_run:
         lock_err = _acquire_read_lock(file_path)
     else:
         lock_err = _acquire_write_lock(file_path)
@@ -1112,7 +1124,7 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
                 backup=backup,
                 encoding=encoding,
                 auto_format=auto_format,
-                preview=preview,
+                dry_run=dry_run,
                 force=force,
                 allow_dirty=allow_dirty,
                 lock_already_held=True,
@@ -1120,7 +1132,7 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
 
         if not allow_dirty and not _all_edits_have_old_content(edits):
             try:
-                _check_dirty(file_path, preview=preview)
+                _check_dirty(file_path, dry_run=dry_run)
             except RuntimeError as e:
                 return _wrap_error(str(e))
 
@@ -1212,7 +1224,7 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
             backup=backup,
             encoding=encoding,
             auto_format=auto_format,
-            preview=preview,
+            dry_run=dry_run,
             force=force,
             allow_dirty=True,  # 安全: old_content 校验已保障行号正确性，无需脏标记
             lock_already_held=True,
@@ -1220,7 +1232,7 @@ async def _handle_structured_write_action(arguments: Dict[str, Any], action: str
     finally:
         if anchor_tmp_cleanup:
             shutil.rmtree(anchor_tmp_cleanup, ignore_errors=True)
-        if preview:
+        if dry_run:
             _release_read_lock(file_path)
         else:
             _release_write_lock(file_path)
@@ -1269,7 +1281,7 @@ async def _handle_write_edits(
     backup: bool = True,
     encoding: str = "auto",
     auto_format: bool = False,
-    preview: bool = False,
+    dry_run: bool = False,
     force: bool = False,
     allow_dirty: bool = False,
     lock_already_held: bool = False,
@@ -1281,7 +1293,7 @@ async def _handle_write_edits(
         return _wrap_error("edits 必须是一个列表")
 
     if not lock_already_held:
-        if preview:
+        if dry_run:
             lock_err = _acquire_read_lock(file_path)
         else:
             lock_err = _acquire_write_lock(file_path)
@@ -1294,7 +1306,7 @@ async def _handle_write_edits(
     try:
         if not allow_dirty and not _all_edits_have_old_content(edits):
             try:
-                _check_dirty(file_path, preview=preview)
+                _check_dirty(file_path, dry_run=dry_run)
             except RuntimeError as e:
                 return _wrap_error(str(e))
 
@@ -1312,11 +1324,11 @@ async def _handle_write_edits(
             original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
             # 预览模式
-            if preview:
+            if dry_run:
                 return {
                     "status": "success",
                     "message": (
-                        f"[preview] would create new file: {os.path.basename(file_path)}, "
+                        f"[dry_run] would create new file: {os.path.basename(file_path)}, "
                         f"{len(content.encode('utf-8'))} bytes"
                     ),
                 }
@@ -1464,13 +1476,13 @@ async def _handle_write_edits(
                     continue
 
             removed = adj_e - adj_s
-            removed_lines_preview = []
+            removed_lines_dry_run = []
 
             before_len = len(lines)  # 编辑前行数（含此前 edits 累计）
             if c == '':
                 if removed > 0 and removed <= 5:
                     actual_lineno = adj_s + 1
-                    removed_lines_preview = [
+                    removed_lines_dry_run = [
                         (actual_lineno + i, lines[adj_s + i].rstrip('\n\r'))
                         for i in range(removed)
                     ]
@@ -1490,7 +1502,7 @@ async def _handle_write_edits(
 
                 if removed > 0 and removed <= 5:
                     actual_lineno = adj_s + 1  # 实际 1-indexed 起始行号
-                    removed_lines_preview = [
+                    removed_lines_dry_run = [
                         (actual_lineno + i, lines[adj_s + i].rstrip('\n\r'))
                         for i in range(removed)
                     ]
@@ -1517,8 +1529,8 @@ async def _handle_write_edits(
                 )
 
             # Per-edit diff 预览（1-indexed 行号）
-            if removed_lines_preview:
-                for orig_lineno, rl in removed_lines_preview:
+            if removed_lines_dry_run:
+                for orig_lineno, rl in removed_lines_dry_run:
                     display = rl if len(rl) <= 80 else rl[:77] + "..."
                     results.append(f"    - L{orig_lineno}: {display}")
             if c_lines:
@@ -1559,7 +1571,7 @@ async def _handle_write_edits(
             )
             all_success = False
 
-        if not all_success and not preview:
+        if not all_success and not dry_run:
             if bak_path and os.path.exists(bak_path):
                 try:
                     os.remove(bak_path)
@@ -1604,7 +1616,7 @@ async def _handle_write_edits(
                 )
 
         # 写入磁盘
-        if not preview:
+        if not dry_run:
             temp_write_path = _make_temp_write_path(file_path)
             text_tmp = None
             try:
@@ -1665,7 +1677,7 @@ async def _handle_write_edits(
 
             # auto_format 可能额外改变行数（展开 uses、调整空行等），重算真实偏移
             fmt_diff = 0
-            if auto_format and not preview and os.path.isfile(file_path) and fmt_msg:
+            if auto_format and not dry_run and os.path.isfile(file_path) and fmt_msg:
                 try:
                     with open(file_path, 'r', encoding=write_enc, newline='',
                               buffering=BUFFER_SIZE_1MB) as f:
@@ -1684,10 +1696,10 @@ async def _handle_write_edits(
             # 标记脏
             _mark_dirty(file_path)
         elif all_success:
-            results.append("  ℹ preview 不清除脏标记；后续 write 仍需 read 或 old_content 校验")
+            results.append("  ℹ dry_run 不清除脏标记；后续 write 仍需 read 或 old_content 校验")
 
         # 追加"未变区域"提示（失败时不输出，因为行号已被污染）
-        if all_success and not preview:
+        if all_success and not dry_run:
             unchanged = _format_unchanged_ranges(edit_results, total)
             if unchanged:
                 results.append(unchanged)
@@ -1695,22 +1707,22 @@ async def _handle_write_edits(
         # 汇总输出
         summary = []
         basename = os.path.basename(file_path)
-        action_label = "preview" if preview else "wrote"
+        action_label = "dry_run" if dry_run else "wrote"
         header_parts = [
             f"{action_label}: {len(validated_edits)} edits, {basename}",
             f"encoding: {write_enc}",
         ]
         if allow_dirty:
             header_parts.append("⚠ allow_dirty: 脏标记绕过（请确保行号准确）")
-        if preview:
-            header_parts.append("preview: true（未写入磁盘）")
+        if dry_run:
+            header_parts.append("dry_run: true（未写入磁盘）")
             if auto_format:
-                header_parts.append("⚠ preview 不含 auto_format 偏移")
+                header_parts.append("⚠ dry_run 不含 auto_format 偏移")
         if encoding_transcoded:
             header_parts.append(f"ℹ transcoded: {detected_encoding} → {write_enc}")
         if encoding_fallback:
             header_parts.append(f"⚠ fallback: {detected_encoding} → utf-8")
-        if not preview and bak_path and backup:
+        if not dry_run and bak_path and backup:
             header_parts.append(f"backup: __history\\{os.path.basename(bak_path)}")
         if fmt_msg:
             header_parts.append("formatted: yes")
@@ -1732,7 +1744,7 @@ async def _handle_write_edits(
 
     finally:
         if not lock_already_held:
-            if preview:
+            if dry_run:
                 _release_read_lock(file_path)
             else:
                 _release_write_lock(file_path)
@@ -1852,13 +1864,17 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
       from_encoding: 源编码（"auto"=自动检测，默认 "auto"）
       to_encoding: 目标编码（必需），如 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be
       backup: 转换前是否备份到 __history（默认 true）
-      preview: 预览模式（默认 false）
+      dry_run: 预览模式（默认 false）
     """
+    removed_preview = _reject_removed_preview_argument(arguments)
+    if removed_preview:
+        return removed_preview
+
     file_path = arguments.get("file_path")
     from_encoding = arguments.get("from_encoding", "auto")
     to_encoding = arguments.get("to_encoding")
     backup = arguments.get("backup", True)
-    preview = arguments.get("preview", False)
+    dry_run = arguments.get("dry_run", False)
 
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
@@ -1877,7 +1893,7 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return _wrap_error(f"不支持的文件类型: {ext}，仅支持 Delphi 源文件")
 
     # 获取写入锁（读+写互斥），预览模式下用读锁
-    if preview:
+    if dry_run:
         lock_err = _acquire_read_lock(file_path)
     else:
         lock_err = _acquire_write_lock(file_path)
@@ -1910,12 +1926,12 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return _wrap_error(f"目标编码 '{target_enc}' 不可识别")
 
         # 预览模式
-        if preview:
+        if dry_run:
             read_size = os.path.getsize(file_path)
             return {
                 "status": "success",
                 "message": (
-                    f"[preview] would convert: {os.path.basename(file_path)}\n"
+                    f"[dry_run] would convert: {os.path.basename(file_path)}\n"
                     f"  from: {detected_enc} (检测) / {read_enc} (指定)\n"
                     f"  to:   {target_enc}\n"
                     f"  size: {read_size} bytes"
@@ -2036,7 +2052,7 @@ async def handle_encode(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "new_size": new_size,
         }
     finally:
-        if preview:
+        if dry_run:
             _release_read_lock(file_path)
         else:
             _release_write_lock(file_path)
@@ -2833,7 +2849,7 @@ async def _grep_replace(
     replace: str,
     content: str,
     enc: str,
-    preview: bool,
+    dry_run: bool,
     use_fulltext: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -2845,12 +2861,12 @@ async def _grep_replace(
         replace: 替换文本
         content: 原文件内容
         enc: 文件编码
-        preview: True=仅预览不写盘
+        dry_run: True=仅预览不写盘
         use_fulltext: True=全文替换（支持跨行），False=逐行替换
 
     Returns:
-        preview=True: {"status": "success", "preview": True, "diff": [...], ...}
-        preview=False: {"status": "success", "replaced": int, ...}
+        dry_run=True: {"status": "success", "dry_run": True, "diff": [...], ...}
+        dry_run=False: {"status": "success", "replaced": int, ...}
     """
     if use_fulltext:
         # ── 全文替换（支持跨行匹配）──
@@ -2870,7 +2886,7 @@ async def _grep_replace(
                 "matched": m.group(),
             })
 
-        if preview:
+        if dry_run:
             output_parts = [
                 f"文件: {os.path.basename(file_path)}（编码: {enc}）",
                 f"预览替换: {replaced_count} 处",
@@ -2880,12 +2896,12 @@ async def _grep_replace(
                     output_parts.append(f"  行 {c['start_lineno']}: {c['matched']}")
                 else:
                     output_parts.append(f"  行 {c['start_lineno']}-{c['end_lineno']}: {c['matched']}")
-            output_parts.append("（预览模式，文件未修改。设 preview=False 执行实际替换）")
+            output_parts.append("（预览模式，文件未修改。设 dry_run=False 执行实际替换）")
 
             return {
                 "status": "success",
                 "message": f"预览：将替换 {replaced_count} 处",
-                "preview": True,
+                "dry_run": True,
                 "replaced": replaced_count,
                 "changes": change_list,
                 "output": "\n".join(output_parts),
@@ -2962,7 +2978,7 @@ async def _grep_replace(
             "replaced": 0,
         }
 
-    if preview:
+    if dry_run:
         # 仅预览
         diff_lines = []
         for ch in change_list:
@@ -2975,12 +2991,12 @@ async def _grep_replace(
         )
         if diff_lines:
             output += "\n".join(diff_lines)
-        output += "\n（预览模式，文件未修改。设 preview=False 执行实际替换）"
+        output += "\n（预览模式，文件未修改。设 dry_run=False 执行实际替换）"
 
         return {
             "status": "success",
             "message": f"预览：将替换 {replaced_count} 处",
-            "preview": True,
+            "dry_run": True,
             "replaced": replaced_count,
             "changes": change_list,
             "output": output,
@@ -3061,7 +3077,7 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
             file_path="Unit1.pas",
             pattern="/TMyClass\b/i",
             replace="TNewClass",
-            preview=True,                   # 默认 True，预览不写盘
+            dry_run=True,                   # 默认 True，预览不写盘
         )
 
     flags 行内语法:
@@ -3075,6 +3091,10 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
         逐行模式: pattern + filter_pattern + exclude_pattern 作用于同一行
         全文模式: pattern + filter_pattern + exclude_pattern 作用于整个匹配文本
     """
+    removed_preview = _reject_removed_preview_argument(arguments)
+    if removed_preview:
+        return removed_preview
+
     file_path = arguments.get("file_path")
     if not file_path:
         return _wrap_error("请提供 file_path 参数")
@@ -3121,9 +3141,9 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return _wrap_error(f"exclude_pattern 正则编译失败: {e}")
 
     replace = arguments.get("replace")
-    preview = arguments.get("preview", True)
-    if not isinstance(preview, bool):
-        return _wrap_error("preview 必须是布尔值")
+    dry_run = arguments.get("dry_run", True)
+    if not isinstance(dry_run, bool):
+        return _wrap_error("dry_run 必须是布尔值")
     context = arguments.get("context", 0)
     if not isinstance(context, int) or context < 0:
         return _wrap_error("context 必须是非负整数")
@@ -3151,7 +3171,7 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     if replace is not None:
         # ── 替换模式 ──
-        return await _grep_replace(file_path, compiled, replace, content, enc, preview,
+        return await _grep_replace(file_path, compiled, replace, content, enc, dry_run,
                                    use_fulltext=use_fulltext)
     elif use_fulltext:
         # ── 全文搜索 ──
@@ -3169,6 +3189,10 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     file_tool 主入口。
     write 使用 edits 数组处理单处或多处修改。
     """
+    removed_preview = _reject_removed_preview_argument(arguments)
+    if removed_preview:
+        return removed_preview
+
     action = arguments.get("action", "read")
 
     if action == "read":

@@ -7,10 +7,37 @@ from src.services.agent_skill_installer import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+PACKAGED_DAOFY_SKILL = ROOT / "src" / "resources" / "agent-skills" / "daofy" / "SKILL.md"
+
+
 def _write_source(root: Path, content: str) -> None:
     skill_dir = root / "daofy"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
+
+
+def test_packaged_daofy_skill_frontmatter_starts_at_first_byte() -> None:
+    data = PACKAGED_DAOFY_SKILL.read_bytes()
+
+    assert not data.startswith(b"\xef\xbb\xbf")
+    assert data.startswith((b"---\n", b"---\r\n"))
+
+
+def test_packaged_daofy_skill_mentions_trae_run_mcp_wrapper() -> None:
+    text = PACKAGED_DAOFY_SKILL.read_text(encoding="utf-8")
+
+    required_terms = [
+        "run_mcp",
+        "server_name",
+        "tool_name",
+        "args",
+        "服务别名",
+        "不是 Daofy 固定值",
+        "不要把 `server_name/tool_name` 混进",
+    ]
+    for term in required_terms:
+        assert term in text, f"Packaged Daofy skill missing {term!r}"
 
 
 def test_installs_daofy_skill(tmp_path: Path) -> None:

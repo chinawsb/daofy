@@ -1,4 +1,4 @@
-﻿<!-- @when: 使用 delphi_file 写入或修改 Delphi 文件时 -->
+<!-- @when: 使用 delphi_file 写入或修改 Delphi 文件时 -->
 <!-- @chain: before=format.md, after=writing.md -->
 
 ## delphi_file 写入规则
@@ -17,7 +17,7 @@ delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end
 # 多段替换（顺序不限，自动排序）
 delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 10, "end_line": 12, "content": "..."}, {"start_line": 5, "end_line": 7, "content": "..."}])
 # 预览模式
-delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end_line": 10, "content": "新内容"}], preview=True)
+delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end_line": 10, "content": "新内容"}], dry_run=True)
 ```
 
 ### 脏标记保护（v2026.06.12+）
@@ -27,7 +27,7 @@ delphi_file(action="write", file_path="Unit1.pas", edits=[{"start_line": 5, "end
 **继续写入方式**：
 - 调用 `read`（自动清脏标记）
 - 每个 edit 提供非空 `old_content`
-- `write(preview=True)` 仅预览（不清脏标记）
+- `write(dry_run=True)` 仅预览（不清脏标记）
 - `write(allow_dirty=True)`（风险自负）
 
 **行号偏移处理（v2026.07+）**：
@@ -48,7 +48,7 @@ write 返回末尾包含"未变"区域提示：
 
 - **read**: `# encoding: utf-8, 1-indexed [1, 200]`
 - **write**: `[5, 10] → [5, 13] edit #0` + `- / +` diff，末尾追加 `未变:` 行
-- **preview**: 同上但标注 `preview: true`（不输出 `未变:` 行）
+- **dry_run**: 同上但标注 `dry_run: true`（不输出 `未变:` 行）
 - **uses**: `wrote: added System.SysUtils in interface, [2, 3] → [2, 4]`
 
 ### 推荐做法
