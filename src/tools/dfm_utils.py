@@ -8,11 +8,12 @@ DFM 格式转换工具 — 按需编译 Delphi 转换器
 """
 
 import os
+import re
 import sys
 import tempfile
 import subprocess
 import shutil
-from typing import Optional, Dict, Any, Set
+from typing import Optional, Dict, Any, Set, List, Tuple
 
 from ..constants import (
     TIMEOUT_DFM_COMPILE,
@@ -25,6 +26,10 @@ logger = get_logger(__name__)
 
 # 跟踪通过 ensure_dfm_text 创建的临时目录，供 _cleanup_dfm_temp_dirs 清理
 _dfm_temp_dirs: Set[str] = set()
+
+# DFM 字符串 token 正则：匹配 #XXXX 转义序列或 '...' 单引号字符串（处理 '' 转义）
+# 编译为模块级别常量避免重复编译
+_DFM_TOKEN_RE = re.compile(r"#[0-9]+|'[^']*(?:''[^']*)*'")
 
 
 def _cleanup_dfm_temp_dirs():
@@ -450,3 +455,187 @@ async def ensure_dfm_binary(text_path: str, original_binary_path: str) -> bool:
     """
     result = await convert_dfm(text_path, original_binary_path, to_text=False)
     return result["success"]
+
+
+def escape_dfm_chinese(text: str) -> str:
+    """
+    将 DFM 文本中单引号字符串内的非 ASCII 字符（如中文）转换为 #XXXX Delphi 转义序列。
+
+    Delphi DFM 文件中，非 ASCII 字符（如中文）应使用 #XXXX（十进制 Unicode）形式表示，
+    而不是直接写 UTF-8 / GBK 编码文本，以确保编码无关的可移植性。
+
+    转换规则：
+    - 对单引号 "'...'" 内的每个非 ASCII 字符 (ord > 127)，替换为 #XXXX（十进制 Unicode 码点）
+    - 相邻的 ASCII 字符保留在单引号字符串中
+    - 处理 Delphi 字符串中的 ''（双单引号转义）
+
+    示例:
+        "Caption = '进度'"         → "Caption = #36827#24230"
+        "Text = 'abc测试123'"      → "Text = 'abc'#27979#35797'123'"
+        "Hint = 'it''s 测试'"      → "Hint = 'it''s'#27979#35797"
+
+    Args:
+        text: DFM 文本内容
+
+    Returns:
+        转换后的 DFM 文本
+    """
+    result: list[str] = []
+    i = 0
+    length = len(text)
+
+    while i < length:
+        ch = text[i]
+        if ch == "'":
+            # 找到单引号字符串的结束位置（处理 '' 转义）
+            start = i
+            i += 1
+            chars: list[str] = []
+            while i < length:
+                if text[i] == "'":
+                    if i + 1 < length and text[i + 1] == "'":
+                        # 转义的单引号 ''
+                        chars.append("'")
+                        i += 2
+                    else:
+                        # 字符串结束
+                        i += 1
+                        break
+                else:
+                    chars.append(text[i])
+                    i += 1
+
+            string_content = ''.join(chars)
+
+            # 检查是否包含非 ASCII 字符
+            if any(ord(c) > 127 for c in string_content):
+                # 构建替换结果：非 ASCII → #XXXX, ASCII 保留在引号内
+                # 注意: Delphi 中单引号用 '' 转义，重建 ASCII 部分时需要恢复
+                parts: list[str] = []
+                ascii_buf: list[str] = []
+                for c in string_content:
+                    code = ord(c)
+                    if code > 127:
+                        if ascii_buf:
+                            ascii_str = ''.join(ascii_buf)
+                            # 恢复 Delphi 单引号转义: ' → ''
+                            ascii_str = ascii_str.replace("'", "''")
+                            parts.append("'" + ascii_str + "'")
+                            ascii_buf = []
+                        parts.append(f'#{code}')
+                    else:
+                        ascii_buf.append(c)
+                if ascii_buf:
+                    ascii_str = ''.join(ascii_buf)
+                    ascii_str = ascii_str.replace("'", "''")
+                    parts.append("'" + ascii_str + "'")
+                result.append(''.join(parts))
+            else:
+                # 无中文，保持原样
+                result.append(text[start:i])
+        else:
+            result.append(ch)
+            i += 1
+
+    return ''.join(result)
+
+
+def _decode_dfm_tokens(tokens: List[Tuple[int, int, str]]) -> str:
+    """Decode a group of adjacent DFM tokens (#XXXX and '...') into a single string.
+
+    Args:
+        tokens: List of (start, end, token_text) tuples forming a contiguous run.
+
+    Returns:
+        Decoded string with all escape sequences resolved.
+    """
+    chars: list[str] = []
+    for _, _, tok in tokens:
+        if tok.startswith('#'):
+            # #XXXX → Unicode character
+            try:
+                code = int(tok[1:])
+                chars.append(chr(code))
+            except (ValueError, OverflowError):
+                # 无效码点（如 #999999999 超出 Unicode 范围），保持原样
+                chars.append(tok)
+        else:
+            # Quoted string: remove outer quotes, resolve '' escapes
+            inner = tok[1:-1]
+            inner = inner.replace("''", "'")
+            chars.extend(inner)
+    return ''.join(chars)
+
+
+def unescape_dfm_chinese(text: str) -> str:
+    """将 DFM 文本中的 #XXXX 转义序列还原为实际字符（只处理含非 ASCII 码点的字符串）。
+
+    与 escape_dfm_chinese() 互为逆操作：
+      - 读取时: #36827#24230 → '进度'
+      - 写入时: '进度' → #36827#24230
+
+    处理规则：
+      - 识别连续的 #XXXX 和 '...' token 组合
+      - 解码后若包含非 ASCII 字符，合并为一个带引号的字符串
+      - 纯 ASCII 的不动（保持原样）
+
+    示例:
+        "Caption = #36827#24230"            → "Caption = '进度'"
+        "Text = 'abc'#27979#35797'123'"    → "Text = 'abc测试123'"
+        "Caption = 'Hello'"                 → "Caption = 'Hello'" (不变)
+
+    Args:
+        text: DFM 文本内容
+
+    Returns:
+        还原后的 DFM 文本
+    """
+    # 使用模块级缓存的正则（匹配 #XXXX 或 '...'，处理 '' 转义）
+    token_re = _DFM_TOKEN_RE
+
+    # 查找所有 token 及其位置
+    tokens: List[Tuple[int, int, str]] = []
+    for m in token_re.finditer(text):
+        tokens.append((m.start(), m.end(), m.group()))
+
+    if not tokens:
+        return text
+
+    # 将相邻 token 分组（前一个的 end == 后一个的 start）
+    groups: List[List[Tuple[int, int, str]]] = []
+    current_group = [tokens[0]]
+    for tok in tokens[1:]:
+        if tok[0] == current_group[-1][1]:
+            current_group.append(tok)
+        else:
+            groups.append(current_group)
+            current_group = [tok]
+    groups.append(current_group)
+
+    # 重建文本，替换含非 ASCII 的 token 组
+    result_parts: list[str] = []
+    last_end = 0
+    for group in groups:
+        # 本组之前的非 token 文本
+        if group[0][0] > last_end:
+            result_parts.append(text[last_end:group[0][0]])
+
+        # 解码本组
+        decoded = _decode_dfm_tokens(group)
+        if any(ord(c) > 127 for c in decoded):
+            # 含非 ASCII → 还原为带引号的可见字符串
+            # 重新转义单引号: ' → '' (Delphi 字符串字面量要求)
+            decoded_escaped = decoded.replace("'", "''")
+            result_parts.append("'" + decoded_escaped + "'")
+        else:
+            # 纯 ASCII → 保持原样
+            for _, _, tok_text in group:
+                result_parts.append(tok_text)
+
+        last_end = group[-1][1]
+
+    # 尾部的非 token 文本
+    if last_end < len(text):
+        result_parts.append(text[last_end:])
+
+    return ''.join(result_parts)

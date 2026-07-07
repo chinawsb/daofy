@@ -244,6 +244,83 @@ TOOL_HELP_DOCS: dict = {
             'delphi_kb(action="stats")                                          查看统计',
             'delphi_kb(action="build", kb_type="project")                       构建项目知识库',
         ],
+        "action_params": {
+            "search": {
+                "description": "搜索类/函数/文档",
+                "required": [],
+                "optional": {
+                    "query": "搜索关键词",
+                    "kb_type": "知识库类型: all/delphi/project/thirdparty/document/example",
+                    "search_type": "搜索类型: class/function/unit/semantic/reference/all 等",
+                    "top_k": "最大返回结果数（默认200，最大500）",
+                    "project_path": "项目路径（搜索 project/thirdparty 时需要）",
+                },
+            },
+            "stats": {
+                "description": "查看知识库统计",
+                "required": [],
+                "optional": {},
+            },
+            "build": {
+                "description": "构建/更新知识库",
+                "required": [],
+                "optional": {
+                    "kb_type": "知识库类型: all/delphi/project/thirdparty/document/example",
+                    "project_path": "项目路径",
+                    "version": "Delphi版本",
+                    "rebuild": "是否强制重建",
+                    "incremental": "是否增量更新",
+                    "async_mode": "是否异步执行（默认 true）",
+                    "directory": "扫描目录（document KB 时使用）",
+                    "extensions": "文件扩展名过滤",
+                    "max_pages": "最大抓取页数",
+                    "max_depth": "最大抓取深度",
+                    "domain_filter": "域名过滤",
+                    "url_pattern": "URL模式过滤",
+                    "exclude": "排除目录列表",
+                    "max_workers": "最大工作进程数",
+                    "show_progress": "是否显示进度",
+                    "build_thirdparty": "是否同时构建第三方库KB",
+                    "build_project": "是否构建项目KB",
+                },
+            },
+            "scan": {
+                "description": "扫描目录添加文档",
+                "required": [],
+                "optional": {
+                    "directory": "扫描目录",
+                    "extensions": "文件扩展名过滤",
+                    "max_workers": "最大工作进程数",
+                    "show_progress": "是否显示进度",
+                },
+            },
+            "web": {
+                "description": "添加网页文档",
+                "required": [],
+                "optional": {
+                    "url": "网页 URL",
+                    "max_depth": "最大抓取深度（默认3）",
+                    "max_pages": "最大抓取页数（默认100）",
+                    "domain_filter": "域名过滤",
+                },
+            },
+            "read": {
+                "description": "读取文档内容或源码文件",
+                "required": [],
+                "optional": {
+                    "url": "文档 URL",
+                    "doc_id": "文档 ID",
+                    "file_path": "文件路径",
+                    "offset": "读取偏移量",
+                    "limit": "读取字节数限制",
+                },
+            },
+            "build_embedding": {
+                "description": "构建向量索引",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
     "delphi_file": {
         "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用读写/搜索/替换入口。Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。",
@@ -282,7 +359,7 @@ TOOL_HELP_DOCS: dict = {
             "backup": "备份管理（创建/列表/恢复）",
             "encode": "文件编码转换。自动检测源编码，写入目标编码。支持 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi。自动备份。转换后标记脏。",
             "uses": "增删 uses 子句中的单元。成功后标记脏。",
-            "grep": "正则搜索+多级过滤+替换。pattern 支持行内 /xxx/i 语法指定 flag。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace 参数切换为替换模式（dry_run 默认 True）。context/count 控制输出。多行 flag(/m)或 dotall(/s)自动切换全文搜索。",
+            "grep": "正则搜索/替换。支持单文件(file_path)、目录递归(path+include)、文件列表(files)、多pattern OR搜索(patterns)。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace+replace 切换替换模式（dry_run 默认 True，预览不写盘）。",
             "fix_garbled": "修复中文乱码：自动检测 U+FFFD 替换字符、缺失 UTF-8 BOM、编码误检测并修复。支持 backup 备份。",
         },
         "examples": [
@@ -301,9 +378,12 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
             'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)   恢复',
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
-            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                          正则搜索(不区分大小写)',
-            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/^procedure/m", context=2)             多行模式+上下文的搜索',
-            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)  替换预览',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                                                         正则搜索(不区分大小写)',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/^procedure/m", context=2)                                        多行模式+上下文的搜索',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)                 替换预览',
+            'delphi_file(action="grep", path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)                                 目录递归搜索',
+            'delphi_file(action="grep", files=["a.pas","b.pas"], pattern="/TMyClass/i")                                                    文件列表搜索',
+            'delphi_file(action="grep", file_path="Unit1.pas", patterns=["/TMyClass/i", "/TSomeClass/"])                                   多 pattern OR 搜索',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")                       添加 UTF-8 BOM',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="gbk")                             转为 GBK',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8", from_encoding="gbk")      指定 GBK→UTF-8',
@@ -322,6 +402,9 @@ TOOL_HELP_DOCS: dict = {
                     "project_path": "项目文件路径，用于 search_in=project 或限制写入路径",
                     "type_name": "类名/接口名",
                     "function_name": "函数/过程名",
+                    "class_name": "类名（search_type=class 时使用，与 type_name 等效）",
+                    "record_name": "Record 类型名（search_type=record 时使用）",
+                    "encoding": "读取编码 auto/utf-8/gbk/utf-16（默认 auto）",
                 },
                 "examples": [
                     'delphi_file(action="read", file_path="Unit1.pas")',
@@ -387,6 +470,8 @@ TOOL_HELP_DOCS: dict = {
                     "config_path": "pasfmt 配置文件路径",
                     "uses_style": "uses子句风格: compact/pasfmt_default",
                     "dry_run": "true=仅检查格式不修改文件",
+                    "backup": "是否创建备份，默认 true",
+                    "project_path": "项目路径（可选）",
                 },
             },
             "encode": {
@@ -396,11 +481,80 @@ TOOL_HELP_DOCS: dict = {
                     "from_encoding": "源编码（auto=自动检测，推荐始终用 auto；如需显式指定，请确保编码名称准确无误，否则会导致解码失败或乱码）",
                     "backup": "转换前是否备份到 __history（默认 true）",
                     "dry_run": "预览模式: 只输出转换信息不写盘（默认 false）",
+                    "project_path": "项目路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")',
                     'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="gbk")',
                     'delphi_file(action="encode", file_path="Unit1.pas", from_encoding="gbk", to_encoding="utf-8")',
+                ],
+            },
+            "uses": {
+                "description": "增删 uses 子句中的单元。成功后标记脏。",
+                "required": ["file_path", "uses_action", "unit_name"],
+                "optional": {
+                    "uses_section": "所在区域: interface/implementation，默认 interface",
+                    "auto_format": "添加后自动 pasfmt 格式化（默认 false）",
+                    "backup": "是否创建备份（默认 true）",
+                    "encoding": "写入编码 auto/utf-8/gbk/utf-16（默认 auto）",
+                    "project_path": "项目路径（可选）",
+                },
+                "examples": [
+                    'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")',
+                    'delphi_file(action="uses", uses_action="remove", unit_name="Vcl.Dialogs", file_path="Unit1.pas")',
+                ],
+            },
+            "backup": {
+                "description": "备份管理：创建备份、列出备份版本、恢复指定版本。",
+                "required": ["file_path"],
+                "optional": {
+                    "backup_action": "子操作: create（默认）/ list / restore",
+                    "version": "备份版本号（restore 时需要，不传则恢复最新）",
+                    "project_path": "项目路径（可选）",
+                },
+                "examples": [
+                    'delphi_file(action="backup", file_path="Unit1.pas")',
+                    'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")',
+                    'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)',
+                ],
+            },
+            "grep": {
+                "description": "正则搜索 + 多级过滤 + 替换。支持单文件（file_path）、目录递归（path+include）、文件列表（files）、多 pattern OR 搜索（patterns）。",
+                "required": [],
+                "optional": {
+                    "file_path": "单文件路径（与 path/files/patterns 四选一）",
+                    "path": "搜索目录（与 file_path/files/patterns 配合）",
+                    "include": "glob 包含模式（与 path 配合），如 **/*.pas",
+                    "files": "文件路径列表（与 file_path/path 三选一）",
+                    "pattern": "单模式正则，支持行内 /expr/flags 语法",
+                    "patterns": "多模式正则数组，各模式 OR 搜索",
+                    "filter_pattern": "二级 AND 过滤（可选），也支持行内 /expr/flags",
+                    "exclude_pattern": "NOT 排除模式（可选），也支持行内 /expr/flags",
+                    "replace": "替换文本，提供后切换为替换模式（dry_run 默认 True）",
+                    "dry_run": "替换模式预览开关，默认 True（仅预览不写盘）",
+                    "context": "上下文行数，默认 0",
+                    "count": "最大返回结果数，默认 200",
+                    "project_path": "项目路径（可选）",
+                },
+                "examples": [
+                    'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")',
+                    'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)',
+                    'delphi_file(action="grep", path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)',
+                    'delphi_file(action="grep", files=["a.pas","b.pas"], pattern="/TMyClass/i")',
+                    'delphi_file(action="grep", file_path="Unit1.pas", patterns=["/TMyClass/i", "/TSomeClass/"])',
+                ],
+            },
+            "fix_garbled": {
+                "description": "修复 Delphi 文件中文乱码：检测无 BOM 的 UTF-8、U+FFFD 替换字符、双重编码等问题并修复。",
+                "required": ["file_path"],
+                "optional": {
+                    "backup": "是否创建备份，默认 True",
+                    "target_encoding": "目标编码，默认 utf-8-sig（带 BOM 的 UTF-8）",
+                    "project_path": "项目路径（可选）",
+                },
+                "examples": [
+                    'delphi_file(action="fix_garbled", file_path="Unit1.pas")',
+                    'delphi_file(action="fix_garbled", file_path="Unit1.pas", target_encoding="utf-8-sig")',
                 ],
             },
         },
@@ -426,6 +580,46 @@ TOOL_HELP_DOCS: dict = {
             'remove: action="remove", target_dfm="Unit1.dfm", component_name="BtnCancel"',
             'modify: action="modify", target_dfm="Unit1.dfm", component_name="BtnOK", properties={"Caption": "确认"}',
         ],
+        "action_params": {
+            "create": {
+                "description": "生成组件 DFM（编译+运行序列化）",
+                "required": ["code"],
+                "optional": {
+                    "uses": "需引用的单元列表，如 [\"Vcl.Forms\", \"Vcl.StdCtrls\"]",
+                    "type_decl": "类型声明段（可选）",
+                    "init_code": "初始化代码（可选）",
+                    "compile_timeout": "编译超时秒数（默认60）",
+                    "exec_timeout": "执行超时秒数（默认15）",
+                },
+            },
+            "add": {
+                "description": "向现有 DFM 添加子组件",
+                "required": ["target_dfm"],
+                "optional": {
+                    "target_pas": "PAS 文件路径（可选，自动同步声明）",
+                    "parent_name": "父组件名称（可选，默认添加到根）",
+                    "new_component_class": "新组件类名，如 TButton",
+                    "new_component_name": "新组件实例名（可选，自动生成）",
+                    "properties": "组件属性字典",
+                    "dfm_text": "待添加的 DFM 文本片段",
+                },
+            },
+            "remove": {
+                "description": "从 DFM 删除组件（含子树）",
+                "required": ["target_dfm", "component_name"],
+                "optional": {
+                    "target_pas": "PAS 文件路径（可选，自动同步删除）",
+                },
+            },
+            "modify": {
+                "description": "修改 DFM 中组件属性",
+                "required": ["target_dfm", "component_name"],
+                "optional": {
+                    "target_pas": "PAS 文件路径（可选，自动同步事件）",
+                    "properties": "组件属性字典",
+                },
+            },
+        },
     },
     "check_environment": {
         "summary": "诊断 Delphi 编译环境、检测编译器、安装 pasfmt。首次使用先 check。",
@@ -442,6 +636,35 @@ TOOL_HELP_DOCS: dict = {
             'check_environment(action="check")                                  检查环境',
             'check_environment(action="detect", search_path="D:\\Delphi")       指定路径检测',
         ],
+        "action_params": {
+            "check": {
+                "description": "检查当前编译环境状态",
+                "required": [],
+                "optional": {},
+            },
+            "detect": {
+                "description": "重新检测 Delphi 编译器",
+                "required": [],
+                "optional": {
+                    "search_path": "额外搜索路径",
+                },
+            },
+            "install": {
+                "description": "下载并安装 pasfmt 格式化工具",
+                "required": [],
+                "optional": {
+                    "install_dir": "安装目录",
+                },
+            },
+            "format_install": {
+                "description": "安装 pasfmt RAD Studio 插件",
+                "required": [],
+                "optional": {
+                    "install_dir": "安装目录",
+                    "delphi_version": "Delphi 版本号，如 11、12",
+                },
+            },
+        },
     },
     "async_task": {
         "summary": "管理后台构建知识库等耗时任务。通常 delphi_kb(action=build) 已自动触发。",
@@ -461,6 +684,44 @@ TOOL_HELP_DOCS: dict = {
             'async_task(action="status", task_id="...")   查看任务进度',
             'async_task(action="list")                    列出所有任务',
         ],
+        "action_params": {
+            "start": {
+                "description": "启动异步任务",
+                "required": [],
+                "optional": {
+                    "task_type": "任务类型，如 build_knowledge_base",
+                    "task_params": "任务参数 dict",
+                },
+            },
+            "status": {
+                "description": "查询任务状态",
+                "required": [],
+                "optional": {
+                    "task_id": "任务 ID",
+                    "long_poll_seconds": "长轮询秒数，默认 0（立即返回），最大 30",
+                    "show_progress": "是否显示进度，默认 true",
+                },
+            },
+            "result": {
+                "description": "获取任务结果",
+                "required": [],
+                "optional": {
+                    "task_id": "任务 ID",
+                },
+            },
+            "list": {
+                "description": "列出所有任务",
+                "required": [],
+                "optional": {},
+            },
+            "cancel": {
+                "description": "取消运行中的任务",
+                "required": [],
+                "optional": {
+                    "task_id": "任务 ID",
+                },
+            },
+        },
     },
     "package": {
         "summary": "编译/安装/管理 Delphi 组件包。支持 .dproj/.dpk/.groupproj。",
@@ -476,6 +737,23 @@ TOOL_HELP_DOCS: dict = {
             'package(action="install", package_path="MyPackage.dpk")  安装组件包',
             'package(action="list")                                    验证安装',
         ],
+        "action_params": {
+            "install": {
+                "description": "编译并安装组件包",
+                "required": ["package_path"],
+                "optional": {
+                    "target_platform": "目标平台 win32/win64，默认 win32",
+                    "build_configuration": "构建配置 Debug/Release，默认 Debug",
+                    "timeout": "超时秒数，默认 300",
+                    "install": "是否自动安装到 IDE，默认 true",
+                },
+            },
+            "list": {
+                "description": "列出已安装的组件包",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
     "get_coding_rules": {
         "summary": "获取 Delphi 编码规范。写/改 Delphi 代码前必须先调用！",
@@ -535,6 +813,113 @@ TOOL_HELP_DOCS: dict = {
             },
         },
         "china_access": "git_clone 支持 mirror 参数指定镜像源。推送依赖用户自身的 SSH/HTTPS 代理配置。",
+        "action_params": {
+            "git_status": {
+                "description": "查看仓库状态",
+                "required": ["dir"],
+                "optional": {},
+            },
+            "git_diff": {
+                "description": "查看差异",
+                "required": ["dir"],
+                "optional": {"staged": "显示已暂存的差异", "name_only": "只输出文件名", "stat": "输出统计信息", "limit": "输出截断行数", "files": "文件路径列表"},
+            },
+            "git_log": {
+                "description": "查看提交历史",
+                "required": ["dir"],
+                "optional": {"limit": "返回条数", "files": "文件路径列表", "stat": "显示统计信息"},
+            },
+            "git_add": {
+                "description": "暂存文件",
+                "required": ["dir"],
+                "optional": {"files": "文件路径列表"},
+            },
+            "git_commit": {
+                "description": "提交",
+                "required": ["dir", "message"],
+                "optional": {},
+            },
+            "git_push": {
+                "description": "推送到远程",
+                "required": ["dir"],
+                "optional": {"remote": "远程名称，默认 origin", "branch": "分支名"},
+            },
+            "git_push_retry": {
+                "description": "推送（后台自动重试）",
+                "required": ["dir"],
+                "optional": {"remote": "远程名称，默认 origin", "branch": "分支名", "retry_interval": "重试间隔秒数，默认 300", "max_retries": "最大重试次数，默认 12"},
+            },
+            "git_clone": {
+                "description": "克隆仓库",
+                "required": ["repo_url", "dir"],
+                "optional": {"branch": "分支名", "mirror": "GitHub 镜像源地址"},
+            },
+            "git_branch": {
+                "description": "分支管理",
+                "required": ["dir"],
+                "optional": {"branch": "分支名", "delete": "删除分支", "remote_branches": "列出远程分支"},
+            },
+            "git_switch": {
+                "description": "切换/创建分支",
+                "required": ["dir", "branch"],
+                "optional": {"create": "创建并切换分支", "start_point": "新分支起点"},
+            },
+            "git_fetch": {
+                "description": "拉取远程引用",
+                "required": ["dir"],
+                "optional": {"branch": "分支名", "prune": "使用 --prune", "async_mode": "后台异步执行"},
+            },
+            "git_pull": {
+                "description": "拉取并合并",
+                "required": ["dir"],
+                "optional": {"branch": "分支名", "rebase": "使用 rebase 模式", "async_mode": "后台异步执行"},
+            },
+            "git_merge": {
+                "description": "合并分支",
+                "required": ["dir", "branch"],
+                "optional": {"ff_only": "使用 ff-only", "no_commit": "使用 no-commit", "async_mode": "后台异步执行"},
+            },
+            "git_restore": {
+                "description": "恢复文件",
+                "required": ["dir", "files"],
+                "optional": {"staged": "恢复已暂存的文件", "source": "--source 引用"},
+            },
+            "git_stash": {
+                "description": "stash 管理",
+                "required": ["dir"],
+                "optional": {"op": "push/list/pop/apply/drop/show", "include_untracked": "包含未跟踪文件", "message": "stash 消息", "files": "文件列表"},
+            },
+            "git_tag": {
+                "description": "标签管理",
+                "required": ["dir"],
+                "optional": {"tag": "标签名", "start_point": "标签起点", "delete": "删除标签"},
+            },
+            "git_unstage": {
+                "description": "取消暂存",
+                "required": ["dir"],
+                "optional": {"files": "文件列表"},
+            },
+            "git_show": {
+                "description": "查看提交/对象",
+                "required": ["dir", "ref"],
+                "optional": {"stat": "统计信息", "name_only": "只输出文件名"},
+            },
+            "create_issue": {
+                "description": "创建工单",
+                "required": ["repo", "title"],
+                "optional": {"body": "正文内容", "labels": "标签名列表"},
+            },
+            "create_pull": {
+                "description": "创建 PR/MR",
+                "required": ["repo", "title", "source_branch", "target_branch"],
+                "optional": {"body": "正文内容"},
+            },
+            "create_release": {
+                "description": "创建 Release",
+                "required": ["repo", "tag_name"],
+                "optional": {"name": "Release 名称", "body": "正文内容", "target_commitish": "目标提交", "draft": "草稿标记", "prerelease": "预发布标记"},
+            },
+        },
     },
 
     "tool_help": {
@@ -589,6 +974,7 @@ TOOL_HELP_DOCS: dict = {
                     "class_name": "限定的类名，空串扫描所有",
                     "force": "true 强制刷新缓存（默认 false）",
                     "keep_alive": "true 保持进程运行供后续复用（默认 false）",
+                    "pipe": "内部命名管道名称（自动生成，不传则自动）",
                 },
             },
             "call": {
@@ -596,6 +982,8 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["app_path", "class_name", "method"],
                 "optional": {
                     "params": "参数 dict，键名需与 discover 返回的 Schema 一致",
+                    "keep_alive": "true 保持进程运行供后续复用（默认 false）",
+                    "pipe": "内部命名管道名称（自动生成，不传则自动）",
                 },
             },
         },
@@ -640,6 +1028,76 @@ TOOL_HELP_DOCS: dict = {
             "delete": "删除经验。id=经验ID",
             "rebuild_embedding": "重建缺失向量。需先 delphi_kb(build_embedding) 加载模型",
         },
+        "action_params": {
+            "save": {
+                "description": "保存经验（自动去重）",
+                "required": ["problem", "solution"],
+                "optional": {
+                    "tools_used": "用到的工具列表",
+                    "tags": "标签列表",
+                    "context": "上下文信息 dict",
+                    "force": "强制新保存（跳过 >0.7 去重提醒层）",
+                },
+            },
+            "search": {
+                "description": "语义搜索经验",
+                "required": [],
+                "optional": {
+                    "query": "搜索关键词",
+                    "top_k": "返回条数，默认 5",
+                    "tags": "标签过滤",
+                },
+            },
+            "get": {
+                "description": "查看经验详情",
+                "required": ["id"],
+                "optional": {},
+            },
+            "list": {
+                "description": "浏览列表",
+                "required": [],
+                "optional": {
+                    "tags": "标签过滤",
+                    "sort_by": "排序字段: updated_at/created_at/hit_count/score，默认 updated_at",
+                    "limit": "返回条数，默认 20",
+                },
+            },
+            "update": {
+                "description": "更新经验",
+                "required": ["id"],
+                "optional": {
+                    "problem": "新问题描述",
+                    "solution": "新解决步骤",
+                    "tags": "新标签列表",
+                    "tools_used": "新工具列表",
+                    "context": "新上下文信息",
+                },
+            },
+            "merge": {
+                "description": "合并多条经验",
+                "required": ["ids"],
+                "optional": {
+                    "keep": "保留的目标 ID（可选，不传则创建新记录）",
+                },
+            },
+            "prune": {
+                "description": "列出低价值经验",
+                "required": [],
+                "optional": {
+                    "limit": "返回条数，默认 20",
+                },
+            },
+            "delete": {
+                "description": "删除经验",
+                "required": ["id"],
+                "optional": {},
+            },
+            "rebuild_embedding": {
+                "description": "重建缺失向量",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
     "daofy_update": {
         "summary": "检查 Daofy 版本更新、执行 git pull 更新（类似 code_hosting 异步模式）。",
@@ -668,6 +1126,36 @@ TOOL_HELP_DOCS: dict = {
             'async_task(action=status, task_id=...) 查询异步任务进度',
             'daofy_update(action="version")         显示当前版本',
         ],
+        "action_params": {
+            "check": {
+                "description": "快速检查版本更新",
+                "required": [],
+                "optional": {},
+            },
+            "check_retry": {
+                "description": "强制后台重试版本检查",
+                "required": [],
+                "optional": {},
+            },
+            "update": {
+                "description": "后台 git pull 更新",
+                "required": [],
+                "optional": {},
+            },
+            "update_retry": {
+                "description": "后台自动重试 git pull",
+                "required": [],
+                "optional": {
+                    "retry_interval": "重试间隔秒数，默认 60",
+                    "max_retries": "最大重试次数，默认 10",
+                },
+            },
+            "version": {
+                "description": "显示当前版本号",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
     "generate_copyright": {
         "summary": "生成软著文档（源代码+说明书+汇总表）。",
@@ -686,6 +1174,49 @@ TOOL_HELP_DOCS: dict = {
             'generate_copyright(action="generate")',
             'generate_copyright(action="audit")',
         ],
+        "action_params": {
+            "generate": {
+                "description": "生成软著文档（源代码+说明书+汇总表）",
+                "required": [],
+                "optional": {
+                    "doc_type": "文档类型: all/source/manual/summary，默认 all",
+                    "output_dir": "输出目录（可选，默认 docs/copyright）",
+                    "project_path": "项目路径（可选，默认当前工作目录）",
+                },
+            },
+            "validate": {
+                "description": "检查配置",
+                "required": [],
+                "optional": {},
+            },
+            "update_config": {
+                "description": "更新配置",
+                "required": [],
+                "optional": {
+                    "config": "配置更新 dict",
+                },
+            },
+            "status": {
+                "description": "检查浏览器/环境状态",
+                "required": [],
+                "optional": {},
+            },
+            "list": {
+                "description": "列出已生成的文件",
+                "required": [],
+                "optional": {},
+            },
+            "generate_content": {
+                "description": "生成草稿",
+                "required": [],
+                "optional": {},
+            },
+            "audit": {
+                "description": "审计草稿，检查驳回风险",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
     "ocr": {
         "summary": "图像分析：PP-OCRv6 文字识别 + 截图差异对比 + 颜色分析 + 图标匹配。",
@@ -1016,6 +1547,48 @@ TOOL_HELP_DOCS: dict = {
             'automate_delphi(action="console", app_path="Deploy.exe", input="\\n", expect="success", args=["--silent"])',
             '# 感知-规划-执行-反馈 完整循环示例见 get_coding_rules(section="automation")',
         ],
+        "action_params": {
+            "gui": {
+                "description": "通过命名管道驱动 GUI 程序自动化测试（需链接 DaofyAutomation 单元）",
+                "required": ["app_path"],
+                "optional": {
+                    "script": "JSON 脚本（文件路径、JSON 字符串、步骤数组、或完整脚本对象）",
+                    "snapshots_dir": "截图输出目录（可选，默认 docs/copyright/snapshots）",
+                    "wait_timeout": "等待 Delphi 管道就绪的超时秒数（默认 10s）",
+                    "keep_alive": "True=执行完后保持进程运行供后续复用",
+                    "stop_on_failure": "True=首个失败后停止执行后续依赖步骤（默认 true）",
+                    "env": "临时环境变量 dict",
+                },
+            },
+            "console": {
+                "description": "通过 subprocess stdin/stdout 驱动控制台程序交互（无需 Delphi 端改造）",
+                "required": ["app_path"],
+                "optional": {
+                    "input": "发送到 stdin 的文本",
+                    "expect": "等待的 stdout 正则模式",
+                    "timeout": "超时秒数（默认 30s）",
+                    "args": "额外命令行参数数组",
+                    "keep_alive": "True=执行完后保持进程运行供后续复用",
+                    "env": "临时环境变量 dict",
+                },
+            },
+            "auto": {
+                "description": "自动检测模式（PE 头判断 GUI vs Console）",
+                "required": ["app_path"],
+                "optional": {
+                    "script": "JSON 脚本",
+                    "input": "发送到 stdin 的文本",
+                    "expect": "等待的 stdout 正则模式",
+                    "timeout": "超时秒数",
+                    "keep_alive": "True=执行完后保持进程运行供后续复用",
+                },
+            },
+            "prepare": {
+                "description": "将 DaofyAutomation 路径注册到 Delphi 全局搜索路径（一劳永逸）",
+                "required": [],
+                "optional": {},
+            },
+        },
     },
 }
 

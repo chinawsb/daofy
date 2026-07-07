@@ -12,11 +12,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def get_tool_help(tool_name: str) -> dict:
+def get_tool_help(tool_name: str, action: str = "") -> dict:
     """获取单个工具的完整帮助文档。
 
     Args:
         tool_name: 工具名，如 compile_project / delphi_file
+        action: 可选，指定 action 名称时只返回该 action 的详细参数说明
 
     Returns:
         dict: {"tool": name, "docs": {...}} 或 {"error": "..."}
@@ -28,6 +29,35 @@ def get_tool_help(tool_name: str) -> dict:
             "status": "failed",
             "message": f"未知工具: {tool_name}。可用工具: {available}",
         }
+
+    # 如果指定了 action，只输出该 action 的参数部分
+    if action:
+        action_params = docs.get("action_params", {})
+        act_info = action_params.get(action)
+        if not act_info:
+            all_actions = ", ".join(sorted(action_params.keys()))
+            return {
+                "status": "failed",
+                "message": f"工具 {tool_name} 中没有 action '{action}'。可用 actions: {all_actions}",
+            }
+
+        desc = act_info.get("description", "")
+        lines = [f"📘 {tool_name} — action: {action}", ""]
+        lines.append(f"  ▶ {action}: {desc}")
+        req = act_info.get("required", [])
+        if req:
+            lines.append(f"    必需参数: {', '.join(req)}")
+        opt = act_info.get("optional", {})
+        if opt:
+            lines.append("    可选参数:")
+            for pname, pdesc in opt.items():
+                lines.append(f"      {pname}: {pdesc}")
+        ex = act_info.get("examples", [])
+        if ex:
+            lines.append("    示例:")
+            for e in ex:
+                lines.append(f"      {e}")
+        return {"status": "ok", "tool": tool_name, "action": action, "help": "\n".join(lines)}
 
     # 格式化为可读文本
     lines = [f"📘 {tool_name} — {docs.get('description', '')}", ""]

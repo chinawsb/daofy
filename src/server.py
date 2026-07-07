@@ -710,8 +710,8 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
-                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx；读取或修改这些文件都应路由到 delphi_file，即使只是读取也不要用内置 Read/Edit/Write/grep"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持单文件/多文件目录递归/文件列表/多pattern OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
+                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx；读取或修改这些文件都应路由到 delphi_file，即使只是读取也不要用内置 Read/Edit/Write/grep。grep 中与 path/files 三选一"},
 
                         # ---- [read] 参数 ----
                         "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
@@ -771,7 +771,12 @@ async def run_server():
                         "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[uses] 所在区域: interface/implementation"},
 
                         # ---- [grep] 参数 ----
-                        "pattern": {"type": "string", "description": "[grep] 正则搜索模式（必需）"},
+                        "pattern": {"type": "string", "description": "[grep] 单正则搜索模式（与 patterns 二选一），支持 /pattern/flags 语法"},
+                        "patterns": {"type": "array", "items": {"type": "string"}, "description": "[grep] 多 pattern OR 搜索（与 pattern 二选一），每个元素支持 /pattern/flags 语法"},
+                        "path": {"type": "string", "description": "[grep] 搜索目录（与 file_path/files 三选一），递归搜索目录下匹配文件"},
+                        "include": {"type": "string", "description": "[grep] 文件包含 glob 模式（默认 **/*，仅 path 模式有效）"},
+                        "exclude": {"type": "string", "description": "[grep] 文件排除 glob 模式（仅 path 模式有效）"},
+                        "files": {"type": "array", "items": {"type": "string"}, "description": "[grep] 文件路径列表（与 file_path/path 三选一）"},
                         "filter_pattern": {"type": "string", "description": "[grep] 二级过滤模式（可选，同一行/匹配文本必须也匹配此模式）"},
                         "exclude_pattern": {"type": "string", "description": "[grep] 排除模式（可选，同一行/匹配文本必须不匹配此模式）"},
                         "replace": {"type": "string", "description": "[grep] 替换文本（可选，不传=搜索模式，传了=替换模式）"},
@@ -949,6 +954,10 @@ async def run_server():
                             "type": "string",
                             "enum": TOOL_NAMES,
                             "description": "要查询的工具名",
+                        },
+                        "action": {
+                            "type": "string",
+                            "description": "可选，指定 action 名称时只返回该 action 的参数说明，减少无关信息干扰",
                         },
                     },
                     "required": ["tool_name"],
@@ -1460,7 +1469,10 @@ async def run_server():
             return {"status": "failed", "message": f"code_hosting failed: {e}"}
 
     async def _handle_tool_help(arguments: dict) -> Any:
-        return get_tool_help(tool_name=arguments.get("tool_name", ""))
+        return get_tool_help(
+            tool_name=arguments.get("tool_name", ""),
+            action=arguments.get("action", ""),
+        )
 
     async def _handle_experience(arguments: dict) -> dict:
         """处理 experience 工具调用，带 asyncio 超时保护（30s）。"""

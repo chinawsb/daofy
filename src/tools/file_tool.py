@@ -22,6 +22,7 @@ Action 模式:
 """
 
 import codecs
+import glob
 import locale
 import os
 import re
@@ -739,6 +740,9 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
         if result.get("status") == "success":
             _clear_dirty(lock_file_path)
+            # DFM: 将 #XXXX 转义序列还原为可见字符（与写入时的 escape_dfm_chinese 互为逆操作）
+            if _is_dfm_file(lock_file_path) and "message" in result:
+                result["message"] = dfm_utils.unescape_dfm_chinese(result["message"])
         return result
     finally:
         _release_read_lock(lock_file_path)
@@ -1321,6 +1325,9 @@ async def _handle_write_edits(
                 return _wrap_error("新文件必须提供 content")
             # 直接走全量写入
             content = e0["content"]
+            # 如果是新建 DFM 文件，自动将中文转为 #XXXX 转义序列
+            if _is_dfm_file(file_path):
+                content = dfm_utils.escape_dfm_chinese(content)
             original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
             # 预览模式
@@ -1557,6 +1564,9 @@ async def _handle_write_edits(
             })
 
         new_text = ''.join(lines)
+        # 对于 DFM 文件，自动将单引号内的非 ASCII 字符（中文）转为 #XXXX 转义序列
+        if _is_dfm_file(file_path):
+            new_text = dfm_utils.escape_dfm_chinese(new_text)
         encoding_fallback = False
         fmt_msg = ""
 
@@ -2691,6 +2701,69 @@ def _parse_inline_flags(pattern_str: str) -> tuple[str, int]:
     return inner, flags
 
 
+def _glob_files(
+    path: str,
+    include: str = "**/*",
+    exclude: Optional[str] = None,
+) -> List[str]:
+    """递归搜索目录下匹配 glob 模式的文件列表。
+
+    Args:
+        path: 根目录路径
+        include: 包含 glob 模式，默认 **/*（所有文件）
+        exclude: 排除 glob 模式（可选）
+
+    Returns:
+        排序后的绝对路径列表
+    """
+    path = os.path.abspath(path)
+    if not os.path.isdir(path):
+        return []
+
+    matched = glob.glob(include, root_dir=path, recursive=True)
+
+    if exclude:
+        excluded = set(glob.glob(exclude, root_dir=path, recursive=True))
+        matched = [f for f in matched if f not in excluded]
+
+    result: List[str] = []
+    for f in sorted(matched):
+        full = os.path.join(path, f)
+        if os.path.isfile(full):
+            result.append(full)
+    return result
+
+
+def _resolve_grep_targets(arguments: Dict[str, Any]) -> tuple[Optional[List[str]], Optional[str]]:
+    """解析 grep 的 file_path / files / path 三选一，确定搜索目标文件列表。
+
+    Returns:
+        (targets_list, None) 或 (None, error_message)
+    """
+    file_path = arguments.get("file_path")
+    files = arguments.get("files")
+    search_path = arguments.get("path")
+
+    # 优先级: file_path > files > path
+    if file_path:
+        return [file_path], None
+
+    if files:
+        if not isinstance(files, list) or len(files) == 0:
+            return None, "files 必须是字符串数组且不能为空"
+        return files, None
+
+    if search_path:
+        include = arguments.get("include") or "**/*"
+        exclude = arguments.get("exclude")
+        file_list = _glob_files(search_path, include, exclude)
+        if not file_list:
+            return None, f"目录 '{search_path}' 下没有匹配的文件（include={include}）"
+        return file_list, None
+
+    return None, "请提供 file_path、files 或 path 参数之一"
+
+
 def _grep_search_fulltext(
     file_path: str,
     compiled: re.Pattern,
@@ -3056,11 +3129,275 @@ async def _grep_replace(
     }
 
 
+def _format_batch_output(
+    files_result: Dict[str, Dict[str, Any]],
+    total_matches: int,
+    file_count: int,
+    replace: Optional[str] = None,
+) -> str:
+    """格式化批量 grep 的人类可读输出。"""
+    if replace is not None:
+        parts = [f"批量替换: 在 {file_count} 个文件中完成替换，共 {total_matches} 处" if file_count > 0
+                 else "批量替换: 无匹配，未做任何替换"]
+    else:
+        parts = [f"批量搜索: 在 {file_count} 个文件中找到 {total_matches} 处匹配" if file_count > 0
+                 else "批量搜索: 无匹配"]
+    for fname, fresult in files_result.items():
+        parts.append(f"")
+        parts.append(f"文件: {fname}")
+        if replace is not None:
+            parts.append(f"  替换: {fresult.get('replaced', 0)} 处")
+        else:
+            parts.append(f"  匹配: {fresult.get('total', 0)} 处")
+            for g in fresult.get("matches", []):
+                for k, v in g.items():
+                    if k == "_pattern":
+                        continue
+                    parts.append(f"  {k}:{v}")
+                parts.append("")
+    return "\n".join(parts)
+
+
+async def _grep_single_file(
+    file_path: str,
+    compiled_patterns: List[re.Pattern],
+    filter_compiled: Optional[re.Pattern],
+    exclude_compiled: Optional[re.Pattern],
+    replace: Optional[str],
+    dry_run: bool,
+    context: int,
+    count: int,
+    use_fulltext: bool,
+    project_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """对单个文件执行 grep 搜索或替换。
+
+    单 pattern 时行为与旧版完全一致（向后兼容）。
+    多 pattern 时 OR 逻辑组合搜索，匹配标注 _pattern 字段。
+    """
+    # ── 检查 .dfm / .fmx ──
+    if _is_dfm_file(file_path):
+        return {"status": "skipped", "message": f"grep 不支持 DFM/FMX 文件: {file_path}"}
+
+    path_err = _validate_path(file_path, project_path)
+    if path_err:
+        return _wrap_error(f"路径安全校验失败: {path_err}")
+
+    # ── 读取文件 ──
+    enc = detect_encoding(file_path)
+    if not enc:
+        enc = "utf-8"
+    try:
+        with open(file_path, 'r', encoding=enc, errors='replace') as f:
+            content = f.read()
+    except FileNotFoundError:
+        return _wrap_error(f"文件不存在: {file_path}")
+    except PermissionError:
+        return _wrap_error(f"无权限读取: {file_path}")
+    except Exception as e:
+        return _wrap_error(f"读取文件失败: {e}")
+
+    # ── 单 pattern — 原路径（完全向后兼容） ──
+    if len(compiled_patterns) == 1:
+        compiled = compiled_patterns[0]
+        if replace is not None:
+            return await _grep_replace(file_path, compiled, replace, content, enc, dry_run,
+                                       use_fulltext=use_fulltext)
+        elif use_fulltext:
+            return _grep_search_fulltext(file_path, compiled, content,
+                                         filter_compiled, exclude_compiled, context, count, enc)
+        else:
+            lines = content.splitlines(keepends=True)
+            return _grep_search(file_path, compiled, lines,
+                                filter_compiled, exclude_compiled, context, count, enc)
+
+    # ── 多 pattern 替换 ──
+    if replace is not None:
+        if dry_run:
+            # 预览：所有 pattern 在原始内容上模拟替换
+            preview_content = content
+            total_replaced = 0
+            all_changes = []
+            for compiled in compiled_patterns:
+                result = await _grep_replace(file_path, compiled, replace, preview_content, enc,
+                                             dry_run=True, use_fulltext=use_fulltext)
+                n = result.get("replaced", 0)
+                total_replaced += n
+                if result.get("changes"):
+                    for c in result["changes"]:
+                        c["_pattern"] = compiled.pattern
+                    all_changes.extend(result["changes"])
+                if n > 0:
+                    preview_content = compiled.sub(replace, preview_content)
+
+            filename = os.path.basename(file_path)
+            return {
+                "status": "success",
+                "message": f"{filename}: 预览替换 {total_replaced} 处（{len(compiled_patterns)} 个 pattern）",
+                "replaced": total_replaced,
+                "dry_run": True,
+                "changes": all_changes,
+            }
+        else:
+            # 实修：逐 pattern 写盘
+            total_replaced = 0
+            all_changes = []
+            for compiled in compiled_patterns:
+                re_read_enc = detect_encoding(file_path)
+                if not re_read_enc:
+                    re_read_enc = "utf-8"
+                try:
+                    with open(file_path, 'r', encoding=re_read_enc, errors='replace') as f:
+                        current_content = f.read()
+                except Exception:
+                    current_content = ""
+                result = await _grep_replace(file_path, compiled, replace, current_content, enc,
+                                             dry_run=False, use_fulltext=use_fulltext)
+                n = result.get("replaced", 0)
+                total_replaced += n
+                if result.get("changes"):
+                    all_changes.extend(result["changes"])
+
+            filename = os.path.basename(file_path)
+            return {
+                "status": "success",
+                "message": f"{filename}: 替换完成，共 {total_replaced} 处（{len(compiled_patterns)} 个 pattern）",
+                "replaced": total_replaced,
+                "changes": all_changes,
+            }
+
+    # ── 多 pattern 搜索 ──
+    all_matches: List[Dict[str, str]] = []
+    total = 0
+
+    for compiled in compiled_patterns:
+        remaining = max(1, count - total)
+        if use_fulltext:
+            result = _grep_search_fulltext(file_path, compiled, content,
+                                           filter_compiled, exclude_compiled, context, remaining, enc)
+        else:
+            lines = content.splitlines(keepends=True)
+            result = _grep_search(file_path, compiled, lines,
+                                  filter_compiled, exclude_compiled, context, remaining, enc)
+
+        n = result.get("total", 0)
+        if n > 0:
+            for m in result.get("matches", []):
+                m["_pattern"] = compiled.pattern
+            all_matches.extend(result.get("matches", []))
+            total += n
+
+    # 按首个行号排序
+    def _sort_key(match_group: Dict[str, str]) -> int:
+        for k in match_group:
+            if k.startswith("L") and not k.endswith("*"):
+                return int(k[1:])
+        return 0
+    all_matches.sort(key=_sort_key)
+
+    filename = os.path.basename(file_path)
+    pattern_count = len(compiled_patterns)
+    output_parts = [f"文件: {filename}（编码: {enc}，共 {total} 处匹配，{pattern_count} 个 pattern）"]
+    for g in all_matches:
+        for k, v in g.items():
+            if k == "_pattern":
+                continue
+            output_parts.append(f"  {k}:{v}")
+        output_parts.append("")
+    if total == 0:
+        output_parts.append("  （无匹配）")
+
+    return {
+        "status": "success",
+        "message": f"{filename}: {total} 处匹配",
+        "total": total,
+        "matches": all_matches,
+        "output": "\n".join(output_parts),
+    }
+
+
+async def _grep_batch(
+    targets: List[str],
+    compiled_patterns: List[re.Pattern],
+    filter_compiled: Optional[re.Pattern],
+    exclude_compiled: Optional[re.Pattern],
+    replace: Optional[str],
+    dry_run: bool,
+    context: int,
+    count_per_file: int,
+    use_fulltext: bool,
+    project_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """对多个文件批量执行 grep 搜索或替换。"""
+    files_result: Dict[str, Dict[str, Any]] = {}
+    total_matches = 0
+    file_count = 0
+    errors: List[str] = []
+
+    for file_path in targets:
+        result = await _grep_single_file(
+            file_path, compiled_patterns, filter_compiled, exclude_compiled,
+            replace, dry_run, context, count_per_file, use_fulltext, project_path,
+        )
+
+        status = result.get("status")
+        if status in ("error", "failed"):
+            errors.append(f"{file_path}: {result['message']}")
+            continue
+        elif status == "skipped":
+            continue  # DFM/FMX 文件静默跳过
+
+        rel_path = os.path.relpath(file_path)
+
+        if replace is not None:
+            replaced = result.get("replaced", 0)
+            if replaced > 0 or not dry_run:
+                files_result[rel_path] = {
+                    "replaced": replaced,
+                    "changes": result.get("changes", []),
+                }
+                if replaced > 0:
+                    total_matches += replaced
+                file_count += 1
+        else:
+            file_total = result.get("total", 0)
+            if file_total > 0:
+                files_result[rel_path] = {
+                    "total": file_total,
+                    "matches": result.get("matches", []),
+                }
+                total_matches += file_total
+                file_count += 1
+
+    output = _format_batch_output(files_result, total_matches, file_count, replace)
+
+    message_parts = []
+    if replace is not None:
+        if total_matches > 0:
+            message_parts.append(f"在 {file_count} 个文件中完成替换，共 {total_matches} 处")
+        else:
+            message_parts.append("无匹配，未做任何替换")
+    else:
+        message_parts.append(f"在 {file_count} 个文件中找到 {total_matches} 处匹配")
+    if errors:
+        message_parts.append(f"\n{len(errors)} 个文件读取失败")
+
+    return {
+        "status": "success" if not errors or file_count > 0 else "error",
+        "message": "; ".join(message_parts),
+        "total_matches": total_matches,
+        "file_count": file_count,
+        "files": files_result,
+        "errors": errors if errors else None,
+        "output": output,
+    }
+
+
 async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    处理 grep action — 正则搜索 + 多级过滤 + 替换。
+    处理 grep action — 正则搜索 + 多级过滤 + 替换（支持单文件与批量）。
 
-    搜索模式（不传 replace）:
+    == 单文件搜索 ==
         delphi_file(
             action="grep",
             file_path="Unit1.pas",
@@ -3071,13 +3408,36 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
             count=200,                      # 最大返回结果数（默认 200）
         )
 
-    替换模式（传 replace）:
+    == 单文件替换 ==
         delphi_file(
             action="grep",
             file_path="Unit1.pas",
             pattern="/TMyClass\b/i",
             replace="TNewClass",
             dry_run=True,                   # 默认 True，预览不写盘
+        )
+
+    == 目录递归搜索 ==
+        delphi_file(
+            action="grep",
+            path="src/",
+            include="**/*.pas",             # glob 包含模式
+            pattern="/TMyClass/i",
+            context=1,
+        )
+
+    == 文件列表搜索 ==
+        delphi_file(
+            action="grep",
+            files=["Unit1.pas", "Unit2.pas"],
+            pattern="/TMyClass/i",
+        )
+
+    == 多 pattern 搜索 ==
+        delphi_file(
+            action="grep",
+            file_path="Unit1.pas",
+            patterns=["/TMyClass/i", "/TSomeClass/"],
         )
 
     flags 行内语法:
@@ -3095,33 +3455,35 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if removed_preview:
         return removed_preview
 
-    file_path = arguments.get("file_path")
-    if not file_path:
-        return _wrap_error("请提供 file_path 参数")
-
+    # ── 解析 pattern / patterns ──
     pattern_str = arguments.get("pattern")
-    if not pattern_str:
-        return _wrap_error("请提供 pattern 参数（正则表达式）")
+    patterns = arguments.get("patterns")
 
-    path_err = _validate_path(file_path, arguments.get("project_path"))
-    if path_err:
-        return _wrap_error("路径安全校验失败: %s" % path_err)
+    if not pattern_str and not patterns:
+        return _wrap_error("请提供 pattern（单模式）或 patterns（多模式）参数")
+    if pattern_str and patterns:
+        return _wrap_error("pattern 和 patterns 不能同时提供，请选其一")
 
-    # ── 解析 /pattern/flags 行内 flags ──
-    try:
-        inner_pattern, inline_flags = _parse_inline_flags(pattern_str)
-    except ValueError as e:
-        return _wrap_error(str(e))
+    # ── 编译 patterns ──
+    pattern_strings = [pattern_str] if pattern_str else patterns
+    compiled_patterns: List[re.Pattern] = []
+    inline_flags = 0
+    for ps in pattern_strings:
+        try:
+            inner_pattern, flags = _parse_inline_flags(ps)
+        except ValueError as e:
+            return _wrap_error(str(e))
+        try:
+            compiled = re.compile(inner_pattern, flags)
+        except re.error as e:
+            return _wrap_error(f"pattern 正则编译失败: {e}")
+        compiled_patterns.append(compiled)
+        inline_flags |= flags
 
     use_fulltext = bool(inline_flags & (re.MULTILINE | re.DOTALL))
 
-    # ── 编译 patterns ──
-    # filter/exclude 继承主 pattern 的 flags，也可单独写行内语法覆盖
-    try:
-        compiled = re.compile(inner_pattern, inline_flags)
-    except re.error as e:
-        return _wrap_error(f"pattern 正则编译失败: {e}")
-
+    # ── 编译 filter / exclude ──
+    # 继承所有 pattern 的 flags 并集
     filter_str = arguments.get("filter_pattern")
     filter_compiled: Optional[re.Pattern] = None
     if filter_str:
@@ -3150,38 +3512,30 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     count = arguments.get("count", 200)
     if not isinstance(count, int) or count < 1:
         count = 200
+    project_path = arguments.get("project_path")
 
-    # ── 检查 .dfm / .fmx ──
-    if _is_dfm_file(file_path):
-        return _wrap_error(f"grep 不支持 DFM/FMX 文件（可能为二进制格式），请使用 read action 读取")
+    # ── 解析目标文件列表 ──
+    targets, err = _resolve_grep_targets(arguments)
+    if err:
+        return _wrap_error(err)
 
-    # ── 读取文件 ──
-    enc = detect_encoding(file_path)
-    if not enc:
-        enc = "utf-8"
-    try:
-        with open(file_path, 'r', encoding=enc, errors='replace') as f:
-            content = f.read()
-    except FileNotFoundError:
-        return _wrap_error(f"文件不存在: {file_path}")
-    except PermissionError:
-        return _wrap_error(f"无权限读取: {file_path}")
-    except Exception as e:
-        return _wrap_error(f"读取文件失败: {e}")
+    # ── 路由：仅显式 file_path + 单 pattern → 快速路径（完全向后兼容） ──
+    # path/files 参数即使命中单文件也走 batch，确保输出格式一致
+    file_path_explicit = arguments.get("file_path")
+    if file_path_explicit and len(targets) == 1 and len(compiled_patterns) == 1 and pattern_str:
+        # 显式单文件 DFM 直接报错（批量中的 DFM 静默跳过）
+        if _is_dfm_file(file_path_explicit):
+            return _wrap_error("grep 不支持 DFM/FMX 文件（可能为二进制格式），请使用 read action 读取")
+        return await _grep_single_file(
+            targets[0], compiled_patterns, filter_compiled, exclude_compiled,
+            replace, dry_run, context, count, use_fulltext, project_path,
+        )
 
-    if replace is not None:
-        # ── 替换模式 ──
-        return await _grep_replace(file_path, compiled, replace, content, enc, dry_run,
-                                   use_fulltext=use_fulltext)
-    elif use_fulltext:
-        # ── 全文搜索 ──
-        return _grep_search_fulltext(file_path, compiled, content,
-                                     filter_compiled, exclude_compiled, context, count, enc)
-    else:
-        # ── 逐行搜索（向后兼容） ──
-        lines = content.splitlines(keepends=True)
-        return _grep_search(file_path, compiled, lines,
-                            filter_compiled, exclude_compiled, context, count, enc)
+    # ── 批量模式（多文件、目录搜索、文件列表 或 多 pattern） ──
+    return await _grep_batch(
+        targets, compiled_patterns, filter_compiled, exclude_compiled,
+        replace, dry_run, context, count, use_fulltext, project_path,
+    )
 
 
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
