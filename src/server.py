@@ -189,6 +189,14 @@ else:
                     await super()._received_request(responder)
 
 
+    def _get_experimental_task_support(server_obj: Any) -> Optional[Any]:
+        """Return MCP task support when the installed SDK exposes it."""
+        experimental_handlers = getattr(server_obj, "_experimental_handlers", None)
+        if experimental_handlers is None:
+            return None
+        return getattr(experimental_handlers, "task_support", None)
+
+
     async def _run_mcp_server(server, read_stream, write_stream) -> None:
         """Run the MCP server with Daofy initialize metadata."""
         initialization_options = server.create_initialization_options()
@@ -203,11 +211,7 @@ else:
                 )
             )
 
-            task_support = (
-                server._experimental_handlers.task_support
-                if server._experimental_handlers
-                else None
-            )
+            task_support = _get_experimental_task_support(server)
             if task_support is not None:
                 task_support.configure_session(session)
                 await stack.enter_async_context(task_support.run())

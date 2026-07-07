@@ -158,6 +158,29 @@ def test_server_health_accepts_legacy_epoch_start_time() -> None:
     assert health["uptime_seconds"] >= 0
 
 
+def test_experimental_task_support_is_feature_detected() -> None:
+    import src.server as server_module
+
+    class LegacyServer:
+        pass
+
+    class DisabledServer:
+        _experimental_handlers = None
+
+    class ExperimentalHandlers:
+        task_support = object()
+
+    class CurrentServer:
+        _experimental_handlers = ExperimentalHandlers()
+
+    assert server_module._get_experimental_task_support(LegacyServer()) is None
+    assert server_module._get_experimental_task_support(DisabledServer()) is None
+    assert (
+        server_module._get_experimental_task_support(CurrentServer())
+        is CurrentServer._experimental_handlers.task_support
+    )
+
+
 def test_server_unknown_resource_raises_value_error() -> None:
     from src.server import _read_mcp_resource
 
