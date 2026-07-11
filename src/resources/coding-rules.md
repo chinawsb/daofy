@@ -28,6 +28,74 @@
 
 ---
 
+## 📁 目录约束
+
+AI Agent 工作时必须遵守以下目录约定，便于后期清理和维护。
+
+### 标准目录结构
+
+```
+project/
+├── src/                    ← 源码（Python/Delphi）
+├── tests/                  ← 测试用例（test_*.py, run_*.py）
+├── docs/                   ← 文档（用户手册、设计文档）
+├── scripts/                ← 辅助脚本（构建/部署/工具脚本）
+├── tools/                  ← 工具程序（pasfmt/7z/daudit 等）
+├── data/                   ← 知识库数据（运行时生成，gitignore）
+├── logs/                   ← 日志文件（运行时生成，gitignore）
+├── config/                 ← 配置文件（compilers.json 等）
+├── releases/               ← 发布包（gitignore）
+├── benchmarks/             ← 性能基准测试（gitignore）
+└── .tmp/                   ← 临时工作目录（gitignore）
+```
+
+### 目录用途约束
+
+| 目录 | 用途 | 清理策略 | gitignore |
+|------|------|----------|-----------|
+| `tests/` | 正式测试用例（test_*.py） | 随项目维护 | ❌ 版本控制 |
+| `tests/tmp_*` | 临时测试脚本 | **用完即删** | ✅ `tmp_*.py` |
+| `.tmp/` | Agent 临时工作文件 | **任务结束清理** | ✅ `.*/` |
+| `.pytest-tmp-*/` | pytest 临时目录 | **测试结束自动清理** | ✅ `.*/` |
+| `docs/` | 正式文档 | 随项目维护 | ❌ 版本控制 |
+| `docs/todos.md` | 个人笔记 | 不入库 | ✅ |
+| `scripts/` | 可复用脚本 | 随项目维护 | ❌ 版本控制 |
+| `_dump_*.py` | 一次性调试脚本 | **用完即删** | ✅ `_dump_*.py` |
+| `_debug_*.py` | 调试脚本 | **用完即删** | ✅ `_debug_*.py` |
+| `logs/` | 运行日志 | **定期清理** | ✅ |
+| `data/` | 知识库数据 | 按需重建 | ✅ |
+| `snapshots/` | UI 截图快照 | **用完即删** | ✅ |
+| `__history/` | Delphi 文件备份 | IDE 自动管理 | ✅ |
+| `Win32/` `Win64/` | Delphi 编译输出 | **编译后清理** | ✅ |
+
+### 命名规范
+
+| 类型 | 命名模式 | 示例 |
+|------|---------|------|
+| 正式测试 | `test_*.py` | `test_compiler.py` |
+| 临时测试 | `tmp_test_*.py` | `tmp_test_new_feature.py` |
+| 调试脚本 | `_debug_*.py` / `_dump_*.py` | `_dump_ast.py` |
+| 临时输出 | `tmp_*` / `test_*.png` | `tmp_output.txt` |
+
+### 清理规则
+
+```
+任务完成后必须清理：
+1. 临时文件 → 删除 tmp_*, _dump_*, _debug_*
+2. 临时目录 → 删除 .tmp/, .pytest-tmp-*
+3. 编译输出 → 删除 Win32/, Win64/, *.dcu, *.exe
+4. 调试产物 → 删除 test_*.png, temp_*.json
+```
+
+### ⚠️ 禁止事项
+
+- ❌ 在 `src/` 下创建临时文件或测试脚本
+- ❌ 在项目根目录散放临时脚本（应用 `.tmp/` 或 `scripts/`）
+- ❌ 临时文件使用无前缀命名（如 `test.py` 而非 `tmp_test.py`）
+- ❌ 任务结束后保留 `.pytest-tmp-*` 目录
+
+---
+
 <!-- 自动化测试架构内容已迁移到 src/resources/automation/architecture.md -->
 <!-- 详细技术参考：MCP Resource delphi://automation/index（入口），delphi://automation/architecture（架构方法论） -->
 
@@ -348,6 +416,21 @@ project(action="compile", project_path="Unit1.pas")                             
 project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 # 可选参数：conditional_defines=["DEBUG"], unit_search_paths=["..."], output_path="..."
 ```
+
+### 附加编译参数（extra_args）
+
+`extra_args` 是完整参数数组，按实际编译后端解释，并在内建参数之后追加：
+
+```python
+# .dproj / 有同名 .dproj 的 .dpr：MSBuild 参数，请求生成 TDS/RSM
+project(action="compile", project_path="Project.dproj",
+        extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])
+
+# 无同名 .dproj 的 .dpr：直接 DCC 参数
+project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
+```
+
+每个数组元素是一个完整参数，不要自行添加外层引号。如果编译器生成 `.tds`/`.rsm`，它们会列入 `output_files`。
 
 ### 运行验证（run_verify）
 ```python

@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 SECTION_KEYS: Dict[str, str] = {
     "planning": "P0 前置计划与审查",
     "workflow": "工作流总览",
+    "directory": "📁 目录约束",
     "env": "① 环境检查",
     "kb_search": "② KB 搜索（编码前必做）",
     "writing": "③ 写 Delphi 代码",
@@ -58,6 +59,9 @@ SECTION_ALIASES: Dict[str, str] = {
     "kb-search": "kb_search",
     "kb-rebuild": "kb_build",
     "agent-rules": "agent_rules",
+    "dir": "directory",
+    "dirs": "directory",
+    "目录": "directory",
     "human-collab": "human_collab",
     "review-guide": "review_guide",
     "review-detail": "review_detail",

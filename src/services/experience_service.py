@@ -90,33 +90,35 @@ class ExperienceMemoryService:
         self._kb_dir = Path(kb_dir)
         self._kb_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = str(self._kb_dir / _STORE_FILENAME)
-        self._local = threading.local()
+        self._conn = None  # 单连接，用锁保护并发
+        self._conn_lock = threading.Lock()
         self._init_db()
 
-    # ── 连接管理 ──
+    # ── 连接管理（单连接 + 锁，防止多线程连接泄露）──
 
     def _get_conn(self):
-        """获取当前线程的数据库连接"""
+        """获取数据库连接（线程安全，单连接模式）"""
         import sqlite3
-        if not hasattr(self._local, 'conn') or self._local.conn is None:
-            conn = sqlite3.connect(self._db_path)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
-            conn.row_factory = sqlite3.Row
-            self._local.conn = conn
-            # 确保表存在
-            self._init_tables(conn)
-        else:
-            try:
-                self._local.conn.execute("SELECT 1")
-            except Exception:
+        with self._conn_lock:
+            if self._conn is None:
                 conn = sqlite3.connect(self._db_path)
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
                 conn.row_factory = sqlite3.Row
-                self._local.conn = conn
+                self._conn = conn
                 self._init_tables(conn)
-        return self._local.conn
+            else:
+                try:
+                    self._conn.execute("SELECT 1")
+                except Exception:
+                    # 连接失效，重建
+                    conn = sqlite3.connect(self._db_path)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+                    conn.row_factory = sqlite3.Row
+                    self._conn = conn
+                    self._init_tables(conn)
+            return self._conn
 
     def _init_db(self):
         """初始化数据库（首次创建表）"""
@@ -157,17 +159,18 @@ class ExperienceMemoryService:
         conn.commit()
 
     def close(self):
-        """关闭当前线程的连接"""
-        if hasattr(self._local, 'conn') and self._local.conn is not None:
-            try:
-                self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except Exception as e:
-                logger.debug("WAL checkpoint 失败（连接将正常关闭）: %s", e)
-            try:
-                self._local.conn.close()
-            except Exception as e:
-                logger.debug("关闭 sqlite 连接失败: %s", e)
-            self._local.conn = None
+        """关闭数据库连接（线程安全）"""
+        with self._conn_lock:
+            if self._conn is not None:
+                try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception as e:
+                    logger.debug("WAL checkpoint 失败（连接将正常关闭）: %s", e)
+                try:
+                    self._conn.close()
+                except Exception as e:
+                    logger.debug("关闭 sqlite 连接失败: %s", e)
+                self._conn = None
 
     # ── 内部 helpers ──
 

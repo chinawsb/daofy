@@ -108,6 +108,66 @@ automate_delphi(
 | `automate_delphi` 连不上管道（超时） | AutoStart 未调用，或被异常跳过 | 读 `.dpr` 确认 AutoStart 在 `Application.Initialize` 前；或 exe 启动后手动等 1-2 秒 |
 | 编译报 `Duplicate resource` | `in` 子句和搜索路径双重引用导致重复编译 | 删除 `in` 子句，统一用搜索路径 |
 
+#### 管道建立失败诊断
+
+当 `automate_delphi` 连接管道超时或失败时，按以下流程诊断。**注意：管道失败时 `listwnd`/`formsum`/`dumpstate` 等管道命令不可用，必须走 Python UIA（`uia.xxx`）。**
+
+```
+管道失败
+  │
+  ├─ 检查进程是否存在（tasklist / PowerShell Get-Process）
+  │
+  ├─ 进程不存在（启动失败或已崩溃）
+  │   │
+  │   └─ 检查 exception.log
+  │       ├─ 存在 → 读取 StackTrace 输出，定位崩溃原因（异常类名+出错行号）
+  │       └─ 不存在 → 进程未启动成功，检查：
+  │           ├─ exe 路径是否正确
+  │           ├─ 缺少 DLL 依赖（用 dumpbin / Dependencies 工具检查）
+  │           └─ Windows Defender / 杀毒软件拦截
+  │
+  └─ 进程存在但管道不通（AutoStart 未调用或管道名不匹配）
+      │
+      ├─ 1. uia.scan 扫描顶层窗口，确认程序界面已加载
+      │     {"cmd": "uia.scan", "depth": 2, "props": "name,class,rect"}
+      │
+      ├─ 2. uia.screenshot 截图 + OCR 识别报错信息
+      │     {"cmd": "uia.screenshot", "path": "pipe_fail_diag.png"}
+      │     → daofy_ocr(action="recognize", image_path="pipe_fail_diag.png")
+      │
+      └─ 3. 根据 OCR 结果判断：
+            ├─ 识别到异常对话框 → 截图作为证据，分析异常内容
+            ├─ 识别到权限/UAC 弹窗 → 需要管理员权限运行
+            └─ 界面正常但管道不通 → 读 .dpr 确认 AutoStart 在 Application.Initialize 前
+```
+
+**诊断工具对照**：
+
+| 场景 | 可用工具 | 不可用工具 |
+|------|---------|-----------|
+| 进程不存在 | `tasklist`, `powershell Get-Process`, 读 `exception.log` | 管道命令全部不可用 |
+| 进程存在+管道失败 | `uia.scan`, `uia.screenshot`, `uia.goto`, OCR | `listwnd`, `formsum`, `dumpstate`, `rget` |
+| 管道正常 | 所有命令 | — |
+
+**快速检查脚本**（Python 侧）：
+```python
+import subprocess, os
+# 检查进程是否存在
+result = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe_name}"], 
+                       capture_output=True, text=True)
+if exe_name not in result.stdout:
+    # 进程不存在，检查 exception.log
+    log_path = os.path.join(exe_dir, "exception.log")
+    if os.path.exists(log_path):
+        # 读取 StackTrace
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            print(f.read())
+else:
+    # 进程存在，走 UIA 诊断
+    # uia.scan → uia.screenshot → OCR
+    pass
+```
+
 ### 工具调用
 
 ```python

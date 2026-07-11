@@ -122,6 +122,30 @@ _gui_execution_lock = RLock()  # RLock 允许同线程重入，防止 UIA 路由
 _pipe_session = threading.local()
 PROCESS_KEEPALIVE_TIMEOUT = 300  # 5 分钟无使用则自动清理
 _ENV_METADATA_KEYS = ('environment', 'env')
+_pool_cleanup_interval = 60  # 定时清理间隔（秒）
+_pool_cleanup_thread: threading.Thread | None = None
+
+
+def _pool_cleanup_worker():
+    """后台守护线程：定时清理过期进程"""
+    while True:
+        time.sleep(_pool_cleanup_interval)
+        try:
+            _cleanup_stale_processes()
+            _cleanup_stale_console_processes()
+        except Exception as e:
+            logger.debug("进程池定时清理异常: %s", e)
+
+
+def _ensure_pool_cleanup_thread():
+    """启动后台清理线程（只启动一次）"""
+    global _pool_cleanup_thread
+    with _pool_lock:
+        if _pool_cleanup_thread is not None and _pool_cleanup_thread.is_alive():
+            return  # 已启动
+        t = threading.Thread(target=_pool_cleanup_worker, daemon=True)
+        t.start()
+        _pool_cleanup_thread = t
 
 # ── Windows API ──
 GENERIC_READ = 0x80000000
@@ -2159,6 +2183,7 @@ def _ensure_process(
             'last_used': time.time(),
             'env_fingerprint': env_fingerprint,
         }
+        _ensure_pool_cleanup_thread()  # 首次使用时启动清理线程
     return True, ''
 
 def _kill_process(app_path: str):
@@ -2870,6 +2895,12 @@ def _execute_script_unlocked(app_path: str, script,
             path_val = step.get('path', '')
             if path_val:
                 req['path'] = path_val
+        elif cmd == 'textbounds':
+            text_val = step.get('text', '')
+            if text_val:
+                req['text'] = text_val
+            req['mode'] = step.get('mode', 'auto')
+            req['include_invisible'] = 'true' if step.get('include_invisible', False) else 'false'
         elif cmd in ('callgraph', 'callgraph_diff', 'callgraph_path'):
             if cmd == 'callgraph_path':
                 source_value = step.get('source', step.get('from'))
@@ -3078,7 +3109,7 @@ def _execute_script_unlocked(app_path: str, script,
                     resp_json['data'] = json.dumps(diff_state, ensure_ascii=False)
             except (json.JSONDecodeError, TypeError):
                 pass
-        elif cmd in ('dumpstate', 'dlgscan') and ok and resp_json.get('data'):
+        elif cmd in ('dumpstate', 'dlgscan', 'textbounds') and ok and resp_json.get('data'):
             try:
                 parsed = json.loads(resp_json['data'])
                 resp_json['state'] = parsed
