@@ -5,6 +5,7 @@
 自动备份到 __history 目录。
 """
 
+import os
 import uuid
 import re
 import shutil
@@ -1735,6 +1736,20 @@ async def _handle_add_source(
             content=[TextContent(type="text", text=f"文件不存在: {project_path}")],
             isError=True,
         )
+
+    # 路径归一化：绝对路径 → 相对于 .dproj 目录的相对路径
+    src_path = Path(source_file)
+    if src_path.is_absolute():
+        try:
+            source_file = os.path.relpath(
+                str(src_path.resolve()),
+                str(Path(project_path).parent),
+            ).replace("/", "\\")
+        except ValueError:
+            # 不同盘符时 relpath 会抛 ValueError，保留原路径
+            pass
+    else:
+        source_file = str(src_path).replace("/", "\\")
 
     parsed = _parse_tree(project_path)
     if parsed is None:
