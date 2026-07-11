@@ -45,6 +45,29 @@ logger = get_logger(__name__)
 _DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj'}
 
 _SYSTEM_SENSITIVE_DIRS: List[str] = []
+
+# ── AI Agent 工作区根目录缓存 ──────────────────────────────
+# 由 server.py 在 MCP 初始化后通过 session.list_roots() 获取并设置，
+# delphi_file 各 action 在 project_path 参数未提供时回退到此路径。
+_workspace_root: Optional[str] = None
+_workspace_root_lock = threading.Lock()
+
+
+def set_workspace_root(root: Optional[str]) -> None:
+    """设置 AI Agent 工作区根目录（由 server.py 初始化时调用）。"""
+    global _workspace_root
+    with _workspace_root_lock:
+        _workspace_root = root
+        if root:
+            logger.info("工作区根目录已设置: %s", root)
+        else:
+            logger.info("工作区根目录已清除")
+
+
+def get_workspace_root() -> Optional[str]:
+    """获取已缓存的工作区根目录，未设置时返回 None。"""
+    with _workspace_root_lock:
+        return _workspace_root
 if os.name == 'nt':
     _windir = os.environ.get('WINDIR', r'C:\Windows')
     _SYSTEM_SENSITIVE_DIRS = [
@@ -53,6 +76,22 @@ if os.name == 'nt':
     ]
 else:
     _SYSTEM_SENSITIVE_DIRS = ['/etc/shadow', '/etc/ssh']
+
+
+def _resolve_project_path(arguments: Dict[str, Any]) -> Optional[str]:
+    """返回 project_path，未提供时回退到 AI Agent 工作区根目录。
+
+    优先级:
+      1. 参数中显式传入的 project_path
+      2. get_workspace_root() 缓存的工作区根目录
+    """
+    explicit = arguments.get("project_path")
+    if explicit:
+        return explicit
+    fallback = get_workspace_root()
+    if fallback:
+        logger.debug("project_path 未提供，回退到工作区根目录: %s", fallback)
+    return fallback
 
 
 def _coerce_positive_int(value: Any, default: int, name: str) -> tuple[Optional[int], Optional[str]]:
@@ -71,7 +110,8 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
 
     Args:
         file_path: 待校验的文件路径
-        project_path: 项目路径（可选，提供时限制 file_path 必须在项目目录内）
+        project_path: 项目路径（可选，提供时限制 file_path 必须在项目目录内）。
+                       未提供时回退到 get_workspace_root()。
     """
     # Null 字节注入检查
     if '\0' in file_path:
@@ -90,15 +130,16 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
         except ValueError:
             pass
 
-    # 项目目录限制：当传入了 project_path 时，确保文件在项目目录内
-    if project_path:
+    # 项目目录限制：确保文件在项目目录内
+    effective_project = project_path or get_workspace_root()
+    if effective_project:
         try:
-            proj_resolved = os.path.abspath(os.path.realpath(project_path))
+            proj_resolved = os.path.abspath(os.path.realpath(effective_project))
             # project_path 可能是 .dproj 文件，取其目录作为项目根
             proj_dir = proj_resolved if os.path.isdir(proj_resolved) else os.path.dirname(proj_resolved)
             rel = os.path.relpath(resolved, proj_dir)
             if rel.startswith('..'):
-                return "路径不在项目目录内: %s (项目: %s)" % (file_path, project_path)
+                return "路径不在项目目录内: %s (项目: %s)" % (file_path, effective_project)
         except (OSError, ValueError):
             # project_path 解析失败时不阻断，由调用方处理
             pass
@@ -2703,31 +2744,48 @@ def _parse_inline_flags(pattern_str: str) -> tuple[str, int]:
 
 def _glob_files(
     path: str,
-    include: str = "**/*",
+    include: Optional[str] = None,
     exclude: Optional[str] = None,
 ) -> List[str]:
-    """递归搜索目录下匹配 glob 模式的文件列表。
+    """Recursively list files matching glob patterns in a directory.
 
     Args:
-        path: 根目录路径
-        include: 包含 glob 模式，默认 **/*（所有文件）
-        exclude: 排除 glob 模式（可选）
+        path: root directory path
+        include: glob pattern; defaults to Delphi source files
+                 (.pas/.dpr/.dpk/.dfm/.fmx/.inc/.dproj)
+        exclude: glob pattern to exclude (optional)
 
     Returns:
-        排序后的绝对路径列表
+        sorted list of matched absolute paths
     """
     path = os.path.abspath(path)
     if not os.path.isdir(path):
         return []
 
-    matched = glob.glob(include, root_dir=path, recursive=True)
+    if include:
+        patterns = [include]
+    else:
+        patterns = [
+            "**/*.pas", "**/*.dpr", "**/*.dpk",
+            "**/*.dfm", "**/*.fmx", "**/*.inc", "**/*.dproj",
+        ]
+
+    matched = set()
+    for pat in patterns:
+        matched.update(glob.glob(pat, root_dir=path, recursive=True))
 
     if exclude:
         excluded = set(glob.glob(exclude, root_dir=path, recursive=True))
-        matched = [f for f in matched if f not in excluded]
+        matched = matched - excluded
 
+    # skip common non-source directories
+    _skip_dirs = {'.git', '__pycache__', '__history', 'node_modules',
+                  '.venv', '.mypy_cache', '.pytest_cache'}
     result: List[str] = []
     for f in sorted(matched):
+        parts = f.replace('\\', '/').split('/')
+        if any(part in _skip_dirs for part in parts[:-1]):
+            continue
         full = os.path.join(path, f)
         if os.path.isfile(full):
             result.append(full)
@@ -2735,33 +2793,92 @@ def _glob_files(
 
 
 def _resolve_grep_targets(arguments: Dict[str, Any]) -> tuple[Optional[List[str]], Optional[str]]:
-    """解析 grep 的 file_path / files / path 三选一，确定搜索目标文件列表。
+    """解析 grep 的 file_path 参数，确定搜索目标文件列表。
+
+    file_path 支持两种形式:
+      - 字符串: 自动检测是文件还是目录，决定搜索方式
+      - 字符串数组: 逐项解析（每项可以是文件或目录路径）
+
+    相对路径解析:
+      - file_path 是相对路径时，先尝试 project_path/workspace_root 作为基目录
+      - 找不到基目录时回退到 os.path.abspath（服务器 CWD）
+
+    include/exclude 仅在目录模式有效（字符串形式且是目录，或数组中含有目录）。
 
     Returns:
         (targets_list, None) 或 (None, error_message)
     """
-    file_path = arguments.get("file_path")
-    files = arguments.get("files")
-    search_path = arguments.get("path")
+    raw = arguments.get("file_path")
 
-    # 优先级: file_path > files > path
-    if file_path:
-        return [file_path], None
+    if raw is None:
+        # 未指定 file_path 时，自动回退到项目根目录
+        base = _resolve_project_path(arguments)
+        if base and os.path.isdir(base):
+            raw = base
+        else:
+            return None, "请提供 file_path 参数（文件路径、目录路径或路径数组）"
 
-    if files:
-        if not isinstance(files, list) or len(files) == 0:
-            return None, "files 必须是字符串数组且不能为空"
-        return files, None
+    # 统一转为列表处理
+    if isinstance(raw, str):
+        items = [raw]
+    elif isinstance(raw, list):
+        if len(raw) == 0:
+            return None, "file_path 数组不能为空"
+        items = raw
+    else:
+        return None, "file_path 必须是字符串或字符串数组"
 
-    if search_path:
-        include = arguments.get("include") or "**/*"
-        exclude = arguments.get("exclude")
-        file_list = _glob_files(search_path, include, exclude)
-        if not file_list:
-            return None, f"目录 '{search_path}' 下没有匹配的文件（include={include}）"
-        return file_list, None
+    # 确定基目录：用于解析相对路径
+    base_dir = _resolve_project_path(arguments)
+    if base_dir:
+        base_dir = os.path.abspath(base_dir)
+        if not os.path.isdir(base_dir):
+            base_dir = None  # 基目录不可用时回退到 CWD
 
-    return None, "请提供 file_path、files 或 path 参数之一"
+    include = arguments.get("include")
+    exclude = arguments.get("exclude")
+    resolved: List[str] = []
+    errors: List[str] = []
+
+    for item in items:
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"无效路径: {item!r}")
+            continue
+
+        item_stripped = item.strip()
+        # 相对路径 → 优先相对 project_path/workspace_root 解析
+        if not os.path.isabs(item_stripped) and base_dir:
+            abs_path = os.path.normpath(os.path.join(base_dir, item_stripped))
+        else:
+            abs_path = os.path.abspath(item_stripped)
+
+        if os.path.isfile(abs_path):
+            resolved.append(abs_path)
+        elif os.path.isdir(abs_path):
+            file_list = _glob_files(abs_path, include, exclude)
+            if file_list:
+                resolved.extend(file_list)
+            else:
+                errors.append(f"目录 '{item}' 下没有匹配的文件")
+        else:
+            errors.append(f"路径 '{item}' 不存在或既不是文件也不是目录")
+
+    if errors and not resolved:
+        return None, "所有路径均无效: " + "; ".join(errors)
+
+    # 去重（保留首次出现的顺序）
+    seen: Set[str] = set()
+    deduped: List[str] = []
+    for p in resolved:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+
+    result = deduped
+    if errors:
+        logger.warning(f"grep 部分路径无效: {'; '.join(errors)}")
+
+    return result, None
 
 
 def _grep_search_fulltext(
@@ -3395,7 +3512,12 @@ async def _grep_batch(
 
 async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    处理 grep action — 正则搜索 + 多级过滤 + 替换（支持单文件与批量）。
+    处理 grep action — 正则搜索 + 多级过滤 + 替换（支持单文件/目录/路径数组）。
+
+    file_path 支持三种形式：
+      - 文件路径 → 单文件搜索
+      - 目录路径 → 递归搜索目录下 Delphi 文件（可配合 include/exclude）
+      - 路径数组 → 逐项解析，每项可以是文件或目录，结果去重
 
     == 单文件搜索 ==
         delphi_file(
@@ -3420,17 +3542,10 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     == 目录递归搜索 ==
         delphi_file(
             action="grep",
-            path="src/",
-            include="**/*.pas",             # glob 包含模式
+            file_path="src/",
+            include="**/*.pas",   # glob 包含模式（可选，默认所有 Delphi 文件）
             pattern="/TMyClass/i",
             context=1,
-        )
-
-    == 文件列表搜索 ==
-        delphi_file(
-            action="grep",
-            files=["Unit1.pas", "Unit2.pas"],
-            pattern="/TMyClass/i",
         )
 
     == 多 pattern 搜索 ==
@@ -3438,6 +3553,13 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
             action="grep",
             file_path="Unit1.pas",
             patterns=["/TMyClass/i", "/TSomeClass/"],
+        )
+
+    == 路径数组搜索 ==
+        delphi_file(
+            action="grep",
+            file_path=["Unit1.pas", "src/"],
+            pattern="/TMyClass/i",
         )
 
     flags 行内语法:
@@ -3519,19 +3641,22 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if err:
         return _wrap_error(err)
 
-    # ── 路由：仅显式 file_path + 单 pattern → 快速路径（完全向后兼容） ──
-    # path/files 参数即使命中单文件也走 batch，确保输出格式一致
-    file_path_explicit = arguments.get("file_path")
-    if file_path_explicit and len(targets) == 1 and len(compiled_patterns) == 1 and pattern_str:
-        # 显式单文件 DFM 直接报错（批量中的 DFM 静默跳过）
-        if _is_dfm_file(file_path_explicit):
+    # ── 路由：单文件 + 单 pattern → 快速路径 ──
+    # 只有 file_path 是字符串且指向具体文件时才走快速路径；数组或目录自动走批量
+    is_single_file = (
+        isinstance(arguments.get("file_path"), str)
+        and len(targets) == 1
+        and os.path.isfile(targets[0])
+    )
+    if is_single_file and len(compiled_patterns) == 1 and pattern_str:
+        if _is_dfm_file(targets[0]):
             return _wrap_error("grep 不支持 DFM/FMX 文件（可能为二进制格式），请使用 read action 读取")
         return await _grep_single_file(
             targets[0], compiled_patterns, filter_compiled, exclude_compiled,
             replace, dry_run, context, count, use_fulltext, project_path,
         )
 
-    # ── 批量模式（多文件、目录搜索、文件列表 或 多 pattern） ──
+    # ── 批量模式（多文件、目录递归 或 多 pattern） ──
     return await _grep_batch(
         targets, compiled_patterns, filter_compiled, exclude_compiled,
         replace, dry_run, context, count, use_fulltext, project_path,
