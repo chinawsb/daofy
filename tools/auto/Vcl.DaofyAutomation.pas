@@ -28,7 +28,9 @@ uses
   Winapi.Windows, Winapi.Messages,
   System.SysUtils, System.Classes, System.Rtti, System.TypInfo,
   System.Actions, System.Generics.Collections, System.JSON, System.Math, System.Types,
-  Vcl.Forms, Vcl.Controls, Vcl.Graphics, Vcl.Imaging.Jpeg, Vcl.Menus;
+  Vcl.Forms, Vcl.Controls, Vcl.StdCtrls, Vcl.ComCtrls,
+  Vcl.Graphics, Vcl.Imaging.Jpeg, Vcl.Menus,
+  DaofyAutomation.TextCapture;
 
 type
   /// <summary>
@@ -60,7 +62,8 @@ type
     function HandleCmdDrag(const ReqId, Source, Target: string; const X, Y: Integer): string; override;
     function HandleCmdType(const ReqId, Target, Value: string): string; override;
     function HandleCmdKey(const ReqId, Target, Key: string): string; override;
-
+    function HandleCmdTextBounds(const ReqId, Target, Text: string;
+      const Mode: string; IncludeInvisible: Boolean): string; override;
     // ── RTTI ──
 
     function HandleRGet(const ReqId, Target, Prop: string): string; override;
@@ -529,6 +532,357 @@ begin
     SendKeyInput(VK, False);
 
   Result := WriteResp(ReqId, 'ok', 'OK');
+end;
+
+function TAutomationProcessor.HandleCmdTextBounds(const ReqId, Target, Text: string;
+  const Mode: string; IncludeInvisible: Boolean): string;
+
+  function FindTextInStrings(const S: TStrings; const AText: string): Integer;
+  var
+    J: Integer;
+  begin
+    for J := 0 to S.Count - 1 do begin
+      if SameText(Trim(S[J]), Trim(AText)) then
+        Exit(J);
+      if SameText(Trim(Copy(S[J], 1, Length(Trim(AText)))), Trim(AText)) then
+        Exit(J);
+    end;
+    Result := -1;
+  end;
+
+  function BoundsJSON(const AX, AY, AWidth, AHeight: Integer): string;
+  var
+    Resp: TJSONObject;
+  begin
+    Resp := TJSONObject.Create;
+    try
+      Resp.AddPair('x', TJSONNumber.Create(AX));
+      Resp.AddPair('y', TJSONNumber.Create(AY));
+      Resp.AddPair('width', TJSONNumber.Create(AWidth));
+      Resp.AddPair('height', TJSONNumber.Create(AHeight));
+      Result := Resp.ToJSON;
+    finally
+      Resp.Free;
+    end;
+  end;
+
+  // A14-bis: paint-hook 返回的富文本边界 JSON（含可见性/剪裁信息）
+  function RichBoundsJSON(const ARec: TTextRecord): string;
+  var
+    Resp: TJSONObject;
+    VS: string;
+  begin
+    Resp := TJSONObject.Create;
+    try
+      Resp.AddPair('x', TJSONNumber.Create(ARec.Rect.Left));
+      Resp.AddPair('y', TJSONNumber.Create(ARec.Rect.Top));
+      Resp.AddPair('width', TJSONNumber.Create(ARec.Rect.Width));
+      Resp.AddPair('height', TJSONNumber.Create(ARec.Rect.Height));
+      case ARec.VisibleState of
+        vsFullyVisible:     VS := 'full';
+        vsPartiallyVisible: VS := 'partial';
+        vsInvisible:        VS := 'invisible';
+      else
+        VS := 'unknown';
+      end;
+      Resp.AddPair('visible_state', VS);
+      if ARec.HasClip then begin
+        Resp.AddPair('clipped', TJSONBool.Create(True));
+        Resp.AddPair('clip_x', TJSONNumber.Create(ARec.ClipRect.Left));
+        Resp.AddPair('clip_y', TJSONNumber.Create(ARec.ClipRect.Top));
+        Resp.AddPair('clip_width', TJSONNumber.Create(ARec.ClipRect.Width));
+        Resp.AddPair('clip_height', TJSONNumber.Create(ARec.ClipRect.Height));
+      end else
+        Resp.AddPair('clipped', TJSONBool.Create(False));
+      if (ARec.VisibleRect.Width > 0) and (ARec.VisibleRect.Height > 0) then begin
+        Resp.AddPair('visible_x', TJSONNumber.Create(ARec.VisibleRect.Left));
+        Resp.AddPair('visible_y', TJSONNumber.Create(ARec.VisibleRect.Top));
+        Resp.AddPair('visible_width', TJSONNumber.Create(ARec.VisibleRect.Width));
+        Resp.AddPair('visible_height', TJSONNumber.Create(ARec.VisibleRect.Height));
+      end;
+      Resp.AddPair('api', ARec.Api);
+      Result := Resp.ToJSON;
+    finally
+      Resp.Free;
+    end;
+  end;
+
+  // paint-hook 路径：假 DC + PaintTo + hook 捕获
+  function TryPaintHook(Ctl: TControl; const SearchText: string;
+    out AJSON: string): Boolean;
+  var
+    ScreenDC, FakeDC: HDC;
+    Mgr: TTextCaptureManager;
+    Records: TTextRecordList;
+    Matches: TTextRecordList;
+    WC: TWinControl;
+  begin
+    Result := False;
+    AJSON := '';
+    if not (Ctl is TWinControl) then
+      Exit; // PaintTo 仅支持 TWinControl
+    WC := TWinControl(Ctl);
+
+    Mgr := TTextCaptureManager.Instance;
+    ScreenDC := GetDC(WC.Handle);
+    if ScreenDC = 0 then
+      Exit;
+    try
+      FakeDC := Mgr.BeginCapture(ScreenDC, WC.ClientWidth, WC.ClientHeight);
+      if FakeDC = 0 then
+        Exit;
+      if Mgr.HookFailed then
+        Exit; // hook 安装失败，调用方回退 type-bound
+      try
+        WC.PaintTo(FakeDC, 0, 0);
+      finally
+        Records := Mgr.EndCapture;
+      end;
+      Matches := Mgr.FilterBySearchText(Records, SearchText, IncludeInvisible);
+      if Length(Matches) = 0 then
+        Exit;
+      AJSON := RichBoundsJSON(Matches[0]);
+      Result := True;
+    finally
+      ReleaseDC(WC.Handle, ScreenDC);
+    end;
+  end;
+
+  // type-bound 回退路径（保留原逻辑）
+  function TypeBoundFallback(Ctl: TControl; const SearchText: string): string;
+  var
+    I: Integer;
+    R: TRect;
+    ChildCtl: TControl;
+    TopIdx, VisibleCount, TotalItems: Integer;
+
+    // 获取 EDIT/RichEdit 控件中指定字符的客户区坐标
+    // RichEdit 2.0+ 的 EM_POSFROMCHAR 参数语义与 EDIT 不同
+    function GetCharPos(EditHandle: HWND; CharIdx: Integer; IsRichEdit: Boolean): TPoint;
+    var
+      LRes: LRESULT;
+    begin
+      Result := Point(0, 0);
+      if IsRichEdit then
+        SendMessage(EditHandle, EM_POSFROMCHAR, WPARAM(@Result), LPARAM(CharIdx))
+      else begin
+        LRes := SendMessage(EditHandle, EM_POSFROMCHAR, CharIdx, 0);
+        if LRes >= 0 then begin
+          Result.X := SmallInt(LoWord(LRes));
+          Result.Y := SmallInt(HiWord(LRes));
+        end;
+      end;
+    end;
+
+    // 用 EM_POSFROMCHAR 获取行首精确 y 坐标，替代硬编码 16 像素行高
+    // 行高优先用下一行首字符 y 差计算，最后一行用 GetTextMetrics 字体高度
+    function GetLineRect(Memo: TMemo; LineIdx: Integer; IsRichEdit: Boolean): TRect;
+    var
+      NextIdx, LH: Integer;
+      StartP, NextP: TPoint;
+      LDC: HDC;
+      LOldFont: HGDIOBJ;
+      LTM: TTextMetric;
+    begin
+      NextIdx := SendMessage(Memo.Handle, EM_LINEINDEX, LineIdx, 0);
+      StartP := GetCharPos(Memo.Handle, NextIdx, IsRichEdit);
+
+      LH := 16; // 回退默认值
+      if LineIdx + 1 < Memo.Lines.Count then begin
+        NextIdx := SendMessage(Memo.Handle, EM_LINEINDEX, LineIdx + 1, 0);
+        NextP := GetCharPos(Memo.Handle, NextIdx, IsRichEdit);
+        if NextP.Y > StartP.Y then
+          LH := NextP.Y - StartP.Y;
+      end else begin
+        LDC := GetDC(Memo.Handle);
+        if LDC <> 0 then
+        try
+          LOldFont := SelectObject(LDC, Memo.Font.Handle);
+          try
+            if GetTextMetrics(LDC, LTM) then
+              LH := LTM.tmHeight + LTM.tmExternalLeading;
+          finally
+            SelectObject(LDC, LOldFont);
+          end;
+        finally
+          ReleaseDC(Memo.Handle, LDC);
+        end;
+      end;
+
+      Result := Rect(2, StartP.Y, Memo.Width - 2, StartP.Y + LH);
+    end;
+
+  begin
+    // ── TListBox / TCheckListBox ──
+    if Ctl is TListBox then begin
+      I := FindTextInStrings(TListBox(Ctl).Items, SearchText);
+      if I < 0 then
+        Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+      R := TListBox(Ctl).ItemRect(I);
+      Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+    end;
+
+    // ── TComboBox ──
+    // 项矩形只计算可见项区域：下拉列表未展开时仅匹配选中项返回 Edit 框矩形；
+    // 展开时根据 TopIndex 和可见项数判断项是否可见，不可见返回 NOT_VISIBLE
+    if Ctl is TComboBox then begin
+      I := FindTextInStrings(TComboBox(Ctl).Items, SearchText);
+      if I < 0 then
+        Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+
+      // 下拉列表未展开：仅当选中项匹配时返回 Edit 框矩形
+      if SendMessage(TComboBox(Ctl).Handle, CB_GETDROPPEDSTATE, 0, 0) = 0 then begin
+        if (TComboBox(Ctl).ItemIndex >= 0)
+        and SameText(Trim(TComboBox(Ctl).Items[TComboBox(Ctl).ItemIndex]), Trim(SearchText)) then
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(0, 0, Ctl.Width, Ctl.Height)));
+        Exit(WriteResp(ReqId, 'err', 'DROPDOWN_CLOSED'));
+      end;
+
+      // 下拉列表展开：获取 TopIndex 计算可见区域
+      TopIdx := SendMessage(TComboBox(Ctl).Handle, CB_GETTOPINDEX, 0, 0);
+      if TopIdx < 0 then TopIdx := 0;
+      VisibleCount := TComboBox(Ctl).DropDownCount;
+      if VisibleCount <= 0 then VisibleCount := 8;
+      TotalItems := TComboBox(Ctl).Items.Count;
+      if VisibleCount > TotalItems - TopIdx then
+        VisibleCount := TotalItems - TopIdx;
+
+      // 项不在可见区域：需先滚动
+      if (I < TopIdx) or (I >= TopIdx + VisibleCount) then
+        Exit(WriteResp(ReqId, 'err', 'NOT_VISIBLE'));
+
+      // 返回项在下拉列表中的相对矩形（相对于 ComboBox 控件坐标）
+      R := Rect(0, (I - TopIdx) * TComboBox(Ctl).ItemHeight,
+                Ctl.Width, (I - TopIdx + 1) * TComboBox(Ctl).ItemHeight);
+      Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+    end;
+
+    // ── TTreeView ──
+    if Ctl is TTreeView then begin
+      for I := 0 to TTreeView(Ctl).Items.Count - 1 do begin
+        if SameText(Trim(TTreeView(Ctl).Items[I].Text), Trim(SearchText)) then begin
+          R := TTreeView(Ctl).Items[I].DisplayRect(True);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── TListView ──
+    if Ctl is TListView then begin
+      for I := 0 to TListView(Ctl).Items.Count - 1 do begin
+        if SameText(Trim(TListView(Ctl).Items[I].Caption), Trim(SearchText)) then begin
+          R := TListView(Ctl).Items[I].DisplayRect(drBounds);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── TPageControl ──
+    if Ctl is TPageControl then begin
+      for I := 0 to TPageControl(Ctl).PageCount - 1 do begin
+        if SameText(Trim(TPageControl(Ctl).Pages[I].Caption), Trim(SearchText)) then begin
+          R := TPageControl(Ctl).TabRect(I);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── TTabControl ──
+    if Ctl is TTabControl then begin
+      for I := 0 to TTabControl(Ctl).Tabs.Count - 1 do begin
+        if SameText(Trim(TTabControl(Ctl).Tabs[I]), Trim(SearchText)) then begin
+          R := TTabControl(Ctl).TabRect(I);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── TMemo ──
+    // 用 EM_POSFROMCHAR 获取行首精确 y 坐标，替代硬编码 16 像素行高
+    if Ctl is TMemo then begin
+      for I := 0 to TMemo(Ctl).Lines.Count - 1 do begin
+        if SameText(Trim(TMemo(Ctl).Lines[I]), Trim(SearchText))
+        or (Pos(AnsiUpperCase(SearchText), AnsiUpperCase(TMemo(Ctl).Lines[I])) > 0) then
+        begin
+          R := GetLineRect(TMemo(Ctl), I, False);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── TRichEdit (via ClassName) ──
+    // RichEdit 2.0+ 的 EM_POSFROMCHAR 参数语义与 EDIT 不同（wParam=@Point, lParam=CharIdx）
+    if Ctl.ClassNameIs('TRichEdit') then begin
+      for I := 0 to TMemo(Ctl).Lines.Count - 1 do begin
+        if SameText(Trim(TMemo(Ctl).Lines[I]), Trim(SearchText))
+        or (Pos(AnsiUpperCase(SearchText), AnsiUpperCase(TMemo(Ctl).Lines[I])) > 0) then
+        begin
+          R := GetLineRect(TMemo(Ctl), I, True);
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(R.Left, R.Top, R.Width, R.Height)));
+        end;
+      end;
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+    end;
+
+    // ── 通用: 遍历子控件匹配 Caption/Text ──
+    if Ctl is TWinControl then begin
+      for I := 0 to TWinControl(Ctl).ControlCount - 1 do begin
+        ChildCtl := TWinControl(Ctl).Controls[I];
+        if IsPublishedProp(ChildCtl, 'Caption')
+        and SameText(Trim(GetStrProp(ChildCtl, 'Caption')), Trim(SearchText)) then begin
+          Exit(WriteResp(ReqId, 'ok', BoundsJSON(ChildCtl.Left, ChildCtl.Top, ChildCtl.Width, ChildCtl.Height)));
+        end;
+      end;
+    end;
+
+    Result := WriteResp(ReqId, 'err', 'TXT_NF');
+  end;
+
+var
+  AtPos: Integer;
+  CtrlName, SearchText: string;
+  Ctl: TControl;
+  PaintJSON: string;
+begin
+  try
+    AtPos := Pos('@', Target);
+    CtrlName := Target;
+    if AtPos > 0 then begin
+      SearchText := Copy(Target, AtPos + 1, MaxInt);
+      CtrlName := Copy(Target, 1, AtPos - 1);
+    end else
+      SearchText := Text;
+
+    if CtrlName = '' then
+      Exit(WriteResp(ReqId, 'err', 'NO_TARGET'));
+    if SearchText = '' then
+      Exit(WriteResp(ReqId, 'err', 'NO_TEXT'));
+    if Screen.ActiveForm = nil then
+      Exit(WriteResp(ReqId, 'err', 'NO_FORM'));
+
+    Ctl := TControl(FindNamedControl(CtrlName));
+    if Ctl = nil then
+      Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+
+    // Mode 路由：paint/auto → 先 paint-hook；type/auto-fallback → type-bound
+    if (Mode = 'paint') or (Mode = 'auto') then begin
+      if TryPaintHook(Ctl, SearchText, PaintJSON) then
+        Exit(WriteResp(ReqId, 'ok', PaintJSON));
+      if Mode = 'paint' then
+        Exit(WriteResp(ReqId, 'err', 'PAINT_NF'));
+      // auto: 回退到 type-bound
+    end;
+
+    Result := TypeBoundFallback(Ctl, SearchText);
+  except
+    on E: Exception do
+      Result := WriteResp(ReqId, 'err', E.Message);
+  end;
 end;
 
 function TAutomationProcessor.HandleCmdDblClick(const ReqId, Target: string): string;

@@ -103,7 +103,8 @@ async def compile_file(
     conditional_defines: Optional[List[str]] = None,
     warning_level: int = 2,
     disabled_warnings: Optional[List[str]] = None,
-    compiler_version: Optional[str] = None
+    compiler_version: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
 ) -> CallToolResult:
     """
     编译单个 Delphi 单元文件(仅语法检查)
@@ -115,6 +116,7 @@ async def compile_file(
         warning_level: 警告级别(0-4)
         disabled_warnings: 禁用的警告列表
         compiler_version: 编译器版本名称（可选，不传时使用最新安装的版本）
+        extra_args: 附加编译器参数列表
 
     Returns:
         编译结果
@@ -166,6 +168,7 @@ async def compile_file(
             warning_level=warning_level,
             disabled_warnings=disabled_warnings or [],
             compiler_version=compiler_version,
+            extra_args=extra_args or [],
         )
 
         result = await _compiler_service.compile_file(request)

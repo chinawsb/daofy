@@ -480,8 +480,8 @@ def test_stacktrace_parse_map_file_uses_uint64_address_storage():
     assert "DWORD(LOffset)" not in body
 
 
-def test_stacktrace_mapdata_v12_varint_uses_zigzag_int64_with_existing_names():
-    """MAPDATA v12 should keep ReadVarInt/WriteVarInt names while using ZigZag Int64 payloads."""
+def test_stacktrace_mapdata_v13_varint_uses_zigzag_int64_with_existing_names():
+    """MAPDATA v13 should keep ReadVarInt/WriteVarInt names while using ZigZag Int64 payloads."""
     source = _read_repo_text("tools/stacktrace/StackTrace.pas")
     serializer_start = source.index("TMapDataSerializer = class")
     serializer_end = source.index("public", serializer_start)
@@ -493,7 +493,7 @@ def test_stacktrace_mapdata_v12_varint_uses_zigzag_int64_with_existing_names():
     serialize_end = source.index("class function TMapDataSerializer.Validate", serialize_start)
     serialize_body = source[serialize_start:serialize_end]
 
-    assert "MapResVersion = 12;" in source
+    assert "MapResVersion = 13;" in source
     assert "class function WriteVarInt(AStream: TStream; Value: Int64): Integer; static;" in serializer_decl
     assert "class function ReadVarInt(AStream: TStream; out Value: Int64): Boolean; static;" in serializer_decl
     assert "class function TMapDataSerializer.EncodeZigZag(AValue: Int64): UInt64;" in source
@@ -508,6 +508,22 @@ def test_stacktrace_mapdata_v12_varint_uses_zigzag_int64_with_existing_names():
     assert "LDelta: Int64;" in serialize_body
     assert "Integer(LAddr)" not in serialize_body
     assert "Integer(LCurAddr)" not in serialize_body
+
+
+def test_stacktrace_mapdata_stack_offset_reads_signed_varint():
+    """StackOffset is signed, so deserialization must not use the non-negative bounded reader."""
+    source = _read_repo_text("tools/stacktrace/StackTrace.pas")
+    deserialize_start = source.index("class function TMapDataSerializer.Deserialize")
+    deserialize_end = source.index("class function TMapDataSerializer.Serialize", deserialize_start)
+    deserialize_body = source[deserialize_start:deserialize_end]
+    location_start = deserialize_body.index("{ Read v13+ location data }")
+    location_end = deserialize_body.index("var LFlags: Byte;", location_start)
+    location_block = deserialize_body[location_start:location_end]
+
+    assert "ReadVarInt(LStream, LStackOffRaw)" in location_block
+    assert "LStackOffRaw < Low(Integer)" in location_block
+    assert "LStackOffRaw > High(Integer)" in location_block
+    assert "ReadBoundedInt" not in location_block
 
 
 def test_stacktrace_mapdata_serializer_writes_per_symbol_token_indexes():

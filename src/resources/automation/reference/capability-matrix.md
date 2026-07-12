@@ -1,4 +1,5 @@
-﻿<!-- @when: 需要根据场景选择自动化命令/工具时 -->
+<!-- @when: 需要根据场景选择自动化命令/工具时 -->
+<!-- @see: controls-operation-reference.md（按控件类型查推荐命令与陷阱） -->
 # 自动化能力选型矩阵
 
 MCP URI: `delphi://automation/capability-matrix`
@@ -34,6 +35,7 @@ MCP URI: `delphi://automation/capability-matrix`
 | 11 | **拖拽控件** | 黑盒 | `drag` | — | — | 管道原生支持 drag |
 | 12 | **截图对比回归验证** | 所有 | `capture` + OCR `diff` | — | — | capture 管道截图，diff 像素对比 |
 | 13 | **OS 文件打开/保存对话框** | 所有 | `dlgfile` | — | `click` 定位文件名框 | dlgfile 通过 HWND 操作 |
+| 14 | **按显示文本定位控件边界**（替代 OCR） | 所有 | `textbounds` | `capture`+OCR `recognize` 或 `uia.*` | — | ⚠️ **仅覆盖 GDI/GDI+ 渲染栈**（VCL/FMX Windows/第三方 GDI 库）；**不覆盖 DirectUI/WPF/UWP/Electron/Qt Quick**（用 `uia.*`），不覆盖 WebView（用 OCR）。详见 `script-schema.md` textbounds 章节"适用范围与限制" |
 
 ### 操作系统弹窗专项
 
@@ -160,6 +162,7 @@ MCP URI: `delphi://automation/capability-matrix`
 | **跨进程 Tab 切换** | `uia.click`（标签名） | `uia.select`（标签名） | ❌ 坐标 |
 | **CheckBox/RadioButton 切换** | `click`（Delphi 内） | `uia.toggle`（跨进程） | ❌ rset（黑盒） |
 | **列表项滚动可见** | `uia.scrollinto` | `uia.scroll` 方向+量 | — |
+| **按文本定位列表/树/标签页项** | `textbounds`（mode=auto） | `capture`+OCR | ❌ 裸坐标点击 |
 
 ### 验证与断言
 
@@ -170,7 +173,7 @@ MCP URI: `delphi://automation/capability-matrix`
 | **验证弹窗未弹出** | `msgscan` + `assert_expr == 'NOD'` | `uia.wait` condition=notexist | ❌ 固定延时 |
 | **验证窗口状态** | `uia.state` | — | — |
 | **视觉对比（回归）** | `capture` + OCR `diff` | `uia.screenshot` + OCR `diff` | ❌ 仅肉眼观察 |
-| **验证文本无截断** | `capture` + OCR `recognize` | `uia.get` `prop=name` | ❌ 仅测像素宽度 |
+| **验证文本无截断** | `textbounds`（visible_state=full 即无截断） | `capture` + OCR `recognize` | ❌ 仅测像素宽度 |
 | **验证布局对齐** | `capture` + OCR `color`（区块边界） | `uia.rect` 计算间距 | ❌ 凭感觉判断 |
 
 ### 通用优先级速查
@@ -179,6 +182,7 @@ MCP URI: `delphi://automation/capability-matrix`
 操作目标
 ├─ Delphi 进程内 + 有 RTTI → RTTI (rget/rset/rcall/rinspect)
 ├─ Delphi 进程内 + 纯黑盒 → 管道 (click/type/key/waitfor/capture)
+├─ Delphi 进程内 + 按文本定位控件 → textbounds（替代 OCR，mode=auto）⚠️ 仅 GDI/GDI+ 渲染栈；FMX 跨平台非 Windows 或 DirectUI/WPF/UWP/Electron/WebView 控件不覆盖，用 uia.* 或 OCR
 ├─ 系统弹窗
 │   ├─ MessageBox → msgscan + msgclick/msgclose
 │   ├─ 文件对话框 → dlgfile

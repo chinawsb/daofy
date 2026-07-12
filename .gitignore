@@ -92,12 +92,18 @@ tmp_*.ps1
 # npm artifacts (accidental)
 node_modules/
 
-# Config (可能包含本地路径)
-config/compilers.json
-config/history.json
+# Config (可能包含本地路径或密钥)
+config/
 src/config/
 temp_scan_result.json
 opencode.json
+
+# ML model artifacts
+yolo*.pt
+yolo*.onnx
+yolo_synthetic/
+runs/
+models/
 
 # Creative roadmap (not in version control)
 docs/roadmap-creative.md

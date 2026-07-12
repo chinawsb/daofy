@@ -9,6 +9,21 @@ project(action="compile", project_path="Unit1.pas")          # 语法检查
 project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 ```
 
+### 附加编译参数（extra_args）
+
+`extra_args` 是完整参数数组，按实际编译后端解释，并在内建参数之后追加：
+
+```python
+# .dproj / 有同名 .dproj 的 .dpr：MSBuild 参数，请求生成 TDS/RSM
+project(action="compile", project_path="Project.dproj",
+        extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])
+
+# 无同名 .dproj 的 .dpr：直接 DCC 参数
+project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
+```
+
+每个数组元素是一个完整参数，不要自行添加外层引号。如果编译器生成 `.tds`/`.rsm`，它们会列入 `output_files`。
+
 ### 运行验证（run_verify）
 
 ```python

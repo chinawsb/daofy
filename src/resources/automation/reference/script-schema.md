@@ -124,6 +124,62 @@ Delphi 内联单元使用纯 RTTI 读取每项的 `Caption`（或回退到 `Text
 
 **优先使用基于标题的点击**（菜单、列表、分类按钮等集合类控件），其对布局变化和 DPI 缩放的鲁棒性更好。
 
+### textbounds 按文本定位控件边界
+
+`textbounds` 通过拦截 GDI/GDI+ 文本绘制函数（paint-hook）定位控件中匹配文本的客户端边界矩形，替代 OCR。两种模式：
+
+- `paint` — 仅 paint-hook（拦截文本绘制，通用，支持任意控件含第三方/自绘/FMX）
+- `type` — 仅 type-bound（按控件类型分发，覆盖标准 VCL 控件：TListBox/TComboBox/TTreeView/TListView/TPageControl/TTabControl/TMemo/TRichEdit）
+- `auto` — paint-hook 优先，失败回退 type-bound（默认）
+
+```json
+{"cmd": "textbounds", "target": "ListBox1@打开工程", "mode": "auto"}
+{"cmd": "textbounds", "target": "Panel1", "text": "保存", "mode": "paint", "include_invisible": false}
+```
+
+字段说明：
+- `target` — 控件名（`ControlName@searchText` 旧式语法兼容，文本也可通过 `text` 字段单独提供）。
+- `text` — 搜索文本（与 `target` 中 `@` 后的文本二选一）。
+- `mode` — `paint`/`type`/`auto`，默认 `auto`。
+- `include_invisible` — 是否包含完全不可见的记录（默认 `false`，仅诊断用）。
+
+返回值（`response.state` 自动反序列化）：
+- 简单模式（type-bound）：`{"x":..,"y":..,"width":..,"height":..}`
+- 富模式（paint-hook）额外含：
+  - `visible_state` — `full`/`partial`/`invisible`/`unknown`（文本可见性）
+  - `clipped` — 是否被剪裁（`true`/`false`）
+  - `clip_x`/`clip_y`/`clip_width`/`clip_height` — 剪裁矩形（clipped=true 时）
+  - `visible_x`/`visible_y`/`visible_width`/`visible_height` — 可见矩形
+  - `api` — 来源 API（`ExtTextOutW`/`DrawTextExW`/`GdipDrawString` 等）
+
+错误码：`NO_TARGET`/`NO_TEXT`/`NO_FORM`/`NF:控件名`/`TXT_NF`/`PAINT_NF`（paint 模式未找到）。
+
+#### 适用范围与限制（必读）
+
+`textbounds` 的 paint-hook 只拦截 **GDI（gdi32.dll）和 GDI+（gdiplus.dll）** 的文本绘制函数。**不覆盖 Direct2D / DirectWrite / MIL / Skia / Blink / Qt RHI 等其他渲染栈。**
+
+各 UI 栈覆盖情况：
+
+| UI 栈 | 渲染方式 | textbounds 覆盖 | 应选用工具 |
+|--------|---------|:---:|------|
+| VCL 标准/自绘控件 | GDI | ✅ | `textbounds` |
+| 第三方 GDI 库（DevExpress/TMS 等）| GDI | ✅ | `textbounds` |
+| FMX（Windows 平台）| GDI+ | ✅ | `textbounds` |
+| **DirectUI**（Win8+ 系统组件、Ribbon、新版文件对话框现代视图）| Direct2D + DirectWrite | ❌ | `uiascan`/`uiaget`（DirectUI 实现了 UIA Provider） |
+| **WPF** | MIL/Direct2D | ❌ | `uia.*` 命令 |
+| **UWP / WinUI 3** | XAML + Direct2D | ❌ | `uia.*` 命令 |
+| **Electron / WebView2** | Blink / Skia | ❌ | `capture` + `daofy_ocr` |
+| **Qt Quick** | OpenGL / RHI | ❌ | `capture` + `daofy_ocr` |
+| **系统旧版对话框**（`GetOpenFileName`、`MessageBox`、`TOpenDialog` 经典视图）| GDI | ✅ | `textbounds`（但与下方现代视图混合时见陷阱） |
+
+**DirectUI 混合渲染陷阱**：Windows 8+ 的现代文件对话框（`IFileOpenDialog`）等是**混合渲染**——对话框外框和经典控件走 GDI，但文件列表区域的新样式视图走 DirectUI。`textbounds` 只能拿到 GDI 部分，文件列表项的文本拿不到。这种场景应该用 `uiascan`。
+
+**何时不应选 textbounds**：
+- 目标控件在 WebView/浏览器内 → 用 `capture` + `daofy_ocr`
+- 目标是 WPF/UWP/Electron/Qt 窗口 → 用 `uia.*` 或 `capture` + `daofy_ocr`
+- 目标是系统对话框的文件列表项（DirectUI 部分）→ 用 `uiascan`，不要用 `textbounds`
+- 目标控件已知是标准 VCL 类型（TListBox/TComboBox/TTreeView/TListView/TPageControl 等）且文本可通过 RTTI 读取 → 直接用 `rget` 更快更准
+
 ## 断言规则
 
 `assert_expr` 是可在 Python 中求值的表达式，`__builtins__` 为空，显式可用变量：

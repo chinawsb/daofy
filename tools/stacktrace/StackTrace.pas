@@ -42,7 +42,7 @@ const
   PreferredImageBase = $00400000;
   MapAddrSegShift = $00401000 - PreferredImageBase;
   MapResMagic: array[0..3] of AnsiChar = 'MAPD';
-  MapResVersion = 12;
+  MapResVersion = 13;
   MapOverlayMagic: array[0..7] of AnsiChar = 'MAPOVL01';
 
 const
@@ -102,13 +102,16 @@ type
     NameCache: TDictionary<string, UInt64>; // 符号名 -> 模块 RVA
   end;
 
-  /// <summary>Local variable metadata</summary>
+  /// <summary>Local variable metadata (v13+ includes StackOffset/IsRegister/RegIndex)</summary>
   TLocalVarInfo = record
     Name: string;
     TypeName: string;
     TypeInfo: PTypeInfo;
     TypeKind: Byte;
     MaxLen: Word; // >0 when this is a ShortString[N] (value = N+1)
+    StackOffset: Integer; // signed offset from EBP/RBP (0 if register variable)
+    IsRegister: Boolean;  // True for REGISTER variables
+    RegIndex: Byte;       // register index (valid when IsRegister=True)
     constructor Create(const AName, ATypeName: string; ATypeKind: Byte); overload;
     constructor Create(const AName, ATypeName: string; ATypeKind: Byte; AMaxLen: Word); overload;
     function GetTypeSize: Integer;
@@ -618,6 +621,9 @@ begin
   TypeInfo := nil;
   TypeKind := ATypeKind;
   MaxLen := 0;
+  StackOffset := 0;
+  IsRegister := False;
+  RegIndex := 0;
 end;
 
 constructor TLocalVarInfo.Create(const AName, ATypeName: string; ATypeKind: Byte; AMaxLen: Word);
@@ -627,6 +633,9 @@ begin
   TypeInfo := nil;
   TypeKind := ATypeKind;
   MaxLen := AMaxLen;
+  StackOffset := 0;
+  IsRegister := False;
+  RegIndex := 0;
 end;
 
 function TLocalVarInfo.GetTypeSize: Integer;
@@ -1038,6 +1047,19 @@ begin
         LEntry.Vars[LLen].TypeKind := LKind;
         LEntry.Vars[LLen].MaxLen := LMaxLen;
 
+        { Read v13+ location data }
+        var LStackOffRaw: Int64;
+        if not ReadVarInt(LStream, LStackOffRaw) then
+          Exit;
+        if (LStackOffRaw < Low(Integer)) or (LStackOffRaw > High(Integer)) then
+          Exit;
+        LEntry.Vars[LLen].StackOffset := Integer(LStackOffRaw);
+        var LFlags: Byte;
+        if LStream.Read(LFlags, 1) <> 1 then
+          Exit;
+        LEntry.Vars[LLen].IsRegister := (LFlags and 1) <> 0;
+        LEntry.Vars[LLen].RegIndex := (LFlags shr 1) and $7F;
+
         var LTNCount: Integer;
         if not ReadBoundedInt(LTNCount, 100) then
           Exit;
@@ -1109,6 +1131,9 @@ var
   LLocalTokKinds: TArray<TArray<Byte>>;
   LLocalTokMaxLens: TArray<TArray<Integer>>;
   LLocalTokTypeNames: TArray<TArray<TArray<Integer>>>;
+  LLocalTokStackOffs: TArray<TArray<Integer>>;
+  LLocalTokIsRegs: TArray<TArray<Boolean>>;
+  LLocalTokRegIdxs: TArray<TArray<Byte>>;
   LSymVarCount: TArray<Integer>;
   LSymVarParamCount: TArray<Integer>;
   LSymVarCallConv: TArray<Byte>;
@@ -1161,6 +1186,9 @@ begin
     SetLength(LLocalTokKinds, Length(MapData.LocalVars));
     SetLength(LLocalTokMaxLens, Length(MapData.LocalVars));
     SetLength(LLocalTokTypeNames, Length(MapData.LocalVars));
+    SetLength(LLocalTokStackOffs, Length(MapData.LocalVars));
+    SetLength(LLocalTokIsRegs, Length(MapData.LocalVars));
+    SetLength(LLocalTokRegIdxs, Length(MapData.LocalVars));
 
     // Build symbol index lookup
     SetLength(LSymLookup, Length(MapData.SymbolEntries));
@@ -1191,6 +1219,9 @@ begin
         SetLength(LLocalTokKinds[I], LVarCount);
         SetLength(LLocalTokMaxLens[I], LVarCount);
         SetLength(LLocalTokTypeNames[I], LVarCount);
+        SetLength(LLocalTokStackOffs[I], LVarCount);
+        SetLength(LLocalTokIsRegs[I], LVarCount);
+        SetLength(LLocalTokRegIdxs[I], LVarCount);
         for J := 0 to LVarCount - 1 do begin
           LTokenIds.Clear;
           TokenizeName(MapData.LocalVars[I].Vars[J].Name, LTokenIds, LDict, LOrdered);
@@ -1200,6 +1231,9 @@ begin
             LLocalTokNames[I][J] := 0;
           LLocalTokKinds[I][J] := MapData.LocalVars[I].Vars[J].TypeKind;
           LLocalTokMaxLens[I][J] := MapData.LocalVars[I].Vars[J].MaxLen;
+          LLocalTokStackOffs[I][J] := MapData.LocalVars[I].Vars[J].StackOffset;
+          LLocalTokIsRegs[I][J] := MapData.LocalVars[I].Vars[J].IsRegister;
+          LLocalTokRegIdxs[I][J] := MapData.LocalVars[I].Vars[J].RegIndex;
           LTokenIds.Clear;
           if MapData.LocalVars[I].Vars[J].TypeName <> '' then
             TokenizeName(MapData.LocalVars[I].Vars[J].TypeName, LTokenIds, LDict, LOrdered);
@@ -1372,6 +1406,13 @@ begin
             WriteVarInt(LStream, LLocalTokNames[LVarLookup][J]);
             LStream.WriteBuffer(LLocalTokKinds[LVarLookup][J], 1);
             WriteVarInt(LStream, LLocalTokMaxLens[LVarLookup][J]);
+            { Write v13+ location data }
+            WriteVarInt(LStream, LLocalTokStackOffs[LVarLookup][J]);
+            var LFlags: Byte := 0;
+            if LLocalTokIsRegs[LVarLookup][J] then
+              LFlags := LFlags or 1;
+            LFlags := LFlags or (LLocalTokRegIdxs[LVarLookup][J] shl 1);
+            LStream.WriteBuffer(LFlags, 1);
             var LTN := LLocalTokTypeNames[LVarLookup][J];
             WriteVarInt(LStream, Length(LTN));
             for var K := 0 to High(LTN) do
@@ -1383,6 +1424,8 @@ begin
             LStream.WriteBuffer(LZero, 1);
             WriteVarInt(LStream, 0);
             WriteVarInt(LStream, 0);
+            WriteVarInt(LStream, 0); { StackOffset }
+            LStream.WriteBuffer(LZero, 1); { flags }
           end;
         end;
       end;
@@ -4329,6 +4372,16 @@ begin
   // First AParamCount entries are parameters
   var LParamDist := 8;
   for I := 0 to AParamCount - 1 do begin
+    // If TD32-derived (v13+) location info is available, use it directly.
+    if AVars[I].IsRegister then begin
+      Offsets[I] := 0; // register-optimized param
+      Continue;
+    end;
+    if AVars[I].StackOffset <> 0 then begin
+      Offsets[I] := AVars[I].StackOffset; // compiler-accurate offset
+      Continue;
+    end;
+    // Fall back to heuristic for MAPDATA < v13 (no TD32 location data).
     if AVars[I].MaxLen > 0 then
       LSize := AVars[I].MaxLen
     else if AVars[I].TypeKind = Byte(Ord(tkString)) then
@@ -4366,6 +4419,16 @@ begin
   // Remaining entries are local variables (BP-pointer, BP-2*pointer, ...).
   LDist := SizeOf(Pointer);
   for I := AParamCount to High(AVars) do begin
+    // If TD32-derived (v13+) location info is available, use it directly.
+    if AVars[I].IsRegister then begin
+      Offsets[I] := 0; // register-optimized local
+      Continue;
+    end;
+    if AVars[I].StackOffset <> 0 then begin
+      Offsets[I] := AVars[I].StackOffset; // compiler-accurate offset
+      Continue;
+    end;
+    // Fall back to heuristic for MAPDATA < v13 (no TD32 location data).
     if AVars[I].MaxLen > 0 then
       LSize := AVars[I].MaxLen
     else if AVars[I].TypeKind = Byte(Ord(tkString)) then
@@ -4391,11 +4454,15 @@ begin
 
   // Verify: total local area fits within frame.
   // If not, variables beyond frame size are register-optimized — mark offset=0.
+  // Skip vars with TD32-derived data — their offsets are compiler-accurate.
   if (FrameSize > 0) and (AParamCount < Length(AVars)) then begin
     var LTotalLocal := LDist - SizeOf(Pointer);
     if LTotalLocal > FrameSize then begin
       // Walk backwards: mark overflow locals as register (offset=0)
       for var J := High(AVars) downto AParamCount do begin
+        // Skip TD32-derived vars — their offsets are already correct.
+        if AVars[J].IsRegister or (AVars[J].StackOffset <> 0) then
+          Continue;
         if (-Offsets[J]) > FrameSize then
           Offsets[J] := 0 // register-optimized local
         else

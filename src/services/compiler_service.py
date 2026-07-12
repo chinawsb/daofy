@@ -1050,9 +1050,21 @@ class CompilerService:
                     logger.info("检测到 Delphi %s (>=XE5)，已启用 DCC_UseMSBuildExternally", delphi_ver)
             except Exception as e:
                 logger.warning("检测 Delphi 版本失败，不启用 DCC_UseMSBuildExternally: %s", e)
-            
+
             # 其他参数
             args.append("/v:minimal")  # 最小输出级别
+
+            # 用户参数最后追加，允许覆盖前面的同名 MSBuild 属性或开关。
+            if not self.args_generator.validate_batch_extra_args(request.options.extra_args):
+                error_msg = "额外编译参数包含不允许的批处理元字符"
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_EXTRA_ARGS",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+            args.extend(request.options.extra_args)
             
             # 记录完整编译参数到日志
             msbuild_cmd = f'msbuild {" ".join(args)}'
@@ -1403,6 +1415,7 @@ class CompilerService:
                 output_dir=output_dir,
                 delphi_version=delphi_version,
                 conditional_defines=request.conditional_defines,
+                extra_args=request.extra_args,
             )
 
             # 5. 执行编译
@@ -1545,7 +1558,7 @@ class CompilerService:
         candidate_dirs.append(project_dir)                    # 项目根目录（MSBuild 缺省输出）
 
         # 输出产物列表（StackTrace/callgraph 需要 .map 做符号解析，.drc 不需要）
-        extensions = ['.exe', '.dll', '.bpl', '.bpi', '.dcp', '.map']
+        extensions = ['.exe', '.dll', '.bpl', '.bpi', '.dcp', '.map', '.tds', '.rsm']
         found: list[str] = []
 
         for output_dir in candidate_dirs:

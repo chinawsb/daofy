@@ -447,6 +447,7 @@ async def compile_project(
     output_type: str = "gui",
     runtime_library: str = "static",
     build_configuration: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
     auto_install: bool = True,
     run_after_compile: bool = False,
     run_verify: bool = False
@@ -470,6 +471,7 @@ async def compile_project(
         output_type: 输出类型(console/gui/dll)
         runtime_library: 运行时库链接方式(static/dynamic)
         build_configuration: 编译配置名称
+        extra_args: 附加到实际编译后端的完整参数列表
         auto_install: 如果是设计期包，是否自动安装（默认 True）
         run_after_compile: 编译成功后，以末次运行参数启动程序
         run_verify: 编译成功后，启动程序 3 秒验证是否崩溃（自动结束进程）
@@ -511,7 +513,8 @@ async def compile_project(
                 target_platform=target_platform,
                 build_configuration=build_configuration or "Debug",
                 timeout=timeout,
-                auto_install=auto_install
+                auto_install=auto_install,
+                extra_args=extra_args,
             )
         
         # 自动检测编译器版本(如果未指定)
@@ -541,7 +544,8 @@ async def compile_project(
             disabled_warnings=disabled_warnings or [],
             output_type=OutputType(output_type),
             runtime_library=RuntimeLibrary(runtime_library),
-            build_configuration=build_configuration
+            build_configuration=build_configuration,
+            extra_args=extra_args or [],
         )
 
         # 构建编译请求
@@ -696,7 +700,8 @@ async def _compile_dpk_package(
     target_platform: str,
     build_configuration: str,
     timeout: int,
-    auto_install: bool
+    auto_install: bool,
+    extra_args: Optional[List[str]] = None,
 ) -> CallToolResult:
     """
     编译 DPK 包文件
@@ -707,6 +712,7 @@ async def _compile_dpk_package(
         build_configuration: 构建配置
         timeout: 超时时间
         auto_install: 是否安装设计期包
+        extra_args: 附加到 MSBuild 的完整参数列表
 
     Returns:
         编译结果
@@ -726,7 +732,8 @@ async def _compile_dpk_package(
             str(dproj_path),
             target_platform,
             build_configuration,
-            timeout
+            timeout,
+            extra_args=extra_args,
         )
         
         is_runtime = _is_runtime_only_package(str(dproj_path))
@@ -743,7 +750,8 @@ async def _compile_dpk_package(
             target_platform=TargetPlatform(target_platform),
             build_configuration=build_configuration,
             timeout=timeout,
-            debug=True
+            debug=True,
+            extra_args=extra_args or [],
         )
         
         request = ProjectCompileRequest(

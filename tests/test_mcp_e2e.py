@@ -428,6 +428,14 @@ class TestToolSchemaCompleteness:
         assert '"type": "boolean"' in after, "force 应声明为 boolean"
         assert '"default": False' in after, "force 默认值应为 False"
 
+    def test_delphi_project_schema_declares_extra_args(self):
+        """编译附加参数必须在 schema 中声明，避免 MCP 客户端静默丢弃。"""
+        block = self._extract_tool_block("delphi_project")
+        assert '"extra_args"' in block
+        after = block.split('"extra_args"', 1)[1][:500]
+        assert '"type": "array"' in after
+        assert '"type": "string"' in after
+
     def test_delphi_file_schema_mentions_builtin_read_edit_write(self):
         """schema 描述也要给客户端路由模型明确提示，读取 Delphi 文件也走 delphi_file。"""
         block = self._extract_tool_block("delphi_file")

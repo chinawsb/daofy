@@ -109,12 +109,14 @@ async def _handle_compile(kwargs: dict) -> Any:
             unit_search_paths=kwargs.get('unit_search_paths'),
             conditional_defines=kwargs.get('conditional_defines'),
             compiler_version=kwargs.get('compiler_version'),
+            extra_args=kwargs.get('extra_args'),
         )
 
     return await _compile_project(
         project_path=project_path,
         target_platform=kwargs.get("target_platform", "win32"),
         build_configuration=kwargs.get("build_configuration", "Debug"),
+        extra_args=kwargs.get("extra_args"),
         output_path=kwargs.get("output_path"),
         compiler_version=kwargs.get("compiler_version"),
         conditional_defines=kwargs.get("conditional_defines"),
@@ -139,6 +141,7 @@ async def _handle_dry_run(kwargs: dict) -> Any:
         "conditional_defines", "unit_search_paths", "resource_search_paths",
         "optimize", "debug", "warning_level",
         "disabled_warnings", "output_type", "runtime_library", "build_configuration",
+        "extra_args",
     }
     filtered = {k: v for k, v in kwargs.items() if k in accepted_keys}
     return await _get_compiler_args(**filtered)
@@ -151,6 +154,7 @@ async def _handle_compile_file(kwargs: dict) -> Any:
         unit_search_paths=kwargs.get('unit_search_paths'),
         conditional_defines=kwargs.get('conditional_defines'),
         compiler_version=kwargs.get('compiler_version'),
+        extra_args=kwargs.get('extra_args'),
     )
 
 

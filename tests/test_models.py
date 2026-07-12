@@ -148,6 +148,15 @@ class TestCompileOptionsValidation:
             opts = CompileOptions(target_platform=tp)
             assert opts.target_platform == tp
 
+    def test_extra_args_are_preserved(self):
+        opts = CompileOptions(extra_args=["-VT", "-VR"])
+        assert opts.extra_args == ["-VT", "-VR"]
+
+    @pytest.mark.parametrize("extra_args", ["-VT", [""], ["   "], [1]])
+    def test_invalid_extra_args_raise(self, extra_args):
+        with pytest.raises(ValueError, match="额外编译参数"):
+            CompileOptions(extra_args=extra_args)
+
 
 # ============================================================
 # ProjectCompileRequest — __post_init__ 验证
@@ -162,6 +171,10 @@ class TestProjectCompileRequestValidation:
     def test_valid_dpr(self):
         req = ProjectCompileRequest(project_path="C:\\Test\\Project.dpr")
         assert req.project_path.endswith(".dpr")
+
+    def test_valid_dpk(self):
+        req = ProjectCompileRequest(project_path="C:\\Test\\Package.dpk")
+        assert req.project_path.endswith(".dpk")
 
     def test_empty_path_raises(self):
         with pytest.raises(ValueError, match="项目路径不能为空"):

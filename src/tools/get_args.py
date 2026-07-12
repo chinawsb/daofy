@@ -38,7 +38,8 @@ async def get_compiler_args(
     disabled_warnings: Optional[List[str]] = None,
     output_type: str = "gui",
     runtime_library: str = "static",
-    build_configuration: Optional[str] = None
+    build_configuration: Optional[str] = None,
+    extra_args: Optional[List[str]] = None
 ) -> CallToolResult:
     """
     获取编译器命令行参数(不执行编译)
@@ -58,6 +59,7 @@ async def get_compiler_args(
         output_type: 输出类型(console/gui/dll)
         runtime_library: 运行时库链接方式(static/dynamic)
         build_configuration: 编译配置名称
+        extra_args: 附加编译器参数列表
 
     Returns:
         命令行参数
@@ -93,7 +95,8 @@ async def get_compiler_args(
             disabled_warnings=disabled_warnings or [],
             output_type=OutputType(output_type),
             runtime_library=RuntimeLibrary(runtime_library),
-            build_configuration=build_configuration
+            build_configuration=build_configuration,
+            extra_args=extra_args or [],
         )
 
         # 构建编译请求

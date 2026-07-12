@@ -5,8 +5,16 @@
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 from enum import Enum
+from typing import List, Optional
+
+
+def _validate_extra_args(extra_args: List[str]) -> None:
+    """验证用户附加的编译参数。"""
+    if not isinstance(extra_args, list):
+        raise ValueError("额外编译参数必须是字符串数组")
+    if any(not isinstance(arg, str) or not arg.strip() for arg in extra_args):
+        raise ValueError("额外编译参数必须是非空字符串")
 
 
 class TargetPlatform(Enum):
@@ -53,6 +61,7 @@ class CompileOptions:
     output_type: OutputType = OutputType.GUI
     runtime_library: RuntimeLibrary = RuntimeLibrary.STATIC
     build_configuration: Optional[str] = None
+    extra_args: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """验证字段"""
@@ -63,6 +72,8 @@ class CompileOptions:
         # 验证超时时间
         if self.timeout <= 0:
             raise ValueError(f"超时时间必须为正数,当前值: {self.timeout}")
+
+        _validate_extra_args(self.extra_args)
 
 
 @dataclass
@@ -77,8 +88,8 @@ class ProjectCompileRequest:
             raise ValueError("项目路径不能为空")
 
         # 验证文件扩展名
-        if not (self.project_path.endswith('.dproj') or self.project_path.endswith('.dpr')):
-            raise ValueError(f"项目文件必须是 .dproj 或 .dpr 格式,当前路径: {self.project_path}")
+        if not self.project_path.endswith(('.dproj', '.dpr', '.dpk')):
+            raise ValueError(f"项目文件必须是 .dproj、.dpr 或 .dpk 格式,当前路径: {self.project_path}")
 
 
 @dataclass
@@ -90,6 +101,7 @@ class FileCompileRequest:
     warning_level: int = 2
     disabled_warnings: List[str] = field(default_factory=list)
     compiler_version: Optional[str] = None
+    extra_args: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """验证文件路径"""
@@ -103,3 +115,5 @@ class FileCompileRequest:
         # 验证警告级别
         if not 0 <= self.warning_level <= 4:
             raise ValueError(f"警告级别必须在 0-4 之间,当前值: {self.warning_level}")
+
+        _validate_extra_args(self.extra_args)

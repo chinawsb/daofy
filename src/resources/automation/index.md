@@ -54,7 +54,7 @@ resources/automation/
 | M. 控件定位策略 | [scenarios/m-control-targeting.md](scenarios/m-control-targeting.md) | 坐标校准/DPI 系数 |
 | N. 等待策略 | [scenarios/n-wait-strategy.md](scenarios/n-wait-strategy.md) | 条件等待替代固定延时 |
 | O. 控件重建安全 | [scenarios/o-control-rebuild.md](scenarios/o-control-rebuild.md) | Rescan 后控件重建等待 |
-| 核对表 | [scenarios/checklist.md](scenarios/checklist.md) | 25 条黑盒测试质量门禁 |
+| 核对表 | [scenarios/checklist.md](scenarios/checklist.md) | 27 条黑盒测试质量门禁 |
 
 入口文件：[coding-rules/ui-testing.md](../coding-rules/ui-testing.md)（`## ⑧ 自动化 UI 交互测试`）
 

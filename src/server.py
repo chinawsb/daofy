@@ -48,6 +48,42 @@ from src.constants import (
     TIMEOUT_GENERATE_COPYRIGHT,
 )
 
+def _filter_surrogates(text: str) -> str:
+    """过滤字符串中的无效 UTF-8 代理对字符（surrogate characters）。
+
+    代理对字符（U+D800 到 U+DFFF）在 UTF-8 编码中是无效的，
+    会导致 Pydantic JSON 序列化失败。此函数将它们替换为 Unicode 替换字符。
+
+    注意：此函数不会影响正常的 Unicode 字符（如中文、日文、韩文、emoji 等），
+    因为这些字符的 Unicode 范围（U+0000-U+D7FF, U+E000-U+10FFFF）
+    与代理对字符的范围（U+D800-U+DFFF）完全不重叠。
+
+    代理对字符出现的常见原因：
+    1. UTF-16 编码的字符串被错误地当作 UTF-8 处理
+    2. 某些老旧的 Delphi 组件使用了不标准的编码
+    3. 文件读取时编码检测错误
+
+    Args:
+        text: 输入字符串
+
+    Returns:
+        过滤后的字符串，所有代理对字符已被替换
+    """
+    import re
+    # 检查是否包含代理对字符
+    surrogate_pattern = re.compile(r'[\ud800-\udfff]')
+    if surrogate_pattern.search(text):
+        # 记录警告，帮助调试编码问题
+        count = len(surrogate_pattern.findall(text))
+        logger.warning(
+            "检测到 %d 个无效的 UTF-8 代理对字符，已替换为替换字符。"
+            "这可能表示源文件编码不正确。",
+            count
+        )
+        return surrogate_pattern.sub('\ufffd', text)
+    return text
+
+
 MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
 
 关键工具路由规则：
@@ -197,6 +233,40 @@ else:
         return getattr(experimental_handlers, "task_support", None)
 
 
+    async def _fetch_workspace_roots(session) -> None:
+        """异步获取 AI Agent 工作区根目录并缓存到 file_tool。
+
+        在 session 初始化完成后调用 session.list_roots() 获取工作区根，
+        将第一个有效的 file:// URI 转换为本地路径后缓存。
+        若客户端不支持 roots 或超时，静默跳过。
+        """
+        try:
+            # 等待初始化完成（InitializedNotification 到达后才可发起 roots/list）
+            await anyio.sleep(1.0)
+            result = await session.list_roots()
+            if not result or not result.roots:
+                logger.info("客户端未提供工作区根目录（roots 为空）")
+                return
+
+            for root in result.roots:
+                uri = root.uri
+                if uri.scheme == "file":
+                    local_path = uri.path.rstrip("/\\")
+                    if local_path and os.path.isdir(local_path):
+                        from src.tools.file_tool import set_workspace_root
+                        set_workspace_root(local_path)
+                        return
+                    logger.info("工作区根 URI 不是有效目录: %s", uri)
+                else:
+                    logger.debug("跳过非 file:// 工作区根: %s", uri)
+
+            logger.info("未找到有效的 file:// 工作区根目录")
+        except anyio.EndOfStream:
+            logger.debug("session 已关闭，跳过根目录获取")
+        except Exception:
+            logger.info("获取工作区根目录失败（客户端可能不支持 roots）- 静默跳过", exc_info=True)
+
+
     async def _run_mcp_server(server, read_stream, write_stream) -> None:
         """Run the MCP server with Daofy initialize metadata."""
         initialization_options = server.create_initialization_options()
@@ -217,6 +287,9 @@ else:
                 await stack.enter_async_context(task_support.run())
 
             async with anyio.create_task_group() as tg:
+                # 后台获取工作区根目录
+                tg.start_soon(_fetch_workspace_roots, session)
+
                 try:
                     async for message in session.incoming_messages:
                         logger.debug("Received message: %s", message)
@@ -657,6 +730,11 @@ async def run_server():
                         },
                         "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk/.pas)"},
                         "dry_run": {"type": "boolean", "default": False, "description": "仅预览编译参数不实际执行"},
+                        "extra_args": {
+                            "type": "array",
+                            "items": {"type": "string", "minLength": 1},
+                            "description": "附加到实际编译后端的完整参数。MSBuild 示例: ['/p:DCC_DebugInfoInTds=true']; 直接 DCC 示例: ['-VT']",
+                        },
                     },
                     "additionalProperties": True,
                     "required": ["action"]
@@ -710,8 +788,8 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(支持单文件/多文件目录递归/文件列表/多pattern OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
-                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径，支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx；读取或修改这些文件都应路由到 delphi_file，即使只是读取也不要用内置 Read/Edit/Write/grep。grep 中与 path/files 三选一"},
+                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(file_path自动检测文件/目录,支持include/exclude/多pattern OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
+                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径。支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx。grep action 额外支持路径数组（file_path=[\"a.pas\",\"dir/\"]），自动检测文件/目录逐项解析。"},
 
                         # ---- [read] 参数 ----
                         "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
@@ -773,10 +851,8 @@ async def run_server():
                         # ---- [grep] 参数 ----
                         "pattern": {"type": "string", "description": "[grep] 单正则搜索模式（与 patterns 二选一），支持 /pattern/flags 语法"},
                         "patterns": {"type": "array", "items": {"type": "string"}, "description": "[grep] 多 pattern OR 搜索（与 pattern 二选一），每个元素支持 /pattern/flags 语法"},
-                        "path": {"type": "string", "description": "[grep] 搜索目录（与 file_path/files 三选一），递归搜索目录下匹配文件"},
-                        "include": {"type": "string", "description": "[grep] 文件包含 glob 模式（默认 **/*，仅 path 模式有效）"},
-                        "exclude": {"type": "string", "description": "[grep] 文件排除 glob 模式（仅 path 模式有效）"},
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "[grep] 文件路径列表（与 file_path/path 三选一）"},
+                        "include": {"type": "string", "description": "[grep] 文件包含 glob 模式（默认 **/*，仅 file_path 为目录时有效）"},
+                        "exclude": {"type": "string", "description": "[grep] 文件排除 glob 模式（仅 file_path 为目录时有效）"},
                         "filter_pattern": {"type": "string", "description": "[grep] 二级过滤模式（可选，同一行/匹配文本必须也匹配此模式）"},
                         "exclude_pattern": {"type": "string", "description": "[grep] 排除模式（可选，同一行/匹配文本必须不匹配此模式）"},
                         "replace": {"type": "string", "description": "[grep] 替换文本（可选，不传=搜索模式，传了=替换模式）"},
@@ -2062,6 +2138,8 @@ async def run_server():
                     text = str(response)
             else:
                 text = str(response)
+            # 过滤无效的 UTF-8 代理对字符，防止 Pydantic JSON 序列化失败
+            text = _filter_surrogates(text)
             result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
             return result
 
@@ -2766,18 +2844,14 @@ def _cleanup_resources():
         _cleanup_exp()
     except Exception:
         logger.warning("清理经验库时发生异常", exc_info=True)
+    # 注意：knowledge_base 模块没有公开的 getter 函数来获取服务实例，
+    # 全局变量 _delphi_kb_service 和 _thirdparty_kb_service 在进程退出时会自动清理。
+    # 这里不再尝试导入不存在的 get_knowledge_base_service / get_thirdparty_knowledge_base_service。
     try:
-        from src.tools.knowledge_base import (
-            get_knowledge_base_service, get_thirdparty_knowledge_base_service,
-        )
-        _kb = get_knowledge_base_service()
-        if _kb is not None and hasattr(_kb, 'close'):
-            _kb.close()
-        _tpb = get_thirdparty_knowledge_base_service()
-        if _tpb is not None and hasattr(_tpb, 'close'):
-            _tpb.close()
+        from src.tools.project_knowledge_base import _cleanup_project_kb_cache
+        _cleanup_project_kb_cache()
     except Exception:
-        logger.warning("清理知识库服务时发生异常", exc_info=True)
+        logger.warning("清理项目知识库缓存时发生异常", exc_info=True)
     global _project_file_watcher
     if _project_file_watcher is not None:
         try:

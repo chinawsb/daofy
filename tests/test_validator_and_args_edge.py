@@ -246,6 +246,12 @@ class TestArgsGeneratorGenerate:
         args = gen.generate("Project.dpr", opts)
         assert "-$D+" in args
 
+    def test_extra_args_are_appended_last(self):
+        gen = ArgsGenerator()
+        opts = CompileOptions(extra_args=["-VT", "-VR"])
+        args = gen.generate("Project.dpr", opts)
+        assert args[-3:] == ["-GD", "-VT", "-VR"]
+
 
 # ============================================================
 # ArgsGenerator — validate_args 边界
@@ -277,6 +283,24 @@ class TestArgsGeneratorValidateArgs:
     def test_ampersand_in_arg(self):
         gen = ArgsGenerator()
         assert not gen.validate_args(["Project.dpr", "cmd1&cmd2"])
+
+    def test_msbuild_extra_properties_are_batch_safe(self):
+        gen = ArgsGenerator()
+        assert gen.validate_batch_extra_args([
+            "/p:DCC_DebugInfoInTds=true",
+            "/p:DCC_UnitSearchPath=$(BDS)\\lib;C:\\Shared Lib",
+        ])
+
+    @pytest.mark.parametrize("arg", [
+        "/p:Flag=true&whoami",
+        "/p:Flag=%COMSPEC%",
+        "/p:Flag=!COMSPEC!",
+        "/p:Flag=\"quoted\"",
+        "/p:Flag=true\r\nwhoami",
+    ])
+    def test_msbuild_extra_properties_reject_batch_metacharacters(self, arg):
+        gen = ArgsGenerator()
+        assert not gen.validate_batch_extra_args([arg])
 
 
 # ============================================================

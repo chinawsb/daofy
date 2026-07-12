@@ -72,7 +72,7 @@ Python                              Delphi
 | M. 控件定位策略 | [../automation/scenarios/m-control-targeting.md](../automation/scenarios/m-control-targeting.md) | 文本优先/坐标校准/DPI 系数 |
 | N. 等待与条件同步 | [../automation/scenarios/n-wait-strategy.md](../automation/scenarios/n-wait-strategy.md) | waitfor 优先/禁用裸固定延时 |
 | O. 控件重建安全 | [../automation/scenarios/o-control-rebuild.md](../automation/scenarios/o-control-rebuild.md) | Rescan/Reload 后控件重建等待 |
-| 附录: 核对表 | [../automation/scenarios/checklist.md](../automation/scenarios/checklist.md) | 25 条黑盒测试质量门禁 |
+| 附录: 核对表 | [../automation/scenarios/checklist.md](../automation/scenarios/checklist.md) | 27 条黑盒测试质量门禁 |
 
 ### 场景选择原则
 

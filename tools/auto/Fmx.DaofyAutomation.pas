@@ -24,13 +24,24 @@ procedure SetScreenshotDir(const ADir: string);
 implementation
 
 uses
-  Winapi.Windows, Winapi.Messages,
-  System.SysUtils, System.Classes, System.Rtti, System.TypInfo, System.Types,
-  System.Generics.Collections, System.JSON,
+  Winapi.Windows,
+  Winapi.Messages,
+  System.SysUtils,
+  System.Classes,
+  System.Rtti,
+  System.TypInfo,
+  System.Types,
+  System.Generics.Collections,
+  System.JSON,
   Vcl.Graphics,
-  FMX.Forms, FMX.Controls, FMX.Types, FMX.Graphics,
-  FMX.Menus, FMX.Platform.Win,
-  FMX.Forms3D;
+  FMX.Forms,
+  FMX.Controls,
+  FMX.Types,
+  FMX.Graphics,
+  FMX.Menus,
+  FMX.Platform.Win,
+  FMX.Forms3D,
+  DaofyAutomation.TextCapture;
 
 type
   /// <summary>
@@ -60,6 +71,11 @@ type
     function HandleCmdDrag(const ReqId, Source, Target: string; const X, Y: Integer): string; override;
     function HandleCmdType(const ReqId, Target, Value: string): string; override;
     function HandleCmdKey(const ReqId, Target, Key: string): string; override;
+    function HandleCmdTextBounds(
+        const ReqId, Target, Text: string;
+        const Mode: string;
+        IncludeInvisible: Boolean
+    ): string; override;
 
     // --- RTTI ---
     function HandleRGet(const ReqId, Target, Prop: string): string; override;
@@ -145,16 +161,20 @@ var
 begin
   Result := 'FAIL';
   GetWindowRect(hWnd, R);
-  if (R.Width <= 0) or (R.Height <= 0) then Exit;
+  if (R.Width <= 0) or (R.Height <= 0) then
+    Exit;
 
   DC := GetDC(0);
-  if DC = 0 then Exit;
+  if DC = 0 then
+    Exit;
   try
     MemDC := CreateCompatibleDC(DC);
-    if MemDC = 0 then Exit;
+    if MemDC = 0 then
+      Exit;
     try
       BmpHandle := CreateCompatibleBitmap(DC, R.Width, R.Height);
-      if BmpHandle = 0 then Exit;
+      if BmpHandle = 0 then
+        Exit;
       try
         // 从屏幕 DC 直接 BitBlt（抓的是屏幕实际像素，方向一定正确）
         Old := SelectObject(MemDC, BmpHandle);
@@ -184,7 +204,8 @@ begin
               // BMP 文件头
               var BFH: array[0..13] of Byte;
               FillChar(BFH, 14, 0);
-              BFH[0] := $42; BFH[1] := $4D;
+              BFH[0] := $42;
+              BFH[1] := $4D;
               PInteger(@BFH[2])^ := 14 + 40 + RowSize * R.Height;
               BFH[10] := 14 + 40;
               MS.Write(BFH, 14);
@@ -202,9 +223,15 @@ begin
                 Src := PByte(Bits) + Y * R.Width * 4;
                 Dst := RowBuf;
                 for X := 0 to R.Width - 1 do begin
-                  Dst^ := Src^; Inc(Dst); Inc(Src);
-                  Dst^ := Src^; Inc(Dst); Inc(Src);
-                  Dst^ := Src^; Inc(Dst); Inc(Src);
+                  Dst^ := Src^;
+                  Inc(Dst);
+                  Inc(Src);
+                  Dst^ := Src^;
+                  Inc(Dst);
+                  Inc(Src);
+                  Dst^ := Src^;
+                  Inc(Dst);
+                  Inc(Src);
                   Inc(Src);
                 end;
                 if RowSize > R.Width * 3 then
@@ -253,20 +280,18 @@ begin
   var hDlg := FindWindowW('#32770', nil);
   if hDlg <> 0 then begin
     Result := CaptureWin32WndToJPEG(hDlg, AFile);
-    if Result = 'OK' then Exit;
+    if Result = 'OK' then
+      Exit;
     // 对话框截图失败，回落 PaintTo
   end;
 
   // FMX 模态对话框（MessageDlg 等）扫描
   for var I := 0 to Screen.FormCount - 1 do
-    if TFmxFormState.Modal in TCommonCustomForm(Screen.Forms[I]).FormState then
-    begin
+    if TFmxFormState.Modal in TCommonCustomForm(Screen.Forms[I]).FormState then begin
       F := Screen.Forms[I] as TCommonCustomForm;
-      Bmp := FMX.Graphics.TBitmap.Create(
-        Trunc(F.ClientWidth), Trunc(F.ClientHeight));
+      Bmp := FMX.Graphics.TBitmap.Create(Trunc(F.ClientWidth), Trunc(F.ClientHeight));
       try
-        if Bmp.Canvas.BeginScene then
-        begin
+        if Bmp.Canvas.BeginScene then begin
           TCustomForm(F).PaintTo(Bmp.Canvas);
           Bmp.Canvas.EndScene;
         end;
@@ -280,14 +305,11 @@ begin
     end;
 
   // FMX 3D 窗体通过 Context.CopyToBitmap 截取（GPU readback）
-  if Screen.ActiveForm is TCustomForm3D then
-  begin
+  if Screen.ActiveForm is TCustomForm3D then begin
     var Form3D := TCustomForm3D(Screen.ActiveForm);
-    Bmp := FMX.Graphics.TBitmap.Create(
-      Round(Form3D.Width), Round(Form3D.Height));
+    Bmp := FMX.Graphics.TBitmap.Create(Round(Form3D.Width), Round(Form3D.Height));
     try
-      Form3D.Context.CopyToBitmap(Bmp,
-        TRect.Create(0, 0, Round(Form3D.Width), Round(Form3D.Height)));
+      Form3D.Context.CopyToBitmap(Bmp, TRect.Create(0, 0, Round(Form3D.Width), Round(Form3D.Height)));
       ForceDirectories(ExtractFilePath(AFile));
       Bmp.SaveToFile(AFile);
       Result := 'OK';
@@ -304,12 +326,10 @@ begin
     F := Screen.Forms[0] as TCommonCustomForm
   else
     Exit;
-    
-  Bmp := FMX.Graphics.TBitmap.Create(
-    Trunc(F.ClientWidth), Trunc(F.ClientHeight));
+
+  Bmp := FMX.Graphics.TBitmap.Create(Trunc(F.ClientWidth), Trunc(F.ClientHeight));
   try
-    if Bmp.Canvas.BeginScene then
-    begin
+    if Bmp.Canvas.BeginScene then begin
       TCustomForm(F).PaintTo(Bmp.Canvas);
       Bmp.Canvas.EndScene;
     end;
@@ -342,8 +362,9 @@ begin
     Ctx := TRttiContext.Create;
     try
       for Prop in Ctx.GetType(Ctrl.ClassType).GetProperties do
-        if not IsSkippedProp(Prop.Name) and IsSimpleKind(Prop.PropertyType.TypeKind)
-          and not Seen.ContainsKey(Prop.Name) then
+        if not IsSkippedProp(Prop.Name)
+            and IsSimpleKind(Prop.PropertyType.TypeKind)
+            and not Seen.ContainsKey(Prop.Name) then
         begin
           Seen.Add(Prop.Name, True);
           Props.AddPair(Prop.Name, PropToJSON(Prop, Ctrl));
@@ -394,8 +415,10 @@ begin
     Ctx := TRttiContext.Create;
     try
       for Prop in Ctx.GetType(F.ClassType).GetProperties do
-        if not IsSkippedProp(Prop.Name) and IsSimpleKind(Prop.PropertyType.TypeKind)
-          and (Prop.Name <> 'Caption') and not Seen.ContainsKey(Prop.Name) then
+        if not IsSkippedProp(Prop.Name)
+            and IsSimpleKind(Prop.PropertyType.TypeKind)
+            and (Prop.Name <> 'Caption')
+            and not Seen.ContainsKey(Prop.Name) then
         begin
           Seen.Add(Prop.Name, True);
           Props.AddPair(Prop.Name, PropToJSON(Prop, F));
@@ -422,7 +445,8 @@ end;
   通过扫描 Form.Components 查找第一个 TPopupMenu。}
 
 function FindPopupMenu(const F: TCommonCustomForm): TPopupMenu;
-var I: Integer;
+var
+  I: Integer;
 begin
   for I := 0 to F.ComponentCount - 1 do
     if F.Components[I] is TPopupMenu then
@@ -458,9 +482,11 @@ var
   It: TMenuItem;
 begin
   F := Screen.ActiveForm;
-  if F = nil then Exit('NOF');
+  if F = nil then
+    Exit('NOF');
   PM := FindPopupMenu(F);
-  if PM = nil then Exit('NOP');
+  if PM = nil then
+    Exit('NOP');
 
   Root := TJSONObject.Create;
   try
@@ -472,7 +498,7 @@ begin
       It := PM.Items[II];
       var ItemObj := TJSONObject.Create;
       ItemObj.AddPair('name', It.Name);
-      ItemObj.AddPair('text', It.Text);          // FMX: Text 而非 Caption
+      ItemObj.AddPair('text', It.Text); // FMX: Text 而非 Caption
       ItemObj.AddPair('enabled', TJSONBool.Create(It.Enabled));
       ItemObj.AddPair('visible', TJSONBool.Create(It.Visible));
       ItemObj.AddPair('checked', TJSONBool.Create(It.IsChecked));
@@ -494,9 +520,11 @@ var
   I: Integer;
 begin
   F := Screen.ActiveForm;
-  if F = nil then Exit('NOF');
+  if F = nil then
+    Exit('NOF');
   PM := FindPopupMenu(F);
-  if PM = nil then Exit('NOP');
+  if PM = nil then
+    Exit('NOP');
   for I := 0 to PM.ItemsCount - 1 do
     if SameText(PM.Items[I].Text, Param) then begin
       InvokeMenuItemClick(PM.Items[I]);
@@ -542,10 +570,8 @@ function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): strin
       SetCursorPos(Round(Pt.X), Round(Pt.Y));
       var H := FormToHWND(Screen.ActiveForm as TCommonCustomForm);
       if H <> 0 then begin
-        SendMessage(H, WM_LBUTTONDOWN, MK_LBUTTON,
-          MakeLParam(Round(Pt.X), Round(Pt.Y)));
-        SendMessage(H, WM_LBUTTONUP, 0,
-          MakeLParam(Round(Pt.X), Round(Pt.Y)));
+        SendMessage(H, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(Round(Pt.X), Round(Pt.Y)));
+        SendMessage(H, WM_LBUTTONUP, 0, MakeLParam(Round(Pt.X), Round(Pt.Y)));
       end;
     end;
   end;
@@ -557,7 +583,8 @@ function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): strin
     if Ctrl is TControl then begin
       C := TControl(Ctrl);
       Result := C.Visible and C.Enabled;
-    end else
+    end
+    else
       Result := True;
   end;
 
@@ -570,7 +597,8 @@ var
   CX, CY: Integer;
   CtrlName: string;
 begin
-  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
+  if Screen.ActiveForm = nil then
+    Exit(WriteResp(ReqId, 'err', 'no active form'));
 
   // 解析 @x,y 坐标点击
   AtPos := Pos('@', Target);
@@ -583,11 +611,13 @@ begin
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if CtrlName <> '' then begin
         Ctrl := Screen.ActiveForm.FindComponent(CtrlName);
-        if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+        if Ctrl = nil then
+          Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
         if not IsCtrlVisible(Ctrl) then
           Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
         DoClickAt(Ctrl, CX, CY);
-      end else begin
+      end
+      else begin
         // 没有控件名，相对活动窗体坐标
         var FH := FormToHWND(Screen.ActiveForm as TCommonCustomForm);
         if FH <> 0 then begin
@@ -602,15 +632,15 @@ begin
 
   // 常规 RTTI 点击
   Ctrl := Screen.ActiveForm.FindComponent(Target);
-  if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
+  if Ctrl = nil then
+    Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
   if not IsCtrlVisible(Ctrl) then
     Exit(WriteResp(ReqId, 'err', 'invisible:' + Target));
 
   Ctx := TRttiContext.Create;
   try
     M := Ctx.GetType(Ctrl.ClassType).GetMethod('Click');
-    if (M <> nil) and (M.MethodKind = mkProcedure) and
-       (Length(M.GetParameters) = 0) then
+    if (M <> nil) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
       M.Invoke(Ctrl, [])
     else begin
       Evt := Ctx.GetType(Ctrl.ClassType).GetProperty('OnClick');
@@ -631,13 +661,15 @@ end;
 
 function TAutomationProcessor.HandleCmdKey(const ReqId, Target, Key: string): string;
 const
-  VK_MAP: array[0..11] of record Name: string; VK: Integer; end = (
-    (Name: 'TAB'; VK: VK_TAB), (Name: 'ENTER'; VK: VK_RETURN),
-    (Name: 'ESC'; VK: VK_ESCAPE), (Name: 'BACK'; VK: VK_BACK),
-    (Name: 'DEL'; VK: VK_DELETE), (Name: 'HOME'; VK: VK_HOME),
-    (Name: 'END'; VK: VK_END), (Name: 'UP'; VK: VK_UP),
-    (Name: 'DOWN'; VK: VK_DOWN), (Name: 'LEFT'; VK: VK_LEFT),
-    (Name: 'RIGHT'; VK: VK_RIGHT), (Name: 'SPACE'; VK: VK_SPACE));
+  VK_MAP: array[0..11] of record
+    Name: string;
+    VK: Integer;
+  end = ((Name: 'TAB';
+  VK:
+      VK_TAB), (Name: 'ENTER'; VK: VK_RETURN), (Name: 'ESC'; VK: VK_ESCAPE), (Name: 'BACK'; VK: VK_BACK),
+      (Name: 'DEL'; VK: VK_DELETE), (Name: 'HOME'; VK: VK_HOME), (Name: 'END'; VK: VK_END), (Name: 'UP'; VK: VK_UP),
+      (Name: 'DOWN'; VK: VK_DOWN), (Name: 'LEFT'; VK: VK_LEFT), (Name: 'RIGHT'; VK: VK_RIGHT),
+      (Name: 'SPACE'; VK: VK_SPACE));
 var
   I, VK: Integer;
   Ctrl: TComponent;
@@ -651,7 +683,8 @@ begin
       Ctx := TRttiContext.Create;
       try
         M := Ctx.GetType(Ctrl.ClassType).GetMethod('SetFocus');
-        if M <> nil then M.Invoke(Ctrl, []);
+        if M <> nil then
+          M.Invoke(Ctrl, []);
       finally
         Ctx.Free;
       end;
@@ -661,19 +694,24 @@ begin
   // 查命名键
   VK := 0;
   for I := 0 to High(VK_MAP) do
-    if SameText(Key, VK_MAP[I].Name) then begin VK := VK_MAP[I].VK; Break; end;
+    if SameText(Key, VK_MAP[I].Name) then begin
+      VK := VK_MAP[I].VK;
+      Break;
+    end;
 
   // F1-F12
   if (VK = 0) and (Length(Key) > 1) and (UpCase(Key[1]) = 'F') then begin
     var FN := StrToIntDef(Copy(Key, 2, MaxInt), 0);
-    if (FN >= 1) and (FN <= 12) then VK := VK_F1 + FN - 1;
+    if (FN >= 1) and (FN <= 12) then
+      VK := VK_F1 + FN - 1;
   end;
 
   // 通过 Windows API 发送按键
   if VK <> 0 then begin
     keybd_event(VK, 0, 0, 0);
     keybd_event(VK, 0, KEYEVENTF_KEYUP, 0);
-  end else if Length(Key) = 1 then begin
+  end
+  else if Length(Key) = 1 then begin
     keybd_event(Ord(UpCase(Key[1])), 0, 0, 0);
     keybd_event(Ord(UpCase(Key[1])), 0, KEYEVENTF_KEYUP, 0);
   end;
@@ -681,21 +719,132 @@ begin
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
+function TAutomationProcessor.HandleCmdTextBounds(
+    const ReqId, Target, Text: string;
+    const Mode: string;
+    IncludeInvisible: Boolean
+): string;
+
+  function RichBoundsJSON(const ARec: TTextRecord): string;
+  var
+    Resp: TJSONObject;
+    VS: string;
+  begin
+    Resp := TJSONObject.Create;
+    try
+      Resp.AddPair('x', TJSONNumber.Create(ARec.Rect.Left));
+      Resp.AddPair('y', TJSONNumber.Create(ARec.Rect.Top));
+      Resp.AddPair('width', TJSONNumber.Create(ARec.Rect.Width));
+      Resp.AddPair('height', TJSONNumber.Create(ARec.Rect.Height));
+      case ARec.VisibleState of
+        vsFullyVisible: VS := 'full';
+        vsPartiallyVisible: VS := 'partial';
+        vsInvisible: VS := 'invisible';
+      else
+        VS := 'unknown';
+      end;
+      Resp.AddPair('visible_state', VS);
+      if ARec.HasClip then begin
+        Resp.AddPair('clipped', TJSONBool.Create(True));
+        Resp.AddPair('clip_x', TJSONNumber.Create(ARec.ClipRect.Left));
+        Resp.AddPair('clip_y', TJSONNumber.Create(ARec.ClipRect.Top));
+        Resp.AddPair('clip_width', TJSONNumber.Create(ARec.ClipRect.Width));
+        Resp.AddPair('clip_height', TJSONNumber.Create(ARec.ClipRect.Height));
+      end
+      else
+        Resp.AddPair('clipped', TJSONBool.Create(False));
+      if (ARec.VisibleRect.Width > 0) and (ARec.VisibleRect.Height > 0) then begin
+        Resp.AddPair('visible_x', TJSONNumber.Create(ARec.VisibleRect.Left));
+        Resp.AddPair('visible_y', TJSONNumber.Create(ARec.VisibleRect.Top));
+        Resp.AddPair('visible_width', TJSONNumber.Create(ARec.VisibleRect.Width));
+        Resp.AddPair('visible_height', TJSONNumber.Create(ARec.VisibleRect.Height));
+      end;
+      Resp.AddPair('api', ARec.Api);
+      Result := Resp.ToJSON;
+    finally
+      Resp.Free;
+    end;
+  end;
+
+var
+  AtPos: Integer;
+  CtrlName, SearchText: string;
+  Obj: TObject;
+  Ctl: TControl;
+  Mgr: TTextCaptureManager;
+  Records: TTextRecordList;
+  Matches: TTextRecordList;
+  FmxBmp: FMX.Graphics.TBitmap;
+begin
+  try
+    // FMX 无 type-bound 实现
+    if Mode = 'type' then
+      Exit(WriteResp(ReqId, 'err', 'UNSUP'));
+
+    AtPos := Pos('@', Target);
+    CtrlName := Target;
+    if AtPos > 0 then begin
+      SearchText := Copy(Target, AtPos + 1, MaxInt);
+      CtrlName := Copy(Target, 1, AtPos - 1);
+    end
+    else
+      SearchText := Text;
+
+    if CtrlName = '' then
+      Exit(WriteResp(ReqId, 'err', 'NO_TARGET'));
+    if SearchText = '' then
+      Exit(WriteResp(ReqId, 'err', 'NO_TEXT'));
+
+    Obj := FindNamedControl(CtrlName);
+    if Obj = nil then
+      Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
+    if not (Obj is TControl) then
+      Exit(WriteResp(ReqId, 'err', 'NOT_CTL'));
+    Ctl := TControl(Obj);
+
+    // FMX paint-hook：BeginCaptureFMX → PaintTo → EndCapture
+    Mgr := TTextCaptureManager.Instance;
+    Mgr.BeginCaptureFMX;
+    try
+      FmxBmp := FMX.Graphics.TBitmap.Create(Round(Ctl.Width), Round(Ctl.Height));
+      try
+        Ctl.PaintTo(FmxBmp.Canvas, RectF(0, 0, Ctl.Width, Ctl.Height));
+      finally
+        FmxBmp.Free;
+      end;
+    finally
+      Records := Mgr.EndCapture;
+    end;
+
+    if Mgr.HookFailed then
+      Exit(WriteResp(ReqId, 'err', 'HOOK_FAILED'));
+
+    Matches := Mgr.FilterBySearchText(Records, SearchText, IncludeInvisible);
+    if Length(Matches) = 0 then
+      Exit(WriteResp(ReqId, 'err', 'TXT_NF'));
+
+    Result := WriteResp(ReqId, 'ok', RichBoundsJSON(Matches[0]));
+  except
+    on E: Exception do
+      Result := WriteResp(ReqId, 'err', E.Message);
+  end;
+end;
 function TAutomationProcessor.HandleCmdDblClick(const ReqId, Target: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
   M: TRttiMethod;
 begin
-  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Screen.ActiveForm = nil then
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
   Ctrl := Screen.ActiveForm.FindComponent(Target);
-  if Ctrl = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Ctrl = nil then
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
 
   Ctx := TRttiContext.Create;
   try
     M := Ctx.GetType(Ctrl.ClassType).GetMethod('DblClick');
-    if (M <> nil) and (M.MethodKind = mkProcedure) and
-       (Length(M.GetParameters) = 0) then
+    if (M <> nil) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
       M.Invoke(Ctrl, []);
   finally
     Ctx.Free;
@@ -711,7 +860,8 @@ var
   CtrlCtl: TControl;
   I: Integer;
 begin
-  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Screen.ActiveForm = nil then
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
   F := Screen.ActiveForm;
   Ctrl := F.FindComponent(Target);
 
@@ -725,8 +875,7 @@ begin
 
   if (Ctrl <> nil) and (PM <> nil) then begin
     CtrlCtl := Ctrl as TControl;
-    PM.Popup(CtrlCtl.AbsoluteRect.CenterPoint.X,
-             CtrlCtl.AbsoluteRect.CenterPoint.Y);
+    PM.Popup(CtrlCtl.AbsoluteRect.CenterPoint.X, CtrlCtl.AbsoluteRect.CenterPoint.Y);
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
@@ -738,25 +887,24 @@ var
   Pt: TPointF;
   F: TCommonCustomForm;
 begin
-  if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Screen.ActiveForm = nil then
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
   F := Screen.ActiveForm;
   Ctrl := F.FindComponent(Target);
-  if Ctrl = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+  if Ctrl = nil then
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
   if Ctrl is TControl then begin
     CtrlCtl := TControl(Ctrl);
-    Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(
-      CtrlCtl.Width / 2, CtrlCtl.Height / 2));
+    Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(CtrlCtl.Width / 2, CtrlCtl.Height / 2));
     SetCursorPos(Round(Pt.X), Round(Pt.Y));
     var H := FormToHWND(F);
     if H <> 0 then
-      SendMessage(H, WM_MOUSEMOVE, 0,
-        MakeLParam(Round(Pt.X), Round(Pt.Y)));
+      SendMessage(H, WM_MOUSEMOVE, 0, MakeLParam(Round(Pt.X), Round(Pt.Y)));
   end;
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
-function TAutomationProcessor.HandleCmdMove(const ReqId, Target: string; const X,
-  Y: Integer): string;
+function TAutomationProcessor.HandleCmdMove(const ReqId, Target: string; const X, Y: Integer): string;
 var
   Ctrl: TComponent;
   CtrlCtl: TControl;
@@ -765,21 +913,24 @@ var
   CX, CY: Integer;
 begin
   if Target <> '' then begin
-    if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'ok', 'OK'));
+    if Screen.ActiveForm = nil then
+      Exit(WriteResp(ReqId, 'ok', 'OK'));
     F := Screen.ActiveForm;
     Ctrl := F.FindComponent(Target);
     if (Ctrl <> nil) and (Ctrl is TControl) then begin
       CtrlCtl := TControl(Ctrl);
-      Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(
-        CtrlCtl.Width / 2, CtrlCtl.Height / 2));
+      Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(CtrlCtl.Width / 2, CtrlCtl.Height / 2));
       CX := Round(Pt.X);
       CY := Round(Pt.Y);
-    end else
+    end
+    else
       Exit(WriteResp(ReqId, 'ok', 'OK'));
-  end else if (X >= 0) and (Y >= 0) then begin
+  end
+  else if (X >= 0) and (Y >= 0) then begin
     CX := X;
     CY := Y;
-  end else
+  end
+  else
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
   SetCursorPos(CX, CY);
@@ -788,8 +939,7 @@ end;
 
 { --- drag --- }
 
-function TAutomationProcessor.HandleCmdDrag(const ReqId, Source, Target: string;
-  const X, Y: Integer): string;
+function TAutomationProcessor.HandleCmdDrag(const ReqId, Source, Target: string; const X, Y: Integer): string;
 var
   SX, SY, TX, TY, I: Integer;
   SrcCtrl, DstCtrl: TComponent;
@@ -804,29 +954,34 @@ begin
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
   SrcCtl := TControl(SrcCtrl);
-  Pt := SrcCtl.LocalToAbsolute(TPointF.Create(
-    SrcCtl.Width / 2, SrcCtl.Height / 2));
-  SX := Round(Pt.X); SY := Round(Pt.Y);
+  Pt := SrcCtl.LocalToAbsolute(TPointF.Create(SrcCtl.Width / 2, SrcCtl.Height / 2));
+  SX := Round(Pt.X);
+  SY := Round(Pt.Y);
 
   if Target <> '' then begin
     DstCtrl := Screen.ActiveForm.FindComponent(Target);
     if (DstCtrl <> nil) and (DstCtrl is TControl) then begin
-      Pt := TControl(DstCtrl).LocalToAbsolute(TPointF.Create(
-        TControl(DstCtrl).Width / 2, TControl(DstCtrl).Height / 2));
-      TX := Round(Pt.X); TY := Round(Pt.Y);
-    end else Exit(WriteResp(ReqId, 'ok', 'OK'));
-  end else if (X >= 0) and (Y >= 0) then begin
-    TX := X; TY := Y;
-  end else Exit(WriteResp(ReqId, 'ok', 'OK'));
+      Pt :=
+          TControl(DstCtrl).LocalToAbsolute(TPointF.Create(TControl(DstCtrl).Width / 2, TControl(DstCtrl).Height / 2));
+      TX := Round(Pt.X);
+      TY := Round(Pt.Y);
+    end
+    else
+      Exit(WriteResp(ReqId, 'ok', 'OK'));
+  end
+  else if (X >= 0) and (Y >= 0) then begin
+    TX := X;
+    TY := Y;
+  end
+  else
+    Exit(WriteResp(ReqId, 'ok', 'OK'));
 
   // 模拟拖拽：mousedown → 渐进移动 → mouseup
   SetCursorPos(SX, SY);
   mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
 
   for I := 1 to 10 do begin
-    SetCursorPos(
-      SX + (TX - SX) * I div 10,
-      SY + (TY - SY) * I div 10);
+    SetCursorPos(SX + (TX - SX) * I div 10, SY + (TY - SY) * I div 10);
     Sleep(8);
   end;
 
@@ -835,8 +990,7 @@ begin
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
-function TAutomationProcessor.HandleCmdType(const ReqId, Target,
-  Value: string): string;
+function TAutomationProcessor.HandleCmdType(const ReqId, Target, Value: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -851,8 +1005,7 @@ begin
         if (Prop <> nil) and Prop.IsWritable then begin
           Prop.SetValue(Ctrl, Value);
           var M := Ctx.GetType(Ctrl.ClassType).GetMethod('Change');
-          if (M <> nil) and (M.MethodKind = mkProcedure) and
-             (Length(M.GetParameters) = 0) then
+          if (M <> nil) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
             M.Invoke(Ctrl, []);
         end;
       finally
@@ -865,8 +1018,7 @@ end;
 
 { --- RTTI --- }
 
-function TAutomationProcessor.HandleRGet(const ReqId, Target,
-  Prop: string): string;
+function TAutomationProcessor.HandleRGet(const ReqId, Target, Prop: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -880,41 +1032,54 @@ var
   Idx: Integer;
 begin
   try
-    if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
+    if Screen.ActiveForm = nil then
+      Exit(WriteResp(ReqId, 'err', 'no active form'));
     Ctrl := Screen.ActiveForm.FindComponent(Target);
-    if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
+    if Ctrl = nil then
+      Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
     Parts := Prop.Split(['.']);
-    if Length(Parts) = 0 then Exit(WriteResp(ReqId, 'err', 'no property'));
+    if Length(Parts) = 0 then
+      Exit(WriteResp(ReqId, 'err', 'no property'));
 
     Ctx := TRttiContext.Create;
     try
       ParseIndexedProp(Parts[0], PropName, Idx);
       if Idx >= 0 then begin
         IP := Ctx.GetType(Ctrl.ClassType).GetIndexedProperty(PropName);
-        if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        if IP = nil then
+          Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
         V := IP.GetValue(Ctrl, [TValue.From<Integer>(Idx)]);
-      end else begin
+      end
+      else begin
         Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(PropName);
-        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
-        if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
+        if Pr = nil then
+          Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+        if not Pr.IsReadable then
+          Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
         V := Pr.GetValue(Ctrl);
       end;
 
       for i := 1 to High(Parts) do begin
-        if V.Kind <> tkClass then Exit(WriteResp(ReqId, 'err', 'not an object: ' + Parts[i]));
+        if V.Kind <> tkClass then
+          Exit(WriteResp(ReqId, 'err', 'not an object: ' + Parts[i]));
         Obj := V.AsObject;
-        if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil: ' + Parts[i]));
+        if Obj = nil then
+          Exit(WriteResp(ReqId, 'err', 'nil: ' + Parts[i]));
 
         ParseIndexedProp(Parts[i], PropName, Idx);
         if Idx >= 0 then begin
           IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
-          if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          if IP = nil then
+            Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
           V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
-        end else begin
+        end
+        else begin
           Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
-          if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
-          if not Pr.IsReadable then Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
+          if Pr = nil then
+            Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          if not Pr.IsReadable then
+            Exit(WriteResp(ReqId, 'err', 'NR:' + PropName));
           V := Pr.GetValue(Obj);
         end;
       end;
@@ -924,41 +1089,41 @@ begin
       Ctx.Free;
     end;
   except
-    on E: Exception do Result := WriteResp(ReqId, 'err', E.Message);
+    on E: Exception do
+      Result := WriteResp(ReqId, 'err', E.Message);
   end;
 end;
 
-function TAutomationProcessor.HandleRSet(const ReqId, Target, Prop,
-  Val: string): string;
+function TAutomationProcessor.HandleRSet(const ReqId, Target, Prop, Val: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
   Pr: TRttiProperty;
 begin
   try
-    if Screen.ActiveForm = nil then Exit(WriteResp(ReqId, 'err', 'no active form'));
+    if Screen.ActiveForm = nil then
+      Exit(WriteResp(ReqId, 'err', 'no active form'));
     Ctrl := Screen.ActiveForm.FindComponent(Target);
-    if Ctrl = nil then Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
+    if Ctrl = nil then
+      Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
     Ctx := TRttiContext.Create;
     try
       Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(Prop);
-      if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + Prop));
-      if not Pr.IsWritable then Exit(WriteResp(ReqId, 'err', 'NW:' + Prop));
+      if Pr = nil then
+        Exit(WriteResp(ReqId, 'err', 'NP:' + Prop));
+      if not Pr.IsWritable then
+        Exit(WriteResp(ReqId, 'err', 'NW:' + Prop));
 
       case Pr.PropertyType.TypeKind of
-        tkString, tkUString, tkWString, tkLString:
-          Pr.SetValue(Ctrl, Val);
-        tkInteger, tkInt64:
-          Pr.SetValue(Ctrl, StrToIntDef(Val, 0));
-        tkFloat:
-          Pr.SetValue(Ctrl, StrToFloatDef(Val, 0));
+        tkString, tkUString, tkWString, tkLString: Pr.SetValue(Ctrl, Val);
+        tkInteger, tkInt64: Pr.SetValue(Ctrl, StrToIntDef(Val, 0));
+        tkFloat: Pr.SetValue(Ctrl, StrToFloatDef(Val, 0));
         tkEnumeration:
           if SameText(Pr.PropertyType.Name, 'Boolean') then
             Pr.SetValue(Ctrl, SameText(Val, 'true'))
           else
-            Pr.SetValue(Ctrl, TValue.FromOrdinal(Pr.PropertyType.Handle,
-              GetEnumValue(Pr.PropertyType.Handle, Val)));
+            Pr.SetValue(Ctrl, TValue.FromOrdinal(Pr.PropertyType.Handle, GetEnumValue(Pr.PropertyType.Handle, Val)));
       else
         Exit(WriteResp(ReqId, 'err', 'unsupported type'));
       end;
@@ -968,14 +1133,14 @@ begin
       Ctx.Free;
     end;
   except
-    on E: Exception do Result := WriteResp(ReqId, 'err', E.Message);
+    on E: Exception do
+      Result := WriteResp(ReqId, 'err', E.Message);
   end;
 end;
 
 { ── RTTI 调用方法 ── }
 
-function TAutomationProcessor.HandleRCall(const ReqId, Target,
-  Method, ParamsJSON: string): string;
+function TAutomationProcessor.HandleRCall(const ReqId, Target, Method, ParamsJSON: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -1010,15 +1175,19 @@ begin
         ParseIndexedProp(Parts[i], PropName, Idx);
         if Idx >= 0 then begin
           IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
-          if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          if IP = nil then
+            Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
           V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
-        end else begin
+        end
+        else begin
           Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
-          if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
+          if Pr = nil then
+            Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
           V := Pr.GetValue(Obj);
         end;
         Obj := V.AsObject;
-        if Obj = nil then Exit(WriteResp(ReqId, 'err', 'nil:' + PropName));
+        if Obj = nil then
+          Exit(WriteResp(ReqId, 'err', 'nil:' + PropName));
       end;
 
       M := Ctx.GetType(Obj.ClassType).GetMethod(Parts[High(Parts)]);
@@ -1027,28 +1196,28 @@ begin
 
       if ParamsJSON <> '' then begin
         ParamArr := TJSONObject.ParseJSONValue(ParamsJSON) as TJSONArray;
-        if ParamArr <> nil then try
-          SetLength(ParamValues, ParamArr.Count);
-          for p := 0 to ParamArr.Count - 1 do begin
-            if p < Length(M.GetParameters) then begin
-              ParamType := M.GetParameters[p].ParamType;
-              case ParamType.TypeKind of
-                tkInteger, tkInt64:
-                  ParamValues[p] := TValue.From(StrToIntDef(ParamArr.Items[p].Value, 0));
-                tkFloat:
-                  ParamValues[p] := TValue.From(StrToFloatDef(ParamArr.Items[p].Value, 0.0));
-                tkEnumeration:
-                  if SameText(ParamType.Name, 'Boolean') then
-                    ParamValues[p] := TValue.From(
-                      SameText(ParamArr.Items[p].Value, 'true'))
-                  else
-                    ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
-              else
-                ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
+        if ParamArr <> nil then
+          try
+            SetLength(ParamValues, ParamArr.Count);
+            for p := 0 to ParamArr.Count - 1 do begin
+              if p < Length(M.GetParameters) then begin
+                ParamType := M.GetParameters[p].ParamType;
+                case ParamType.TypeKind of
+                  tkInteger, tkInt64: ParamValues[p] := TValue.From(StrToIntDef(ParamArr.Items[p].Value, 0));
+                  tkFloat: ParamValues[p] := TValue.From(StrToFloatDef(ParamArr.Items[p].Value, 0.0));
+                  tkEnumeration:
+                    if SameText(ParamType.Name, 'Boolean') then
+                      ParamValues[p] := TValue.From(SameText(ParamArr.Items[p].Value, 'true'))
+                    else
+                      ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
+                else
+                  ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
+                end;
               end;
             end;
+          finally
+            ParamArr.Free;
           end;
-        finally ParamArr.Free; end;
       end;
 
       M.Invoke(Obj, ParamValues);
@@ -1091,8 +1260,7 @@ begin
 
         Methods := TJSONArray.Create;
         for M in Ty.GetMethods do
-          if (M.Visibility = mvPublic) and (M.MethodKind = mkProcedure)
-            and (Length(M.GetParameters) = 0) then
+          if (M.Visibility = mvPublic) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
             Methods.AddElement(TJSONString.Create(M.Name));
         Root.AddPair('methods', Methods);
 
@@ -1155,9 +1323,9 @@ end;
 
 procedure TAutomationProcessor.DoTerminateApp;
 begin
-  Terminate;  // 管道线程下次循环检查到 Terminated 会自行退出
+  Terminate; // 管道线程下次循环检查到 Terminated 会自行退出
   Application.Terminate;
-  PostQuitMessage(0);  // 向主线程消息队列发 WM_QUIT，确保 Run 退出
+  PostQuitMessage(0); // 向主线程消息队列发 WM_QUIT，确保 Run 退出
 end;
 
 function TAutomationProcessor.FindNamedControl(const AName: string): TObject;

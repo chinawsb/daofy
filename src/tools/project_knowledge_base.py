@@ -18,8 +18,41 @@ from ..utils.progress_tracker import ProgressInfo
 
 logger = get_logger(__name__)
 
-# 项目知识库实例缓存
+# 项目知识库实例缓存（LRU 淘汰，防止内存无限增长）
 _project_kb_cache: Dict[str, ProjectKnowledgeBase] = {}
+_project_kb_cache_order: list[str] = []  # 访问顺序，最近访问的在末尾
+_MAX_PROJECT_KB_CACHE = 5  # 最多缓存 5 个项目知识库
+
+
+def _evict_oldest_project_kb() -> None:
+    """淘汰最久未访问的项目知识库实例"""
+    while len(_project_kb_cache) >= _MAX_PROJECT_KB_CACHE and _project_kb_cache_order:
+        oldest_key = _project_kb_cache_order.pop(0)
+        if oldest_key in _project_kb_cache:
+            try:
+                _project_kb_cache[oldest_key].close()
+            except Exception as e:
+                logger.debug("关闭被淘汰的项目知识库失败: %s", e)
+            del _project_kb_cache[oldest_key]
+            logger.debug("淘汰项目知识库缓存: %s", oldest_key)
+
+
+def _touch_project_kb_cache(project_path: str) -> None:
+    """更新缓存访问顺序"""
+    if project_path in _project_kb_cache_order:
+        _project_kb_cache_order.remove(project_path)
+    _project_kb_cache_order.append(project_path)
+
+
+def _cleanup_project_kb_cache() -> None:
+    """清理所有项目知识库缓存（服务关闭时调用）"""
+    for path, pkb in list(_project_kb_cache.items()):
+        try:
+            pkb.close()
+        except Exception:
+            pass
+    _project_kb_cache.clear()
+    _project_kb_cache_order.clear()
 
 
 def get_project_kb(project_path: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None) -> ProjectKnowledgeBase:
@@ -36,9 +69,11 @@ def get_project_kb(project_path: str, progress_callback: Optional[Callable[[Prog
     project_path = str(Path(project_path).resolve())
 
     if project_path not in _project_kb_cache:
+        _evict_oldest_project_kb()
         _project_kb_cache[project_path] = ProjectKnowledgeBase(project_path, progress_callback)
         _project_kb_cache[project_path].load_knowledge_bases()
 
+    _touch_project_kb_cache(project_path)
     return _project_kb_cache[project_path]
 
 

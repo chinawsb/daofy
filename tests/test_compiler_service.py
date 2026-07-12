@@ -78,6 +78,25 @@ end.
         _restore_dproj(str(dproj_path), backup_path)
 
 
+def test_collect_output_files_includes_tds_and_rsm(tmp_path):
+    """Extra debug symbol outputs should be visible in the MCP result."""
+    from src.services.compiler_service import CompilerService
+
+    project_path = tmp_path / "Symbols.dproj"
+    tds_path = tmp_path / "Symbols.tds"
+    rsm_path = tmp_path / "Symbols.rsm"
+    tds_path.touch()
+    rsm_path.touch()
+
+    output_files = CompilerService._collect_output_files(
+        str(project_path),
+        output_path_override=str(tmp_path),
+    )
+
+    assert str(tds_path.resolve()) in output_files
+    assert str(rsm_path.resolve()) in output_files
+
+
 def _get_delphi_versions():
     """从注册表获取 Delphi 版本列表（测试辅助函数）"""
     versions = []

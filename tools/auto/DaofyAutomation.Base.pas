@@ -116,9 +116,14 @@ type
     /// <summary>发送按键（key 值如 Tab/Enter/Esc/F1 或单字符）</summary>
     function HandleCmdKey(const ReqId, Target, Key: string): string; virtual; abstract;
 
+    /// <summary>查找控件中指定文本的边界矩形（返回客户端 left,top,width,height），替代 OCR</summary>
+    /// <param name="Mode">捕获模式：auto=先尝试 paint-hook 再回退 type-bound；paint=仅 paint-hook；type=仅 type-bound</param>
+    /// <param name="IncludeInvisible">是否包含完全不可见的记录（默认 false，用于诊断）</param>
+    function HandleCmdTextBounds(const ReqId, Target, Text: string;
+      const Mode: string; IncludeInvisible: Boolean): string; virtual; abstract;
+
     /// <summary>RTTI 读取属性值</summary>
     function HandleRGet(const ReqId, Target, Prop: string): string; virtual; abstract;
-
     /// <summary>RTTI 写入属性值</summary>
     function HandleRSet(const ReqId, Target, Prop, Val: string): string; virtual; abstract;
 
@@ -723,6 +728,11 @@ begin
 
       else if Cmd = 'key' then
         Result := HandleCmdKey(ReqId, Target, GetJSONStr(J, 'key', ''))
+
+      else if Cmd = 'textbounds' then
+        Result := HandleCmdTextBounds(ReqId, Target, GetJSONStr(J, 'text', ''),
+          GetJSONStr(J, 'mode', 'auto'),
+          GetJSONStr(J, 'include_invisible', 'false') = 'true')
 
       else if Cmd = 'peekresult' then begin
         var AR: TAsyncResultRec;

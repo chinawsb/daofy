@@ -127,6 +127,9 @@ class ArgsGenerator:
         # 生成 Detailed 级别 .map 文件（供 StackTrace callgraph 解析）
         args.append('-GD')
 
+        # 用户参数最后追加，允许显式覆盖前面的同类编译器开关
+        args.extend(options.extra_args)
+
         logger.debug("生成的参数: " + " ".join(args))
         return args
 
@@ -167,6 +170,15 @@ class ArgsGenerator:
 
         return True
 
+    def validate_batch_extra_args(self, args: List[str]) -> bool:
+        """验证即将写入 MSBuild 批处理文件的用户参数。"""
+        forbidden_chars = {'"', '%', '!', '&', '|', '<', '>', '^'}
+        for arg in args:
+            if any(ord(char) < 32 or char in forbidden_chars for char in arg):
+                logger.error("MSBuild 额外参数包含批处理元字符: %s", arg)
+                return False
+        return True
+
     def format_command(self, executable: str, args: List[str]) -> str:
         """生成完整命令字符串"""
         if ' ' in executable:
@@ -180,7 +192,8 @@ class ArgsGenerator:
                          warning_level: int = 2, disabled_warnings: List[str] = None,
                          namespaces: List[str] = None, include_paths: List[str] = None,
                          output_dir: str = None, delphi_version: Optional[str] = None,
-                         conditional_defines: List[str] = None) -> List[str]:
+                         conditional_defines: List[str] = None,
+                         extra_args: Optional[List[str]] = None) -> List[str]:
         """生成单文件编译参数
 
         Args:
@@ -193,6 +206,7 @@ class ArgsGenerator:
             output_dir: 输出目录 (用于存放.dcu文件)
             delphi_version: Delphi版本号，默认自动检测
             conditional_defines: 条件编译符号列表
+            extra_args: 附加编译器参数列表
         """
         args = []
 
@@ -257,6 +271,8 @@ class ArgsGenerator:
 
         # 仅语法检查
         args.append('-$M-')
+
+        args.extend(extra_args or [])
 
         logger.debug("生成的单文件编译参数: " + " ".join(args))
         return args

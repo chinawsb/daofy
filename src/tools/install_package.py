@@ -165,14 +165,15 @@ async def _compile_single_package(
     project_path: str,
     target_platform: str,
     build_configuration: str,
-    timeout: int
+    timeout: int,
+    extra_args: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """编译单个包项目"""
     from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform
     
     existing_bpl = _find_bpl_file(project_path, target_platform, build_configuration)
     
-    if existing_bpl and Path(existing_bpl).exists():
+    if not extra_args and existing_bpl and Path(existing_bpl).exists():
         return {
             "success": True,
             "output_file": existing_bpl,
@@ -186,7 +187,8 @@ async def _compile_single_package(
         target_platform=TargetPlatform(target_platform),
         build_configuration=build_configuration,
         timeout=timeout,
-        debug=True
+        debug=True,
+        extra_args=extra_args or [],
     )
     
     request = ProjectCompileRequest(

@@ -46,7 +46,8 @@ MCP resource URI: `delphi://automation/script-generation-workflow`。
 2. 多步流程设置 `keep_alive=true`。
 3. 步骤按 `phase: "perceive | execute | verify | wait | rebuild"` 编排。
 4. 每个验证步骤添加 `expected` 说明和 `assert_expr`。
-5. 通过的可复用脚本保存到被测项目根目录 `Tests\<测试类型>\` 下。
+5. 功能用例必须覆盖边界场景：正常路径、失败/取消路径、空值/非法值/超长输入、极限数量、权限或依赖缺失、异步超时、控件重建、DPI/布局、文件对话框回退等按场景适用；不适用项在 `note` 写明理由。
+6. 通过的可复用脚本保存到被测项目根目录 `Tests\<测试类型>\` 下。
 
 ### Step 4: 执行
 

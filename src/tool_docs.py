@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tool 完整文档字典 — 供 tool_help 工具按需查询
 
 每个工具包含：简介、触发词、协作链、全部 action 说明、示例、降级策略等。
@@ -55,9 +55,11 @@ TOOL_HELP_DOCS: dict = {
                     "auto_install": "仅 .dpk 有效，是否自动安装到 IDE，默认 true",
                     "run_verify": "编译后启动 3 秒验证是否崩溃，默认 false",
                     "output_path": "编译输出目录",
+                    "extra_args": "附加到实际编译后端的完整参数数组；.dproj/MSBuild 使用 /p:...，无对应 .dproj 的直接 DCC 编译使用 -VT/-VR 等开关",
                 },
                 "examples": [
                     'project(action="compile", project_path="App.dproj", build_configuration="Release")',
+                    'project(action="compile", project_path="App.dproj", extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])',
                     'project(action="compile", project_path="unit.pas")',
                 ],
             },
@@ -74,6 +76,7 @@ TOOL_HELP_DOCS: dict = {
                     "debug": "是否调试",
                     "output_type": "输出类型",
                     "runtime_library": "运行时库",
+                    "extra_args": "附加编译器参数",
                 },
                 "examples": [
                     'project(action="dry_run", project_path="App.dproj")',
@@ -86,6 +89,7 @@ TOOL_HELP_DOCS: dict = {
                     "unit_search_paths": "单元搜索路径",
                     "conditional_defines": "条件编译符号",
                     "compiler_version": "编译器版本",
+                    "extra_args": "附加 DCC 参数",
                 },
                 "examples": [
                     'project(action="compile_file", project_path="unit.pas")',
@@ -359,7 +363,7 @@ TOOL_HELP_DOCS: dict = {
             "backup": "备份管理（创建/列表/恢复）",
             "encode": "文件编码转换。自动检测源编码，写入目标编码。支持 utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi。自动备份。转换后标记脏。",
             "uses": "增删 uses 子句中的单元。成功后标记脏。",
-            "grep": "正则搜索/替换。支持单文件(file_path)、目录递归(path+include)、文件列表(files)、多pattern OR搜索(patterns)。filter_pattern 二级 AND 过滤，exclude_pattern NOT 排除。replace+replace 切换替换模式（dry_run 默认 True，预览不写盘）。",
+            "grep": "正则搜索/替换。file_path 支持字符串（自动检测文件/目录）或路径数组（逐项解析）。支持多 pattern OR 搜索(patterns)、二级 AND 过滤(filter_pattern)、NOT 排除(exclude_pattern)。replace 切换替换模式（dry_run 默认 True，预览不写盘）。",
             "fix_garbled": "修复中文乱码：自动检测 U+FFFD 替换字符、缺失 UTF-8 BOM、编码误检测并修复。支持 backup 备份。",
         },
         "examples": [
@@ -378,12 +382,12 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
             'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)   恢复',
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
-            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                                                         正则搜索(不区分大小写)',
+            'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")                                                     单文件正则搜索(不区分大小写)',
             'delphi_file(action="grep", file_path="Unit1.pas", pattern="/^procedure/m", context=2)                                        多行模式+上下文的搜索',
             'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)                 替换预览',
-            'delphi_file(action="grep", path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)                                 目录递归搜索',
-            'delphi_file(action="grep", files=["a.pas","b.pas"], pattern="/TMyClass/i")                                                    文件列表搜索',
+            'delphi_file(action="grep", file_path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)                            目录递归搜索（file_path自动检测为目录）',
             'delphi_file(action="grep", file_path="Unit1.pas", patterns=["/TMyClass/i", "/TSomeClass/"])                                   多 pattern OR 搜索',
+            'delphi_file(action="grep", file_path=["Unit1.pas", "src/"], pattern="/TMyClass/i")                                         路径数组搜索',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")                       添加 UTF-8 BOM',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="gbk")                             转为 GBK',
             'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8", from_encoding="gbk")      指定 GBK→UTF-8',
@@ -519,13 +523,12 @@ TOOL_HELP_DOCS: dict = {
                 ],
             },
             "grep": {
-                "description": "正则搜索 + 多级过滤 + 替换。支持单文件（file_path）、目录递归（path+include）、文件列表（files）、多 pattern OR 搜索（patterns）。",
+                "description": "正则搜索 + 多级过滤 + 替换。file_path 自动检测：文件路径→单文件搜索，目录路径→递归搜索。也支持多 pattern OR 搜索（patterns）。",
                 "required": [],
                 "optional": {
-                    "file_path": "单文件路径（与 path/files/patterns 四选一）",
-                    "path": "搜索目录（与 file_path/files/patterns 配合）",
-                    "include": "glob 包含模式（与 path 配合），如 **/*.pas",
-                    "files": "文件路径列表（与 file_path/path 三选一）",
+                    "file_path": "文件路径、目录路径或路径数组。字符串自动检测文件/目录；数组逐项解析",
+                    "include": "glob 包含模式（仅 file_path 为目录时有效），如 **/*.pas",
+                    "exclude": "glob 排除模式（仅 file_path 为目录时有效）",
                     "pattern": "单模式正则，支持行内 /expr/flags 语法",
                     "patterns": "多模式正则数组，各模式 OR 搜索",
                     "filter_pattern": "二级 AND 过滤（可选），也支持行内 /expr/flags",
@@ -539,9 +542,9 @@ TOOL_HELP_DOCS: dict = {
                 "examples": [
                     'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")',
                     'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i", replace="TNewClass", dry_run=True)',
-                    'delphi_file(action="grep", path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)',
-                    'delphi_file(action="grep", files=["a.pas","b.pas"], pattern="/TMyClass/i")',
+                    'delphi_file(action="grep", file_path="src/", include="**/*.pas", pattern="/TMyClass/i", context=1)',
                     'delphi_file(action="grep", file_path="Unit1.pas", patterns=["/TMyClass/i", "/TSomeClass/"])',
+                    'delphi_file(action="grep", file_path=["Unit1.pas", "src/sub/"], pattern="/TMyClass/i")',
                 ],
             },
             "fix_garbled": {
@@ -1408,7 +1411,7 @@ TOOL_HELP_DOCS: dict = {
                 "protocol": {
                     "transport": "命名管道 JSON 请求/响应",
                     "async_cmds": "click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type",
-                    "sync_cmds": "goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception",
+                    "sync_cmds": "goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/textbounds/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception",
                 },
                 "commands_by_phase": {
                     "perception": {
@@ -1431,6 +1434,7 @@ TOOL_HELP_DOCS: dict = {
                             "msgscan": "扫描 MessageBox 弹窗（同步，每步执行后必做）",
                             "dlgscan": "扫描文件对话框状态（同步）",
                             "rinspect": "RTTI 成员发现：列出控件的属性名+类型+方法（非属性值）",
+                            "textbounds": "按显示文本查找控件中匹配项的边界矩形（替代 OCR）。两种模式: paint-hook（拦截 GDI/GDI+ 文本绘制，通用，支持任意控件含第三方/自绘）和 type-bound（按控件类型分发，覆盖标准 VCL 控件）。Mode 路由: paint=仅 paint-hook; type=仅 type-bound; auto=paint-hook 优先失败回退 type-bound。脚本参数: target='ControlName@searchText' 或 JSON {'text':'searchText','mode':'auto','include_invisible':false}。返回值: 简单模式 {\"x\":..,\"y\":..,\"width\":..,\"height\":..}; paint-hook 富模式额外含 visible_state(full/partial/invisible/unknown)/clipped/clip_*/visible_*/api",
                         },
                     },
                     "execution": {
@@ -1490,6 +1494,7 @@ TOOL_HELP_DOCS: dict = {
                     "callgraph_explain_exception": "异常栈扩展解释，输出上下游调用摘要",
                     "rset/rcall": "RTTI 写属性/调用方法（异步）",
                     "rinspect": "RTTI 成员发现（同步）",
+                    "textbounds": "按显示文本查找控件中匹配项的边界矩形（替代 OCR）。paint-hook 模式拦截 GDI/GDI+ 文本绘制通用匹配；type-bound 模式按控件类型分发覆盖标准 VCL 控件。mode=paint/type/auto（auto=paint 优先回退 type）。FMX 端仅支持 paint-hook",
                     "dlgfile/snapdir": "文件对话框/截图目录（同步）",
                     "exit": "退出进程",
                     "uiaclick/uiagoto/uiaget/uiascan/uiaset/uiawait": "UIA 自动化（Python 端执行，按 Name/ClassName 匹配控件，不受 Delphi 管道/线程限制）",

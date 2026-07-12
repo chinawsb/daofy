@@ -1,6 +1,6 @@
 # Delphi Project — 项目全生命周期管理
 
-> 版本：v1.1 | 最后更新：2026-07-05
+> 版本：v1.2 | 最后更新：2026-07-10
 
 ---
 
@@ -76,6 +76,7 @@ delphi_project(action="compile",
     unit_search_paths=["C:\Libs\Common", "..\Shared"],
     optimize=True,
     debug=False,
+    extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"],
     output_path=".\Build\Release")
 ```
 
@@ -100,6 +101,25 @@ delphi_project(action="compile",
 | `auto_install` | ❌ | true | 仅 .dpk：是否自动安装到 IDE |
 | `run_verify` | ❌ | false | 编译后启动 3 秒验证是否崩溃 |
 | `output_path` | ❌ | — | 编译输出目录 |
+| `extra_args` | ❌ | — | 附加到实际编译后端的完整参数数组 |
+
+#### 附加编译参数
+
+`extra_args` 中每个元素必须是一个完整参数。Daofy 会在内建参数之后追加这些参数，并按实际后端解释：
+
+```python
+# .dproj 或存在同名 .dproj 的 .dpr：走 MSBuild，请求生成 TDS/RSM 调试符号
+delphi_project(action="compile",
+    project_path="Project.dproj",
+    extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])
+
+# 没有同名 .dproj 的 .dpr：直接走 DCC
+delphi_project(action="compile",
+    project_path="Project.dpr",
+    extra_args=["-VT", "-VR"])
+```
+
+如果编译器生成了 `.tds`、`.rsm` 文件，它们会列入编译结果的 `output_files`。不要在数组元素中自行添加外层引号；包含空格的单个参数仍作为一个数组元素传入。
 
 #### 编译事件
 
