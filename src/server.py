@@ -41,6 +41,53 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
+
+def _ensure_deps() -> None:
+    """启动前检查核心依赖，缺失时自动 pip install（仅主进程，失败不阻塞）。
+
+    使用 importlib.util.find_spec 探测，不触发实际导入，避免副作用。
+    """
+    import subprocess
+    import importlib.util
+
+    # (模块探测名, pip install 规格)
+    CORE: list[tuple[str, str]] = [
+        ("zvec",      "zvec>=0.5.0"),
+        ("chardet",   "chardet>=7.0"),
+        ("mcp",       "mcp>=0.9.0"),
+        ("pydantic",  "pydantic>=2.0.0"),
+        ("bs4",       "beautifulsoup4>=4.12.0"),
+        ("html2text", "html2text>=2024.2.25"),
+        ("lxml",      "lxml>=4.9.0"),
+        ("docx",      "python-docx>=0.8.11"),
+        ("requests",  "requests>=2.31.0"),
+    ]
+
+    missing = [spec for mod, spec in CORE if importlib.util.find_spec(mod) is None]
+    if not missing:
+        return
+
+    try:
+        _logging.getLogger("daofy").info(
+            "缺失依赖，正在自动安装: %s ...", ", ".join(missing)
+        )
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", *missing],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=120,
+        )
+        _logging.getLogger("daofy").info("依赖安装完成")
+    except Exception as exc:
+        _logging.getLogger("daofy").warning(
+            "自动安装依赖失败（%s），请手动执行:  pip install -r requirements.txt", exc
+        )
+
+
+# multiprocessing spawn 子进程重执行本文件时跳过安装
+if __name__ != "__mp_main__":
+    _ensure_deps()
+
 from src.constants import (
     REG_KEY_EMBARCADERO_BDS,
     TIMEOUT_AUTOMATION_GUI,
