@@ -414,6 +414,7 @@ def _detect_path(paths: list[str], agent_name: str = "") -> str | None:
         "Cline": ["cline"],
         "Qoder": ["qoder"],
         "Qoder CN": ["qoder cn", "qodercn", "qoder-cn", "qoder_cn"],
+        "CodeBuddy": ["codebuddy"],
     }
     keywords = keywords_map.get(agent_name, [])
 
@@ -651,6 +652,20 @@ AGENT_DEFINITIONS = {
             os.path.join(_env("LOCALAPPDATA"), "Programs", "ChatGLM", "ChatGLM.exe"),
         ],
         "experimental": True,
+    },
+    "CodeBuddy": {
+        # 腾讯云 CodeBuddy IDE — AI 代码助手
+        # MCP 配置文件: ~/.codebuddy/mcp.json（mcpServers 键）
+        # 支持 stdio/sse/http 三种 MCP 传输类型
+        # 文档: https://www.codebuddy.ai/docs/ide/User-guide/MCP
+        "config_type": "Standard",
+        "doc_url": "https://www.codebuddy.ai/docs/ide/User-guide/MCP",
+        "config_path": lambda: os.path.join(_userprofile(), ".codebuddy", "mcp.json"),
+        "detect_paths": lambda: [
+            os.path.join(_env("LOCALAPPDATA"), "Programs", "CodeBuddy", "CodeBuddy.exe"),
+            os.path.join(_env("ProgramFiles"), "CodeBuddy", "CodeBuddy.exe"),
+            os.path.join(_env("APPDATA"), "CodeBuddy"),
+        ],
     },
     "Qoder": {
         # 阿里云通义团队出品的 Agentic Coding Platform（国际版）
@@ -1127,7 +1142,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
-            "Codex": "Codex CLI",
+            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy",
         }
         target = filter_map.get(agent_filter, agent_filter)
         agents = [a for a in agents if a["name"] == target]
@@ -1471,7 +1486,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
-            "Codex": "Codex CLI",
+            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy",
         }
         target = filter_map.get(agent_filter, agent_filter)
         selected = []
@@ -1939,7 +1954,7 @@ def main() -> None:
     parser.add_argument("--agent", default="All",
                         choices=["Claude", "ClaudeCode", "Trae", "CodeArts", "Cursor", "OpenCode",
                                  "Windsurf", "Cline", "Roo", "Tongyi", "Doubao",
-                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "All"],
+                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "CodeBuddy", "All"],
                         help="指定 AI Agent")
     parser.add_argument("--force", action="store_true", help="强制重新配置")
     parser.add_argument("--restart", action="store_true", help="操作后自动重启 AI Agent（不交互询问）")

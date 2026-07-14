@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 # 监听的 Delphi 文件扩展名
 DELPHI_EXTENSIONS: Set[str] = {
-    '.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj',
+    '.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj', '.groupproj',
 }
 
 # 跳过的不需要监听的目录名

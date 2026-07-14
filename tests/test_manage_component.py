@@ -2,8 +2,10 @@
 测试 DFM 解析器 + PAS 声明解析器 + manage_component 增删改操作
 """
 
+import importlib
 import os
 import tempfile
+
 import pytest
 
 from src.tools.dfm_parser import (
@@ -16,6 +18,7 @@ from src.tools.dfm_parser import (
 from src.tools.pas_decl_parser import (
     PasFieldDecl, PasMethodDecl,
     parse_pas_class, sync_pas_declarations, extract_event_handlers,
+    extract_uses_units,
 )
 
 
@@ -178,6 +181,21 @@ end
         assert root.get_property("Color").raw_value == "clBtnFace"
         assert root.get_property("OnClick").is_event is True
 
+    def test_parse_and_serialize_dotted_property_name(self):
+        dfm = """\
+object Form1: TForm
+  Constraints.MinWidth = 320
+  Constraints.MinHeight = 180
+end
+"""
+        root = parse_dfm_text(dfm)
+
+        assert root.get_property("Constraints.MinWidth").value == "320"
+        assert root.get_property("Constraints.MinHeight").value == "180"
+        serialized = serialize_component(root)
+        assert "Constraints.MinWidth = 320" in serialized
+        assert "Constraints.MinHeight = 180" in serialized
+
 
 # ============================================================
 # PAS 声明解析器测试
@@ -308,6 +326,28 @@ class TestPasDeclParser:
         )
         assert "Vcl.Dialogs" in new_pas
 
+    def test_extract_uses_units(self):
+        assert extract_uses_units(SAMPLE_PAS) == [
+            "Vcl.Forms",
+            "Vcl.StdCtrls",
+            "Vcl.ExtCtrls",
+        ]
+
+    def test_sync_namespaced_uses_replaces_short_name(self):
+        pas_text = SAMPLE_PAS.replace("Vcl.Forms", "Forms")
+        new_pas = sync_pas_declarations(pas_text, add_uses=["Vcl.Forms"])
+        units = extract_uses_units(new_pas)
+
+        assert "Vcl.Forms" in units
+        assert "Forms" not in units
+
+    def test_sync_distinct_namespaced_units_with_same_short_name(self):
+        new_pas = sync_pas_declarations(SAMPLE_PAS, add_uses=["FMX.Forms"])
+        units = extract_uses_units(new_pas)
+
+        assert "Vcl.Forms" in units
+        assert "FMX.Forms" in units
+
     def test_sync_remove_uses(self):
         new_pas = sync_pas_declarations(
             SAMPLE_PAS,
@@ -369,6 +409,7 @@ class TestManageComponentAdd:
         )
         assert result["status"] == "success"
         assert result["component_name"] == "Edit1"
+        assert result["pas_sync"]["added_uses"] == []
         assert "Edit1: TEdit;" in open(pas_path, 'r', encoding='utf-8').read()
 
     @pytest.mark.asyncio
@@ -387,6 +428,135 @@ class TestManageComponentAdd:
         pas_text = open(pas_path, 'r', encoding='utf-8').read()
         assert "BtnApply: TButton;" in pas_text
         assert "procedure BtnApplyClick(Sender: TObject);" in pas_text
+
+    @pytest.mark.asyncio
+    async def test_add_component_syncs_required_uses(self, dfm_pas_pair, monkeypatch):
+        module = importlib.import_module("src.tools.manage_component")
+        monkeypatch.setattr(module, "collect_all_units", lambda _component: ["Acme.Controls"])
+        dfm_path, pas_path = dfm_pas_pair
+
+        result = await module.manage_component(
+            action="add",
+            target_dfm=dfm_path,
+            target_pas=pas_path,
+            new_component_class="TAcmeWidget",
+            new_component_name="Widget1",
+        )
+
+        assert result["status"] == "success"
+        assert result["pas_sync"]["added_uses"] == ["Acme.Controls"]
+        pas_text = open(pas_path, 'r', encoding='utf-8').read()
+        assert "Widget1: TAcmeWidget;" in pas_text
+        assert extract_uses_units(pas_text).count("Acme.Controls") == 1
+
+    @pytest.mark.asyncio
+    async def test_add_component_does_not_duplicate_required_uses(
+        self,
+        dfm_pas_pair,
+        monkeypatch,
+    ):
+        module = importlib.import_module("src.tools.manage_component")
+        monkeypatch.setattr(module, "collect_all_units", lambda _component: ["Vcl.StdCtrls"])
+        dfm_path, pas_path = dfm_pas_pair
+
+        result = await module.manage_component(
+            action="add",
+            target_dfm=dfm_path,
+            target_pas=pas_path,
+            new_component_class="TEdit",
+            new_component_name="Edit1",
+        )
+
+        assert result["status"] == "success"
+        assert result["pas_sync"]["added_uses"] == []
+        pas_text = open(pas_path, 'r', encoding='utf-8').read()
+        assert extract_uses_units(pas_text).count("Vcl.StdCtrls") == 1
+
+    @pytest.mark.asyncio
+    async def test_add_component_missing_uses_clause_does_not_modify_files(
+        self,
+        dfm_pas_pair,
+        monkeypatch,
+    ):
+        module = importlib.import_module("src.tools.manage_component")
+        monkeypatch.setattr(module, "collect_all_units", lambda _component: ["Acme.Controls"])
+        dfm_path, pas_path = dfm_pas_pair
+        pas_without_uses = SAMPLE_PAS.replace(
+            "uses\n  Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls;\n\n",
+            "",
+        )
+        with open(pas_path, 'w', encoding='utf-8') as pas_file:
+            pas_file.write(pas_without_uses)
+        original_dfm = open(dfm_path, 'r', encoding='utf-8').read()
+
+        result = await module.manage_component(
+            action="add",
+            target_dfm=dfm_path,
+            target_pas=pas_path,
+            new_component_class="TAcmeWidget",
+            new_component_name="Widget1",
+        )
+
+        assert result["status"] == "failed"
+        assert "interface uses" in result["message"]
+        assert open(dfm_path, 'r', encoding='utf-8').read() == original_dfm
+        assert open(pas_path, 'r', encoding='utf-8').read() == pas_without_uses
+
+    @pytest.mark.asyncio
+    async def test_add_component_dfm_failure_does_not_modify_pas(
+        self,
+        dfm_pas_pair,
+        monkeypatch,
+    ):
+        module = importlib.import_module("src.tools.manage_component")
+        dfm_path, pas_path = dfm_pas_pair
+        original_dfm = open(dfm_path, 'r', encoding='utf-8').read()
+        original_pas = open(pas_path, 'r', encoding='utf-8').read()
+
+        async def fail_dfm_write(*_args, **_kwargs):
+            return "simulated DFM write failure"
+
+        monkeypatch.setattr(module, "_write_dfm_file", fail_dfm_write)
+        result = await module.manage_component(
+            action="add",
+            target_dfm=dfm_path,
+            target_pas=pas_path,
+            new_component_class="TEdit",
+            new_component_name="Edit1",
+        )
+
+        assert result["status"] == "failed"
+        assert open(dfm_path, 'r', encoding='utf-8').read() == original_dfm
+        assert open(pas_path, 'r', encoding='utf-8').read() == original_pas
+
+    @pytest.mark.asyncio
+    async def test_add_component_pas_failure_rolls_back_dfm(
+        self,
+        dfm_pas_pair,
+        monkeypatch,
+    ):
+        module = importlib.import_module("src.tools.manage_component")
+        dfm_path, pas_path = dfm_pas_pair
+        original_dfm = open(dfm_path, 'r', encoding='utf-8').read()
+        original_pas = open(pas_path, 'r', encoding='utf-8').read()
+        monkeypatch.setattr(
+            module,
+            "_write_pas_add_plan",
+            lambda _plan: "simulated PAS write failure",
+        )
+
+        result = await module.manage_component(
+            action="add",
+            target_dfm=dfm_path,
+            target_pas=pas_path,
+            new_component_class="TEdit",
+            new_component_name="Edit1",
+        )
+
+        assert result["status"] == "failed"
+        assert result["dfm_rolled_back"] is True
+        assert open(dfm_path, 'r', encoding='utf-8').read() == original_dfm
+        assert open(pas_path, 'r', encoding='utf-8').read() == original_pas
 
 
 class TestManageComponentRemove:

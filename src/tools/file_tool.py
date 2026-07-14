@@ -42,7 +42,7 @@ from . import dfm_utils
 
 logger = get_logger(__name__)
 
-_DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj'}
+_DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj', '.groupproj'}
 
 _SYSTEM_SENSITIVE_DIRS: List[str] = []
 
@@ -2752,7 +2752,7 @@ def _glob_files(
     Args:
         path: root directory path
         include: glob pattern; defaults to Delphi source files
-                 (.pas/.dpr/.dpk/.dfm/.fmx/.inc/.dproj)
+                 (.pas/.dpr/.dpk/.dfm/.fmx/.inc/.dproj/.groupproj)
         exclude: glob pattern to exclude (optional)
 
     Returns:
@@ -2767,7 +2767,7 @@ def _glob_files(
     else:
         patterns = [
             "**/*.pas", "**/*.dpr", "**/*.dpk",
-            "**/*.dfm", "**/*.fmx", "**/*.inc", "**/*.dproj",
+            "**/*.dfm", "**/*.fmx", "**/*.inc", "**/*.dproj", "**/*.groupproj",
         ]
 
     matched = set()

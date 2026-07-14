@@ -63,6 +63,8 @@ end
 CLEAN_LAYOUT_DFM = """object Form1: TForm1
   ClientWidth = 320
   ClientHeight = 180
+  Constraints.MinWidth = 320
+  Constraints.MinHeight = 180
   object LabelName: TLabel
     Left = 24
     Top = 12
@@ -101,6 +103,54 @@ CLEAN_LAYOUT_DFM = """object Form1: TForm1
     Width = 160
     Height = 21
     TabOrder = 2
+  end
+end
+"""
+
+
+RESIZABLE_ALIGNED_DFM = """object Form1: TForm1
+  ClientWidth = 320
+  ClientHeight = 180
+  object ContentPanel: TPanel
+    Left = 0
+    Top = 0
+    Width = 320
+    Height = 180
+    Align = alClient
+  end
+end
+"""
+
+
+FIXED_MANUAL_DFM = """object Form1: TForm1
+  ClientWidth = 320
+  ClientHeight = 180
+  BorderStyle = bsDialog
+  object EditName: TEdit
+    Left = 92
+    Top = 12
+    Width = 160
+    Height = 21
+  end
+end
+"""
+
+
+NESTED_RESIZABLE_MANUAL_DFM = """object Form1: TForm1
+  ClientWidth = 320
+  ClientHeight = 180
+  object ContentPanel: TPanel
+    Left = 0
+    Top = 0
+    Width = 320
+    Height = 180
+    Align = alClient
+    object EditName: TEdit
+      Left = 92
+      Top = 12
+      Width = 160
+      Height = 21
+    end
   end
 end
 """
@@ -170,6 +220,37 @@ def test_audit_dfm_layout_text_accepts_clean_form() -> None:
     assert findings == []
 
 
+def test_resizable_form_with_manual_layout_requires_minimum_size() -> None:
+    findings = audit_dfm_layout_text(BAD_LAYOUT_DFM, "ResizableForm.dfm")
+    finding = next(item for item in findings if item.rule_id == "LAYOUT-008")
+
+    assert finding.component == "Form1"
+    assert "MinWidth=0" in finding.message
+    assert "MinHeight=0" in finding.message
+    assert "Align" in finding.recommendation
+
+
+def test_resizable_form_accepts_align_layout() -> None:
+    findings = audit_dfm_layout_text(RESIZABLE_ALIGNED_DFM, "AlignedForm.dfm")
+
+    assert all(item.rule_id != "LAYOUT-008" for item in findings)
+
+
+def test_fixed_form_accepts_manual_layout_without_constraints() -> None:
+    findings = audit_dfm_layout_text(FIXED_MANUAL_DFM, "FixedForm.dfm")
+
+    assert all(item.rule_id != "LAYOUT-008" for item in findings)
+
+
+def test_resizable_nested_container_requires_adequate_minimum_size() -> None:
+    findings = audit_dfm_layout_text(NESTED_RESIZABLE_MANUAL_DFM, "NestedForm.dfm")
+    layout_findings = [item for item in findings if item.rule_id == "LAYOUT-008"]
+
+    assert [item.component for item in layout_findings] == ["ContentPanel"]
+    assert "至少需要 252" in layout_findings[0].message
+    assert "至少需要 33" in layout_findings[0].message
+
+
 def test_audit_dfm_layout_text_uses_geometry_for_custom_classes() -> None:
     findings = audit_dfm_layout_text(CUSTOM_CLASS_LAYOUT_DFM, "CustomForm.dfm")
     rule_ids = {finding.rule_id for finding in findings}
@@ -198,6 +279,7 @@ async def test_run_layout_audit_json_output(tmp_path: Path) -> None:
     payload = json.loads(result.content[0].text)
     assert payload["summary"]["total"] >= 6
     assert any(item["rule_id"] == "LAYOUT-001" for item in payload["findings"])
+    assert any(item["rule_id"] == "LAYOUT-008" for item in payload["findings"])
 
 
 @pytest.mark.asyncio

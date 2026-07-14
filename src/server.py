@@ -132,12 +132,9 @@ def _filter_surrogates(text: str) -> str:
 
 
 MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
-
-关键工具路由规则：
-- Delphi 文件(.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx)必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。
-- 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")` 获取规则；用 `delphi_kb` 查 API/项目符号；用 `delphi_project` 做 compile/audit/layout/runtime 验证。
-- 所有 Git 操作必须使用 `code_hosting`，不要在 shell 中直接运行 git。
-- 不确定工具用法时，先调用 `tool_help(tool_name=...)` 或 `get_coding_rules(...)`。
+Delphi 文件处理请严格遵循已安装到你规则目录的 Daofy Rule（必须用 `delphi_file` 工具，
+禁用内置 Read/Edit/Write/grep）；详细用法见 `daofy` skill，深度规范用
+`get_coding_rules(section=...)` 按需获取。
 """
 
 MCP_SERVER_DESCRIPTION = (
@@ -314,6 +311,23 @@ else:
             logger.info("获取工作区根目录失败（客户端可能不支持 roots）- 静默跳过", exc_info=True)
 
 
+    async def _install_client_rules(session) -> None:
+        """将 Daofy 客户端规则安装到所连 MCP 客户端的规则目录。
+
+        客户端身份只有 initialize 之后才可得，故放在后台任务里执行，
+        不阻塞握手。失败不影响 Server 运行。
+        """
+        try:
+            from src.services.client_rules_installer import install_client_rules
+
+            client_params = getattr(session, "_client_params", None)
+            outcome = install_client_rules(client_params)
+            if outcome.get("message"):
+                logger.info("[client-rules] %s", outcome["message"])
+        except Exception:
+            logger.info("安装 Daofy 客户端规则失败（不影响正常运行）", exc_info=True)
+
+
     async def _run_mcp_server(server, read_stream, write_stream) -> None:
         """Run the MCP server with Daofy initialize metadata."""
         initialization_options = server.create_initialization_options()
@@ -336,6 +350,8 @@ else:
             async with anyio.create_task_group() as tg:
                 # 后台获取工作区根目录
                 tg.start_soon(_fetch_workspace_roots, session)
+                # 后台将 Daofy 规则安装到所连 MCP 客户端的规则目录
+                tg.start_soon(_install_client_rules, session)
 
                 try:
                     async for message in session.incoming_messages:
@@ -835,8 +851,21 @@ async def run_server():
                     "required": ["action"],
                     "properties": {
                         # ---- 全局参数（所有 action 都可用）----
-                        "action": {"type": "string", "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"], "default": "read", "description": "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, grep=正则搜索/替换(file_path自动检测文件/目录,支持include/exclude/多pattern OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。"},
-                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径。支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx。grep action 额外支持路径数组（file_path=[\"a.pas\",\"dir/\"]），自动检测文件/目录逐项解析。"},
+                        "action": {
+                            "type": "string",
+                            "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"],
+                            "default": "read",
+                            "description": (
+                                "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), "
+                                "insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, "
+                                "backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, "
+                                "grep=正则搜索/替换(file_path自动检测文件/目录,支持include/exclude/多pattern "
+                                "OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file "
+                                "读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。看到 "
+                                ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj 时，即使只是读取也必须使用 delphi_file。"
+                            ),
+                        },
+                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径。支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj。grep action 额外支持路径数组（file_path=[\"a.pas\",\"dir/\"]），自动检测文件/目录逐项解析。"},
 
                         # ---- [read] 参数 ----
                         "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},

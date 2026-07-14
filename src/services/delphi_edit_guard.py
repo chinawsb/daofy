@@ -20,7 +20,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 DELPHI_EXTENSIONS: Set[str] = {
-    ".pas", ".dpr", ".dpk", ".dfm", ".fmx", ".inc", ".dproj",
+    ".pas", ".dpr", ".dpk", ".dfm", ".fmx", ".inc", ".dproj", ".groupproj",
 }
 
 DEFAULT_AUTH_TTL_SECONDS = 10.0
@@ -264,7 +264,7 @@ def external_edit_block_message(
         lines.append(f"- ... 还有 {len(events) - 10} 个文件")
     lines.extend([
         "",
-        "请使用 `delphi_file` 或 Daofy 已登记的 Delphi 工具读写 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 文件。",
+        "请使用 `delphi_file` 或 Daofy 已登记的 Delphi 工具读写 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj 文件。",
         "如果这次外部修改是有意为之，请先检查或回退这些改动；确认工作区干净后重启 MCP Server。",
         "如只需记录告警而不阻断，请设置 `DAOFY_EDIT_GUARD=warn`；如需关闭检测，请设置 `DAOFY_EDIT_GUARD=off`。",
     ])

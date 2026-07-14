@@ -32,7 +32,7 @@ TOOL_HELP_DOCS: dict = {
             "audit": "运行 50+ 条静态分析规则",
             "ast": "⭐ 代码骨架提取（daudit --mode skeleton --compact），最省 token",
             "runtime": "运行时注册检查，检测 uses 中是否遗漏必需单元",
-            "layout": "静态 DFM UI 布局审计，基于 DFM 几何和属性检测重叠、越界、对齐、间距、文本标签-字段配对和 TabOrder",
+            "layout": "静态 DFM UI 布局审计，检测重叠、越界、对齐、间距、字段配对、TabOrder 和可调整窗口的绝对坐标溢出风险",
         },
         "action_params": {
             "compile": {
@@ -205,7 +205,7 @@ TOOL_HELP_DOCS: dict = {
                 ],
             },
             "layout": {
-                "description": "静态审计 .dfm 布局质量，适合 AI 生成窗体后立即检查。",
+                "description": "静态审计 .dfm 布局质量，包括可调整窗口应优先使用 Align 或设置父容器最小尺寸。",
                 "optional": {
                     "base_dir": "递归扫描目录下的 .dfm 文件",
                     "file_path": "单个 .dfm 文件",
@@ -327,7 +327,7 @@ TOOL_HELP_DOCS: dict = {
         },
     },
     "delphi_file": {
-        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用读写/搜索/替换入口。Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。",
+        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc/.groupproj)专用读写/搜索/替换入口。Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep。",
         "description": "Delphi 文件专用操作：读/写(edits)/replace/insert/delete/格式化/备份管理/encoding转换/uses子句增删（编码检测+自动备份+DFM转换）。AI 工具路由规则：读取或修改 Delphi 文件都必须选 delphi_file。",
         "triggers": [
             "读文件、查看源码、打开文件、cat、Agent内置Read、built-in Read、写代码、编辑文件、改代码、修改代码、Agent内置Edit/Write",
@@ -335,7 +335,7 @@ TOOL_HELP_DOCS: dict = {
             "查看备份、还原文件、增删uses、添加单元、删除单元",
             "批量写入、批量修改、多处修改、多 edit、write edits",
         ],
-        "file_triggers": "看到 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc 文件路径时必须用此；读取也算",
+        "file_triggers": "看到 .pas/.dfm/.dproj/.dpk/.dpr/.fmx/.inc/.groupproj 文件路径时必须用此；读取也算",
         "constraints": [
             "❌ Delphi 文件必须用 delphi_file 读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep",
             "🚫 禁止对同一个文件并行写入，多处修改合并到一次 write(edits=[...])",
@@ -763,7 +763,7 @@ TOOL_HELP_DOCS: dict = {
         "description": "获取 Delphi 编码规则 — AI 写/改 Delphi 代码前必须先调用",
         "triggers": ["编码规则、编码规范、代码风格、命名规范、规则、coding rules"],
         "file_triggers": [
-            "⚠️ 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.res 等 Delphi 文件时，必须先调用此工具",
+            "⚠️ 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.res/.groupproj 等 Delphi 文件时，必须先调用此工具",
             "⚠️ 在写/修改任何 Delphi 代码前，必须先 get_coding_rules 了解编码规范",
         ],
         "workflow": "任何 .pas/.dproj 操作前→get_coding_rules(section='workflow') 了解流程",
@@ -1634,7 +1634,7 @@ TOOL_SHORT_DESC: dict = {
     ),
     "delphi_file": (
         "Delphi 文件专用读写入口: read/write(edits)/replace/insert/delete/format/backup/encode/uses。"
-        " 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 时，即使只是读取也用本工具。"
+        " 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj 时，即使只是读取也用本工具。"
         " Delphi 文件必须用 delphi_file，不要用内置 Read/Edit/Write/grep/apply_patch/PowerShell/Python。"
         " 内置工具和外部写入只能由 edit guard 事后兜底，不能作为主编辑路径。"
         " 🚫 同文件多处修改必须合并到一次 write(edits=[...])。"
@@ -1652,7 +1652,7 @@ TOOL_SHORT_DESC: dict = {
         "编译安装 Delphi 组件包: install(编译安装)/list(查已装)。"
     ),
     "get_coding_rules": (
-        "获取 Delphi 编码规范。写/改 Delphi 代码前必须先调用；具体 .pas/.dfm/.dproj 读取和修改仍路由到 delphi_file。"
+        "获取 Delphi 编码规范。写/改 Delphi 代码前必须先调用；具体 .pas/.dfm/.dproj/.groupproj 读取和修改仍路由到 delphi_file。"
     ),
     "code_hosting": (
         "Git 操作: status/diff/show/log/add/commit/fetch/pull/branch/switch/merge/restore/unstage/stash/tag/push/clone"

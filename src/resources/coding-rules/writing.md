@@ -14,7 +14,7 @@
 
 ### 自动备份
 - `delphi_file(action="write", backup=True)` 默认自动备份到 `__history/`
-- ❌ 禁止直接用 Agent 内置 Read/Edit/Write/grep、shell/Python 修改/搜索 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止直接用 Agent 内置 Read/Edit/Write/grep、shell/Python 修改/搜索 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj`
 - 手动操作：
   ```python
   delphi_file(action="backup", file_path="src/Unit1.pas")                                # 手动备份

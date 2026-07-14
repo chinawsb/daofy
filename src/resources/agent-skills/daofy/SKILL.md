@@ -1,30 +1,20 @@
 ---
 name: daofy
 description: >-
-  Daofy for Delphi MCP 路由规则。处理 Delphi 源码、DFM、工程文件、Daofy MCP 工具、
-  Delphi 编译/审计/自动化测试或 Daofy 仓库时使用；尤其是看到
-  .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 路径、需要 Git 操作、需要调用
-  delphi_file/delphi_project/delphi_kb/code_hosting/automate_delphi 时使用。
+  Daofy for Delphi 用法 skill（按需加载）。当实际需要调用 delphi_file 写入/修改 Delphi 文件、
+  需要做编译/审计/自动化测试，或遇到 Trae 等只暴露 run_mcp 的客户端包装时使用。
+  强制路由规则(Delphi 文件必用 delphi_file)由 Daofy Rule 与 initialize.instructions 常驻保证，本 skill 只讲"怎么用"。
 ---
 
 <!-- daofy-managed-skill: true -->
-<!-- daofy-managed-skill-version: 2026.07.07.1 -->
+<!-- daofy-managed-skill-version: 2026.07.14.2 -->
 
-# Daofy for Delphi
+# Daofy for Delphi — 用法 Skill（按需加载）
 
-本 skill 是 Daofy MCP Server 提供的 Agent 侧兜底规则。它不替代 MCP
-`initialize.instructions`、`list_tools`、`tool_help` 或 `get_coding_rules`，只用于让
-支持 Agent Skills 的客户端更稳定地选对 Daofy 工具。
-
-## 强制路由
-
-- Delphi 文件必须用 `delphi_file` 读写/搜索/正则匹配+替换，不要用内置
-  `Read/Edit/Write/grep`。
-- 修改 Delphi 代码前，按需调用 `get_coding_rules(section="writing")`。
-- API、类、函数或项目符号不确定时，先用 `delphi_kb` 查询。
-- 修改后用 `delphi_project(action="compile")` 验证；涉及 UI/DFM 布局时，用
-  `delphi_project(action="layout")` 做布局审计。
-- 所有 Git 操作使用 `code_hosting`，不要在 shell 里直接运行 `git`。
+> 本 skill 是**按需加载**的详细用法手册，不是常驻规则。
+> 强制路由约束（Delphi 文件必须用 `delphi_file`，禁用内置 Read/Edit/Write/grep）已由
+> Daofy Rule（安装到客户端规则目录）与 MCP `initialize.instructions` 常驻保证，此处不再复述，
+> 以免与 Rule 重复注入。本 skill 只补充 Rule 没覆盖的"客户端包装"与"工作流"。
 
 ## 客户端包装
 
@@ -50,8 +40,10 @@ run_mcp({
 
 ## 工作流
 
-1. 环境或规则不确定时，先调用 `check_environment`、`tool_help` 或
-   `get_coding_rules`。
+1. **确定 Delphi 编译器/环境时，调用 `check_environment(action="detect")`**
+   （首次编译前先 `action="check"`），**不要**用 shell 跑 `where dcc32` /
+   `dcc64 --version` 等探测命令——编译器路径/版本由 Daofy 统一探测与缓存。
+   工具参数不确定时再用 `tool_help` 或 `get_coding_rules`。
 2. 读取 Delphi 文件时调用 `delphi_file(action="read", file_path=...)`。
 3. 写入 Delphi 文件时使用 `delphi_file(action="write", edits=[...])`；同一文件多处
    修改合并为一次写入。
@@ -59,6 +51,7 @@ run_mcp({
 5. 编译、审计、布局、运行时 uses 检查使用 `delphi_project`。
 6. 自动化测试使用 `automate_delphi`；需要完整流程时读取
    `delphi://automation/workflow`。
+7. 深度编码/编译/审查规范用 `get_coding_rules(section=...)` 按需获取，不要在常驻上下文里堆规范。
 
 ## 与其他 IDE skill 的关系
 

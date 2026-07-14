@@ -356,7 +356,7 @@ def _parse_dfm_lines(lines: List[str], root_class_name: str = "") -> Optional[Df
 
 
 def _parse_property_line(line: str, class_name: str = "") -> Optional[DfmProperty]:
-    m = re.match(r'^(\w+)\s*=\s*(.+)$', line)
+    m = re.match(r'^([\w.]+)\s*=\s*(.+)$', line)
     if m:
         name = m.group(1)
         raw_value = m.group(2).strip()
@@ -366,7 +366,7 @@ def _parse_property_line(line: str, class_name: str = "") -> Optional[DfmPropert
             is_event=is_event_property(class_name, name) if class_name else _fallback_is_event(name),
         )
 
-    m = re.match(r'^(\w+)\s*=\s*$', line)
+    m = re.match(r'^([\w.]+)\s*=\s*$', line)
     if m:
         name = m.group(1)
         return DfmProperty(

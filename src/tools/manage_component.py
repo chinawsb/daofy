@@ -14,6 +14,7 @@ DFM↔PAS 同步规则:
 """
 
 import os
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..utils.file_backup import detect_encoding
@@ -31,7 +32,7 @@ from .dfm_parser import (
 from .pas_decl_parser import (
     PasFieldDecl,
     PasMethodDecl,
-    parse_pas_class,
+    extract_uses_units,
     sync_pas_declarations,
 )
 from . import dfm_utils
@@ -41,6 +42,16 @@ from ..services.delphi_edit_guard import record_authorized_write
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class _PasAddPlan:
+    """Prepared PAS update for one component add operation."""
+
+    file_path: str
+    encoding: str
+    updated_text: str
+    result: Dict[str, Any]
 
 
 async def manage_component(
@@ -171,11 +182,46 @@ async def _action_add(
     dfm_before = existing_dfm.count('\n')
     dfm_after = new_dfm_text.count('\n')
 
-    pas_result = None
+    pas_plan = None
     if target_pas:
-        pas_result = await _sync_pas_for_add(target_pas, new_comp, root)
+        pas_plan, pas_error = _prepare_pas_for_add(target_pas, new_comp)
+        if pas_error:
+            return {
+                "status": "failed",
+                "message": f"PAS 同步准备失败: {pas_error}",
+                "action": "add",
+                "component_name": new_comp.name,
+            }
 
-    await _write_dfm_file(target_dfm, new_dfm_text, existing_dfm)
+    dfm_error = await _write_dfm_file(target_dfm, new_dfm_text)
+    if dfm_error:
+        return {
+            "status": "failed",
+            "message": f"写入 DFM 失败: {dfm_error}",
+            "action": "add",
+            "component_name": new_comp.name,
+        }
+
+    pas_result = None
+    if pas_plan is not None:
+        pas_error = _write_pas_add_plan(pas_plan)
+        if pas_error:
+            rollback_error = await _write_dfm_file(
+                target_dfm,
+                existing_dfm,
+                operation="rollback_dfm_add",
+            )
+            message = f"写入 PAS 失败: {pas_error}；DFM 已恢复"
+            if rollback_error:
+                message = f"写入 PAS 失败: {pas_error}；DFM 恢复失败: {rollback_error}"
+            return {
+                "status": "failed",
+                "message": message,
+                "action": "add",
+                "component_name": new_comp.name,
+                "dfm_rolled_back": rollback_error is None,
+            }
+        pas_result = pas_plan.result
 
     return {
         "status": "success",
@@ -229,7 +275,15 @@ async def _action_remove(
     if target_pas:
         pas_result = _sync_pas_for_remove(target_pas, component_name, removed_events)
 
-    await _write_dfm_file(target_dfm, new_dfm_text, existing_dfm)
+    dfm_error = await _write_dfm_file(target_dfm, new_dfm_text)
+    if dfm_error:
+        return {
+            "status": "failed",
+            "message": f"写入 DFM 失败: {dfm_error}",
+            "action": "remove",
+            "component_name": component_name,
+            "pas_sync": pas_result,
+        }
 
     return {
         "status": "success",
@@ -301,7 +355,15 @@ async def _action_modify(
     if target_pas:
         pas_result = _sync_pas_for_modify(target_pas, old_events, new_events, component_name, target.class_name)
 
-    await _write_dfm_file(target_dfm, new_dfm_text, existing_dfm)
+    dfm_error = await _write_dfm_file(target_dfm, new_dfm_text)
+    if dfm_error:
+        return {
+            "status": "failed",
+            "message": f"写入 DFM 失败: {dfm_error}",
+            "action": "modify",
+            "component_name": component_name,
+            "pas_sync": pas_result,
+        }
 
     return {
         "status": "success",
@@ -315,18 +377,27 @@ async def _action_modify(
     }
 
 
-async def _sync_pas_for_add(
+def _units_are_equivalent(first: str, second: str) -> bool:
+    first_lower = first.lower()
+    second_lower = second.lower()
+    if first_lower == second_lower:
+        return True
+    if first_lower.rsplit('.', 1)[-1] != second_lower.rsplit('.', 1)[-1]:
+        return False
+    return '.' not in first or '.' not in second
+
+
+def _prepare_pas_for_add(
     target_pas: str,
     new_comp: DfmComponent,
-    root: DfmComponent,
-) -> Optional[Dict[str, Any]]:
+) -> Tuple[Optional[_PasAddPlan], Optional[str]]:
     enc = detect_encoding(target_pas)
     try:
         with open(target_pas, 'r', encoding=enc, newline='') as f:
             pas_text = f.read()
     except OSError as e:
         logger.warning("读取 PAS 文件失败: %s", e)
-        return {"status": "failed", "message": str(e)}
+        return None, str(e)
 
     add_fields = [PasFieldDecl(name=new_comp.name, type_name=new_comp.class_name)]
     for child in new_comp.children:
@@ -349,48 +420,65 @@ async def _sync_pas_for_add(
                     name=handler, params=params, method_type="procedure",
                 ))
 
+    required_units = collect_all_units(new_comp)
+    existing_units = extract_uses_units(pas_text)
     new_pas = sync_pas_declarations(
         pas_text,
         add_fields=add_fields,
         add_methods=add_methods,
+        add_uses=required_units,
     )
+    updated_units = extract_uses_units(new_pas)
+    missing_units = [
+        unit
+        for unit in required_units
+        if not any(_units_are_equivalent(unit, existing) for existing in updated_units)
+    ]
+    if missing_units:
+        units_text = ", ".join(missing_units)
+        return None, f"无法将所需单元加入 interface uses: {units_text}"
 
-    # 写入前行数，用于计算偏移量
-    pas_before = 0
-    try:
-        with open(target_pas, 'r', encoding=enc, newline='') as f:
-            pas_before = sum(1 for _ in f)
-    except OSError:
-        pass
-
-    try:
-        record_authorized_write(
-            target_pas,
-            tool="manage_component",
-            operation="sync_pas_add",
-        )
-        with open(target_pas, 'w', encoding=enc, newline='') as f:
-            f.write(new_pas)
-    except OSError as e:
-        logger.warning("写入 PAS 文件失败: %s", e)
-        return {"status": "failed", "message": str(e)}
-
-    # 重新计算 uses 添加后的行数（handle_uses 也会改变行数）
-    pas_final = 0
-    try:
-        with open(target_pas, 'r', encoding=enc, newline='') as f:
-            pas_final = sum(1 for _ in f)
-    except OSError:
-        pass
-
-    return {
+    added_units = [
+        unit
+        for unit in required_units
+        if not any(_units_are_equivalent(unit, existing) for existing in existing_units)
+    ]
+    result = {
         "status": "success",
         "message": "PAS 同步完成",
         "added_fields": [f.name for f in add_fields],
         "added_methods": [m.name for m in add_methods],
         "added_uses": added_units,
-        "offset": pas_final - pas_before,
+        "offset": new_pas.count('\n') - pas_text.count('\n'),
     }
+    return _PasAddPlan(
+        file_path=target_pas,
+        encoding=enc,
+        updated_text=new_pas,
+        result=result,
+    ), None
+
+
+def _write_pas_add_plan(plan: _PasAddPlan) -> Optional[str]:
+    temp_path = file_tool._make_temp_write_path(plan.file_path)
+    try:
+        file_tool._write_text_temp(temp_path, plan.updated_text, plan.encoding)
+        record_authorized_write(
+            plan.file_path,
+            tool="manage_component",
+            operation="sync_pas_add",
+        )
+        file_tool._replace_with_temp(temp_path, plan.file_path)
+        return None
+    except (OSError, UnicodeError) as e:
+        logger.warning("写入 PAS 文件失败: %s", e)
+        return str(e)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                logger.debug("清理 PAS 临时文件失败: %s", temp_path)
 
 
 def _sync_pas_for_remove(
@@ -551,31 +639,38 @@ async def _read_dfm_file(file_path: str) -> Optional[str]:
         return None
 
 
-async def _write_dfm_file(file_path: str, new_text: str, original_text: str) -> None:
+async def _write_dfm_file(
+    file_path: str,
+    new_text: str,
+    operation: str = "write_dfm",
+) -> Optional[str]:
+    temp_path = file_tool._make_temp_write_path(file_path)
+    text_temp: Optional[str] = None
     try:
         fmt = dfm_utils._detect_dfm_format(file_path)
         if fmt == "binary":
-            tmp_dir = os.path.dirname(file_path)
-            tmp_text = os.path.join(tmp_dir, "_manage_tmp.dfmx")
-            try:
-                with open(tmp_text, 'w', encoding='utf-8') as f:
-                    f.write(new_text)
-                record_authorized_write(
-                    file_path,
-                    tool="manage_component",
-                    operation="write_dfm",
-                )
-                await dfm_utils.convert_dfm(tmp_text, file_path, to_text=False)
-            finally:
-                if os.path.isfile(tmp_text):
-                    os.remove(tmp_text)
+            text_temp = temp_path + ".dfmx"
+            file_tool._write_text_temp(text_temp, new_text, "utf-8")
+            conversion = await dfm_utils.convert_dfm(text_temp, temp_path, to_text=False)
+            if not conversion.get("success"):
+                return str(conversion.get("message", "DFM 转换失败"))
         else:
-            record_authorized_write(
-                file_path,
-                tool="manage_component",
-                operation="write_dfm",
-            )
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(new_text)
-    except OSError as e:
+            file_tool._write_text_temp(temp_path, new_text, "utf-8")
+
+        record_authorized_write(
+            file_path,
+            tool="manage_component",
+            operation=operation,
+        )
+        file_tool._replace_with_temp(temp_path, file_path)
+        return None
+    except (OSError, UnicodeError) as e:
         logger.error("写入 DFM 文件失败: %s", e)
+        return str(e)
+    finally:
+        for cleanup_path in (text_temp, temp_path):
+            if cleanup_path and os.path.exists(cleanup_path):
+                try:
+                    os.remove(cleanup_path)
+                except OSError:
+                    logger.debug("清理 DFM 临时文件失败: %s", cleanup_path)

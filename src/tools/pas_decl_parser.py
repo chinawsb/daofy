@@ -250,6 +250,40 @@ def sync_pas_declarations(
     return line_ending.join(lines)
 
 
+def extract_uses_units(pas_text: str) -> List[str]:
+    """Extract unit names from the first Pascal uses clause.
+
+    Args:
+        pas_text: Complete Pascal source or a uses-clause fragment.
+
+    Returns:
+        Unit names in source order, without ``in`` file specifications.
+    """
+    lines = pas_text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    uses_start = -1
+    uses_end = -1
+    for i, line in enumerate(lines):
+        if re.match(r'^\s*uses\b', line, re.IGNORECASE):
+            uses_start = i
+        if uses_start >= 0 and i >= uses_start:
+            if ';' in line:
+                uses_end = i
+                break
+
+    if uses_start < 0 or uses_end < 0:
+        return []
+
+    uses_text = "".join(lines[uses_start:uses_end + 1])
+
+    unit_pattern = re.compile(r'(\w+(?:\.\w+)*)\s*(?:in\s+[^,;]+)?')
+    units = []
+    for m in unit_pattern.finditer(uses_text):
+        unit = m.group(1)
+        if unit.lower() != 'uses':
+            units.append(unit)
+    return units
+
+
 def _sync_uses(lines: List[str], add_units: List[str], remove_units: List[str]) -> List[str]:
     uses_start = -1
     uses_end = -1
@@ -264,22 +298,32 @@ def _sync_uses(lines: List[str], add_units: List[str], remove_units: List[str]) 
     if uses_start < 0 or uses_end < 0:
         return lines
 
-    uses_text = ""
-    for i in range(uses_start, uses_end + 1):
-        uses_text += lines[i]
-
-    unit_pattern = re.compile(r'(\w+(?:\.\w+)*)\s*(?:in\s+[^,;]+)?')
-    existing_units = []
-    for m in unit_pattern.finditer(uses_text):
-        unit = m.group(1)
-        if unit.lower() != 'uses':
-            existing_units.append(unit)
+    uses_text = "".join(lines[uses_start:uses_end + 1])
+    existing_units = extract_uses_units(uses_text)
 
     existing_set = {u.lower() for u in existing_units}
     for u in add_units:
-        if u.lower() not in existing_set:
+        unit_lower = u.lower()
+        if unit_lower in existing_set:
+            continue
+
+        short_name = unit_lower.rsplit('.', 1)[-1]
+        collision_index = next(
+            (
+                index
+                for index, existing in enumerate(existing_units)
+                if existing.lower().rsplit('.', 1)[-1] == short_name
+                and ('.' not in u or '.' not in existing)
+            ),
+            None,
+        )
+        if collision_index is None:
             existing_units.append(u)
-            existing_set.add(u.lower())
+            existing_set.add(unit_lower)
+        elif '.' in u and '.' not in existing_units[collision_index]:
+            existing_set.discard(existing_units[collision_index].lower())
+            existing_units[collision_index] = u
+            existing_set.add(unit_lower)
 
     for u in remove_units:
         existing_units = [eu for eu in existing_units if eu.lower() != u.lower()]

@@ -24,6 +24,44 @@ GAP_TOLERANCE = 4
 OVERLAP_TOLERANCE = 2
 LABEL_FIELD_MIN_GAP = 4
 LABEL_FIELD_MAX_GAP = 16
+FIXED_BORDER_STYLES = {
+    "bsdialog",
+    "bsnone",
+    "bssingle",
+    "bstoolwindow",
+    "dialog",
+    "none",
+    "single",
+    "toolwindow",
+}
+HORIZONTAL_ALIGNMENTS = {
+    "albottom",
+    "alclient",
+    "alcontents",
+    "alcustom",
+    "alscale",
+    "altop",
+    "bottom",
+    "client",
+    "contents",
+    "custom",
+    "scale",
+    "top",
+}
+VERTICAL_ALIGNMENTS = {
+    "alclient",
+    "alcontents",
+    "alcustom",
+    "alleft",
+    "alright",
+    "alscale",
+    "client",
+    "contents",
+    "custom",
+    "left",
+    "right",
+    "scale",
+}
 
 
 @dataclass(frozen=True)
@@ -133,6 +171,10 @@ def _align_property(component: DfmComponent) -> str:
     return (_property_value(component, "Align") or "alNone").strip()
 
 
+def _normalized_enum(value: str) -> str:
+    return value.rsplit(".", 1)[-1].strip().lower()
+
+
 def _component_rect(component: DfmComponent, is_root: bool = False) -> Optional[LayoutRect]:
     left = _int_property(component, "Left")
     top = _int_property(component, "Top")
@@ -172,7 +214,57 @@ def _has_visual_children(component: DfmComponent) -> bool:
 
 
 def _is_manual_layout(control: LayoutControl) -> bool:
-    return control.align.lower() in {"", "alnone"}
+    return _normalized_enum(control.align) in {"", "alnone", "none"}
+
+
+def _axis_is_fixed_by_constraints(component: DfmComponent, dimension: str) -> bool:
+    minimum = _int_property(component, f"Constraints.Min{dimension}")
+    maximum = _int_property(component, f"Constraints.Max{dimension}")
+    return minimum is not None and minimum > 0 and maximum == minimum
+
+
+def _root_resize_axes(root: DfmComponent) -> tuple[bool, bool]:
+    border_style = _normalized_enum(_property_value(root, "BorderStyle") or "bsSizeable")
+    if border_style in FIXED_BORDER_STYLES:
+        return False, False
+    return (
+        not _axis_is_fixed_by_constraints(root, "Width"),
+        not _axis_is_fixed_by_constraints(root, "Height"),
+    )
+
+
+def _child_resize_axes(
+    component: DfmComponent,
+    parent_axes: tuple[bool, bool],
+) -> tuple[bool, bool]:
+    align = _normalized_enum(_align_property(component))
+    anchors = {_normalized_enum(item) for item in _set_property(component, "Anchors")}
+    stretches_horizontally = align in HORIZONTAL_ALIGNMENTS or (
+        bool({"akleft", "left"} & anchors) and bool({"akright", "right"} & anchors)
+    )
+    stretches_vertically = align in VERTICAL_ALIGNMENTS or (
+        bool({"aktop", "top"} & anchors) and bool({"akbottom", "bottom"} & anchors)
+    )
+    return (
+        parent_axes[0]
+        and stretches_horizontally
+        and not _axis_is_fixed_by_constraints(component, "Width"),
+        parent_axes[1]
+        and stretches_vertically
+        and not _axis_is_fixed_by_constraints(component, "Height"),
+    )
+
+
+def _resize_axes_by_parent(root: DfmComponent) -> dict[str, tuple[bool, bool]]:
+    axes_by_parent: dict[str, tuple[bool, bool]] = {}
+
+    def visit(component: DfmComponent, axes: tuple[bool, bool]) -> None:
+        axes_by_parent[component.name] = axes
+        for child in component.children:
+            visit(child, _child_resize_axes(child, axes))
+
+    visit(root, _root_resize_axes(root))
+    return axes_by_parent
 
 
 def _is_passive_text(control: LayoutControl) -> bool:
@@ -457,6 +549,51 @@ def _audit_tab_order(file_path: str, siblings: list[LayoutControl]) -> list[Layo
     ]
 
 
+def _audit_resizable_manual_layout(
+    file_path: str,
+    parent: DfmComponent,
+    siblings: list[LayoutControl],
+    resize_axes: tuple[bool, bool],
+) -> list[LayoutFinding]:
+    manual = [item for item in siblings if _is_manual_layout(item)]
+    if not manual or not any(resize_axes):
+        return []
+
+    required_width = max(item.rect.right for item in manual)
+    required_height = max(item.rect.bottom for item in manual)
+    min_width = _int_property(parent, "Constraints.MinWidth") or 0
+    min_height = _int_property(parent, "Constraints.MinHeight") or 0
+
+    missing_constraints: list[str] = []
+    if resize_axes[0] and min_width < required_width:
+        missing_constraints.append(f"MinWidth={min_width}（至少需要 {required_width}）")
+    if resize_axes[1] and min_height < required_height:
+        missing_constraints.append(f"MinHeight={min_height}（至少需要 {required_height}）")
+    if not missing_constraints:
+        return []
+
+    control_names = ", ".join(item.name for item in manual[:8])
+    if len(manual) > 8:
+        control_names += f" 等 {len(manual)} 个控件"
+    constraint_text = "，".join(missing_constraints)
+    return [
+        LayoutFinding(
+            severity="warning",
+            rule_id="LAYOUT-008",
+            file=file_path,
+            component=parent.name,
+            message=(
+                f"可调整大小的父容器内使用了绝对坐标布局: {control_names}；"
+                f"父容器最小尺寸不足，{constraint_text}，缩小窗口时内容可能溢出。"
+            ),
+            recommendation=(
+                "优先使用 Align 和分区容器组织布局；若必须保留绝对坐标，"
+                "请按手工布局内容边界设置父容器的 Constraints.MinWidth/MinHeight。"
+            ),
+        )
+    ]
+
+
 def _find_component(root: DfmComponent, name: str) -> Optional[DfmComponent]:
     if root.name == name:
         return root
@@ -480,6 +617,7 @@ def audit_dfm_layout_text(text: str, file_path: str = "<memory>") -> list[Layout
 
     findings: list[LayoutFinding] = []
     children_by_parent = _children_by_parent(root)
+    resize_axes_by_parent = _resize_axes_by_parent(root)
     for parent_name, siblings in children_by_parent.items():
         parent = _find_component(root, parent_name)
         if parent is None:
@@ -490,6 +628,14 @@ def audit_dfm_layout_text(text: str, file_path: str = "<memory>") -> list[Layout
         findings.extend(_audit_vertical_gaps(file_path, siblings))
         findings.extend(_audit_label_fields(file_path, siblings))
         findings.extend(_audit_tab_order(file_path, siblings))
+        findings.extend(
+            _audit_resizable_manual_layout(
+                file_path,
+                parent,
+                siblings,
+                resize_axes_by_parent.get(parent_name, (False, False)),
+            )
+        )
 
     return findings
 

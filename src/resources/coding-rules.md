@@ -207,7 +207,7 @@ delphi_file(action="read", file_path="...", start_line=100, limit=200)          
 - 备份文件命名: `文件名.~版本号~`（与 Delphi IDE 兼容）
 - 二进制 DFM 文件的备份是原始二进制版本，恢复时 100% 还原
 - ❌ Delphi 文件必须用 `delphi_file`，不要用内置 `Read/Edit/Write/grep`
-- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx`
+- ❌ 禁止用 `apply_patch`、shell 重定向、PowerShell/Python 直接写入 `.pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj`
 - ✅ Delphi 文件必须通过 `delphi_file` 或 Daofy 内部已登记的 Delphi 工具写入；Daofy edit guard 会在文件监听启用时记录绕过 Daofy 的外部写入告警
 - 手动备份/恢复/列表:
   ```python
