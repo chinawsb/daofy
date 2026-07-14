@@ -93,10 +93,10 @@ class ZVecKnowledgeBase:
                     id=f"c{offset + i:07d}",
                     fields={
                         # 将 entity_name 合并到 chunk_text 前端，确保 FTS 可搜索
-                        "chunk_text": c['entity_name'][:500] + "\n" + str(c['chunk_text'])[:99480],
-                        "chunk_type": c['chunk_type'],
-                        "base_class": c['base_class'][:200],
-                        "file_path": c['file_path'][:500],
+                        "chunk_text": (str(c['entity_name'])[:500] + "\n" + str(c['chunk_text'])[:99480]),
+                        "chunk_type": str(c['chunk_type']),
+                        "base_class": str(c['base_class'])[:200],
+                        "file_path": str(c['file_path'])[:500],
                         "start_line": c['start_line'],
                         "end_line": c['end_line'],
                     },

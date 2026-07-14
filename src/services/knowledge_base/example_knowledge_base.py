@@ -255,11 +255,11 @@ class ExampleKnowledgeBase:
                         chunked_docs.append(zvec.Doc(
                             id=chunk_id,
                             fields={
-                                'chunk_text': (title[:200] + "\n" + chunk)[:100000],
-                                'title': title[:500],
-                                'path': full_path[:500],
-                                'extension': ext[:20],
-                                'url': url_prefix[:500],
+                                'chunk_text': (str(title)[:200] + "\n" + chunk)[:100000],
+                                'title': str(title)[:500],
+                                'path': str(full_path)[:500],
+                                'extension': str(ext)[:20],
+                                'url': str(url_prefix)[:500],
                             }
                         ))
 

@@ -1774,15 +1774,15 @@ class GenericDocumentScanner:
 
                     for ci in range(0, len(content_lines), chunk_sz):
                         chunk_lines = content_lines[ci:ci + chunk_sz]
-                        chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                        chunk_text = (str(title)[:200] if title else '') + "\n" + "\n".join(chunk_lines)
                         chunk_id = hashlib.md5(f"{path_val}#chunk{ci//chunk_sz}".encode()).hexdigest()[:16]
                         batch_buffer.append(zvec.Doc(
                             id=chunk_id,
                             fields={
                                 'chunk_text': chunk_text,
-                                'path': path_val,
-                                'content_type': content_type_val,
-                                'extension': ext_val,
+                                'path': str(path_val),
+                                'content_type': str(content_type_val),
+                                'extension': str(ext_val),
                             }
                         ))
 
@@ -1940,14 +1940,14 @@ class GenericDocumentScanner:
                 docs = []
                 for ci in range(0, len(content_lines), chunk_size):
                     chunk_lines = content_lines[ci:ci + chunk_size]
-                    chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                    chunk_text = (str(title)[:200] if title else '') + "\n" + "\n".join(chunk_lines)
                     chunk_id = hashlib.md5(f"{url}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
                     docs.append(zvec.Doc(
                         id=chunk_id,
                         fields={
                             'chunk_text': chunk_text,
-                            'path': url,
-                            'content_type': result.get('content_type', ''),
+                            'path': str(url),
+                            'content_type': str(result.get('content_type', '')),
                             'extension': '.html',
                         }
                     ))
@@ -2075,14 +2075,14 @@ class GenericDocumentScanner:
                 docs = []
                 for ci in range(0, len(content_lines), chunk_size):
                     chunk_lines = content_lines[ci:ci + chunk_size]
-                    chunk_text = (title[:200] if title else '') + "\n" + "\n".join(chunk_lines)
+                    chunk_text = (str(title)[:200] if title else '') + "\n" + "\n".join(chunk_lines)
                     chunk_id = hashlib.md5(f"{url}#chunk{ci//chunk_size}".encode()).hexdigest()[:16]
                     docs.append(zvec.Doc(
                         id=chunk_id,
                         fields={
                             'chunk_text': chunk_text,
-                            'path': url,
-                            'content_type': result.get('content_type', ''),
+                            'path': str(url),
+                            'content_type': str(result.get('content_type', '')),
                             'extension': '.html',
                         }
                     ))
