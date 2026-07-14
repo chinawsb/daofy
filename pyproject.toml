@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daofy-for-delphi"
-version = "2026.07.13"
+version = "2026.07.14"
 description = "Daofy for Delphi - MCP Server for Delphi project compilation and knowledge base query"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,6 +26,7 @@ keywords = ["delphi", "mcp", "compiler", "model-context-protocol", "ai", "embarc
 dependencies = [
     "mcp>=0.9.0",
     "pydantic>=2.0.0",
+    "pyyaml>=6.0",
     "beautifulsoup4>=4.12.0",
     "html2text>=2024.2.25",
     "lxml>=4.9.0",
