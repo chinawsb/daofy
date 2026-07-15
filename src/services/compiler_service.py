@@ -531,6 +531,17 @@ class CompilerService:
         logger.info(f"直接编译 .dpr 文件: {request.project_path}")
         start_time = time.time()
 
+        # dcc 直编只支持 .dpr/.dpk，.dproj 必须走 MSBuild
+        if request.project_path.lower().endswith('.dproj'):
+            error_msg = ".dproj 文件不能通过 dcc 直接编译，必须使用 MSBuild"
+            logger.error(error_msg)
+            return CompileResult(
+                status=CompileStatus.FAILED,
+                error_code="DPROJ_REQUIRES_MSBUILD",
+                error_message=error_msg,
+                duration=0
+            )
+
         try:
             # 1. 验证项目路径
             is_valid, error_msg = self.validator.validate_project_path(request.project_path)
@@ -927,7 +938,19 @@ class CompilerService:
                 )
             
             # 4. 提取并执行编译事件
-            platform = "Win64" if request.options.target_platform == TargetPlatform.WIN64 else "Win32"
+            _PLATFORM_MSBUILD_MAP = {
+                TargetPlatform.WIN32: "Win32",
+                TargetPlatform.WIN64: "Win64",
+                TargetPlatform.OSX64: "OSX64",
+                TargetPlatform.OSXARM64: "OSXARM64",
+                TargetPlatform.IOSDEVICE64: "iOSDevice64",
+                TargetPlatform.IOSDEVICE: "iOSDevice",
+                TargetPlatform.IOSSIMULATOR: "iOSSimulator",
+                TargetPlatform.ANDROID: "Android",
+                TargetPlatform.ANDROID64: "Android64",
+                TargetPlatform.LINUX64: "Linux64",
+            }
+            platform = _PLATFORM_MSBUILD_MAP.get(request.options.target_platform, "Win32")
             config = request.options.build_configuration or "Debug"
             
             project_dir = str(Path(dproj_path).parent)
@@ -1237,9 +1260,25 @@ class CompilerService:
 
         # 检查项目类型（.dpr/.dpk 可以直编，.dproj 只能 MSBuild）
         ext = Path(request.project_path).suffix.lower()
-        can_compile_direct = ext in ('.dpr', '.dpk')
         is_source_file = ext in ('.dpr', '.dpk')
-        
+        is_dproj = ext == '.dproj'
+
+        # .dproj 文件必须通过 MSBuild 编译，dcc32 无法处理 XML 项目文件
+        if is_dproj:
+            if not self.msbuild_path:
+                error_msg = ("MSBuild 未安装，无法编译 .dproj 文件。"
+                             "请安装 Visual Studio 或 Build Tools，"
+                             "或改用 .dpr 文件编译。")
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="MSBUILD_REQUIRED_FOR_DPROJ",
+                    error_message=error_msg,
+                    duration=0
+                )
+            logger.info("使用 MSBuild 编译 .dproj 文件")
+            return await self.compile_project_with_msbuild(request)
+
         # 检查是否存在 .dproj 文件
         dproj_exists = False
         if is_source_file:
@@ -1247,18 +1286,14 @@ class CompilerService:
             dproj_exists = Path(dproj_path).exists()
             if not dproj_exists:
                 logger.info(f"未找到 .dproj 文件，将使用 dcc32 直接编译{ext} 文件")
-        
-        # 如果是源码文件且没有 .dproj 文件，或者 MSBuild 不可用，使用直接编译
-        if (is_source_file and not dproj_exists) or not self.msbuild_path:
-            if is_source_file and not dproj_exists:
-                logger.info(f"使用 dcc32 直接编译{ext} 文件")
-            else:
-                logger.info("MSBuild 不可用，使用直接编译器调用")
-            return await self.compile_dpr_direct(request)
-        
-        # 优先使用 MSBuild 编译
-        logger.info("使用 MSBuild 编译")
-        return await self.compile_project_with_msbuild(request)
+
+        # .dpr/.dpk 有 .dproj 且 MSBuild 可用 → 用 MSBuild；否则 dcc 直编
+        if dproj_exists and self.msbuild_path:
+            logger.info("使用 MSBuild 编译")
+            return await self.compile_project_with_msbuild(request)
+
+        logger.info(f"使用 dcc 直接编译 {ext} 文件")
+        return await self.compile_dpr_direct(request)
 
     async def compile_file(self, request: FileCompileRequest) -> CompileResult:
         """
