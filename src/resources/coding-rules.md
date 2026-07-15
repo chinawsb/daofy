@@ -568,6 +568,10 @@ delphi_project(action="compile", project_path="Project.dproj", run_verify=True)
 | Assert 使用 | 调试断言用于前置/后置条件检查；注意 `Assert` 在 Release 下被 `{$DEFINES}` 剔除 |
 | 初始化/终结段 | `initialization`/`finalization` 段中是否存在资源泄漏或顺序依赖问题 |
 | 日志输出 | 日志应区分级别（调试/信息/警告/错误），生产环境只输出必要级别；每条日志包含时间戳、严重级别、可定位问题的上下文信息；异常日志需包含异常类型和调用栈 |
+| 测试假通过检测 | 测试用例中是否存在 `Assert(True)` / `assert True` 跳过、执行时间异常短（100 次操作 <5 秒）、断言只验证"无异常"而非具体状态 |
+| 外部依赖测试 | 依赖外部组件（WebView2/Runtime/COM/DLL）时是否测试了组件不可用的降级路径；构建脚本中外部工具缺失时是否返回非零退出码 |
+| 资源生命周期测试 | COM 接口/IStream/IWebView2 等引用是否验证了获取→使用→释放的完整生命周期；流包装后是否确认 WebView2 读取完毕再释放 |
+| 审计证据完整性 | 功能审计结论是否有运行证据支撑（截图/日志/测试报告），"DESIGN" 标记不可得出 "COMPLETE" 结论 |
 
 ### 资源泄露
 

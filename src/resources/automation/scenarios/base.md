@@ -203,6 +203,89 @@ Python                              Delphi
 - 新建进程首次调用自动设置 `snapdir`
 - 返回 `process_reused` / `process_alive` 字段让 AI 感知状态
 
+### 测试质量红线
+
+> ⚠️ **以下 6 条为一票否决红线。违反任何一条，测试用例不合格，必须修改后重新提交。适用于所有测试用例（Delphi 自动化测试、pytest 单元测试、集成测试）。**
+
+#### 红线 1：禁止跳过式通过
+
+- ❌ Runtime/组件不可用时 `Assert(True)` / `assert True` 混入 passed 计数
+- ❌ 初始化失败后静默执行空操作，最终断言"没有异常"
+- ✅ 检测前置条件 → 不满足则**显式 skip + 说明原因**，或 **Fail + 说明原因**
+
+```
+// ❌ Delphi 错误示例
+{"cmd":"rget","target":"WebView2.IsAvailable","assert_expr":"true","note":"跳过检查"}
+
+// ✅ Delphi 正确示例
+{"cmd":"rget","target":"WebView2.IsAvailable","assert_expr":"actual=='True'",
+ "on_fail":"skip","skip_reason":"WebView2 Runtime 未安装"}
+```
+
+```python
+# ❌ pytest 错误示例
+def test_webview2_create():
+    try:
+        wv = CreateWebView2()
+    except:
+        pass
+    assert True  # 假通过
+
+# ✅ pytest 正确示例
+@pytest.mark.skipif(not is_webview2_available(), reason="WebView2 Runtime 未安装")
+def test_webview2_create():
+    wv = CreateWebView2()
+    assert wv IsNot None
+    assert wv.NativeWindow > 0
+```
+
+#### 红线 2：断言必须验证具体状态
+
+- ❌ `assert_expr: "true"` / `assert_expr: "actual != ''"` — 无信息量，无法定位问题
+- ✅ `assert_expr: "len(actual) > 0"` / `assert_expr: "actual == 'ExpectedValue'"` / `assert_expr: "FileExists(actual)"`
+- **判断标准**：如果断言失败，能否定位到**具体哪个状态不对**？不能 = 断言无效
+
+#### 红线 3：截图必须有内容验证
+
+- ❌ `capture` 后直接 `exit`，截图存了不检查
+- ❌ pytest 中 `screenshot()` 后不调用 `image_diff` / `ocr` / `pixel_assert`
+- ✅ `capture` 后接 `recognize`/`detect`/`diff`/`match`，或至少 `rget` 验证截图相关的 UI 状态
+
+#### 红线 4：外部依赖必须测试降级路径
+
+依赖 WebView2/Runtime/COM/DLL 等外部组件时：
+
+1. **正向测试**：组件可用时验证功能正常
+2. **降级测试**：组件不可用时验证程序行为（报错/降级/跳过），不得静默无操作
+
+构建脚本中调用外部工具（`brcc32`/`dcc32`/`msbuild`）时：
+
+- ❌ 工具缺失时返回 exit code 0
+- ✅ 工具缺失时返回非零退出码 + stderr 输出错误信息
+
+#### 红线 5：执行时间必须与操作量匹配
+
+| 操作规模 | 最低耗时 | 说明 |
+|---------|---------|------|
+| 单次 goto + capture + exit | ≥ 2 秒 | 含进程启动/管道建立/截图 |
+| 10 次循环操作 | ≥ 5 秒 | 含中间验证 |
+| 100 次循环操作 | ≥ 30 秒 | 不可能 1 秒完成 100 次真实操作 |
+
+- 若实际耗时远低于预期，必须在 `note` 中说明原因（mock/桩/环境差异）
+- 测试报告中必须包含**实际执行时间**，不得只报告 passed/failed 数量
+
+#### 红线 6：审计结论必须有运行证据支撑
+
+- ❌ 设计文档写 "支持外部 URI 拒绝" → 结论 "功能完整"
+- ✅ 运行证据：测试脚本实际请求外部 URI → 返回 403/404 → 截图/日志佐证
+- 审计报告中的标记含义：
+
+| 审计标记 | 含义 | 可否得出 COMPLETE |
+|---------|------|------------------|
+| `DESIGN` | 仅设计审查，未实际运行 | ❌ 不可 |
+| `IMPLEMENTED` | 代码已实现，已编译通过 | ❌ 不可 |
+| `TESTED` | 已运行测试，有截图/日志证据 | ✅ 可 |
+
 ### 协议
 
 - 同步命令阻塞等待返回；异步立即 ACK

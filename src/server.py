@@ -308,7 +308,7 @@ else:
         except anyio.EndOfStream:
             logger.debug("session 已关闭，跳过根目录获取")
         except Exception:
-            logger.info("获取工作区根目录失败（客户端可能不支持 roots）- 静默跳过", exc_info=True)
+            logger.debug("获取工作区根目录失败（客户端可能不支持 roots）- 静默跳过", exc_info=True)
 
 
     async def _install_client_rules(session) -> None:
