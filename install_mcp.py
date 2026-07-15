@@ -280,11 +280,16 @@ def _is_toml_config(config_type: str) -> bool:
     return config_type == "Codex"
 
 
+def _is_yaml_config(config_type: str) -> bool:
+    """判断是否为 YAML 格式的配置文件（如 Hermes Agent）。"""
+    return config_type == "YAML"
+
+
 def _mcp_node_key(config_type: str) -> str:
-    """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键，Codex 使用 'mcp_servers'"""
+    """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键，Codex 使用 'mcp_servers'，Hermes 使用 'mcp_servers'"""
     if config_type == "OpenCode":
         return "mcp"
-    if _is_toml_config(config_type):
+    if _is_toml_config(config_type) or _is_yaml_config(config_type):
         return "mcp_servers"
     return "mcpServers"
 
@@ -293,6 +298,10 @@ def _read_config(config_path: str, config_type: str) -> dict:
     if _is_toml_config(config_type):
         with open(config_path, "r", encoding="utf-8") as f:
             return _toml_parse(f.read())
+    if _is_yaml_config(config_type):
+        import yaml
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
     return read_json(config_path)
 
 
@@ -306,6 +315,10 @@ def _write_config(config_path: str, data: dict, config_type: str) -> None:
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(text)
             f.write("\n")
+    elif _is_yaml_config(config_type):
+        import yaml
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     else:
         write_json(config_path, data)
 
@@ -589,6 +602,20 @@ AGENT_DEFINITIONS = {
             os.path.exists(os.path.join(_env("APPDATA"), "npm", "node_modules", "@openai", "codex"))
             or os.path.exists(os.path.join(_env("LOCALAPPDATA"), "npm", "node_modules", "@openai", "codex"))
         ),
+    },
+    "Hermes": {
+        # Hermes Agent — AI 编码代理（YAML 配置格式）
+        # 安装方式: pip install hermes-agent
+        # 配置格式: YAML，~/.hermes/config.yaml，mcp_servers 节
+        # 检测方式: 检查 hermes 命令或 ~/.hermes/ 目录
+        "config_type": "YAML",
+        "doc_url": "https://github.com/hermes-agent/hermes",
+        "config_path": lambda: os.path.join(_userprofile(), ".hermes", "config.yaml"),
+        "detect_paths": lambda: [
+            os.path.join(_env("APPDATA"), "hermes-agent"),
+            os.path.join(_userprofile(), ".hermes"),
+        ],
+        "detect_command": lambda: shutil.which("hermes") is not None,
     },
     "Windsurf": {
         "config_type": "Standard",
@@ -893,6 +920,21 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
             base["cwd"] = cwd
         return base
 
+    if _is_yaml_config(config_type):
+        # Hermes Agent 格式：YAML mcp_servers 节，command + args + env
+        base = {
+            "command": "daofy" if use_pip else python_exe,
+            "args": [] if use_pip else [server_script],
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+        }
+        if not use_pip:
+            base["cwd"] = cwd
+        return base
+
     # Standard 格式（Claude / Cursor / Windsurf 等）
     base = {
         "command": "daofy" if use_pip else python_exe,
@@ -1142,7 +1184,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
-            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy",
+            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy", "Hermes": "Hermes",
         }
         target = filter_map.get(agent_filter, agent_filter)
         agents = [a for a in agents if a["name"] == target]
@@ -1486,7 +1528,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
-            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy",
+            "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy", "Hermes": "Hermes",
         }
         target = filter_map.get(agent_filter, agent_filter)
         selected = []
@@ -1954,7 +1996,7 @@ def main() -> None:
     parser.add_argument("--agent", default="All",
                         choices=["Claude", "ClaudeCode", "Trae", "CodeArts", "Cursor", "OpenCode",
                                  "Windsurf", "Cline", "Roo", "Tongyi", "Doubao",
-                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "CodeBuddy", "All"],
+                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "CodeBuddy", "Hermes", "All"],
                         help="指定 AI Agent")
     parser.add_argument("--force", action="store_true", help="强制重新配置")
     parser.add_argument("--restart", action="store_true", help="操作后自动重启 AI Agent（不交互询问）")
