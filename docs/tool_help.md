@@ -1,6 +1,6 @@
 # Tool Help — 工具帮助文档
 
-> 版本：v1.0 | 最后更新：2026-06-08
+> 版本：v1.1 | 最后更新：2026-07-15
 
 ---
 
@@ -53,7 +53,7 @@ tool_help(tool_name="delphi_file")
 
 | 工具名 | 说明 |
 |--------|------|
-| `project` | 项目全生命周期管理 |
+| `delphi_project` | 项目全生命周期管理 |
 | `delphi_kb` | 知识库搜索/管理 |
 | `delphi_file` | Delphi 文件专用操作 |
 | `manage_component` | DFM 组件管理 |
@@ -99,8 +99,8 @@ delphi_file(action="read", ...)       # 根据帮助使用
 ### 回顾某个工具的完整参数
 
 ```python
-# 当需要 project 的 compile action 参数时
-tool_help(tool_name="project")
+# 当需要 delphi_project 的 compile action 参数时
+tool_help(tool_name="delphi_project")
 # → 返回 compile 的 required/optional 参数、默认值、示例
 ```
 
@@ -110,8 +110,21 @@ tool_help(tool_name="project")
 # 先看 check_environment
 tool_help(tool_name="check_environment")
 
-# 再看 project
-tool_help(tool_name="project")
+# 再看 delphi_project
+tool_help(tool_name="delphi_project")
+```
+
+### 部署设备
+
+```python
+# 查看 deploy action 参数
+tool_help(tool_name="delphi_project", action="devices")
+
+# 枚举设备
+delphi_project(action="devices", target_platform="iosdevice64")
+
+# 部署
+delphi_project(action="deploy", project_path="App.dproj", target_platform="iosdevice64")
 ```
 
 ---
@@ -122,7 +135,7 @@ Daofy 共注册 12 个 MCP 工具：
 
 | # | 工具名 | 功能域 |
 |---|--------|--------|
-| 1 | `project` | 编译/配置/审计 |
+| 1 | `delphi_project` | 编译/配置/审计/部署 |
 | 2 | `delphi_kb` | 知识库搜索/构建 |
 | 3 | `delphi_file` | Delphi 文件操作 |
 | 4 | `manage_component` | DFM 组件管理 |

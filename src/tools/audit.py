@@ -289,23 +289,65 @@ def _format_report(data: Dict, min_severity: str = "suggestion") -> str:
 
 
 
-def _build_guide() -> str:
-    """daudit.exe 不存在时的引导提示"""
+def _build_guide(mode: str = "audit") -> str:
+    """daudit.exe 不存在时的引导提示
+
+    根据请求模式返回对应的 AI 人工审计指引，让 AI 直接按规则审查代码，
+    而非等待 daudit 安装。
+    """
+    if mode == "ast":
+        return (
+            "# daudit 不可用 — 请用 delphi_file 人工分析代码结构\n\n"
+            "AST 分析引擎 (daudit.exe) 尚未安装，无法自动提取代码骨架。\n\n"
+            "## 请按以下步骤人工分析\n\n"
+            "1. **获取待审文件列表**\n"
+            "   - `delphi_file(action=\"read\", file_path=\"...\", search_type=\"path\")` 列出目录下 .pas 文件\n\n"
+            "2. **逐文件读取并提取结构**\n"
+            "   - `delphi_file(action=\"read\", file_path=\"...\", search_type=\"class\")` — 提取类/接口定义\n"
+            "   - `delphi_file(action=\"read\", file_path=\"...\", search_type=\"function\")` — 提取函数/过程签名\n"
+            "   - `delphi_file(action=\"read\", file_path=\"...\", search_type=\"record\")` — 提取 record 类型\n\n"
+            "3. **关注要点**\n"
+            "   - uses 依赖关系（interface + implementation）\n"
+            "   - 类继承链和接口实现\n"
+            "   - 公共方法签名和可见性\n"
+            "   - 常量/类型定义\n\n"
+            "> 💡 daudit 安装后可直接 `delphi_project(action=\"ast\", ...)` 获取预格式化骨架摘要。"
+        )
+
+    # 默认 audit 模式
     return (
-        "# 代码分析工具未就绪\n\n"
-        "AST 分析引擎 (daudit.exe) 尚未安装。安装后可提供 Delphi 源码结构化解析能力。\n\n"
-        "## 当前可用的替代方式\n\n"
-        "1. **delphi_file(action=\"read\", ...)** — 读源码自行分析结构\n"
-        "2. **delphi_kb(query=..., search_type=\"reference\")** — 查 API 用法\n"
-        "3. **get_coding_rules(section=\"review\")** — 获取审核清单\n\n"
-        "## 两种模式（AI 常用程度排序）\n\n"
-        "1. **ast**（⭐ 推荐，AI Agent 摘要）: `daudit --mode skeleton --compact` — 代码骨架提取。\n"
-            "   输出预格式化文本（单元名、uses、类/函数/常量），无需 AI 二次解析，最省 token。\n"
-        "2. **audit**: `daudit --mode audit` — 运行 50+ 条静态分析规则审计代码质量。\n"
-        "   适用于审查特定违规模式\n\n"
-        "## 预计目录结构\n\n"
-        "```\ntools/daudit/\n└── daudit.exe    ← AST 分析引擎\n```\n\n"
-        "放置 daudit.exe 后，重新调用本工具即可使用。"
+        "# daudit 不可用 — 请按审核规则进行人工代码审计\n\n"
+        "静态分析引擎 (daudit.exe) 尚未安装，无法自动运行 50+ 条审计规则。\n"
+        "**请直接按以下流程人工审计：**\n\n"
+        "## 审计流程\n\n"
+        "### ① 获取审核规则\n\n"
+        "```\nget_coding_rules(section=\"review\")\n```\n\n"
+        "返回 9 大维度 66 个检查项（一致性/完整性/资源泄露/Delphi 特有陷阱/\n"
+        "常见错误模式/代码质量/数据转换/安全/性能）。\n\n"
+        "### ② 读取待审源码\n\n"
+        "```\ndelphi_file(action=\"read\", file_path=\"Unit1.pas\")\n```\n\n"
+        "### ③ 逐维度对照检查\n\n"
+        "按 `get_coding_rules(section=\"review\")` 中的检查项逐条审查，重点关注：\n\n"
+        "| 优先级 | 维度 | 关键检查 |\n"
+        "|--------|------|----------|\n"
+        "| 🔴 P0 | 资源泄露 | Create/Free 配对、try/finally 资源释放 |\n"
+        "| 🔴 P0 | 安全 | SQL 注入、硬编码凭据、缓冲区溢出 |\n"
+        "| 🔴 P0 | Delphi 特有 | 接口循环引用、TComponent 重复 Free、Record 值语义 |\n"
+        "| 🟡 P1 | 完整性 | 分支覆盖、边界条件、输入验证 |\n"
+        "| 🟡 P1 | 常见错误 | 空 except、with 语句、线程访问 VCL |\n"
+        "| 🟢 P2 | 代码质量 | 方法规模、圈复杂度、魔法数字 |\n"
+        "| 🟢 P2 | 性能 | 循环内分配、不必要的类型转换 |\n\n"
+        "### ④ 输出审计报告\n\n"
+        "按以下格式输出发现的问题：\n\n"
+        "```\n"
+        "## 审计报告\n\n"
+        "### 🔴 严重问题\n"
+        "- [文件:行号] 问题描述 → 修复建议\n\n"
+        "### 🟡 一般问题\n"
+        "- [文件:行号] 问题描述 → 修复建议\n\n"
+        "### 🔵 建议项\n"
+        "- [文件:行号] 优化建议\n```\n\n"
+        "> 💡 daudit 安装后可直接 `delphi_project(action=\"audit\", ...)` 自动运行规则检查。"
     )
 
 
@@ -552,7 +594,7 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
 
     # 检查 daudit 是否可用
     if not _find_daudit():
-        guide = _build_guide()
+        guide = _build_guide(mode)
         guide += (
             f"\n---\n**请求参数**: mode=`{mode}`, base_dir=`{base_dir}`, "
             f"file_path=`{file_path or ''}`\n\n"

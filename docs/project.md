@@ -1,6 +1,6 @@
 # Delphi Project — 项目全生命周期管理
 
-> 版本：v1.2 | 最后更新：2026-07-10
+> 版本：v1.3 | 最后更新：2026-07-15
 
 ---
 
@@ -11,24 +11,26 @@
 3. [编译相关](#3-编译相关)
 4. [配置管理](#4-配置管理)
 5. [代码审计](#5-代码审计)
-6. [工作流场景](#6-工作流场景)
-7. [编译失败排查](#7-编译失败排查)
-8. [技术架构](#8-技术架构)
-9. [故障排除](#9-故障排除)
+6. [设备部署](#6-设备部署)
+7. [工作流场景](#7-工作流场景)
+8. [编译失败排查](#8-编译失败排查)
+9. [技术架构](#9-技术架构)
+10. [故障排除](#10-故障排除)
 
 ---
 
 ## 1. 概述
 
-`delphi_project` 是 Daofy 中最核心的工具，提供 Delphi 项目的**全生命周期管理**——从创建项目、配置编译选项、执行编译，到代码审计。它合并了原有的 `compile_project`、`dproj_tool`、`run_audit` 三个工具的功能。
+`delphi_project` 是 Daofy 中最核心的工具，提供 Delphi 项目的**全生命周期管理**——从创建项目、配置编译选项、执行编译，到代码审计和设备部署。它合并了原有的 `compile_project`、`dproj_tool`、`run_audit` 三个工具的功能，并新增了设备部署能力。
 
-**一句话**：所有 Delphi 项目的编译、配置、审计操作都通过此工具完成。
+**一句话**：所有 Delphi 项目的编译、配置、审计、部署操作都通过此工具完成。
 
 | 功能域 | 涵盖 |
 |--------|------|
 | **编译** | `.dproj`/`.dpr`/`.dpk` 项目编译、.pas 语法检查、参数预览 |
 | **配置** | 读取/创建/修改 `.dproj` 配置、增删源文件、增删编译配置 |
 | **审计** | AST 骨架提取、50+ 静态分析规则、运行时注册检查、DFM UI 布局审计 |
+| **部署** | 枚举连接设备（iOS/Android/Windows）、部署应用到设备 |
 
 ### 硬约束
 
@@ -54,6 +56,8 @@
 | `ast` | ⭐ 代码骨架提取（最省 token） | `base_dir` |
 | `runtime` | 运行时注册检查 | — |
 | `layout` | 静态 DFM UI 布局审计 | `base_dir` 或 `file_path` |
+| `devices` | 枚举连接的设备列表 | — |
+| `deploy` | 部署应用到设备 | `project_path`, `target_platform` |
 
 ---
 
@@ -310,7 +314,104 @@ delphi_project(action="layout", file_path="MainForm.dfm", output_format="json")
 
 ---
 
-## 6. 工作流场景
+## 6. 设备部署
+
+### 6.1 `devices` — 枚举连接的设备
+
+枚举当前连接到开发机的设备列表，支持 iOS、Android、Windows 三种平台。
+
+```python
+# 枚举所有平台的设备
+delphi_project(action="devices")
+
+# 枚举 iOS 设备
+delphi_project(action="devices", target_platform="iosdevice64")
+
+# 枚举 Android 设备
+delphi_project(action="devices", target_platform="android64")
+
+# 从项目推断平台并枚举
+delphi_project(action="devices", project_path="App.dproj")
+```
+
+**返回格式**：
+
+```json
+{
+  "status": "ok",
+  "platform": "iosdevice64",
+  "devices": [
+    {
+      "udid": "00008020-001234567890001E",
+      "name": "iPhone 15 Pro",
+      "platform": "iosdevice64",
+      "source": "libimobiledevice"
+    }
+  ]
+}
+```
+
+**设备来源**：
+
+| 平台 | 工具 | 说明 |
+|------|------|------|
+| iOS | `libimobiledevice` / `iosdeploy` | 需安装命令行工具 |
+| Android | `adb` | 需安装 Android SDK Platform Tools |
+| Windows | 本机 | 始终返回本机设备 |
+
+### 6.2 `deploy` — 部署应用到设备
+
+将编译后的应用部署到目标设备。
+
+```python
+# 部署到 iOS 设备（默认设备）
+delphi_project(action="deploy",
+    project_path="App.dproj",
+    target_platform="iosdevice64")
+
+# 部署到指定 iOS 设备
+delphi_project(action="deploy",
+    project_path="App.dproj",
+    target_platform="iosdevice64",
+    device_id="00008020-001234567890001E",
+    build_configuration="Release")
+
+# 部署到 Android 模拟器
+delphi_project(action="deploy",
+    project_path="App.dproj",
+    target_platform="android64",
+    device_id="emulator-5554")
+```
+
+**参数说明**：
+
+| 参数 | 必需 | 默认值 | 说明 |
+|------|------|--------|------|
+| `project_path` | ✅ | — | .dproj/.dpr 路径 |
+| `target_platform` | ✅ | — | iosdevice64/iossimulator/android64/win32 等 |
+| `device_id` | ❌ | 默认设备 | iOS UDID 或 Android serial |
+| `build_configuration` | ❌ | Debug | Debug/Release |
+| `extra_args` | ❌ | — | 附加到 MSBuild 的参数数组 |
+| `timeout` | ❌ | 600 | 超时秒数 |
+
+**部署方式**：
+
+| 平台 | 底层工具 | 说明 |
+|------|----------|------|
+| iOS/macOS | MSBuild Deploy + PAServer | 需在 Mac 上运行 PAServer |
+| Android | MSBuild Deploy + ADB | 需安装 Android SDK |
+| Windows | 本地运行 | 编译后可直接运行 |
+
+**环境变量**：
+
+| 变量 | 说明 |
+|------|------|
+| `PAServer_PASSWORD` | PAServer 连接密码（iOS 部署时使用） |
+| `ANDROID_HOME` / `ANDROID_SDK_ROOT` | Android SDK 路径 |
+
+---
+
+## 7. 工作流场景
 
 ### 日常编译
 
@@ -353,6 +454,18 @@ delphi_project(action="set", property_name="DCC_Define", value="RELEASE", config
 delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release")  # 验证
 ```
 
+### 设备部署
+
+```
+delphi_project(action="devices", target_platform="iosdevice64")        # 枚举设备
+  ↓ 选择设备
+delphi_project(action="compile", project_path="App.dproj",            # 编译
+                target_platform="iosdevice64", build_configuration="Release")
+  ↓ 编译成功
+delphi_project(action="deploy", project_path="App.dproj",             # 部署
+                target_platform="iosdevice64", device_id="UDID")
+```
+
 ---
 
 ## 7. 编译失败排查
@@ -378,13 +491,13 @@ delphi_project(action="compile", project_path="Project.dproj", build_configurati
 
 ---
 
-## 8. 技术架构
+## 9. 技术架构
 
 ```
 AI Agent
     │
     ▼
-delphi_project(action="compile"|"info"|"audit"|...)
+delphi_project(action="compile"|"info"|"audit"|"devices"|"deploy"|...)
     │
     ▼
 ┌─────────────────────────────────────┐
@@ -393,17 +506,17 @@ delphi_project(action="compile"|"info"|"audit"|...)
 └──────┬────────┬──────────┬───────────┘
        │        │          │
        ▼        ▼          ▼
-┌──────────┐ ┌────────┐ ┌──────────┐
-│ compile  │ │ dproj  │ │  audit   │
-│_project  │ │_tool   │ │  /ast    │
-│ .py      │ │ .py    │ │  .py     │
-├──────────┤ ├────────┤ ├──────────┤
-│· MSBuild │ │· info  │ │· AST解析 │
-│· dcc32   │ │· create│ │· 50+规则 │
-│· 事件处理│ │· set   │ │· 骨架提取│
-│· 路径解析│ │· add/  │ │· 运行时  │
-│          │ │ remove │ │  检查    │
-└──────────┘ └────────┘ └──────────┘
+┌──────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐
+│ compile  │ │ dproj  │ │  audit   │ │  deploy  │
+│_project  │ │_tool   │ │  /ast    │ │  /devices│
+│ .py      │ │ .py    │ │  .py     │ │  .py     │
+├──────────┤ ├────────┤ ├──────────┤ ├──────────┤
+│· MSBuild │ │· info  │ │· AST解析 │ │· iOS部署 │
+│· dcc32   │ │· create│ │· 50+规则 │ │· Android │
+│· 事件处理│ │· set   │ │· 骨架提取│ │  部署    │
+│· 路径解析│ │· add/  │ │· 运行时  │ │· 设备枚举│
+│          │ │ remove │ │  检查    │ │          │
+└──────────┘ └────────┘ └──────────┘ └──────────┘
        │
        ▼
 ┌──────────────────────┐
@@ -416,7 +529,7 @@ delphi_project(action="compile"|"info"|"audit"|...)
 
 ---
 
-## 9. 故障排除
+## 10. 故障排除
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
@@ -426,3 +539,6 @@ delphi_project(action="compile"|"info"|"audit"|...)
 | MSBuild 路径不正确 | Delphi 安装不完整 | 手动指定 `compiler_version` |
 | 命令行过长 | 搜索路径过多 | 自动优化：只包含实际依赖的三方库 |
 | `.dpk` 安装失败 | 缺少依赖或版本不兼容 | 检查 `auto_install` 参数和相关包依赖 |
+| iOS 设备未检测到 | 缺少 `libimobiledevice` | 安装 `iosdeploy` 或 `libimobiledevice` |
+| Android 设备未检测到 | 缺少 ADB 或未连接设备 | 安装 Android SDK Platform Tools |
+| 部署失败 | PAServer 未运行或密码错误 | 检查 `PAServer_PASSWORD` 环境变量 |

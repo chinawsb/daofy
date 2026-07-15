@@ -4,9 +4,9 @@
 ## ⑤ 编译
 
 ```python
-project(action="compile", project_path="Project.dproj")
-project(action="compile", project_path="Unit1.pas")          # 语法检查
-project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
+delphi_project(action="compile", project_path="Project.dproj")
+delphi_project(action="compile", project_path="Unit1.pas")          # 语法检查
+delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 ```
 
 ### 附加编译参数（extra_args）
@@ -15,11 +15,11 @@ project(action="compile", project_path="Project.dproj", build_configuration="Rel
 
 ```python
 # .dproj / 有同名 .dproj 的 .dpr：MSBuild 参数，请求生成 TDS/RSM
-project(action="compile", project_path="Project.dproj",
+delphi_project(action="compile", project_path="Project.dproj",
         extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])
 
 # 无同名 .dproj 的 .dpr：直接 DCC 参数
-project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
+delphi_project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
 ```
 
 每个数组元素是一个完整参数，不要自行添加外层引号。如果编译器生成 `.tds`/`.rsm`，它们会列入 `output_files`。
@@ -27,7 +27,7 @@ project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
 ### 运行验证（run_verify）
 
 ```python
-project(action="compile", project_path="Project.dproj", run_verify=True)
+delphi_project(action="compile", project_path="Project.dproj", run_verify=True)
 ```
 
 编译成功后自动启动 exe 检测运行时崩溃：

@@ -1,5 +1,5 @@
 """
-project 统一工具 — 合并 compile_project + dproj_tool + run_audit
+project 统一工具 — 合并 compile_project + dproj_tool + run_audit + deploy
 
 通过 action 路由到各子功能，复用现有实现。
 """
@@ -22,6 +22,9 @@ from .dproj_tool import dproj_tool as _dproj_tool
 
 # audit
 from .audit import run_audit as _run_audit
+
+# deploy
+from .deploy import deploy_project as _deploy_project
 
 # 编译服务（全局实例由 server.py 设置，但需要在这里 re-export 给 server.py）
 _compiler_service_set = False
@@ -54,6 +57,9 @@ _ACTIONS = {
     "ast": "audit",
     "runtime": "audit",
     "layout": "audit",
+    # deploy 系列
+    "devices": "deploy",
+    "deploy": "deploy",
 }
 
 _DISABLED_WARNINGS = {"W1000"}  # 默认禁用的警告
@@ -85,6 +91,10 @@ async def handle_project(**kwargs) -> Any:
         # ── run_audit 系列 ──
         elif action in ("audit", "ast", "runtime", "layout"):
             return await _handle_audit(kwargs)
+
+        # ── deploy 系列 ──
+        elif action in ("devices", "deploy"):
+            return await _handle_deploy(action, kwargs)
 
         else:
             return {"status": "failed", "message": f"未知 action: {action}。"
@@ -192,3 +202,10 @@ async def _handle_dproj(action: str, kwargs: dict) -> Any:
 async def _handle_audit(kwargs: dict) -> Any:
     """处理 run_audit 系列 action"""
     return await _run_audit(kwargs)
+
+
+async def _handle_deploy(action: str, kwargs: dict) -> Any:
+    """处理 deploy 系列 action"""
+    # 移除 kwargs 中的 action 以避免重复
+    deploy_kwargs = {k: v for k, v in kwargs.items() if k != "action"}
+    return await _deploy_project(action=action, **deploy_kwargs)

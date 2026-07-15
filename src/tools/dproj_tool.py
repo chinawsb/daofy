@@ -1432,7 +1432,7 @@ async def _handle_info(project_path: str) -> CallToolResult:
                 parts = [u.strip() for u in uses_joined.split(',') if u.strip()]
                 lines_out.append(f"引用的单元 ({len(parts)} 个): {', '.join(parts[:30])}{'...' if len(parts) > 30 else ''}")
             lines_out.append("")
-            lines_out.append(f"💡 可通过 project(action='create', project_path='{dproj_path}', main_source='{path_obj.name}') 创建对应的 .dproj")
+            lines_out.append(f"💡 可通过 delphi_project(action='create', project_path='{dproj_path}', main_source='{path_obj.name}') 创建对应的 .dproj")
 
             return CallToolResult(
                 content=[TextContent(type="text", text="\n".join(lines_out))],

@@ -16,7 +16,7 @@
   ② 查KB确认API  →  delphi_kb / delphi_file
   ③ 写代码       →  delphi_file(action="write")
   ④ 格式化       →  delphi_file(action="format")
-  ⑤ 编译验证     →  project(action="compile")
+  ⑤ 编译验证     →  delphi_project(action="compile")
    ⑥ 代码审核     →  get_coding_rules(section="review")
    ⑦ 清理         →  delphi_file
    ⑧ 自动化UI测试 →  automate_delphi
@@ -411,9 +411,9 @@ delphi_file(action="format", file_path="src/Unit1.pas")
 
 ## ⑤ 编译
 ```python
-project(action="compile", project_path="Project.dproj")                         # 整体编译
-project(action="compile", project_path="Unit1.pas")                             # 语法检查
-project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
+delphi_project(action="compile", project_path="Project.dproj")                         # 整体编译
+delphi_project(action="compile", project_path="Unit1.pas")                             # 语法检查
+delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 # 可选参数：conditional_defines=["DEBUG"], unit_search_paths=["..."], output_path="..."
 ```
 
@@ -423,18 +423,18 @@ project(action="compile", project_path="Project.dproj", build_configuration="Rel
 
 ```python
 # .dproj / 有同名 .dproj 的 .dpr：MSBuild 参数，请求生成 TDS/RSM
-project(action="compile", project_path="Project.dproj",
+delphi_project(action="compile", project_path="Project.dproj",
         extra_args=["/p:DCC_DebugInfoInTds=true", "/p:DCC_RemoteDebug=true"])
 
 # 无同名 .dproj 的 .dpr：直接 DCC 参数
-project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
+delphi_project(action="compile", project_path="Project.dpr", extra_args=["-VT", "-VR"])
 ```
 
 每个数组元素是一个完整参数，不要自行添加外层引号。如果编译器生成 `.tds`/`.rsm`，它们会列入 `output_files`。
 
 ### 运行验证（run_verify）
 ```python
-project(action="compile", project_path="Project.dproj", run_verify=True)
+delphi_project(action="compile", project_path="Project.dproj", run_verify=True)
 ```
 
 编译成功后自动启动 exe 检测运行时崩溃：

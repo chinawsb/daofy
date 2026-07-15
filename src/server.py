@@ -535,7 +535,7 @@ _DELPHI_FILE_FOOTNOTE_TEXT = (
 # action → 需要尾注的操作集合
 _DELPHI_FILE_FOOTNOTE_ACTIONS: dict[str, set[str]] = {
     "delphi_kb":          {"search", "read", "stats"},
-    "delphi_project":     {"info", "ast", "audit", "compile", "compile_file"},
+    "delphi_project":     {"info", "ast", "audit", "compile", "compile_file", "devices", "deploy"},
     "check_environment":  {"detect"},
     "code_hosting":       {"git_clone", "git_pull", "git_merge", "git_switch"},
 }

@@ -1522,7 +1522,7 @@ code_hosting(action="git_diff", files=["src/unit1.pas"]) # 查看文件当前变
 experience(action="save",
     problem="编译 Delphi 项目时 dcc32 返回 exit code 2",
     solution="检查 .dproj 中的 DCC_UnitSearchPath 是否包含所有第三方库路径，"
-             "然后在 project(action=compile) 中传入 unit_search_paths 补充",
+             "然后在 delphi_project(action=compile) 中传入 unit_search_paths 补充",
     tools_used=["project", "delphi_file"],
     tags=["Delphi", "编译", "dcc32"])
 
