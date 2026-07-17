@@ -375,6 +375,27 @@ Remove-Item "$out" -Recurse -Force
    gh release create v2026.05.14 --title "v2026.05.14" --notes-file release_notes.md
    ```
 3. 附加包文件到 Release（通过 Web UI 或 `gh release upload`）
+4. 发布到 PyPI（见下方）
+
+### PyPI 发布
+
+PyPI Token 存储在 `config/pypi.json`（已在 `.gitignore` 中排除）。
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+
+# 1. 构建包
+python -m build
+
+# 2. 上传到 PyPI（需设置 UTF-8 编码避免 Windows GBK 问题）
+$token = (Get-Content config/pypi.json | ConvertFrom-Json).token
+twine upload dist/* -u __token__ -p $token --disable-progress-bar
+```
+
+**注意事项**：
+- 必须设置 `$env:PYTHONIOENCODING='utf-8'`，否则 twine 的 rich 进度条会在 Windows GBK 终端报 UnicodeEncodeError
+- `--disable-progress-bar` 可避免 rich 终端渲染问题
+- Token 格式：`pypi-AgEIcHlwaS5vcmcC...`（完整 token 在 `config/pypi.json`）
 
 ## 重构 Checklist
 
