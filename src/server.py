@@ -786,7 +786,8 @@ async def run_server():
                             "type": "string",
                             "enum": ["compile", "compile_file", "dry_run", "info", "create",
                                      "set", "add_config", "remove_config", "add_source",
-                                     "remove_source", "audit", "ast", "runtime", "layout"],
+                                     "remove_source", "audit", "ast", "runtime", "layout",
+                                     "devices", "deploy"],
                         },
                     },
                     "required": ["action"]

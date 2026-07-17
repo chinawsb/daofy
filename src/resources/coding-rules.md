@@ -1,5 +1,5 @@
 # Delphi 编码规范
-> 最后更新: 2026-06-24 | 版本: 1.13.0
+> 最后更新: 2026-07-17 | 版本: 1.14.0
 
 ## 工作流总览
 ```
@@ -412,7 +412,7 @@ delphi_file(action="format", file_path="src/Unit1.pas")
 ## ⑤ 编译
 ```python
 delphi_project(action="compile", project_path="Project.dproj")                         # 整体编译
-delphi_project(action="compile", project_path="Unit1.pas")                             # 语法检查
+delphi_project(action="compile_file", project_path="Unit1.pas")                        # 单文件语法检查
 delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 # 可选参数：conditional_defines=["DEBUG"], unit_search_paths=["..."], output_path="..."
 ```
