@@ -26,7 +26,7 @@ def test_public_resource_index_lists_stable_automation_uris() -> None:
     assert "delphi://coding-rules" in index
     assert "delphi://automation/workflow" in index
     assert "delphi://automation/script-generation-workflow" in index
-    assert "`src/resources/coding-rules/index.md`" in index
+    assert "`src/resources/coding-rules/delphi/index.md`" in index
     assert "`src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md`" in index
     assert "SHA-256" in index
     assert "Version" in index
@@ -192,7 +192,7 @@ def test_public_resource_metadata_matches_file_content() -> None:
     metadata = get_public_resource_metadata("delphi://coding-rules")
     data = metadata.path.read_bytes()
 
-    assert metadata.source == "src/resources/coding-rules/index.md"
+    assert metadata.source == "src/resources/coding-rules/delphi/index.md"
     assert metadata.byte_size == len(data)
     assert metadata.sha256 == hashlib.sha256(data).hexdigest()
     assert metadata.version == "1.14.0"
@@ -260,7 +260,7 @@ def test_coding_rules_resource_is_preferred() -> None:
         if resource.uri == "delphi://coding-rules"
     )
 
-    assert resolve_resource_path(coding_rules) == PROJECT_ROOT / "src" / "resources" / "coding-rules" / "index.md"
+    assert resolve_resource_path(coding_rules) == PROJECT_ROOT / "src" / "resources" / "coding-rules" / "delphi" / "index.md"
 
 
 def test_automation_skill_mirrors_match_resource_sources() -> None:

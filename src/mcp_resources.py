@@ -44,7 +44,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Delphi source coding, editing, compile, review, and automation rules.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/coding-rules/index.md",
+            "src/resources/coding-rules/delphi/index.md",
         ),
     ),
     PublicResourceSpec(

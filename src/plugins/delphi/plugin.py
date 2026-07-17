@@ -133,7 +133,7 @@ class DelphiPlugin(CompilerPlugin):
         "delphi_file": "Delphi 文件必用读写/搜索/替换/备份工具",
         "delphi_kb": "知识库搜索/管理",
         "manage_component": "DFM组件增/删/改/生成",
-        "get_coding_rules": "编码必用编码规则获取工具",
+        "get_coding_rules": "编码规则获取工具 — 支持 Delphi 和 Lazarus/FPC 编码规范，支持按语言/章节分段获取",
         "package": "组件包编译安装/列出",
         "check_environment": "环境检查/编译器检测/安装",
         "delphi_rtti": "RTTI 发现/调用",

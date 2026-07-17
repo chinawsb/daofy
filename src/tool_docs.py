@@ -790,9 +790,12 @@ TOOL_HELP_DOCS: dict = {
         },
     },
     "get_coding_rules": {
-        "summary": "加载 Delphi 编码规则。按场景加载，不要一次全读。",
+        "summary": "加载编码规则（支持 Delphi / Lazarus/FPC）。按场景加载，不要一次全读。",
         "description": (
-            "按场景加载 Delphi 编码规则。每个场景对应一组规则，按需加载。\n\n"
+            "按场景加载编码规则。支持多种编程语言的编码规范。\n\n"
+            "**语言选择**:\n"
+            "  `language=\"delphi\"`（默认）— Delphi 编码规范\n"
+            "  `language=\"lazarus\"` — Lazarus/Free Pascal 编码规范\n\n"
             "⚠️ 必须调用的场景（违反会导致编译失败/运行崩溃）:\n"
             "  编辑代码 → section=\"writing\"      （命名/格式/行号规则）\n"
             "  编译项目 → section=\"compile\"       （编译参数/错误处理）\n"
@@ -840,7 +843,7 @@ TOOL_HELP_DOCS: dict = {
             "debug-log": "调试日志示例（异常分类、日志格式）",
             "write-edits": "write(edits=[...]) 批量写入示例（行号偏移计算）",
         },
-        "default_section": "不传 section=返回工作流总览+章节索引（推荐首次调用）",
+        "default_section": "不传 section=返回工作流总览+章节索引（推荐首次调用）。language=delphi(默认)或lazarus。",
     },
     "code_hosting": {
         "summary": "Git 本地操作 + 代码托管平台。必须使用此工具进行所有 Git 操作，禁止用 bash 直接执行 git。",
@@ -1776,7 +1779,8 @@ TOOL_SHORT_DESC: dict = {
         "编译安装 Delphi 组件包: install(编译安装)/list(查已装)。"
     ),
     "get_coding_rules": (
-        "获取 Delphi 编码规范。写/改 Delphi 代码前必须先调用；具体 .pas/.dfm/.dproj/.groupproj 读取和修改仍路由到 delphi_file。"
+        "获取编码规范（Delphi/Lazarus）。写/改代码前必须先调用。"
+        " language=delphi(默认)或lazarus。各语言具体规则见 coding-rules/{language}/。"
     ),
     "code_hosting": (
         "Git 操作: status/diff/show/log/add/commit/fetch/pull/branch/switch/merge/restore/unstage/stash/tag/push/clone"

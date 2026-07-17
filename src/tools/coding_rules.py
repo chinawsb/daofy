@@ -100,18 +100,28 @@ TITLE_TO_KEY = {v: k for k, v in SECTION_KEYS.items()}
 
 CODING_RULES_DIR = Path(__file__).parent.parent / "resources" / "coding-rules"
 
+LANGUAGE_NAMES: Dict[str, str] = {
+    "delphi": "Delphi",
+    "lazarus": "Lazarus/Free Pascal",
+}
 
-def _default_rules_candidates() -> List[Path]:
-    """Return built-in coding rule files in preferred lookup order.
 
-    Returns either:
-    - the coding-rules/ directory (merged by _read_first_existing_text), or
-    - the MCP resource path as fallback.
+def _default_rules_candidates(language: str = "delphi") -> List[Path]:
+    """Return built-in coding rule directories for the given language.
+
+    Returns [shared_dir, language_dir] — shared rules first, language-specific
+    rules second (language overrides shared on heading collision).
+    Falls back to MCP resource path if directory structure doesn't exist.
     """
-    # Return the new directory structure — _read_first_existing_text's directory-mode
-    # merge will pick up and join all .md files within it.
-    if CODING_RULES_DIR.is_dir():
-        return [CODING_RULES_DIR]
+    candidates: List[Path] = []
+    shared_dir = CODING_RULES_DIR / "shared"
+    if shared_dir.is_dir():
+        candidates.append(shared_dir)
+    lang_dir = CODING_RULES_DIR / language
+    if lang_dir.is_dir():
+        candidates.append(lang_dir)
+    if candidates:
+        return candidates
     # Fallback: try the MCP resource path directly
     try:
         coding_rules = next(
@@ -127,32 +137,44 @@ def _default_rules_candidates() -> List[Path]:
 def _read_first_existing_text(paths: List[Path], label: str) -> Tuple[str, Optional[Path]]:
     """Read the first existing UTF-8 text file from a candidate list.
 
-    If the first path is the CODING_RULES_DIR (a directory), merge all .md files
-    within it. Otherwise read the file directly.
+    If the path is a directory, merge all .md files within it.
+    If multiple directories are provided, merge ALL of them (not just the first).
+    If a single file path is provided, read it directly.
     """
+    parts: list[str] = []
+    merged_path: Optional[Path] = None
+
     for path in paths:
         if not path.exists():
             continue
-        # Directory mode: merge all .md files from coding-rules/
-        if path == CODING_RULES_DIR:
-            parts: list[str] = []
+        # Directory mode: merge all .md files
+        if path.is_dir():
+            dir_parts: list[str] = []
             merged_paths = sorted(path.rglob("*.md"))
             for f in merged_paths:
                 try:
-                    parts.append(f.read_text(encoding="utf-8"))
+                    dir_parts.append(f.read_text(encoding="utf-8"))
                 except Exception as e:
                     logger.error(f"读取 {label} 子文件失败: {f}: {str(e)}")
                     continue
-            if parts:
-                merged = "\n\n".join(parts)
-                return merged, path
-            return "", None
+            if dir_parts:
+                merged = "\n\n".join(dir_parts)
+                parts.append(merged)
+                if merged_path is None:
+                    merged_path = path
+            continue
         # Single file mode
         try:
-            return path.read_text(encoding='utf-8'), path
+            text = path.read_text(encoding='utf-8')
+            parts.append(text)
+            if merged_path is None:
+                merged_path = path
         except Exception as e:
             logger.error(f"读取{label}失败: {path}: {str(e)}")
             continue
+
+    if parts:
+        return "\n\n".join(parts), merged_path
     return "", None
 
 
@@ -274,17 +296,18 @@ def _list_available_sections(content: str) -> str:
     return '\n'.join(lines_out)
 
 
-def _load_example(example_name: str) -> Optional[str]:
+def _load_example(example_name: str, language: str = "delphi") -> Optional[str]:
     """
-    按名称加载示例文件。在 coding-rules/examples/ 下递归搜索匹配的 .md 文件。
+    按名称加载示例文件。在 coding-rules/{language}/examples/ 下递归搜索匹配的 .md 文件。
 
     Args:
         example_name: 示例名称（不含扩展名），如 "naming"、"dirty-flag"
+        language: 编程语言，默认 "delphi"
 
     Returns:
         示例内容，未找到返回 None
     """
-    examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / "examples"
+    examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / language / "examples"
     if not examples_dir.is_dir():
         return None
 
@@ -307,12 +330,13 @@ def _load_example(example_name: str) -> Optional[str]:
 async def get_coding_rules(
     project_path: Optional[str] = None,
     section: Optional[str] = None,
-    examples: Optional[str] = None
+    examples: Optional[str] = None,
+    language: Optional[str] = None,
 ) -> CallToolResult:
     """
-    获取 Delphi 源码编码规则，支持按章节分段获取，支持按名称加载示例。
+    获取编码规范规则，支持按语言（Delphi / Lazarus）和章节分段获取。
 
-    默认读取 src/resources/coding-rules/ 目录（合并所有 .md 文件）。
+    默认读取 src/resources/coding-rules/{language}/ 及 shared/ 目录下的规则文件。
     如果用户项目目录下存在 CODING_RULES.mdc，则合并用户规则（用户规则覆盖默认规则）
 
     Args:
@@ -321,21 +345,29 @@ async def get_coding_rules(
                  不传或传 None 时返回工作流总览 + 章节索引，引导按需获取。
                  传 "list" 返回可用章节列表。
         examples: 示例名称（可选），如 "naming"、"format"。
-                  指定后从 coding-rules/examples/ 加载对应示例文件。
-
-    Returns:
-        编码规则内容
+                  指定后从 coding-rules/{language}/examples/ 加载对应示例文件。
+        language: 编程语言（可选），"delphi"（默认）或 "lazarus"。
+                  不传时默认 "delphi"（向后兼容）。
     """
-    logger.info(f"获取编码规则请求 — project_path={project_path}, section={section}, examples={examples}")
+    # 默认语言为 delphi（向后兼容）
+    lang = (language or "delphi").lower().strip()
+    if lang not in LANGUAGE_NAMES:
+        valid = ", ".join(LANGUAGE_NAMES.keys())
+        return CallToolResult(
+            content=[{"type": "text", "text": f"不支持的语言: '{language}'。有效值: {valid}"}],
+            isError=True,
+        )
+
+    logger.info(f"获取编码规则请求 — language={lang}, project_path={project_path}, section={section}, examples={examples}")
 
     try:
-        # 读取默认编码规则
+        # 读取默认编码规则（shared/ + language/）
         default_rules, default_rules_path = _read_first_existing_text(
-            _default_rules_candidates(),
-            "默认编码规则文件",
+            _default_rules_candidates(lang),
+            f"默认编码规则文件 (language={lang})",
         )
         if default_rules_path and default_rules:
-            logger.info(f"成功读取默认编码规则文件: {default_rules_path}")
+            logger.info(f"成功读取编码规则文件: {default_rules_path} (language={lang})")
         elif default_rules_path:
             logger.warning(f"默认编码规则文件为空或读取失败: {default_rules_path}")
         else:
@@ -383,13 +415,13 @@ async def get_coding_rules(
 
         # examples 参数处理：按名称加载示例文件
         if examples:
-            example_text = _load_example(examples)
+            example_text = _load_example(examples, lang)
             if example_text:
-                logger.info(f"返回示例: {examples}")
+                logger.info(f"返回示例: {examples} (language={lang})")
                 return CallToolResult(content=[{"type": "text", "text": example_text}])
             else:
                 # 列出可用示例名供参考
-                examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / "examples"
+                examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / lang / "examples"
                 available = []
                 if examples_dir.is_dir():
                     for f in sorted(examples_dir.rglob("*.md")):

@@ -240,10 +240,11 @@ class TestGetCodingRules:
     def test_default_rules_candidates_prefer_resources(self):
         candidates = _default_rules_candidates()
 
-        # Now returns the coding-rules/ directory (merge-all mode)
-        assert len(candidates) == 1
-        assert candidates[0].name == "coding-rules"
-        assert candidates[0].is_dir()
+        # Now returns [shared/, delphi/] (multi-language support)
+        assert len(candidates) == 2
+        assert candidates[0].name == "shared"
+        assert candidates[1].name == "delphi"
+        assert all(c.is_dir() for c in candidates)
 
     @pytest.mark.asyncio
     async def test_section_review_meta(self, mock_default_rules):

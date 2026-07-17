@@ -294,7 +294,12 @@ async def _handle_package(arguments: dict) -> Any:
 
 
 async def _handle_get_coding_rules(arguments: dict) -> Any:
-    return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"), examples=arguments.get("examples"))
+    return await _get_coding_rules(
+        project_path=arguments.get("project_path"),
+        section=arguments.get("section"),
+        examples=arguments.get("examples"),
+        language=arguments.get("language"),
+    )
 
 
 async def _handle_automate_delphi(arguments: dict) -> dict:
@@ -454,7 +459,7 @@ DELPHI_TOOL_DESCRIPTIONS: dict[str, str] = {
     "manage_component": "DFM组件增/删/改/生成",
     "check_environment": "环境检查/编译器检测/安装",
     "package": "组件包编译安装/列出",
-    "get_coding_rules": "编码必用编码规则获取工具",
+    "get_coding_rules": "编码规则获取工具 — 支持 Delphi 和 Lazarus/FPC 编码规范，支持按语言/章节分段获取",
     "automate_delphi": "Delphi 自动化测试",
     "delphi_rtti": "RTTI 发现/调用",
 }
@@ -550,7 +555,13 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
         "type": "object",
         "properties": {
             "section": {"type": "string"},
-            "examples": {"type": "string", "description": "示例名称，如 naming/format/debug-log。按名称加载 coding-rules/examples/ 下的示例文件"},
+            "language": {
+                "type": "string",
+                "enum": ["delphi", "lazarus"],
+                "default": "delphi",
+                "description": "编程语言：delphi（默认）或 lazarus",
+            },
+            "examples": {"type": "string", "description": "示例名称，如 naming/format/debug-log。按名称加载 coding-rules/{language}/examples/ 下的示例文件"},
         }
     },
     "automate_delphi": {

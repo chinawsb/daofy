@@ -240,7 +240,7 @@ class TestDocConsistency:
 
         scanned_files = [
             ROOT / "AGENTS.md",
-            ROOT / "src" / "resources" / "coding-rules" / "delphi-file-rules.md",
+            ROOT / "src" / "resources" / "coding-rules" / "delphi" / "delphi-file-rules.md",
         ]
         combined = "\n".join(
             path.read_text(encoding="utf-8") for path in scanned_files
@@ -322,6 +322,7 @@ class TestDocConsistency:
                         candidates = [
                             path.parent / href,
                             resources / "coding-rules" / href,
+                            resources / "coding-rules" / "shared" / href,
                             resources / href,
                         ]
                     else:
