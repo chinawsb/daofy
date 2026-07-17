@@ -7,7 +7,7 @@ description: >-
 ---
 
 <!-- daofy-managed-skill: true -->
-<!-- daofy-managed-skill-version: 2026.07.14.2 -->
+<!-- daofy-managed-skill-version: 2026.07.17 -->
 
 # Daofy for Delphi — 用法 Skill（按需加载）
 
@@ -51,7 +51,49 @@ run_mcp({
 5. 编译、审计、布局、运行时 uses 检查使用 `delphi_project`。
 6. 自动化测试使用 `automate_delphi`；需要完整流程时读取
    `delphi://automation/workflow`。
-7. 深度编码/编译/审查规范用 `get_coding_rules(section=...)` 按需获取，不要在常驻上下文里堆规范。
+7. 深度编码/编译/审查规范用 `get_coding_rules(section=..., examples=...)` 按需获取，不要在常驻上下文里堆规范。
+
+## 编码规则按需加载
+
+`get_coding_rules` 支持 `section` 和 `examples` 两个维度按需加载，避免一次性注入全部规则：
+
+```python
+# 只加载写代码规则
+get_coding_rules(section="writing")
+
+# 只加载某个子章节
+get_coding_rules(section="delphi_file_write_rule")
+
+# 加载写代码规则 + 命名规范示例
+get_coding_rules(section="writing", examples="naming")
+
+# 加载编译规则 + 格式化示例
+get_coding_rules(section="compile", examples="formatting")
+```
+
+**常用 section**: `writing`, `compile`, `review`, `agent_rules`, `kb_search`,
+`delphi_file_write_rule`, `delphi_file_dirty_flag`, `delphi_file_output_format`,
+`delphi_file_usage_tips`
+
+**常用 examples**: `naming`, `formatting`, `documentation`, `error-handling`
+
+## DFM 中文内容
+
+编辑 DFM 文件时，中文内容（Caption、Text、Hint 等）**直接写原文，不需要转义**：
+
+```python
+# ✅ 正确：直接写中文
+delphi_file(action="write", file_path="MainForm.dfm", edits=[
+    {"start_line": 5, "end_line": 5, "new_text": '    Caption = "中文标题"'}
+])
+
+# ❌ 错误：不要手动转义 Unicode
+delphi_file(action="write", file_path="MainForm.dfm", edits=[
+    {"start_line": 5, "end_line": 5, "new_text": '    Caption = \u4e2d\u6587\u6807\u9898'}
+])
+```
+
+原理：`delphi_file` 读写时自动处理编码（GBK/UTF-8/BOM），中文内容保持原文写入。
 
 ## 与其他 IDE skill 的关系
 
