@@ -790,8 +790,23 @@ TOOL_HELP_DOCS: dict = {
         },
     },
     "get_coding_rules": {
-        "summary": "获取 Delphi 编码规范。写/改 Delphi 代码前必须先调用！",
-        "description": "获取 Delphi 编码规则 — AI 写/改 Delphi 代码前必须先调用",
+        "summary": "加载 Delphi 编码规则。按场景加载，不要一次全读。",
+        "description": (
+            "按场景加载 Delphi 编码规则。每个场景对应一组规则，按需加载。\n\n"
+            "⚠️ 必须调用的场景（违反会导致编译失败/运行崩溃）:\n"
+            "  编辑代码 → section=\"writing\"      （命名/格式/行号规则）\n"
+            "  编译项目 → section=\"compile\"       （编译参数/错误处理）\n"
+            "  审查代码 → section=\"review\"        （审核清单）\n\n"
+            "📋 按需加载的场景:\n"
+            "  首次编码 → section=\"workflow\"      （整体流程总览）\n"
+            "  调试问题 → section=\"debugging\"     （调试决策树/异常分类）\n"
+            "  自动化测试 → section=\"automation\"  （测试架构/脚本/场景模板）\n"
+            "  UI 布局 → section=\"ui_layout\"      （布局审计规范）\n"
+            "  保存经验 → section=\"experience\"    （经验库操作）\n"
+            "  人机协同 → section=\"human_collab\"  （异常诊断/人工介入）\n"
+            "  重建 KB → section=\"kb_build\"       （知识库重建）\n\n"
+            "💡 不传 section= 返回工作流总览+章节索引（首次使用时推荐）"
+        ),
         "triggers": ["编码规则、编码规范、代码风格、命名规范、规则、coding rules"],
         "file_triggers": [
             "⚠️ 看到 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.res/.groupproj 等 Delphi 文件时，必须先调用此工具",
@@ -799,11 +814,17 @@ TOOL_HELP_DOCS: dict = {
         ],
         "workflow": "任何 .pas/.dproj 操作前→get_coding_rules(section='workflow') 了解流程",
         "section_guide": {
-            "workflow": "工作流总览（先看这个了解整体流程）",
-            "writing": "写 Delphi 代码时的命名/格式/泛型规则",
-            "review": "编译后审查代码（含完整审核表）",
-            "safety": "安全敏感操作规则",
-            "agent_rules": "Agent 操作硬规则",
+            "workflow": "工作流总览（首次编码时加载）",
+            "writing": "写 Delphi 代码时的命名/格式/泛型规则（编辑代码前必须加载）",
+            "compile": "编译参数/错误处理（编译项目前必须加载）",
+            "review": "编译后审查代码（审查前必须加载）",
+            "debugging": "调试决策树/异常分类（调试问题时加载）",
+            "automation": "自动化测试架构/脚本/场景模板（自动化测试时加载）",
+            "ui_layout": "UI 布局规范与审计（修改窗体后加载）",
+            "experience": "经验库操作（保存/搜索经验时加载）",
+            "human_collab": "人机协同（异常诊断/人工介入时加载）",
+            "kb_build": "知识库重建（KB 数据缺失时加载）",
+            "agent_rules": "Agent 操作硬规则（执行脚本/格式化时加载）",
         },
         "default_section": "不传 section=返回工作流总览+章节索引（推荐首次调用）",
     },
