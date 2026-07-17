@@ -1,7 +1,7 @@
 """
 输出解析器
 
-解析 Delphi 编译器输出,提取错误和警告信息
+解析 Delphi / FPC 编译器输出,提取错误和警告信息
 """
 
 import re
@@ -13,10 +13,9 @@ logger = get_logger(__name__)
 
 
 class OutputParser:
-    """Delphi 编译器输出解析器"""
+    """Delphi / FPC 编译器输出解析器"""
 
-    # 错误/警告正则表达式模式
-    # 格式: Error: File.pas(10,5): Error message
+    # 标准格式: Error: File.pas(10,5): Error message
     # 格式: Warning: File.pas(20,10): Warning message
     # 格式: Fatal: File.pas(1,1): Fatal error
     MESSAGE_PATTERN = re.compile(
@@ -25,14 +24,29 @@ class OutputParser:
         r'(?P<message>.+)'
     )
 
+    # FPC 格式: File.pas(13,3) Fatal: (2003) Syntax error message
+    # FPC 格式: File.pas(13,8) Error: (4001) Incompatible types...
+    # FPC 格式: File.pas(13,10) Error: (5000) Identifier not found...
+    FPC_MESSAGE_PATTERN = re.compile(
+        r'(?P<file>[^(]+)\((?P<line>\d+),(?P<column>\d+)\)\s+'
+        r'(?P<type>Error|Fatal|Warning):\s+'
+        r'\(?\d+\)?\s*'
+        r'(?P<message>.+)'
+    )
+
     # 致命错误模式(无行号)
     FATAL_PATTERN = re.compile(
         r'Fatal:\s+(?P<message>.+)'
     )
 
+    # FPC 致命错误: Fatal: (1018) Compilation aborted
+    FPC_FATAL_PATTERN = re.compile(
+        r'Fatal:\s+\(\d+\)\s+(?P<message>.+)'
+    )
+
     def parse(self, output: str) -> List[CompileMessage]:
         """
-        解析编译器输出
+        解析编译器输出（支持 Delphi 和 FPC 格式）
 
         Args:
             output: 编译器输出字符串
@@ -47,32 +61,46 @@ class OutputParser:
             if not line:
                 continue
 
-            # 尝试匹配标准错误/警告格式
-            match = self.MESSAGE_PATTERN.match(line)
+            # Delphi: Error: File.pas(10,5): message
+            # FPC:    File.pas(13,3) Fatal: (2003) message
+            match = (
+                self.MESSAGE_PATTERN.match(line)
+                or self.FPC_MESSAGE_PATTERN.match(line)
+            )
             if match:
                 message_type = match.group('type').lower()
                 if message_type == 'fatal':
                     message_type = 'error'
-
                 messages.append(CompileMessage(
                     file_path=match.group('file').strip(),
                     line=int(match.group('line')),
                     column=int(match.group('column')),
                     message=match.group('message').strip(),
-                    message_type=message_type
+                    message_type=message_type,
                 ))
                 continue
 
-            # 尝试匹配致命错误格式(无行号)
+            # FPC/Fatal without file info: Fatal: (1018) Compilation aborted
+            match = self.FPC_FATAL_PATTERN.match(line)
+            if match:
+                messages.append(CompileMessage(
+                    file_path="", line=0, column=0,
+                    message=match.group('message').strip(),
+                    message_type='error',
+                ))
+                continue
+
+            # Delphi/Fatal without file info: Fatal: Some error
             match = self.FATAL_PATTERN.match(line)
             if match:
                 messages.append(CompileMessage(
-                    file_path="",
-                    line=0,
-                    column=0,
+                    file_path="", line=0, column=0,
                     message=match.group('message').strip(),
-                    message_type='error'
+                    message_type='error',
                 ))
+
+        logger.debug(f"解析到 {len(messages)} 条消息")
+        return messages
 
         logger.debug(f"解析到 {len(messages)} 条消息")
         return messages
