@@ -2,7 +2,9 @@
 Lazarus/FPC 编译器插件
 
 Phase 1: 委托到现有 compiler_service.compile_with_lazbuild / lpi_parser，
-不重复任何业务逻辑。
+         不重复任何业务逻辑。
+Phase 2: 工具归属声明 (get_owned_tool_names)。
+Phase 5: handler 提取到 handlers.py，get_tools() 返回完整 ToolDefinition。
 """
 
 from pathlib import Path
@@ -52,7 +54,6 @@ class LazarusPlugin(CompilerPlugin):
         from ...services.config_manager import ConfigManager
         from ...models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform
 
-        # 映射 target_platform 字符串到枚举
         platform_map = {
             "win32": TargetPlatform.WIN32,
             "win64": TargetPlatform.WIN64,
@@ -86,7 +87,6 @@ class LazarusPlugin(CompilerPlugin):
 
         from ...utils.lpi_parser import LpiParser
 
-        # .lpr → 查找同名 .lpi
         p = Path(project_path)
         if p.suffix.lower() == '.lpr':
             lpi_path = p.with_suffix('.lpi')
@@ -106,47 +106,32 @@ class LazarusPlugin(CompilerPlugin):
             "info": info,
         }
 
-    # ── 工具注册 ──
-
-    # ── 工具归属声明 ──
-    # Phase 2: 插件声明拥有哪些工具名。
+    # ── 工具归属声明 (Phase 2) + handler 提取 (Phase 5) ──
 
     def get_owned_tool_names(self) -> List[str]:
         """Lazarus 插件拥有的 MCP 工具名列表"""
-        return ["lazarus_compile"]
+        return [
+            "lazarus_compile",
+            "lazarus_project",
+        ]
 
     def get_tools(self) -> List[ToolDefinition]:
-        """返回 Lazarus 插件注册的 MCP 工具
-
-        Phase 2: 只有 lazarus_compile。handler 在此处直接实现。
-        """
+        """返回 Lazarus 插件注册的 MCP 工具 (Phase 5: 完整 ToolDefinition)"""
+        from .handlers import LAZARUS_HANDLERS
         return [
             ToolDefinition(
-                name="lazarus_compile",
-                description="Lazarus/Free Pascal 项目编译 (lazbuild)",
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "project_path": {
-                            "type": "string",
-                            "description": ".lpi 或 .lpr 文件路径",
-                        },
-                        "target_platform": {
-                            "type": "string",
-                            "enum": ["win32", "win64"],
-                            "default": "win32",
-                        },
-                        "build_configuration": {
-                            "type": "string",
-                            "description": "Default/Release/Debug",
-                        },
-                        "timeout": {
-                            "type": "integer",
-                            "default": 600,
-                        },
-                    },
-                    "required": ["project_path"],
-                },
-                handler=self.compile,
-            ),
+                name=name,
+                description=self._TOOL_DESCRIPTIONS.get(name, f"Lazarus 工具: {name}"),
+                input_schema=self._TOOL_SCHEMAS.get(name, {"type": "object", "properties": {}}),
+                handler=handler,
+            )
+            for name, handler in LAZARUS_HANDLERS.items()
         ]
+
+    # 工具描述和 schema 元数据
+    _TOOL_DESCRIPTIONS = {
+        "lazarus_compile": "Lazarus/Free Pascal 项目编译 (lazbuild)",
+        "lazarus_project": "Lazarus 项目信息查询 — 解析 .lpi 文件",
+    }
+
+    _TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}

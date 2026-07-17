@@ -87,9 +87,9 @@ class ProjectCompileRequest:
         if not self.project_path:
             raise ValueError("项目路径不能为空")
 
-        # 验证文件扩展名
-        if not self.project_path.endswith(('.dproj', '.dpr', '.dpk')):
-            raise ValueError(f"项目文件必须是 .dproj、.dpr 或 .dpk 格式,当前路径: {self.project_path}")
+        # 验证文件扩展名（支持 Delphi .dproj/.dpr/.dpk 和 Lazarus .lpi/.lpr）
+        if not self.project_path.endswith(('.dproj', '.dpr', '.dpk', '.lpi', '.lpr')):
+            raise ValueError(f"项目文件必须是 .dproj、.dpr、.dpk、.lpi 或 .lpr 格式,当前路径: {self.project_path}")
 
 
 @dataclass

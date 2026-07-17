@@ -1661,6 +1661,62 @@ TOOL_HELP_DOCS: dict = {
             },
         },
     },
+    "lazarus_compile": {
+        "summary": "Lazarus/Free Pascal 项目编译 (lazbuild)",
+        "description": "Lazarus/Free Pascal 项目编译",
+        "triggers": [
+            "编译 Lazarus 工程、lazbuild、lpi、lpr、Free Pascal",
+        ],
+        "constraints": [
+            "❌ 不得用 bash/cmd 运行 lazbuild",
+        ],
+        "workflow": "lazarus_compile(project_path=.lpi) → 检查 result.status",
+        "actions": {
+            "compile": "编译 .lpi/.lpr 项目",
+        },
+        "action_params": {
+            "compile": {
+                "description": "编译 Lazarus 项目",
+                "required": ["project_path"],
+                "optional": {
+                    "target_platform": "win32/win64，默认 win32",
+                    "build_configuration": "Default/Release/Debug",
+                    "timeout": "超时秒数，默认 600",
+                },
+            },
+        },
+    },
+    "lazarus_project": {
+        "summary": "Lazarus 项目信息查询 — 解析 .lpi 文件",
+        "description": "Lazarus 项目信息查询",
+        "triggers": [
+            "查看 lpi 项目信息、Lazarus 单元列表、FPC 编译器选项",
+        ],
+        "constraints": [],
+        "workflow": "lazarus_project(project_path=.lpi) → info/units/options",
+        "actions": {
+            "info": "项目概要（名称/主源文件/单元数/搜索路径/编译器选项）",
+            "units": "单元列表（含 IsPartOfProject）",
+            "options": "编译器选项（CPU/OS/调试/优化级别）",
+        },
+        "action_params": {
+            "info": {
+                "description": "获取项目概要",
+                "required": ["project_path"],
+                "optional": {},
+            },
+            "units": {
+                "description": "获取单元列表",
+                "required": ["project_path"],
+                "optional": {},
+            },
+            "options": {
+                "description": "获取编译器选项",
+                "required": ["project_path"],
+                "optional": {},
+            },
+        },
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -1681,6 +1737,8 @@ TOOL_NAMES: list = [
     "generate_copyright",
     "delphi_rtti",
     "ocr",
+    "lazarus_compile",
+    "lazarus_project",
 ]
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
@@ -1750,5 +1808,13 @@ TOOL_SHORT_DESC: dict = {
     "ocr": (
         "图像分析: recognize(文字识别)/detect(文本框)/diff(截图对比)/color(颜色分析)/match(图标匹配)/status(模型状态)。"
         " 纯ONNX+OpenCV+Pillow。diff需两张截图；match需模板图；color支持区域分析。"
+    ),
+    "lazarus_compile": (
+        "Lazarus/Free Pascal 项目编译 (lazbuild)。"
+        " project_path(.lpi/.lpr)必需。支持 target_platform(win32/win64)/build_configuration/timeout。"
+    ),
+    "lazarus_project": (
+        "Lazarus 项目信息查询 — 解析 .lpi 文件。"
+        " action=info(默认，项目概要)/units(单元列表)/options(编译器选项)。"
     ),
 }

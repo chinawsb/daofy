@@ -38,6 +38,7 @@ class TestToolRegistrationConsistency:
         "code_hosting", "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
         "ocr",
+        "lazarus_compile", "lazarus_project",
     }
 
     # _TOOL_HANDLERS 中已注册的 handler 名（含别名）
@@ -49,6 +50,7 @@ class TestToolRegistrationConsistency:
         "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
         "ocr",
+        "lazarus_compile", "lazarus_project",
     }
 
     HANDLER_ALLOWED_ALIASES = {"file_tool"}
@@ -192,12 +194,14 @@ class TestServerDispatch:
 
         Phase 4: list_tools() 已改为从 registry 动态生成 Tool 对象，
         不再在源码中硬编码 Tool(name=...) 块。
+        Phase 5: 加入 Lazarus handler 模块。
         此处创建独立的 PluginRegistry 实例并注册相同的 handler dicts，
         与 server.py 启动时的注册逻辑完全一致。
         """
         from src.plugins.registry import PluginRegistry
         from src.plugins.core.handlers import CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS
         from src.plugins.delphi.handlers import DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS
+        from src.plugins.lazarus.handlers import LAZARUS_HANDLERS, LAZARUS_TOOL_DESCRIPTIONS, LAZARUS_TOOL_SCHEMAS
 
         reg = PluginRegistry()
         reg.register_handlers(CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS, owner="core")
@@ -205,21 +209,29 @@ class TestServerDispatch:
             DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS,
             owner="delphi", aliases={"file_tool"}
         )
+        reg.register_handlers(
+            LAZARUS_HANDLERS, LAZARUS_TOOL_DESCRIPTIONS, LAZARUS_TOOL_SCHEMAS,
+            owner="lazarus",
+        )
         return {td.name for td in reg.collect_tools()}
 
     @classmethod
     def _extract_handler_names(cls) -> set:
         """从插件 handlers 模块提取已注册的工具名"""
-        # Phase 3: handler 已提取到 src/plugins/{core,delphi}/handlers.py
-        # 从 CORE_HANDLERS + DELPHI_HANDLERS 字典提取工具名
+        # Phase 3: handler 已提取到 src/plugins/{core,delphi,lazarus}/handlers.py
         core_path = Path(__file__).parent.parent / "src" / "plugins" / "core" / "handlers.py"
         delphi_path = Path(__file__).parent.parent / "src" / "plugins" / "delphi" / "handlers.py"
+        lazarus_path = Path(__file__).parent.parent / "src" / "plugins" / "lazarus" / "handlers.py"
         names: set = set()
-        for path in (core_path, delphi_path):
+        for path in (core_path, delphi_path, lazarus_path):
             if not path.exists():
                 continue
             source = path.read_text(encoding="utf-8")
-            match = re.search(r"(?:CORE_HANDLERS|DELPHI_HANDLERS)\s*=\s*\{(.*?)\}", source, re.DOTALL)
+            match = re.search(
+                r"(?:CORE_HANDLERS|DELPHI_HANDLERS|LAZARUS_HANDLERS)"
+                r"(?::\s*\w+(?:\[.*?\])?)?\s*=\s*\{(.*?)\}",
+                source, re.DOTALL,
+            )
             if match:
                 names.update(re.findall(r'"(\w+)"\s*:', match.group(1)))
         assert names, "Cannot find handler registrations in plugin modules"

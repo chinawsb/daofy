@@ -249,11 +249,10 @@ else:
     # 插件工具归属:
     #   delphi 插件拥有: delphi_project, delphi_file, delphi_kb, manage_component,
     #                     get_coding_rules, package, check_environment, delphi_rtti, automate_delphi
-    #   lazarus 插件拥有: lazarus_compile
+    #   lazarus 插件拥有: lazarus_compile, lazarus_project
     #   核心拥有: async_task, code_hosting, tool_help, experience, daofy_update,
     #            generate_copyright, ocr
-    # handler 仍由 _TOOL_HANDLERS 管理（闭包中的局部函数不可导入），
-    # Phase 3 将 handler 提取到插件模块。
+    # handler 已全部提取到插件模块 (Phase 3 / Phase 5)。
 
 
     class DaofyServerSession(ServerSession):
@@ -806,9 +805,10 @@ async def run_server():
             for td in _plugin_registry.collect_tools()
         ]
 
-    # 注册核心 + Delphi handler 模块（handler + description + schema 一次注册）
+    # 注册核心 + Delphi + Lazarus handler 模块（handler + description + schema 一次注册）
     from src.plugins.core.handlers import CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS
     from src.plugins.delphi.handlers import DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS
+    from src.plugins.lazarus.handlers import LAZARUS_HANDLERS, LAZARUS_TOOL_DESCRIPTIONS, LAZARUS_TOOL_SCHEMAS
 
     _plugin_registry.register_handlers(
         CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS,
@@ -816,6 +816,10 @@ async def run_server():
     _plugin_registry.register_handlers(
         DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS,
         owner="delphi", aliases={"file_tool"},
+    )
+    _plugin_registry.register_handlers(
+        LAZARUS_HANDLERS, LAZARUS_TOOL_DESCRIPTIONS, LAZARUS_TOOL_SCHEMAS,
+        owner="lazarus",
     )
 
     @server.call_tool()
