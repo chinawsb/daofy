@@ -16,6 +16,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
 
 
@@ -53,6 +54,15 @@ class CompilerPlugin(ABC):
     def info(self) -> PluginInfo:
         """插件元信息"""
         ...
+
+    def is_available(self) -> bool:
+        """检查当前环境是否安装了此插件对应的开发工具。
+
+        返回 False 时，registry.register() 将跳过该插件的工具注册，
+        避免向 MCP 客户端暴露不可用的工具。
+        子类可覆盖此方法实现自定义检测逻辑。
+        """
+        return True
 
     @abstractmethod
     async def detect(self) -> List[Dict[str, Any]]:

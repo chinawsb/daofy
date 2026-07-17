@@ -94,11 +94,19 @@ class PluginRegistry:
     # ── 插件注册 ──
 
     def register(self, plugin: CompilerPlugin) -> None:
-        """注册插件 + 收集其 ToolDefinition（含 handler + schema）"""
+        """注册插件 + 收集其 ToolDefinition（含 handler + schema）
+
+        如果 plugin.is_available() 返回 False，跳过该插件的工具注册，
+        仅保留插件元信息（名称、扩展名映射），避免暴露不可用的工具。
+        """
         info = plugin.info
         self._plugins[info.name] = plugin
         for ext in info.supported_extensions:
             self._ext_map[ext.lower()] = info.name
+
+        if not plugin.is_available():
+            logger.info(f"插件 {info.display_name} 未检测到开发工具，跳过工具注册")
+            return
 
         # 收集插件声明的工具归属
         for tool_name in plugin.get_owned_tool_names():

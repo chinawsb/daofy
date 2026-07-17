@@ -1760,6 +1760,41 @@ TOOL_HELP_DOCS: dict = {
             },
         },
     },
+    "lazarus_file": {
+        "summary": "Lazarus/FPC 文件读写 — read/write(edits,自动备份)/backup",
+        "description": "Lazarus/FPC 文件读写，复用共享文件内核。仅支持 read / write(edits 批量修改) / backup。自动 BOM 编码检测，write 前自动备份到 __history。",
+        "triggers": [
+            "lazarus 文件、读取 lfm、修改 lpi、编辑 lazarus 源码",
+        ],
+        "constraints": [
+            "❌ 不支持 grep/format/uses/encode/fix_garbled — 这些是 Delphi 特有的操作",
+        ],
+        "workflow": "lazarus_file(action=read, file_path=...) → 修改 → lazarus_file(action=write, file_path=..., edits=[...])",
+        "actions": {
+            "read": "读取文件（BOM 自动检测）",
+            "write": "写入文件（edits 批量修改，自动备份到 __history）",
+            "backup": "手动创建备份到 __history",
+        },
+        "action_params": {
+            "read": {
+                "description": "读取文件内容",
+                "required": ["file_path"],
+                "optional": {},
+            },
+            "write": {
+                "description": "写入文件（edits 批量修改）",
+                "required": ["file_path", "edits"],
+                "optional": {
+                    "encoding": "文件编码（不传则自动检测 BOM）",
+                },
+            },
+            "backup": {
+                "description": "手动备份到 __history",
+                "required": ["file_path"],
+                "optional": {},
+            },
+        },
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -1783,6 +1818,7 @@ TOOL_NAMES: list = [
     "lazarus_compile",
     "lazarus_project",
     "lazarus_kb",
+    "lazarus_file",
 ]
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
@@ -1866,5 +1902,10 @@ TOOL_SHORT_DESC: dict = {
         "Lazarus/FPC 源码知识库。"
         " build(构建)/search(搜索)/stats(统计)/read(读取源码)。"
         " 自动检测 C:\\lazarus 下的 LCL/FPC RTL 源码。"
+    ),
+    "lazarus_file": (
+        "Lazarus/FPC 文件读写。"
+        " read(读)/write(edits修改，自动备份到__history)/backup(手动备份)。"
+        " 只读/写/备份，不支持 grep/format/uses 等 Delphi 特有操作。"
     ),
 }

@@ -245,11 +245,13 @@ else:
 
     logger.info(f"已注册插件: {[p.info.name for p in _plugin_registry.get_all_plugins()]}")
     logger.info(f"插件扩展名映射: {_plugin_registry.get_all_extensions()}")
+    logger.info(f"可用插件工具: {list(_plugin_registry.collect_tools())}")
 
     # 插件工具归属:
     #   delphi 插件拥有: delphi_project, delphi_file, delphi_kb, manage_component,
     #                     get_coding_rules, package, check_environment, delphi_rtti, automate_delphi
-    #   lazarus 插件拥有: lazarus_compile, lazarus_project
+    #   lazarus 插件拥有: lazarus_compile, lazarus_project, lazarus_kb, lazarus_file
+    #                    （仅当 lazbuild.exe 可用时注册，否则跳过）
     #   核心拥有: async_task, code_hosting, tool_help, experience, daofy_update,
     #            generate_copyright, ocr
     # handler 已全部提取到插件模块 (Phase 3 / Phase 5)。

@@ -291,14 +291,36 @@ async def _handle_lazarus_kb(arguments: dict) -> dict:
         if not p.exists():
             return {"status": "failed", "error": f"文件不存在: {file_path}"}
         try:
-            text = p.read_text(encoding="utf-8-sig")
+            # BOM 自动检测：优先 UTF-8 BOM，fallback UTF-8
+            raw = p.read_bytes()
+            if raw[:3] == b'\xef\xbb\xbf':
+                text = raw[3:].decode('utf-8')
+            elif raw[:2] in (b'\xff\xfe', b'\xfe\xff'):
+                text = raw.decode('utf-16')
+            else:
+                text = raw.decode('utf-8')
             return {
                 "status": "success",
                 "action": "read",
                 "file_path": file_path,
                 "content": text,
                 "size": len(text),
+                "encoding": "utf-8",
             }
+        except UnicodeDecodeError:
+            # Fallback: 系统默认编码
+            try:
+                text = p.read_text(encoding="ansi")
+                return {
+                    "status": "success",
+                    "action": "read",
+                    "file_path": file_path,
+                    "content": text,
+                    "size": len(text),
+                    "encoding": "ansi",
+                }
+            except Exception as e2:
+                return {"status": "failed", "error": f"无法解码文件（尝试了 UTF-8/UTF-16/ANSI）: {e2}"}
         except Exception as e:
             return {"status": "failed", "error": f"读取文件失败: {e}"}
 
@@ -333,6 +355,29 @@ async def _handle_lazarus_kb(arguments: dict) -> dict:
     return {"status": "failed", "error": f"未知 action: {action}"}
 
 
+async def _handle_lazarus_file(arguments: dict) -> dict:
+    """Lazarus/FPC 文件读写工具（只读/写/备份，复用共享文件内核）
+
+    Actions:
+        read:    读取文件（BOM 自动检测）
+        write:   写入文件（edits=[...] 批量修改，自动备份到 __history）
+        backup:  手动创建备份到 __history
+
+    限制 action 范围，禁止 delphi_file 特有的 DFM/pasfmt/uses/grep 等操作。
+    """
+    from src.tools.file_tool import handle_file_tool
+
+    allowed = {"read", "write", "backup"}
+    action = arguments.get("action", "read")
+    if action not in allowed:
+        return {
+            "status": "failed",
+            "error": f"lazarus_file 不支持 action='{action}'。支持: {', '.join(sorted(allowed))}",
+        }
+
+    return await handle_file_tool(arguments)
+
+
 # ============================================================
 # 导出：工具名 → handler 映射
 # ============================================================
@@ -341,12 +386,14 @@ LAZARUS_HANDLERS: dict[str, Any] = {
     "lazarus_compile": _handle_lazarus_compile,
     "lazarus_project": _handle_lazarus_project,
     "lazarus_kb": _handle_lazarus_kb,
+    "lazarus_file": _handle_lazarus_file,
 }
 
 LAZARUS_TOOL_DESCRIPTIONS: dict[str, str] = {
     "lazarus_compile": "Lazarus/Free Pascal 项目编译 (lazbuild)",
     "lazarus_project": "Lazarus 项目信息查询 — 解析 .lpi 文件，获取项目名称/主源文件/单元列表/编译器选项",
     "lazarus_kb": "Lazarus/FPC 源码知识库 — 索引和搜索 LCL/FPC RTL 源码。build(构建)/search(搜索)/stats(统计)/read(读取源码)",
+    "lazarus_file": "Lazarus/FPC 文件读写 — read(读)/write(edits批量修改，自动备份)/backup(手动备份)",
 }
 
 LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
@@ -416,5 +463,38 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
                 "description": "按文件类型过滤（如 pas/inc/pp）",
             },
         },
+    },
+    "lazarus_file": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["read", "write", "backup"],
+                "default": "read",
+                "description": "read=读取, write=写入(edits), backup=备份",
+            },
+            "file_path": {
+                "type": "string",
+                "description": "文件路径",
+            },
+            "edits": {
+                "type": "array",
+                "description": "批量编辑操作（write 时必需）",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start_line": {"type": "integer", "description": "起始行号（1-indexed 闭区间）"},
+                        "end_line": {"type": "integer", "description": "结束行号（1-indexed 闭区间）"},
+                        "content": {"type": "string", "description": "新内容"},
+                    },
+                    "required": ["start_line"],
+                },
+            },
+            "encoding": {
+                "type": "string",
+                "description": "文件编码（不传则自动检测 BOM）",
+            },
+        },
+        "required": ["action"],
     },
 }

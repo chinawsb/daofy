@@ -29,6 +29,27 @@ class LazarusPlugin(CompilerPlugin):
             supported_extensions=[".lpi", ".lpr", ".lpk"],
         )
 
+    # ── 可用性检测 ──
+
+    def is_available(self) -> bool:
+        """检查 lazbuild.exe 是否可用（PATH 或常见安装目录）"""
+        import shutil
+        from pathlib import Path
+        import os
+
+        # 1. PATH 中查找
+        if shutil.which("lazbuild"):
+            return True
+
+        # 2. 常见安装目录
+        common_dirs = [
+            Path("C:/lazarus"),
+            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
+            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Lazarus",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
+        ]
+        return any((d / "lazbuild.exe").exists() for d in common_dirs)
+
     # ── detect ──
 
     async def detect(self) -> List[Dict[str, Any]]:
@@ -114,6 +135,7 @@ class LazarusPlugin(CompilerPlugin):
             "lazarus_compile",
             "lazarus_project",
             "lazarus_kb",
+            "lazarus_file",
         ]
 
     def get_tools(self) -> List[ToolDefinition]:
@@ -134,6 +156,7 @@ class LazarusPlugin(CompilerPlugin):
         "lazarus_compile": "Lazarus/Free Pascal 项目编译 (lazbuild)",
         "lazarus_project": "Lazarus 项目信息查询 — 解析 .lpi 文件",
         "lazarus_kb": "Lazarus/FPC 源码知识库 — 索引和搜索 LCL/FPC RTL 源码",
+        "lazarus_file": "Lazarus/FPC 文件读写 — read/write(edits,自动备份)/backup",
     }
 
     _TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}

@@ -2286,7 +2286,91 @@ def _parse_units_from_uses(units_text: str) -> List[str]:
     return parts
 
 
-def _build_uses_text(unit_names: List[str], original_text: str) -> str:
+_NAMESPACE_PRIORITY: dict[str, int] = {
+    # Group 0 — implicit always-first
+    # Group 1 — System.* (fundamental RTL)
+    "system": 10,
+    # Group 2 — WinAPI
+    "winapi": 20,
+    "wintypes": 20,
+    "winprocs": 20,
+    # Group 3 — VCL
+    "vcl": 30,
+    # Group 4 — Data
+    "data": 40,
+    "datasnap": 41,
+    # Group 5 — Web/XML/Soap
+    "web": 50,
+    "xml": 51,
+    "soap": 52,
+    # Group 6 — FireDAC
+    "firedac": 60,
+    # Group 7 — REST
+    "rest": 70,
+    # Group 8 — Everything else
+}
+
+_RTL_CORE = {"system", "sysinit", "sysutils", "classes", "types", "variants", "typinfo", "rtlconsts"}
+
+
+def _uses_sort_key(unit_name: str) -> tuple:
+    """Returns a sort key for Delphi uses clause ordering.
+
+    Follows Delphi convention: System.* → Winapi.* → Vcl.* → Data.* → others.
+    Within each group, units sort alphabetically by short name.
+    """
+    name = unit_name.strip().lower()
+    # Strip 'in' clause if present (e.g., "Unit1 in 'Unit1.pas'")
+    in_match = re.match(r"(\S+)\s+in\s+", name)
+    if in_match:
+        name = in_match.group(1)
+
+    parts = name.split(".")
+    if len(parts) == 1:
+        # No namespace: bare unit name
+        if name in _RTL_CORE:
+            group = 0  # System/SysInit etc → absolute first
+        else:
+            group = 100  # Unknown bare unit → after all namespaced
+        return (group, parts[0], unit_name)
+    else:
+        ns = parts[0]
+        group = _NAMESPACE_PRIORITY.get(ns, 99)
+        return (group, parts[-1], parts[0])
+
+
+def _uses_group(unit_name: str) -> int:
+    """Return namespace group number for a unit name.
+    
+    Lower number = earlier in uses clause.
+    Used by handle_uses to insert new units at the correct position
+    without reordering existing units.
+    """
+    name = unit_name.strip().lower()
+    in_match = re.match(r"(\S+)\s+in\s+", name)
+    if in_match:
+        name = in_match.group(1)
+    parts = name.split(".")
+    if len(parts) == 1:
+        if name in _RTL_CORE:
+            return 0
+        return 100
+    ns = parts[0]
+    return _NAMESPACE_PRIORITY.get(ns, 99)
+
+
+def _uses_insert_position(existing: List[str], new_unit: str) -> int:
+    """Find the insertion index for new_unit so it stays in namespace group order.
+    
+    Keeps existing units in their original relative order.
+    Only places new_unit at the boundary between its namespace group
+    and the next group.
+    """
+    new_group = _uses_group(new_unit)
+    for i, unit in enumerate(existing):
+        if _uses_group(unit) > new_group:
+            return i
+    return len(existing)
     """从单元名列表重建 uses 子句文本，保持原始换行风格。
 
     如果原始是单行，保持单行；如果跨多行，每行一个单元。
@@ -2406,18 +2490,17 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
                         break
             if collision_idx is not None:
                 if '.' in unit_name_stripped and '.' not in existing_names[collision_idx]:
-                    # 长名替换短名：Vcl.Forms 替换 Forms
-                    replaced_unit = existing_units[collision_idx]
+                    # 长名替换短名：Vcl.Forms 替换 Forms，保持原位置
                     new_units = existing_units.copy()
                     new_units[collision_idx] = unit_name_stripped
-                    new_units.sort(key=lambda e: _get_unit_name(e).lower())
                 else:
                     # 短名冲突长名，已有长名则跳过
                     return {"status": "success", "message": f"{unit_name_stripped} 与已有单元 {existing_names[collision_idx]} 短名相同，视为同一单元，跳过"}
             else:
-                # 无冲突，直接插入
-                new_units = existing_units + [unit_name_stripped]
-                new_units.sort(key=lambda e: _get_unit_name(e).lower())
+                # 无冲突，按 namespace group 插入（不重排已有单元顺序）
+                insert_at = _uses_insert_position(existing_units, unit_name_stripped)
+                new_units = existing_units.copy()
+                new_units.insert(insert_at, unit_name_stripped)
         else:  # remove
             if unit_name_lower not in existing_names_lower:
                 return {"status": "success", "message": f"{unit_name_stripped} 不在 {uses_section} uses 中，无需删除"}
