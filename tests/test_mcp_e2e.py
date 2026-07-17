@@ -38,7 +38,7 @@ class TestToolRegistrationConsistency:
         "code_hosting", "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
         "ocr",
-        "lazarus_compile", "lazarus_project",
+        "lazarus_compile", "lazarus_project", "lazarus_kb",
     }
 
     # _TOOL_HANDLERS 中已注册的 handler 名（含别名）
@@ -50,7 +50,7 @@ class TestToolRegistrationConsistency:
         "tool_help", "experience", "daofy_update",
         "automate_delphi", "generate_copyright", "delphi_rtti",
         "ocr",
-        "lazarus_compile", "lazarus_project",
+        "lazarus_compile", "lazarus_project", "lazarus_kb",
     }
 
     HANDLER_ALLOWED_ALIASES = {"file_tool"}

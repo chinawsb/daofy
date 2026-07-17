@@ -134,6 +134,205 @@ async def _handle_lazarus_project(arguments: dict) -> dict:
     }
 
 
+async def _handle_lazarus_kb(arguments: dict) -> dict:
+    """Lazarus/FPC 源码知识库
+
+    索引和搜索 Lazarus LCL / FPC RTL 源码。使用独立的 ZVec 知识库
+    存储在 data/lazarus-knowledge-base/。
+
+    Actions:
+        build:   扫描 Lazarus 安装目录索引源码
+        search:  搜索已索引的源码（返回符号定义和用法）
+        stats:   知识库统计信息
+        read:    读取源码文件内容
+    """
+    from pathlib import Path
+
+    action = arguments.get("action", "search")
+
+    # 独立 KB 路径
+    server_root = Path(__file__).resolve().parents[3]
+    kb_dir = str(server_root / "data" / "lazarus-knowledge-base")
+
+    # ── 自动检测 Lazarus 源码目录 ──
+    def _detect_source_dirs() -> list[str]:
+        candidates = [
+            ("C:\\lazarus\\lcl", "LCL (Lazarus Component Library)"),
+            ("C:\\lazarus\\components", "Lazarus bundled components"),
+        ]
+        # FPC source — check multiple version dirs
+        fpc_root = Path("C:\\lazarus\\fpc")
+        if fpc_root.is_dir():
+            for ver_dir in sorted(fpc_root.iterdir(), reverse=True):
+                src = ver_dir / "source"
+                if src.is_dir():
+                    candidates.append((str(src), f"FPC RTL {ver_dir.name}"))
+                    break
+                elif ver_dir.is_dir():
+                    candidates.append((str(ver_dir), f"FPC {ver_dir.name}"))
+                    break
+        return [
+            {"path": p, "label": label}
+            for p, label in candidates
+            if Path(p).is_dir()
+        ]
+
+    # ── build ──
+    if action == "build":
+        from src.services.knowledge_base.scan_generic_documents import (
+            GenericDocumentScanner,
+        )
+
+        sources = _detect_source_dirs()
+        if not sources:
+            return {
+                "status": "failed",
+                "error": "未检测到 Lazarus/FPC 安装目录。请确认 Lazarus 安装在 C:\\lazarus",
+            }
+
+        Path(kb_dir).mkdir(parents=True, exist_ok=True)
+        scanner = GenericDocumentScanner(kb_dir)
+
+        results = []
+        total_files = 0
+        for src in sources:
+            try:
+                result = scanner.scan_directory(
+                    directory=src["path"],
+                    extensions=[".pas", ".inc", ".pp", ".lpr", ".lpi"],
+                )
+                total_files += result.get("total_files", 0)
+                results.append({
+                    "source": src["label"],
+                    "path": src["path"],
+                    "files": result.get("total_files", 0),
+                    "processed": result.get("processed", 0),
+                    "failed": result.get("failed", 0),
+                })
+            except Exception as e:
+                logger.warning(f"扫描 {src['label']} 失败: {e}")
+                results.append({
+                    "source": src["label"],
+                    "path": src["path"],
+                    "error": str(e),
+                })
+
+        stats = scanner.get_statistics()
+        return {
+            "status": "success",
+            "action": "build",
+            "sources": results,
+            "total_files_scanned": total_files,
+            "indexed_documents": stats.get("total_documents", 0),
+            "kb_path": kb_dir,
+        }
+
+    # ── search ──
+    if action == "search":
+        query = arguments.get("query", "")
+        if not query:
+            return {"status": "failed", "error": "缺少必需参数: query"}
+
+        top_k = min(int(arguments.get("top_k", 20)), 100)
+        content_type = arguments.get("content_type")  # optional filter
+
+        kb_path = Path(kb_dir)
+        if not kb_path.is_dir() or not any(kb_path.iterdir()):
+            return {
+                "status": "failed",
+                "error": "Lazarus 知识库为空，请先执行 lazarus_kb(action=build)",
+            }
+
+        from src.services.knowledge_base.scan_generic_documents import (
+            GenericDocumentScanner,
+        )
+        scanner = GenericDocumentScanner(kb_dir)
+        results = scanner.search(query, content_type=content_type, top_k=top_k)
+
+        if not results:
+            return {
+                "status": "success",
+                "action": "search",
+                "query": query,
+                "count": 0,
+                "results": [],
+                "message": f"未找到匹配 '{query}' 的文档",
+            }
+
+        output = []
+        for doc in results:
+            entry = {
+                "id": doc.get("id"),
+                "title": doc.get("title", "N/A"),
+                "type": doc.get("content_type", "N/A"),
+                "path": doc.get("path", doc.get("url", "")),
+                "size": doc.get("size", 0),
+            }
+            content = doc.get("content", "")
+            if content:
+                entry["preview"] = content[:300]
+            output.append(entry)
+
+        return {
+            "status": "success",
+            "action": "search",
+            "query": query,
+            "count": len(output),
+            "results": output,
+        }
+
+    # ── read ──
+    if action == "read":
+        file_path = arguments.get("file_path")
+        if not file_path:
+            return {"status": "failed", "error": "需要 file_path 参数"}
+
+        p = Path(file_path)
+        if not p.exists():
+            return {"status": "failed", "error": f"文件不存在: {file_path}"}
+        try:
+            text = p.read_text(encoding="utf-8-sig")
+            return {
+                "status": "success",
+                "action": "read",
+                "file_path": file_path,
+                "content": text,
+                "size": len(text),
+            }
+        except Exception as e:
+            return {"status": "failed", "error": f"读取文件失败: {e}"}
+
+    # ── stats ──
+    if action == "stats":
+        kb_path = Path(kb_dir)
+        if not kb_path.is_dir():
+            return {
+                "status": "success",
+                "action": "stats",
+                "total_documents": 0,
+                "sources_available": _detect_source_dirs(),
+                "message": "知识库尚未构建。请执行 lazarus_kb(action=build)",
+            }
+
+        from src.services.knowledge_base.scan_generic_documents import (
+            GenericDocumentScanner,
+        )
+        scanner = GenericDocumentScanner(kb_dir)
+        stats = scanner.get_statistics()
+
+        return {
+            "status": "success",
+            "action": "stats",
+            "kb_path": kb_dir,
+            "total_documents": stats.get("total_documents", 0),
+            "by_type": stats.get("by_type", {}),
+            "by_language": stats.get("by_language", {}),
+            "sources_available": _detect_source_dirs(),
+        }
+
+    return {"status": "failed", "error": f"未知 action: {action}"}
+
+
 # ============================================================
 # 导出：工具名 → handler 映射
 # ============================================================
@@ -141,11 +340,13 @@ async def _handle_lazarus_project(arguments: dict) -> dict:
 LAZARUS_HANDLERS: dict[str, Any] = {
     "lazarus_compile": _handle_lazarus_compile,
     "lazarus_project": _handle_lazarus_project,
+    "lazarus_kb": _handle_lazarus_kb,
 }
 
 LAZARUS_TOOL_DESCRIPTIONS: dict[str, str] = {
     "lazarus_compile": "Lazarus/Free Pascal 项目编译 (lazbuild)",
     "lazarus_project": "Lazarus 项目信息查询 — 解析 .lpi 文件，获取项目名称/主源文件/单元列表/编译器选项",
+    "lazarus_kb": "Lazarus/FPC 源码知识库 — 索引和搜索 LCL/FPC RTL 源码。build(构建)/search(搜索)/stats(统计)/read(读取源码)",
 }
 
 LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
@@ -187,5 +388,33 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         "required": ["project_path"],
+    },
+    "lazarus_kb": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["build", "search", "stats", "read"],
+                "default": "search",
+                "description": "build=构建知识库, search=搜索, stats=统计, read=读取源码",
+            },
+            "query": {
+                "type": "string",
+                "description": "搜索关键词（action=search 时必需）",
+            },
+            "top_k": {
+                "type": "integer",
+                "default": 20,
+                "description": "返回结果数上限（默认20，最大100）",
+            },
+            "file_path": {
+                "type": "string",
+                "description": "源码文件路径（action=read 时必需）",
+            },
+            "content_type": {
+                "type": "string",
+                "description": "按文件类型过滤（如 pas/inc/pp）",
+            },
+        },
     },
 }

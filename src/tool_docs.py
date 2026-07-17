@@ -1720,6 +1720,46 @@ TOOL_HELP_DOCS: dict = {
             },
         },
     },
+    "lazarus_kb": {
+        "summary": "Lazarus/FPC 源码知识库 — 索引和搜索 LCL/FPC RTL 源码",
+        "description": "独立的 Lazarus/FPC 源码知识库。自动检测 C:\\lazarus 安装目录，索引 LCL、组件和 FPC RTL 源码。使用与 Delphi 文档 KB 相同的 ZVec 引擎。",
+        "triggers": [
+            "lazarus kb、FPC API、LCL 文档、搜索 lazarus 源码、lazarus 函数定义",
+        ],
+        "constraints": [],
+        "workflow": "lazarus_kb(action=build) → lazarus_kb(action=search, query=...)",
+        "actions": {
+            "build": "自动检测并索引 LCL / FPC RTL 源码",
+            "search": "搜索已索引的源码（query 参数必需）",
+            "stats": "知识库统计信息",
+            "read": "读取指定源码文件（file_path 参数必需）",
+        },
+        "action_params": {
+            "build": {
+                "description": "构建 Lazarus/FPC 源码知识库",
+                "required": [],
+                "optional": {},
+            },
+            "search": {
+                "description": "搜索 Lazarus/FPC 源码",
+                "required": ["query"],
+                "optional": {
+                    "top_k": "返回结果数上限（默认20，最大100）",
+                    "content_type": "按文件类型过滤（如 pas/inc/pp）",
+                },
+            },
+            "stats": {
+                "description": "知识库统计",
+                "required": [],
+                "optional": {},
+            },
+            "read": {
+                "description": "读取源码文件",
+                "required": ["file_path"],
+                "optional": {},
+            },
+        },
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -1742,6 +1782,7 @@ TOOL_NAMES: list = [
     "ocr",
     "lazarus_compile",
     "lazarus_project",
+    "lazarus_kb",
 ]
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
@@ -1820,5 +1861,10 @@ TOOL_SHORT_DESC: dict = {
     "lazarus_project": (
         "Lazarus 项目信息查询 — 解析 .lpi 文件。"
         " action=info(默认，项目概要)/units(单元列表)/options(编译器选项)。"
+    ),
+    "lazarus_kb": (
+        "Lazarus/FPC 源码知识库。"
+        " build(构建)/search(搜索)/stats(统计)/read(读取源码)。"
+        " 自动检测 C:\\lazarus 下的 LCL/FPC RTL 源码。"
     ),
 }

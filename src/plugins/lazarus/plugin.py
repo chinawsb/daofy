@@ -113,6 +113,7 @@ class LazarusPlugin(CompilerPlugin):
         return [
             "lazarus_compile",
             "lazarus_project",
+            "lazarus_kb",
         ]
 
     def get_tools(self) -> List[ToolDefinition]:
@@ -132,6 +133,7 @@ class LazarusPlugin(CompilerPlugin):
     _TOOL_DESCRIPTIONS = {
         "lazarus_compile": "Lazarus/Free Pascal 项目编译 (lazbuild)",
         "lazarus_project": "Lazarus 项目信息查询 — 解析 .lpi 文件",
+        "lazarus_kb": "Lazarus/FPC 源码知识库 — 索引和搜索 LCL/FPC RTL 源码",
     }
 
     _TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}
