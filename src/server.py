@@ -874,6 +874,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "section": {"type": "string"},
+                        "examples": {"type": "string", "description": "示例名称，如 naming/format/debug-log。按名称加载 coding-rules/examples/ 下的示例文件"},
                     }
                 }
             ),
@@ -1200,7 +1201,7 @@ async def run_server():
         return await handle_package(**arguments)
 
     async def _handle_get_coding_rules(arguments: dict) -> Any:
-        return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"))
+        return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"), examples=arguments.get("examples"))
 
     async def _handle_code_hosting(arguments: dict) -> Any:
         try:

@@ -274,12 +274,43 @@ def _list_available_sections(content: str) -> str:
     return '\n'.join(lines_out)
 
 
+def _load_example(example_name: str) -> Optional[str]:
+    """
+    按名称加载示例文件。在 coding-rules/examples/ 下递归搜索匹配的 .md 文件。
+
+    Args:
+        example_name: 示例名称（不含扩展名），如 "naming"、"dirty-flag"
+
+    Returns:
+        示例内容，未找到返回 None
+    """
+    examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / "examples"
+    if not examples_dir.is_dir():
+        return None
+
+    # 精确匹配: examples/{name}.md 或 examples/**/{name}.md
+    candidates = list(examples_dir.rglob(f"{example_name}.md"))
+    if not candidates:
+        return None
+
+    # 优先精确目录匹配（浅层优先）
+    candidates.sort(key=lambda p: len(p.parts))
+    try:
+        text = candidates[0].read_text(encoding="utf-8")
+        logger.info(f"加载示例: {candidates[0].relative_to(examples_dir)}")
+        return text
+    except Exception as e:
+        logger.error(f"读取示例文件失败: {candidates[0]}: {e}")
+        return None
+
+
 async def get_coding_rules(
     project_path: Optional[str] = None,
-    section: Optional[str] = None
+    section: Optional[str] = None,
+    examples: Optional[str] = None
 ) -> CallToolResult:
     """
-    获取 Delphi 源码编码规则，支持按章节分段获取。
+    获取 Delphi 源码编码规则，支持按章节分段获取，支持按名称加载示例。
 
     默认读取 src/resources/coding-rules/ 目录（合并所有 .md 文件）。
     如果用户项目目录下存在 CODING_RULES.mdc，则合并用户规则（用户规则覆盖默认规则）
@@ -289,11 +320,13 @@ async def get_coding_rules(
         section: 章节名称（可选），如 "workflow"、"writing"、"review" 等。
                  不传或传 None 时返回工作流总览 + 章节索引，引导按需获取。
                  传 "list" 返回可用章节列表。
+        examples: 示例名称（可选），如 "naming"、"format"。
+                  指定后从 coding-rules/examples/ 加载对应示例文件。
 
     Returns:
         编码规则内容
     """
-    logger.info(f"获取编码规则请求 — project_path={project_path}, section={section}")
+    logger.info(f"获取编码规则请求 — project_path={project_path}, section={section}, examples={examples}")
 
     try:
         # 读取默认编码规则
@@ -347,6 +380,25 @@ async def get_coding_rules(
                 content=[{"type": "text", "text": "未找到任何编码规则文件"}],
                 isError=True
             )
+
+        # examples 参数处理：按名称加载示例文件
+        if examples:
+            example_text = _load_example(examples)
+            if example_text:
+                logger.info(f"返回示例: {examples}")
+                return CallToolResult(content=[{"type": "text", "text": example_text}])
+            else:
+                # 列出可用示例名供参考
+                examples_dir = Path(__file__).parent.parent / "resources" / "coding-rules" / "examples"
+                available = []
+                if examples_dir.is_dir():
+                    for f in sorted(examples_dir.rglob("*.md")):
+                        available.append(f.stem)
+                hint = f"可用示例: {', '.join(available)}" if available else "暂无示例文件"
+                return CallToolResult(
+                    content=[{"type": "text", "text": f"未找到示例: '{examples}'。{hint}"}],
+                    isError=True
+                )
 
         # 特殊章节：section="automation" → 从 resources/coding-rules/testing/automation/ 读取
         if section and _normalize_section_name(section) == "automation":
