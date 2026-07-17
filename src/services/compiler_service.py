@@ -1247,11 +1247,228 @@ class CompilerService:
             self._save_history(request.project_path, result.status.value, duration, error_msg)
             return result
 
+    async def compile_with_lazbuild(self, request: ProjectCompileRequest) -> CompileResult:
+        """
+        使用 lazbuild 编译 Lazarus/Free Pascal 工程
+
+        Args:
+            request: 工程编译请求（project_path 为 .lpi 或 .lpr）
+
+        Returns:
+            编译结果
+        """
+        logger.info(f"使用 lazbuild 编译工程: {request.project_path}")
+        start_time = time.time()
+
+        try:
+            # 1. 查找 lazbuild 路径
+            lazbuild_path = self._find_lazbuild()
+            if not lazbuild_path:
+                error_msg = ("未找到 lazbuild.exe，请安装 Lazarus IDE。"
+                             "下载地址: https://www.lazarus-ide.org/")
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="LAZBUILD_NOT_FOUND",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+
+            # 2. 确定 .lpi 文件路径
+            project_path = Path(request.project_path)
+            ext = project_path.suffix.lower()
+            if ext == '.lpr':
+                lpi_path = project_path.with_suffix('.lpi')
+                if not lpi_path.exists():
+                    error_msg = f"未找到对应的 .lpi 文件: {lpi_path}"
+                    logger.error(error_msg)
+                    return CompileResult(
+                        status=CompileStatus.FAILED,
+                        error_code="LPI_NOT_FOUND",
+                        error_message=error_msg,
+                        duration=int((time.time() - start_time) * 1000)
+                    )
+            elif ext == '.lpi':
+                lpi_path = project_path
+            else:
+                error_msg = "Lazarus 工程文件必须是 .lpi 或 .lpr 文件"
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_LAZARUS_PROJECT",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+
+            # 3. 检查目标程序是否正在运行
+            project_name = project_path.stem
+            running_process = self._check_process_running(project_name)
+            if running_process:
+                error_msg = (f"目标程序 '{project_name}.exe' 正在运行 "
+                             f"(PID: {running_process['pid']})，无法编译。"
+                             "请先关闭程序后再试。")
+                logger.warning(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="PROCESS_RUNNING",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000),
+                    log=f"进程信息: PID={running_process['pid']}, "
+                        f"路径={running_process.get('path', '未知')}"
+                )
+
+            # 4. 构建 lazbuild 命令行
+            args = [str(lpi_path)]
+
+            # 编译模式: --build-mode=Default/Release/Debug
+            if request.options.build_configuration:
+                args.append(f"--build-mode={request.options.build_configuration}")
+
+            # 平台: --ws=win32/win64
+            platform_map = {
+                TargetPlatform.WIN32: "win32",
+                TargetPlatform.WIN64: "win64",
+            }
+            ws = platform_map.get(request.options.target_platform)
+            if ws:
+                args.append(f"--ws={ws}")
+
+            logger.info(f"lazbuild 命令: {lazbuild_path} {' '.join(args)}")
+
+            # 5. 执行编译
+            return_code, stdout, stderr = await self.process_manager.execute(
+                lazbuild_path,
+                args,
+                request.options.timeout
+            )
+
+            # 6. 解析输出
+            output_text = stdout + stderr
+            errors = self.output_parser.parse_errors(output_text)
+            warnings = self.output_parser.parse_warnings(output_text)
+
+            # 7. 构建结果
+            duration = int((time.time() - start_time) * 1000)
+
+            if return_code == 0:
+                # 查找输出文件
+                exe_path = self._find_lazbuild_output(lpi_path)
+                result = CompileResult(
+                    status=CompileStatus.SUCCESS,
+                    output_file=str(exe_path) if exe_path else None,
+                    duration=duration,
+                    warnings=warnings,
+                    log=output_text,
+                )
+            else:
+                error_message = f"lazbuild 编译失败 (退出码: {return_code})"
+                if errors:
+                    error_message += f"\n{errors[0]}"
+
+                result = CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="LAZBUILD_COMPILE_FAILED",
+                    error_message=error_message,
+                    duration=duration,
+                    errors=errors,
+                    warnings=warnings,
+                    log=output_text,
+                )
+
+            self._save_history(request.project_path, result.status.value,
+                               duration, result.error_message or "")
+            return result
+
+        except Exception as e:
+            duration = int((time.time() - start_time) * 1000)
+            error_msg = f"lazbuild 编译异常: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            result = CompileResult(
+                status=CompileStatus.FAILED,
+                error_code="INTERNAL_ERROR",
+                error_message=error_msg,
+                duration=duration,
+            )
+            self._save_history(request.project_path, result.status.value,
+                               duration, error_msg)
+            return result
+
+    def _find_lazbuild(self) -> Optional[str]:
+        """
+        查找 lazbuild.exe 路径
+
+        搜索顺序:
+        1. 配置文件中的 Lazarus 编译器路径
+        2. PATH 环境变量
+        3. 常见安装目录
+
+        Returns:
+            lazbuild.exe 路径,未找到则返回 None
+        """
+        import shutil
+
+        # 1. 从配置文件查找 Lazarus 编译器
+        config = self.config_manager.config
+        for compiler in config.compilers:
+            if (getattr(compiler, 'compiler_type', None) == 'lazarus'
+                    and compiler.path.lower().endswith('lazbuild.exe')):
+                if Path(compiler.path).exists():
+                    return compiler.path
+
+        # 2. PATH 中查找
+        path = shutil.which("lazbuild")
+        if path:
+            return path
+
+        # 3. 常见安装目录
+        common_dirs = [
+            Path("C:/lazarus"),
+            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
+            Path(os.environ.get("ProgramFiles(x86)",
+                                "C:/Program Files (x86)")) / "Lazarus",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
+        ]
+        for d in common_dirs:
+            lb = d / "lazbuild.exe"
+            if lb.exists():
+                return str(lb)
+
+        return None
+
+    def _find_lazbuild_output(self, lpi_path: Path) -> Optional[Path]:
+        """
+        查找 lazbuild 编译输出文件
+
+        Args:
+            lpi_path: .lpi 文件路径
+
+        Returns:
+            输出 exe 路径
+        """
+        project_dir = lpi_path.parent
+        project_name = lpi_path.stem
+        exe_name = f"{project_name}.exe"
+
+        # 优先查找 lazarus 默认输出目录
+        output_dirs = [
+            project_dir / "lib" / project_name,
+            project_dir / "output",
+            project_dir,
+        ]
+
+        for d in output_dirs:
+            exe = d / exe_name
+            if exe.exists():
+                return exe
+
+        return None
+
     async def compile_project(self, request: ProjectCompileRequest) -> CompileResult:
         """
-        编译 Delphi 工程
+        编译 Delphi/Lazarus 工程
         
-        优先使用 MSBuild 编译,如果 MSBuild 不可用或没有 .dproj 文件则回退到直接调用编译器
+        优先使用 MSBuild 编译 Delphi 工程,如果 MSBuild 不可用或没有 .dproj 文件则回退到直接调用编译器
+        对于 Lazarus 工程(.lpi/.lpr),使用 lazbuild 编译
 
         Args:
             request: 工程编译请求
@@ -1261,12 +1478,18 @@ class CompilerService:
         """
         logger.info(f"开始编译工程: {request.project_path}")
 
-        # 检查项目类型（.dpr/.dpk 可以直编，.dproj 只能 MSBuild）
+        # 检查项目类型
         ext = Path(request.project_path).suffix.lower()
         is_source_file = ext in ('.dpr', '.dpk')
         is_dproj = ext == '.dproj'
+        is_lpi = ext == '.lpi'
+        is_lpr = ext == '.lpr'
 
-        # .dproj 文件必须通过 MSBuild 编译，dcc32 无法处理 XML 项目文件
+        # Lazarus 工程 (.lpi/.lpr) 使用 lazbuild 编译
+        if is_lpi or is_lpr:
+            return await self.compile_with_lazbuild(request)
+
+        # Delphi 工程 (.dproj) 使用 MSBuild 编译
         if is_dproj:
             if not self.msbuild_path:
                 error_msg = ("MSBuild 未安装，无法编译 .dproj 文件。"

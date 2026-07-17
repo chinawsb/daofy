@@ -233,7 +233,7 @@ else:
     logger = init_default_logger()
 
     # ============================================================
-    # 插件系统 (Phase 1: 注册但不改变现有工具路由)
+    # 插件系统 (Phase 2: 工具归属 + handler 分发)
     # ============================================================
     from src.plugins.registry import PluginRegistry
     from src.plugins.delphi import DelphiPlugin
@@ -246,11 +246,14 @@ else:
     logger.info(f"已注册插件: {[p.info.name for p in _plugin_registry.get_all_plugins()]}")
     logger.info(f"插件扩展名映射: {_plugin_registry.get_all_extensions()}")
 
-    # Phase 2 TODO: 迁移 list_tools() 和 call_tool() 到 _plugin_registry.collect_tools()
-    # 当前 list_tools/call_tool 仍使用硬编码的 _TOOL_HANDLERS，插件注册仅用于:
-    #   1. 按文件扩展名路由到对应插件
-    #   2. 编译器检测 (detect)
-    #   3. 项目解析 (parse_project)
+    # 插件工具归属:
+    #   delphi 插件拥有: delphi_project, delphi_file, delphi_kb, manage_component,
+    #                     get_coding_rules, package, check_environment, delphi_rtti, automate_delphi
+    #   lazarus 插件拥有: lazarus_compile
+    #   核心拥有: async_task, code_hosting, tool_help, experience, daofy_update,
+    #            generate_copyright, ocr
+    # handler 仍由 _TOOL_HANDLERS 管理（闭包中的局部函数不可导入），
+    # Phase 3 将 handler 提取到插件模块。
 
 
     class DaofyServerSession(ServerSession):
@@ -1676,6 +1679,9 @@ async def run_server():
         "delphi_rtti": _handle_delphi_rtti,
         "ocr": _handle_ocr,
     }
+
+    # Phase 2: 将 _TOOL_HANDLERS 注入插件注册表
+    _plugin_registry.register_handlers(_TOOL_HANDLERS)
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict):

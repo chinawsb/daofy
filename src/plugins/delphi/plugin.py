@@ -96,28 +96,19 @@ class DelphiPlugin(CompilerPlugin):
         """
         return ""  # Phase 2: 实现完整逻辑
 
-    # ── 工具注册 ──
-    # Phase 1: 工具处理器仍由 server.py 的 _TOOL_HANDLERS 管理。
-    # Delphi 插件声明自己拥有的工具名（用于扩展名路由和工具归属元数据），
-    # 但 handler 仍在 server.py 闭包中注册。
-    # Phase 2: 提取 handler 到独立模块后，这里会填入真实 ToolDefinition。
+    # ── 工具归属声明 ──
+    # Phase 2: 插件声明拥有哪些工具名，handler 由 server.py 注入到 registry。
 
-    def get_tools(self) -> List[ToolDefinition]:
-        """返回 Delphi 插件拥有的 MCP 工具名列表
-
-        Phase 1: 只声明工具名元数据，handler 由 server.py 管理。
-        Phase 2: handler 函数迁移到 delphi/plugin.py 后，此处返回完整 ToolDefinition。
-        """
-        # 工具名 → 描述（元数据，用于工具归属查询）
-        self._tool_metadata = {
-            "delphi_project": "Delphi 项目全生命周期管理：编译/配置/审计/部署",
-            "delphi_file": "Delphi 文件必用读写/搜索/替换/备份工具",
-            "delphi_kb": "知识库搜索/管理",
-            "manage_component": "DFM组件增/删/改/生成",
-            "get_coding_rules": "编码必用编码规则获取工具",
-            "package": "组件包编译安装/列出",
-            "check_environment": "环境检查/编译器检测/安装",
-            "delphi_rtti": "RTTI 发现/调用",
-            "automate_delphi": "Delphi 自动化测试",
-        }
-        return []  # Phase 2: 返回完整 ToolDefinition 列表
+    def get_owned_tool_names(self) -> List[str]:
+        """Delphi 插件拥有的 MCP 工具名列表"""
+        return [
+            "delphi_project",
+            "delphi_file",
+            "delphi_kb",
+            "manage_component",
+            "get_coding_rules",
+            "package",
+            "check_environment",
+            "delphi_rtti",
+            "automate_delphi",
+        ]

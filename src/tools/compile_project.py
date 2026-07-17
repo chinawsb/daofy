@@ -496,16 +496,31 @@ async def compile_project(
                 isError=True,
             )
 
-        # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
-        if not target_platform or target_platform == "win32":
-            target_platform = resolve_target_platform_from_dproj(project_path)
-            logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
-        else:
-            target_platform = target_platform.lower()
-        
         # 检查是否为 .dpk 文件
         project_ext = Path(project_path).suffix.lower()
-        
+
+        # Lazarus 工程 (.lpi/.lpr): 直接走 lazbuild 编译
+        if project_ext in ('.lpi', '.lpr'):
+            target_platform = (target_platform or "win32").lower()
+
+            options = CompileOptions(
+                target_platform=TargetPlatform(target_platform),
+                build_configuration=build_configuration or "Default",
+                timeout=timeout,
+                compiler_version=compiler_version,
+            )
+            request = ProjectCompileRequest(
+                project_path=project_path,
+                options=options,
+            )
+            result = await _compiler_service.compile_project(request)
+            result_dict = result.to_dict()
+            result_text = json.dumps(result_dict, ensure_ascii=False, default=str)
+            return CallToolResult(
+                content=[{"type": "text", "text": result_text}],
+                isError=result.status.value != "success",
+            )
+
         if project_ext == '.dpk':
             # 处理 DPK 包文件
             return await _compile_dpk_package(
@@ -516,6 +531,13 @@ async def compile_project(
                 auto_install=auto_install,
                 extra_args=extra_args,
             )
+
+        # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
+        if not target_platform or target_platform == "win32":
+            target_platform = resolve_target_platform_from_dproj(project_path)
+            logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
+        else:
+            target_platform = target_platform.lower()
         
         # 自动检测编译器版本(如果未指定)
         if not compiler_version:

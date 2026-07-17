@@ -108,11 +108,17 @@ class LazarusPlugin(CompilerPlugin):
 
     # ── 工具注册 ──
 
+    # ── 工具归属声明 ──
+    # Phase 2: 插件声明拥有哪些工具名。
+
+    def get_owned_tool_names(self) -> List[str]:
+        """Lazarus 插件拥有的 MCP 工具名列表"""
+        return ["lazarus_compile"]
+
     def get_tools(self) -> List[ToolDefinition]:
         """返回 Lazarus 插件注册的 MCP 工具
 
-        Phase 1: 只注册编译和检测工具。
-        Lazarus 不需要 delphi_file / delphi_kb / manage_component 等 Delphi 专属工具。
+        Phase 2: 只有 lazarus_compile。handler 在此处直接实现。
         """
         return [
             ToolDefinition(

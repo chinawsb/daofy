@@ -10,6 +10,8 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import json
 import os
+import shutil
+import subprocess
 import winreg
 from pathlib import Path
 from typing import Optional, List
@@ -355,7 +357,7 @@ class ConfigManager:
         logger.info("清空编译历史")
 
     def _auto_detect_compilers(self):
-        """自动检测 Delphi 编译器"""
+        """自动检测 Delphi 和 Lazarus 编译器"""
         detected_compilers = []
 
         # 首先清空旧的编译器配置，避免旧配置干扰
@@ -366,14 +368,14 @@ class ConfigManager:
         # 通过注册表检测 Delphi 安装路径
         delphi_installations = self._detect_delphi_from_registry()
 
-        if not delphi_installations:
-            logger.warning("未在注册表中检测到 Delphi 安装")
-            return
-
         for version, install_path in delphi_installations.items():
             logger.info(f"检测到 Delphi {version}: {install_path}")
             compilers = self._detect_compilers_from_path(install_path, version)
             detected_compilers.extend(compilers)
+
+        # 检测 Lazarus/FPC 安装
+        lazarus_compilers = self._detect_lazarus()
+        detected_compilers.extend(lazarus_compilers)
 
         if detected_compilers:
             # 添加所有检测到的编译器
@@ -390,7 +392,7 @@ class ConfigManager:
             self.save_config()
             logger.info(f"自动检测完成,共检测到 {len(detected_compilers)} 个编译器")
         else:
-            logger.warning("未检测到任何 Delphi 编译器,请手动配置")
+            logger.warning("未检测到任何编译器,请手动配置")
 
     def _detect_delphi_from_registry(self) -> dict:
         """
@@ -567,4 +569,104 @@ class ConfigManager:
         """
         from src.utils.delphi_versions import get_version_name_from_path
         return get_version_name_from_path(delphi_path)
+
+    def _detect_lazarus(self) -> List[CompilerConfig]:
+        """
+        检测 Lazarus/FPC 编译器安装
+
+        搜索顺序:
+        1. PATH 环境变量中的 lazbuild.exe
+        2. 常见安装目录 (C:/lazarus, C:/Program Files/Lazarus 等)
+        3. winget 安装目录
+
+        Returns:
+            检测到的 Lazarus 编译器配置列表
+        """
+        compilers: List[CompilerConfig] = []
+
+        # 候选 lazbuild.exe 路径
+        candidates: List[Path] = []
+
+        # 1. PATH 中查找
+        lazbuild_path = shutil.which("lazbuild")
+        if lazbuild_path:
+            candidates.append(Path(lazbuild_path))
+
+        # 2. 常见安装目录
+        common_dirs = [
+            Path("C:/lazarus"),
+            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
+            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Lazarus",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
+        ]
+        for d in common_dirs:
+            lb = d / "lazbuild.exe"
+            if lb.exists() and lb not in candidates:
+                candidates.append(lb)
+
+        if not candidates:
+            logger.debug("未检测到 Lazarus/FPC 安装")
+            return compilers
+
+        for lazbuild_path in candidates:
+            lazarus_dir = lazbuild_path.parent
+            version = self._get_lazarus_version(str(lazbuild_path))
+            compiler_name = f"Lazarus FPC {version}" if version else "Lazarus FPC"
+
+            # 检测 fpc.exe 路径（lazarus/fpc/<ver>/bin/x86_64-win64/fpc.exe）
+            fpc_path = self._find_fpc_in_lazarus(lazarus_dir)
+
+            compilers.append(CompilerConfig(
+                name=compiler_name,
+                path=str(lazbuild_path),
+                is_default=False,
+                version=version,
+                compiler_type="lazarus",
+            ))
+            if fpc_path:
+                compilers.append(CompilerConfig(
+                    name=f"FPC {version}" if version else "FPC",
+                    path=str(fpc_path),
+                    is_default=False,
+                    version=version,
+                    compiler_type="lazarus",
+                ))
+            logger.debug(f"检测到 Lazarus: {lazbuild_path}, version={version}")
+
+        return compilers
+
+    def _get_lazarus_version(self, lazbuild_path: str) -> str:
+        """通过 lazbuild --version 获取 Lazarus 版本号"""
+        import subprocess
+        try:
+            result = subprocess.run(
+                [lazbuild_path, "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                # 输出形如 "Lazarus 4.8"
+                if line.lower().startswith("lazarus"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return parts[1]
+        except Exception as e:
+            logger.debug(f"获取 Lazarus 版本失败: {e}")
+        return ""
+
+    def _find_fpc_in_lazarus(self, lazarus_dir: Path) -> Optional[str]:
+        """在 Lazarus 安装目录中查找 fpc.exe"""
+        fpc_base = lazarus_dir / "fpc"
+        if not fpc_base.exists():
+            return None
+        # 目录结构: fpc/<version>/bin/x86_64-win64/fpc.exe
+        for ver_dir in sorted(fpc_base.iterdir(), reverse=True):
+            if not ver_dir.is_dir():
+                continue
+            for arch_dir in (ver_dir / "bin").glob("*"):
+                fpc_exe = arch_dir / "fpc.exe"
+                if fpc_exe.exists():
+                    return str(fpc_exe)
+        return None
 

@@ -16,6 +16,7 @@ class CompilerConfig:
     is_default: bool = False
     version: Optional[str] = None
     registry_version: Optional[str] = None  # 注册表数值版本号，如 "22.0"
+    compiler_type: Optional[str] = None     # "delphi" 或 "lazarus"
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -29,7 +30,8 @@ class CompilerConfig:
             path=data.get('path', ''),
             is_default=data.get('is_default', False),
             version=data.get('version'),
-            registry_version=data.get('registry_version')
+            registry_version=data.get('registry_version'),
+            compiler_type=data.get('compiler_type'),
         )
 
 
@@ -97,6 +99,7 @@ class ConfigFile:
             existing.path = compiler.path
             existing.is_default = compiler.is_default
             existing.version = compiler.version
+            existing.compiler_type = compiler.compiler_type
         else:
             # 添加新配置
             self.compilers.append(compiler)
