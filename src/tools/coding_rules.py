@@ -16,7 +16,8 @@ from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 章节名称映射：短键 → Markdown 标题（## 或 ###）
+# ── 章节名称映射：短键 → Markdown 标题（## 或 ###） ──
+
 SECTION_KEYS: Dict[str, str] = {
     "planning": "P0 前置计划与审查",
     "workflow": "工作流总览",
@@ -54,6 +55,42 @@ SECTION_KEYS: Dict[str, str] = {
     "safety": "安全",
     "performance": "性能",
 }
+
+LAZARUS_SECTION_KEYS: Dict[str, str] = {
+    "planning": "P0 前置计划与审查",
+    "workflow": "Lazarus/FPC 工作流总览",
+    "env": "① 环境检查",
+    "kb_search": "② 查 API（FPC 文档）",
+    "writing": "③ 编码",
+    "compile": "④ 编译",
+    "review_guide": "⑤ 审核",
+    "cleanup": "⑥ 清理",
+    # 共享 key 跟 SECTION_KEYS 相同
+    "kb_build": "知识库重建",
+    "agent_rules": "Agent 操作硬规则",
+    "human_collab": "人机协同 — 异常诊断与人工介入",
+    "experience": "⑪ 经验保存 — 将知识沉淀到经验库",
+    "maintenance": "⑫ 规则维护",
+    "automation": "⚙ 自动化测试架构 — 感知·规划·执行·反馈循环",
+    "ui-testing": "⑧ 自动化 UI 交互测试",
+    "console-testing": "⑨ 控制台程序交互验证",
+    # 审核子章节（### 级别，与 Delphi 共享）
+    "consistency": "一致性",
+    "completeness": "完整性",
+    "resource_leak": "资源泄露",
+    "common_errors": "常见错误模式",
+    "code_quality": "代码质量",
+    "safety": "安全",
+    "performance": "性能",
+}
+
+
+def _get_section_keys(language: str) -> Dict[str, str]:
+    """Return section key → heading mapping for the given language."""
+    lang = (language or "delphi").lower().strip()
+    if lang == "lazarus":
+        return LAZARUS_SECTION_KEYS
+    return SECTION_KEYS
 
 SECTION_ALIASES: Dict[str, str] = {
     "kb-search": "kb_search",
@@ -94,8 +131,13 @@ META_SECTIONS: Dict[str, List[str]] = {
     "coding": ["writing", "format", "compile"],
 }
 
-# 反向映射：标题 → 短键（用于错误提示）
-TITLE_TO_KEY = {v: k for k, v in SECTION_KEYS.items()}
+# 反向映射：标题 → 短键（用于错误提示）— 运行时由 _get_title_to_key(language) 构建
+
+
+def _get_title_to_key(language: str) -> Dict[str, str]:
+    """Build reverse mapping: heading → section key for the given language."""
+    keys = _get_section_keys(language)
+    return {v: k for k, v in keys.items()}
 
 
 CODING_RULES_DIR = Path(__file__).parent.parent / "resources" / "coding-rules"
@@ -213,11 +255,16 @@ def _strip_trailing_separator(text: str) -> str:
     return re.sub(r'\n---+\s*$', '', text)
 
 
-def _extract_section(content: str, section_name: str) -> Optional[str]:
+def _extract_section(content: str, section_name: str, language: str = "delphi") -> Optional[str]:
     """从 markdown 内容中提取指定章节。
 
     返回章节内容（含标题行），不含尾部分隔线。
     若章节不存在返回 None。
+
+    Args:
+        content: markdown 内容
+        section_name: 章节短键名
+        language: 语言（影响章节标题映射）
     """
     lines = content.split('\n')
     ranges = _find_heading_ranges(lines)
@@ -228,8 +275,9 @@ def _extract_section(content: str, section_name: str) -> Optional[str]:
         start, end = ranges[section_name]
         return _strip_trailing_separator('\n'.join(lines[:3] + [''] + lines[start:end]))
 
-    # 通过 SECTION_KEYS 映射查找
-    target_title = SECTION_KEYS.get(canonical_section)
+    # 通过语言对应的章节映射查找
+    keys = _get_section_keys(language)
+    target_title = keys.get(canonical_section)
     if target_title and target_title in ranges:
         start, end = ranges[target_title]
         return _strip_trailing_separator('\n'.join(lines[:3] + [''] + lines[start:end]))
@@ -237,7 +285,7 @@ def _extract_section(content: str, section_name: str) -> Optional[str]:
     return None
 
 
-def _extract_meta_section(content: str, meta_name: str, ranges: Dict[str, Tuple[int, int]]) -> Optional[str]:
+def _extract_meta_section(content: str, meta_name: str, ranges: Dict[str, Tuple[int, int]], language: str = "delphi") -> Optional[str]:
     """提取元章节（多个标题的组合）。"""
     keys = META_SECTIONS.get(_normalize_section_name(meta_name))
     if not keys:
@@ -245,9 +293,10 @@ def _extract_meta_section(content: str, meta_name: str, ranges: Dict[str, Tuple[
 
     lines = content.split('\n')
     parts: List[str] = []
+    section_keys = _get_section_keys(language)
 
     for key in keys:
-        title = SECTION_KEYS.get(key)
+        title = section_keys.get(key)
         if title and title in ranges:
             start, end = ranges[title]
             parts.append('\n'.join(lines[start:end]))
@@ -261,35 +310,37 @@ def _extract_meta_section(content: str, meta_name: str, ranges: Dict[str, Tuple[
     return _strip_trailing_separator(header + '\n\n' + body)
 
 
-def _list_available_sections(content: str) -> str:
+def _list_available_sections(content: str, language: str = "delphi") -> str:
     """生成可用章节列表。"""
     lines = content.split('\n')
     ranges = _find_heading_ranges(lines)
+    title_to_key = _get_title_to_key(language)
 
     available = []
     for title in sorted(ranges.keys()):
-        # 只暴露 ## 级别的顶级章节和 ### 级别的审核子章节
-        if title in TITLE_TO_KEY:
-            key = TITLE_TO_KEY[title]
+        if title in title_to_key:
+            key = title_to_key[title]
             available.append(f"  `{key}` → {title}")
 
     lines_out = ["可用章节（传给 section 参数）:", ""]
     lines_out.append("【顶级章节】")
-    for item in available:
-        if not any(item.startswith(f"  `{t}`") for t in TITLE_TO_KEY.values()
-                   if t not in ('一致性', '完整性', '资源泄露', 'Delphi 特有陷阱',
-                                '常见错误模式', '代码质量', '数据转换', '安全', '性能')):
-            # 顶级章节
-            pass
-    # Simpler: just list by section key category
-    lines_out.append("  基础流程: planning, workflow, env, kb_search, writing, format, compile, cleanup, review_guide")
-    lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak, delphi_specific,")
-    lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
-    lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
-    lines_out.append("                 delphi_file_usage_tips")
-    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation, ui-testing(→testing/ui), ui_layout, console-testing(→testing/console)")
-    lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
-    lines_out.append("  兼容别名: kb-search/kb-rebuild/agent-rules/human-collab/delphi-file-rules")
+
+    if language == "lazarus":
+        lines_out.append("  基础流程: planning, workflow, env, kb_search, writing, compile, cleanup, review_guide")
+        lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak,")
+        lines_out.append("           common_errors, code_quality, safety, performance")
+        lines_out.append("  其他:     kb_build, agent_rules, human_collab, experience, maintenance, automation")
+        lines_out.append("  组合:     review(审核指南+审核表), coding(writing+compile)")
+    else:
+        lines_out.append("  基础流程: planning, workflow, env, kb_search, writing, format, compile, cleanup, review_guide")
+        lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak, delphi_specific,")
+        lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
+        lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
+        lines_out.append("                 delphi_file_usage_tips")
+        lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation, ui-testing(→testing/ui), ui_layout, console-testing(→testing/console)")
+        lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
+        lines_out.append("  兼容别名: kb-search/kb-rebuild/agent-rules/human-collab/delphi-file-rules")
+
     lines_out.append("")
     lines_out.append("不传 section 则返回工作流总览 + 章节索引。")
 
@@ -446,7 +497,7 @@ async def get_coding_rules(
 
         # section 参数处理
         if section == "list":
-            output = _list_available_sections(merged)
+            output = _list_available_sections(merged, lang)
             return CallToolResult(content=[{"type": "text", "text": output}])
 
         if section:
@@ -454,15 +505,15 @@ async def get_coding_rules(
             # 先查元章节
             lines = merged.split('\n')
             ranges = _find_heading_ranges(lines)
-            meta_content = _extract_meta_section(merged, canonical_section, ranges)
+            meta_content = _extract_meta_section(merged, canonical_section, ranges, lang)
             if meta_content:
-                logger.info(f"返回元章节: {canonical_section}")
+                logger.info(f"返回元章节: {canonical_section} (language={lang})")
                 return CallToolResult(content=[{"type": "text", "text": meta_content}])
 
             # 再查单章节
-            section_content = _extract_section(merged, canonical_section)
+            section_content = _extract_section(merged, canonical_section, lang)
             if section_content:
-                logger.info(f"返回章节: {canonical_section}")
+                logger.info(f"返回章节: {canonical_section} (language={lang})")
                 source = "默认规则 + 用户规则（用户覆盖默认）" if default_rules and user_rules else \
                          "用户规则" if user_rules else "默认规则"
                 output = f"编码规则 (来源: {source}, 章节: {canonical_section}):\n\n"
@@ -470,24 +521,59 @@ async def get_coding_rules(
                 return CallToolResult(content=[{"type": "text", "text": output}])
 
             # 未找到章节
-            logger.warning(f"未知章节: {section}")
+            logger.warning(f"未知章节: {section} (language={lang})")
             return CallToolResult(
                 content=[TextContent(
                     type="text",
-                    text=f"未知章节: '{section}'。\n\n{_list_available_sections(merged)}"
+                    text=f"未知章节: '{section}' (language={lang})。\n\n{_list_available_sections(merged, lang)}"
                 )],
                 isError=True
             )
 
         # section=None：返回工作流总览 + 章节索引，引导按需获取
-        logger.info("返回工作流 + 章节索引（默认模式）")
+        logger.info(f"返回工作流 + 章节索引（默认模式, language={lang}）")
 
         # 提取工作流总览章节
-        workflow_content = _extract_section(merged, "工作流总览")
+        workflow_content = _extract_section(merged, "workflow", lang)
         workflow_part = workflow_content if workflow_content else ""
 
         # 生成章节索引
-        index_lines = [
+        if lang == "lazarus":
+            index_lines = [
+                "",
+                "## 章节索引 (Lazarus/FPC)",
+                "",
+                "按需获取各章节详情（节省 token，提升遵守率）：",
+                "",
+                "| 参数 | 内容 | 使用时机 |",
+                "|------|------|----------|",
+                "| `section=\"planning\"` | P0 前置计划与审查 | 新功能/大规模修改编码前必做 |",
+                "| `section=\"workflow\"` | Lazarus/FPC 工作流总览 | 任务开始，了解整体流程 |",
+                "| `section=\"env\"` | ① 环境检查 | 首次运行/环境异常时 |",
+                "| `section=\"kb_search\"` | ② 查 API | 编码前查 FPC 定义 |",
+                "| `section=\"writing\"` | ③ 编码规范 | 编码阶段 |",
+                "| `section=\"compile\"` | ④ 编译 | 编译验证 |",
+                "| `section=\"review\"` | ⑤ 代码审核（含完整审核表） | 清理后审查最终代码质量 |",
+                "| `section=\"cleanup\"` | ⑥ 清理 | 编译通过后先清理冗余 |",
+                "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
+                "| `section=\"human_collab\"` | 人机协同 — 异常诊断与人工介入 | 异常诊断或需要人工介入时 |",
+                "| `section=\"experience\"` | ⑪ 经验沉淀 | 问题解决后保存经验时 |",
+                "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
+                "| `section=\"automation\"` | ⚙ 自动化测试架构 | 执行自动化 UI 测试前 |",
+                "| `section=\"coding\"` | 组合：writing + compile | 完整编码流程 |",
+                "",
+                "也可获取细分章节：planning, consistency, completeness, resource_leak,",
+                "common_errors, code_quality, safety, performance, agent_rules, human_collab, experience",
+                "",
+                "使用示例：",
+                "```python",
+                'get_coding_rules(section="writing", language="lazarus")',
+                'get_coding_rules(section="review", language="lazarus")',
+                'get_coding_rules(section="list", language="lazarus")',
+                "```",
+            ]
+        else:
+            index_lines = [
             "",
             "## 章节索引",
             "",
