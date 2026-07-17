@@ -1,5 +1,5 @@
 """
-自动更新模块 — 版本检测 / GitHub Release 查询 / git pull 更新
+自动更新模块 — 版本检测 / GitHub+PyPI Release 查询 / git pull 更新
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
@@ -7,9 +7,12 @@ Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 功能:
   - get_current_version()       从 pyproject.toml 读取当前版本
   - fetch_latest_release()      查询 GitHub 最新 Release（带镜像回退）
+  - fetch_pypi_version()        查询 PyPI 最新版本（pip 安装专用，无需认证）
   - compare_versions(a, b)      比较 YYYY.MM.DD 版本号
+  - check_for_update()          智能版本检查（pip→PyPI，git→GitHub）
   - check_for_update_retry()    ⭐ 异步自动重试版本检查（后台运行，可取消）
   - is_git_installation()       判断是否为 git 源码安装
+  - is_pip_installation()       判断是否为 pip 安装
   - git_pull_update()           执行 git pull 更新
 """
 
@@ -41,7 +44,19 @@ RELEASE_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
 # GitHub 国内镜像代理
 GITHUB_MIRRORS: list[str] = [
     "",  # 原始源（优先尝试）
-    "https://ghproxy.net",  # 国内 GitHub 代理
+    "https://ghproxy.com",  # ghproxy 新域名
+    "https://ghproxy.net",  # ghproxy 旧域名
+]
+
+# PyPI 包信息
+PYPI_PACKAGE = "daofy-for-delphi"
+PYPI_JSON_URL = f"https://pypi.org/pypi/{PYPI_PACKAGE}/json"
+
+# PyPI 国内镜像
+PYPI_MIRRORS: list[str] = [
+    "",  # PyPI 官方
+    "https://pypi.tuna.tsinghua.edu.cn",  # 清华镜像
+    "https://mirrors.aliyun.com/pypi",  # 阿里云镜像
 ]
 
 # 单次请求参数
@@ -194,12 +209,23 @@ def fetch_latest_release(timeout: int = REQUEST_TIMEOUT) -> Optional[dict]:
                 ).decode("utf-8")
             )
             return data
+        except urllib.error.HTTPError as e:
+            last_err = e
+            # 分类 HTTP 错误
+            if e.code == 403:
+                logger.warning("GitHub API 访问受限(403): %s — 可能是网络问题或 rate limit", api_url)
+            elif e.code == 404:
+                logger.warning("GitHub Release 不存在(404): %s", api_url)
+            else:
+                logger.debug("从镜像获取 Release 信息失败: %s — HTTP %d", api_url, e.code)
+            continue
         except Exception as e:
             last_err = e
-            logger.debug(f"从镜像获取 Release 信息失败: {api_url} — {e}")
+            logger.debug("从镜像获取 Release 信息失败: %s — %s", api_url, _categorize_request_error(e))
             continue
     if last_err:
-        logger.warning(f"所有镜像获取 Release 信息均失败: {last_err}")
+        error_hint = _categorize_request_error(last_err)
+        logger.warning("所有镜像获取 Release 信息均失败: %s", error_hint)
     return None
 
 
@@ -215,15 +241,107 @@ def get_latest_version() -> Optional[str]:
     return None
 
 
+def _categorize_request_error(err: Exception) -> str:
+    """将请求错误分类为用户友好的中文提示。
+
+    Args:
+        err: 异常对象
+
+    Returns:
+        用户友好的错误描述
+    """
+    err_str = str(err).lower()
+
+    # Rate limit (GitHub 403)
+    if "403" in err_str or "rate limit" in err_str or "abuse" in err_str:
+        return "GitHub API 访问受限（可能是网络问题或请求过于频繁）"
+
+    # 网络连接问题
+    if any(kw in err_str for kw in (
+        "timed out", "timeout", "connection refused",
+        "connection reset", "connection abort",
+    )):
+        return "网络连接超时或被拒绝，请检查网络连接"
+
+    # DNS 解析失败
+    if any(kw in err_str for kw in (
+        "resolve", "name or service not known",
+        "getaddrinfo", "nodename nor servname",
+    )):
+        return "无法解析主机地址，请检查 DNS 或网络连接"
+
+    # 被墙/代理失败
+    if any(kw in err_str for kw in (
+        "ssl", "certificate", "eof", "connection reset by peer",
+    )):
+        return "网络连接异常（可能是代理或防火墙问题）"
+
+    # 默认
+    return f"请求失败: {err}"
+
+
+def fetch_pypi_version(timeout: int = REQUEST_TIMEOUT) -> Optional[str]:
+    """查询 PyPI 最新版本号（无需认证，国内可访问）。
+
+    Args:
+        timeout: 单次请求超时秒数
+
+    Returns:
+        版本号字符串（如 "2026.07.17"），失败返回 None。
+    """
+    for mirror in PYPI_MIRRORS:
+        try:
+            if mirror:
+                url = f"{mirror}/pypi/{PYPI_PACKAGE}/json"
+            else:
+                url = PYPI_JSON_URL
+            data = json.loads(
+                _retry_urlopen(
+                    url,
+                    headers={"User-Agent": "daofy-updater"},
+                    timeout=timeout,
+                ).decode("utf-8")
+            )
+            version = data.get("info", {}).get("version")
+            if version:
+                logger.debug("从 PyPI 获取版本成功: %s (mirror: %s)", version, mirror or "official")
+                return version
+        except Exception as e:
+            logger.debug("从 PyPI 获取版本失败: %s — %s", url, e)
+            continue
+    logger.warning("所有 PyPI 镜像获取版本均失败")
+    return None
+
+
 def check_for_update() -> Optional[dict]:
     """检查是否有新版本可用。
 
+    根据安装方式自动选择版本源：
+    - pip 安装 → 优先查询 PyPI（无需认证，国内可访问）
+    - git 安装 → 查询 GitHub Release
+
     Returns:
-        dict 包含 current, latest, update_available, release_url；
+        dict 包含 current, latest, update_available, release_url, source；
         查询失败返回 None。
     """
     current = get_current_version()
-    latest = get_latest_version()
+    latest = None
+    source = "github"  # 默认来源
+
+    # pip 安装：优先查询 PyPI（无需认证，无 rate limit）
+    if is_pip_installation():
+        latest = fetch_pypi_version()
+        if latest:
+            source = "pypi"
+            logger.debug("pip 安装: 从 PyPI 获取版本 %s", latest)
+        else:
+            # PyPI 失败，回退到 GitHub
+            logger.info("PyPI 查询失败，回退到 GitHub")
+            latest = get_latest_version()
+    else:
+        # git 安装或未知：查询 GitHub
+        latest = get_latest_version()
+
     if latest is None:
         return None
 
@@ -236,6 +354,7 @@ def check_for_update() -> Optional[dict]:
         "current": current,
         "latest": latest_clean,
         "update_available": available,
+        "source": source,
         "release_url": f"https://github.com/{RELEASE_REPO}/releases/tag/{latest}",
     }
     return result
