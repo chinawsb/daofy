@@ -5,7 +5,7 @@
 
 ```python
 delphi_project(action="compile", project_path="Project.dproj")
-delphi_project(action="compile", project_path="Unit1.pas")          # 语法检查
+delphi_project(action="compile_file", project_path="Unit1.pas")    # 单文件语法检查
 delphi_project(action="compile", project_path="Project.dproj", build_configuration="Release", target_platform="win64")
 ```
 

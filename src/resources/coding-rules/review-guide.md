@@ -1,7 +1,7 @@
-<!-- @when: 清理完成后，审查最终代码质量 -->
-<!-- @chain: after=cleanup.md, before=ui-testing.md -->
+<!-- @when: 编译通过后，审查最终代码质量 -->
+<!-- @chain: after=compile.md, before=cleanup.md -->
 
-## ⑦ 代码审核
+## ⑥ 代码审核
 
 **编译通过后按下方维度审查代码。**
 
