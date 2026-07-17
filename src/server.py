@@ -232,6 +232,26 @@ else:
     # 初始化日志
     logger = init_default_logger()
 
+    # ============================================================
+    # 插件系统 (Phase 1: 注册但不改变现有工具路由)
+    # ============================================================
+    from src.plugins.registry import PluginRegistry
+    from src.plugins.delphi import DelphiPlugin
+    from src.plugins.lazarus import LazarusPlugin
+
+    _plugin_registry = PluginRegistry()
+    _plugin_registry.register(DelphiPlugin())
+    _plugin_registry.register(LazarusPlugin())
+
+    logger.info(f"已注册插件: {[p.info.name for p in _plugin_registry.get_all_plugins()]}")
+    logger.info(f"插件扩展名映射: {_plugin_registry.get_all_extensions()}")
+
+    # Phase 2 TODO: 迁移 list_tools() 和 call_tool() 到 _plugin_registry.collect_tools()
+    # 当前 list_tools/call_tool 仍使用硬编码的 _TOOL_HANDLERS，插件注册仅用于:
+    #   1. 按文件扩展名路由到对应插件
+    #   2. 编译器检测 (detect)
+    #   3. 项目解析 (parse_project)
+
 
     class DaofyServerSession(ServerSession):
         """ServerSession with MCP 2025-11-25 serverInfo.description metadata."""
