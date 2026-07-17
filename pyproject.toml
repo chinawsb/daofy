@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daofy-for-delphi"
-version = "2026.07.14"
+version = "2026.07.17"
 description = "Daofy for Delphi - MCP Server for Delphi project compilation and knowledge base query"
 readme = "README.md"
 requires-python = ">=3.10"
