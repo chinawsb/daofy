@@ -6,9 +6,10 @@
 核心机制:
   1. discover(plugins_dir) 扫描 src/plugins/*/plugin.py，
      importlib 动态加载 CompilerPlugin 子类并实例化。
-  2. register_core_handlers() 注册非插件工具（async_task, code_hosting 等）。
-  3. collect_tools() 返回所有工具（插件 + 核心），用于 list_tools。
-  4. dispatch() 按工具名路由到 handler。
+  2. register_handlers(handlers, descriptions, schemas, owner) 注册 handler + schema，
+     由各插件 handler 模块自行调用。
+  3. collect_tools() 返回所有工具定义（ToolDefinition），供 list_tools() 使用。
+  4. get_handler() 按工具名路由到 handler，供 call_tool() 使用。
 """
 
 import importlib
@@ -22,13 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 class PluginRegistry:
-    """插件注册表 — 动态发现 + handler 分发"""
+    """插件注册表 — 动态发现 + handler 分发 + schema 收集"""
 
     def __init__(self):
         self._plugins: Dict[str, CompilerPlugin] = {}  # name -> plugin
         self._ext_map: Dict[str, str] = {}  # ext -> plugin_name
         self._tool_handlers: Dict[str, Callable] = {}  # tool_name -> handler
+        self._tool_descriptions: Dict[str, str] = {}  # tool_name -> description
+        self._tool_schemas: Dict[str, Dict[str, Any]] = {}  # tool_name -> inputSchema
         self._tool_owner: Dict[str, str] = {}  # tool_name -> plugin_name
+        self._aliases: set = set()  # 别名工具名（不暴露给 MCP 客户端）
+
+    # ── 插件动态发现 ──
 
     def discover(self, plugins_dir: str | Path) -> None:
         """扫描 plugins_dir/*/plugin.py，动态加载 CompilerPlugin 子类。
@@ -85,8 +91,10 @@ class PluginRegistry:
             if not found:
                 logger.warning(f"插件目录 {name}/ 中未找到 CompilerPlugin 子类")
 
+    # ── 插件注册 ──
+
     def register(self, plugin: CompilerPlugin) -> None:
-        """注册插件 + 收集其工具 handlers"""
+        """注册插件 + 收集其 ToolDefinition（含 handler + schema）"""
         info = plugin.info
         self._plugins[info.name] = plugin
         for ext in info.supported_extensions:
@@ -96,18 +104,67 @@ class PluginRegistry:
         for tool_name in plugin.get_owned_tool_names():
             self._tool_owner[tool_name] = info.name
 
-        # 从 get_tools() 收集 handler 引用
+        # 从 get_tools() 收集 handler + schema + description
         for tool_def in plugin.get_tools():
             if tool_def.handler:
                 self._tool_handlers[tool_def.name] = tool_def.handler
+            if tool_def.description:
+                self._tool_descriptions[tool_def.name] = tool_def.description
+            if tool_def.input_schema:
+                self._tool_schemas[tool_def.name] = tool_def.input_schema
 
-    def register_core_handlers(self, handlers: Dict[str, Callable]) -> None:
-        """注册核心（非插件）工具 handlers。
+    # ── Handler 模块注册（各插件 handler 模块自行调用）──
 
-        core/ 目录的工具不通过 discover() 加载，
-        由 server.py 显式调用此方法注册。
+    def register_handlers(
+        self,
+        handlers: Dict[str, Callable],
+        descriptions: Dict[str, str] | None = None,
+        schemas: Dict[str, Dict[str, Any]] | None = None,
+        owner: str | None = None,
+        aliases: set | None = None,
+    ) -> None:
+        """注册 handler 模块导出的工具 — handler + description + schema 一次注册。
+
+        由各插件的 handlers.py 模块在导入时调用：
+            _plugin_registry.register_handlers(
+                CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS)
         """
-        self._tool_handlers.update(handlers)
+        for name, handler in handlers.items():
+            self._tool_handlers[name] = handler
+            if owner:
+                self._tool_owner[name] = owner
+        if descriptions:
+            self._tool_descriptions.update(descriptions)
+        if schemas:
+            self._tool_schemas.update(schemas)
+        if aliases:
+            self._aliases.update(aliases)
+
+    def get_handler(self, tool_name: str) -> Optional[Callable]:
+        """按工具名获取 handler"""
+        return self._tool_handlers.get(tool_name)
+
+    # ── 工具定义收集（供 list_tools 使用）──
+
+    def collect_tools(self) -> List[ToolDefinition]:
+        """收集所有工具定义（插件 + 核心），供 server.py list_tools() 使用。
+
+        返回的 ToolDefinition 包含 name, description, inputSchema, handler。
+        别名工具（如 file_tool）不包含在内。
+        """
+        tools: List[ToolDefinition] = []
+        for name in self._tool_handlers:
+            if name in self._aliases:
+                continue
+            tools.append(ToolDefinition(
+                name=name,
+                description=self._tool_descriptions.get(name, f"工具: {name}"),
+                input_schema=self._tool_schemas.get(name, {"type": "object", "properties": {}}),
+                handler=self._tool_handlers[name],
+            ))
+        return tools
+
+    # ── 查询方法 ──
 
     def get_plugin(self, name: str) -> Optional[CompilerPlugin]:
         """按名称获取插件"""
@@ -143,23 +200,9 @@ class PluginRegistry:
         return [name for name in self._tool_handlers
                 if name not in self._tool_owner]
 
-    def get_handler(self, tool_name: str) -> Optional[Callable]:
-        """按工具名获取 handler"""
-        return self._tool_handlers.get(tool_name)
-
     def dispatch(self, tool_name: str, arguments: dict) -> Any:
         """分发工具调用到对应 handler"""
         handler = self._tool_handlers.get(tool_name)
         if handler:
             return handler(arguments)
         return None
-
-    def collect_tools(self) -> List[ToolDefinition]:
-        """收集所有工具定义（插件 + 核心）"""
-        tools: List[ToolDefinition] = []
-        # 插件工具（通过 get_tools() 声明）
-        for plugin in self._plugins.values():
-            tools.extend(plugin.get_tools())
-        # 核心工具（仅 handler，无完整 ToolDefinition）
-        # 这些由 server.py 的 list_tools 直接提供 schema
-        return tools

@@ -15,6 +15,7 @@ from src.tools.code_hosting import code_hosting
 from src.tools.experience import experience as _experience
 from src.tools.tool_help import get_tool_help
 from src.utils import updater
+from src.tool_docs import TOOL_NAMES
 from src.utils.logger import init_default_logger
 
 logger = init_default_logger()
@@ -270,4 +271,101 @@ CORE_HANDLERS = {
     "daofy_update": _handle_daofy_update,
     "generate_copyright": _handle_generate_copyright,
     "ocr": _handle_ocr,
+}
+
+# ── 工具描述 + inputSchema — list_tools() 从 registry 收取，不再硬编码在 server.py ──
+
+CORE_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "async_task": "异步任务管理",
+    "code_hosting": "Git操作+代码托管平台API",
+    "tool_help": "获取工具的完整帮助文档",
+    "experience": "经验记忆管理",
+    "daofy_update": "版本更新检查/git pull",
+    "generate_copyright": "生成软著文档",
+    "ocr": "图像分析",
+}
+
+CORE_TOOL_SCHEMAS: dict[str, dict] = {
+    "async_task": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list"},
+            "task_id": {"type": "string", "description": "任务 ID"},
+            "long_poll_seconds": {
+                "type": "integer",
+                "description": "长轮询等待秒数（可选，默认0即立即返回。MCP请求通道有超时限制，建议≤30秒）",
+                "default": 0,
+            },
+        }
+    },
+    "code_hosting": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": [
+                "create_token", "init_labels", "create_issue", "get_issue", "edit_issue",
+                "set_labels", "close_issue", "add_comment", "list_issues",
+                "create_pull", "get_pull", "list_pulls", "edit_pull", "merge_pull",
+                "close_pull", "reopen_pull",
+                "create_release", "get_release", "list_releases", "edit_release", "delete_release",
+                "git_clone", "git_add", "git_commit", "git_push", "git_push_retry",
+                "git_status", "git_diff", "git_show", "git_log",
+                "git_fetch", "git_pull", "git_branch", "git_switch", "git_merge",
+                "git_restore", "git_unstage", "git_stash", "git_tag",
+            ]},
+        },
+        "required": ["action"]
+    },
+    "tool_help": {
+        "type": "object",
+        "properties": {
+            "tool_name": {
+                "type": "string",
+                "enum": TOOL_NAMES,
+            },
+        },
+        "required": ["tool_name"],
+    },
+    "experience": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["save", "search", "get", "list", "update", "merge", "prune", "delete", "rebuild_embedding"],
+            },
+        },
+        "required": ["action"],
+    },
+    "daofy_update": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["check", "check_retry", "update", "update_retry", "version"],
+                "default": "check",
+            },
+        },
+        "required": ["action"],
+    },
+    "generate_copyright": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["generate", "validate", "update_config", "status", "list", "generate_content", "audit"],
+                "default": "generate",
+            },
+        },
+        "required": ["action"],
+    },
+    "ocr": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["recognize", "detect", "status", "diff", "color", "match"],
+                "default": "recognize",
+            },
+        },
+        "required": [],
+    },
 }

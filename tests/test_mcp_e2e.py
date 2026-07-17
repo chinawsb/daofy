@@ -188,16 +188,24 @@ class TestServerDispatch:
 
     @classmethod
     def _extract_list_tool_names(cls) -> set:
-        """从 server.py 源码提取 list_tools() 中注册的工具名"""
-        source = cls.SERVER_PATH.read_text(encoding="utf-8")
-        # 找到 @server.list_tools() 到 @server.call_tool() 之间的 section
-        start = source.find("@server.list_tools()")
-        end = source.find("@server.call_tool()")
-        assert start != -1 and end != -1, "Cannot find list_tools/call_tool sections"
-        section = source[start:end]
-        # 提取所有 Tool(name=...) 中的工具名，排除 submit_task 等内部 name= 值
-        names = re.findall(r'Tool\(\s*name\s*=\s*"(\w+)"', section)
-        return set(names)
+        """从 registry.collect_tools() 获取 list_tools() 中注册的工具名
+
+        Phase 4: list_tools() 已改为从 registry 动态生成 Tool 对象，
+        不再在源码中硬编码 Tool(name=...) 块。
+        此处创建独立的 PluginRegistry 实例并注册相同的 handler dicts，
+        与 server.py 启动时的注册逻辑完全一致。
+        """
+        from src.plugins.registry import PluginRegistry
+        from src.plugins.core.handlers import CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS
+        from src.plugins.delphi.handlers import DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS
+
+        reg = PluginRegistry()
+        reg.register_handlers(CORE_HANDLERS, CORE_TOOL_DESCRIPTIONS, CORE_TOOL_SCHEMAS, owner="core")
+        reg.register_handlers(
+            DELPHI_HANDLERS, DELPHI_TOOL_DESCRIPTIONS, DELPHI_TOOL_SCHEMAS,
+            owner="delphi", aliases={"file_tool"}
+        )
+        return {td.name for td in reg.collect_tools()}
 
     @classmethod
     def _extract_handler_names(cls) -> set:
@@ -372,84 +380,88 @@ class TestToolSchemaCompleteness:
       - delphi_file write 的 force/old_content 参数必须在 inputSchema 中声明，
         否则 MCP 客户端会静默丢弃这些安全控制参数
 
-    这些测试确保任何 handler 中 arguments.get("xxx", default) 引入的参数
-    都必须在 list_tools() 的 inputSchema.properties 中显式声明。
+    Phase 4: schema 已迁移到插件 handler 模块，由 registry 统一收集。
+    测试直接从 handler 模块导入 TOOL_SCHEMAS + TOOL_DESCRIPTIONS。
     """
 
-    SERVER_PATH = Path(__file__).parent.parent / "src" / "server.py"
+    @classmethod
+    def _get_all_schemas(cls) -> dict:
+        """从 handler 模块导入所有工具 schema"""
+        from src.plugins.core.handlers import CORE_TOOL_SCHEMAS
+        from src.plugins.delphi.handlers import DELPHI_TOOL_SCHEMAS
+        return {**CORE_TOOL_SCHEMAS, **DELPHI_TOOL_SCHEMAS}
 
     @classmethod
-    def _extract_tool_block(cls, tool_name: str) -> str:
-        """从 server.py 源码提取指定 Tool 的整个 inputSchema 块（粗略按 Tool( 边界）。"""
-        src = cls.SERVER_PATH.read_text(encoding="utf-8")
-        # 匹配 `name="<tool_name>"` 到下个 `Tool(` 之前的所有内容
-        pattern = rf'name="{re.escape(tool_name)}"(.*?)(?=\n\s*Tool\()'
-        m = re.search(pattern, src, re.DOTALL)
-        assert m, f"Could not locate Tool definition for {tool_name!r} in server.py"
-        return m.group(1)
+    def _get_all_descriptions(cls) -> dict:
+        """从 handler 模块导入所有工具描述"""
+        from src.plugins.core.handlers import CORE_TOOL_DESCRIPTIONS
+        from src.plugins.delphi.handlers import DELPHI_TOOL_DESCRIPTIONS
+        return {**CORE_TOOL_DESCRIPTIONS, **DELPHI_TOOL_DESCRIPTIONS}
 
     def test_async_task_schema_declares_long_poll_seconds(self):
         """async_task inputSchema 必须声明 long_poll_seconds（与 handler 中 arguments.get 一致）"""
-        block = self._extract_tool_block("async_task")
-        assert '"long_poll_seconds"' in block, (
+        schema = self._get_all_schemas()["async_task"]
+        props = schema.get("properties", {})
+        assert "long_poll_seconds" in props, (
             "async_task inputSchema missing 'long_poll_seconds' declaration. "
             "MCP 客户端会因 schema mismatch 静默丢弃该参数，导致长轮询失效。"
         )
-        # 验证类型/默认值与 handler 一致
-        after = block.split('"long_poll_seconds"', 1)[1][:400]
-        assert '"type": "integer"' in after, "long_poll_seconds 应声明为 integer"
-        assert '"default": 0' in after, "long_poll_seconds 默认值应为 0"
+        lps = props["long_poll_seconds"]
+        assert lps.get("type") == "integer", "long_poll_seconds 应声明为 integer"
+        assert lps.get("default") == 0, "long_poll_seconds 默认值应为 0"
 
     def test_delphi_file_schema_declares_write_safety_params(self):
         """delphi_file inputSchema 必须声明 write 的 force/old_content 安全参数，且不再声明 batch_write"""
-        block = self._extract_tool_block("delphi_file")
-        action_line = block.split('"action"', 1)[1][:500]
-        assert '"batch_write"' not in action_line, "delphi_file schema must not expose removed batch_write action"
-        assert '"replace"' in action_line, "delphi_file schema missing replace action"
-        assert '"insert"' in action_line, "delphi_file schema missing insert action"
-        assert '"delete"' in action_line, "delphi_file schema missing delete action"
-        edits_idx = block.find('"edits"')
-        assert edits_idx > 0, "delphi_file schema missing 'edits' declaration"
-        edits_desc = block[edits_idx:edits_idx + 1200]
-        assert '"position"' in edits_desc, "delphi_file schema missing insert position"
-        assert '"required": ["start_line"]' in edits_desc, "delete action should not be forced to pass content by schema"
-        assert '"old_content"' in block, "delphi_file schema missing per-edit old_content"
-        old_content_desc = block.split('"old_content"', 1)[1][:300]
-        assert "非空" in old_content_desc, "old_content schema must document non-empty guard requirement"
-        assert '"expected_old_hash"' not in block, "delphi_file schema must not expose removed expected_old_hash"
-        assert '"base_file_sha256"' not in block, "delphi_file schema must not expose removed base_file_sha256"
-        assert '"preview"' not in block, "delphi_file schema must not expose removed preview parameter"
-        # 提取 edits 之后到 # format 段之前的内容
-        rest = block[edits_idx:]
-        # 截到 # format 注释或下个 # action 段（避免误匹配其他工具的 force 字段）
-        segment_end = rest.find("# ---- [仅 action=format]")
-        if segment_end > 0:
-            rest = rest[:segment_end]
-        assert '"force"' in rest, (
-            "delphi_file write 段缺少 'force' 参数声明。\n"
-            "force 是 write 参数（跳过连续重复行检测），"
-            "MCP 客户端会因 schema mismatch 静默丢弃该参数。"
-        )
-        assert '"dry_run"' in rest, "delphi_file schema must expose dry_run for write previews"
-        # 验证类型/默认值与 handler 一致
-        after = rest.split('"force"', 1)[1][:400]
-        assert '"type": "boolean"' in after, "force 应声明为 boolean"
-        assert '"default": False' in after, "force 默认值应为 False"
+        import json as _json
+
+        schema = self._get_all_schemas()["delphi_file"]
+        props = schema.get("properties", {})
+        action_enum = props.get("action", {}).get("enum", [])
+
+        # action 不能有已移除的 batch_write
+        assert "batch_write" not in action_enum, "delphi_file schema must not expose removed batch_write action"
+        assert "replace" in action_enum, "delphi_file schema missing replace action"
+        assert "insert" in action_enum, "delphi_file schema missing insert action"
+        assert "delete" in action_enum, "delphi_file schema missing delete action"
+
+        # edits 声明
+        assert "edits" in props, "delphi_file schema missing 'edits' declaration"
+        edits_items = props["edits"].get("items", {})
+        edits_props = edits_items.get("properties", {})
+        assert "position" in edits_props, "delphi_file schema missing insert position"
+        assert edits_items.get("required") == ["start_line"], "edits items required should be ['start_line']"
+
+        # old_content 带非空校验说明
+        assert "old_content" in edits_props, "delphi_file schema missing per-edit old_content"
+        assert "非空" in edits_props["old_content"].get("description", ""), "old_content schema must document non-empty guard requirement"
+
+        # 已移除的参数不能出现
+        schema_str = _json.dumps(schema, ensure_ascii=False)
+        assert "expected_old_hash" not in schema_str, "delphi_file schema must not expose removed expected_old_hash"
+        assert "base_file_sha256" not in schema_str, "delphi_file schema must not expose removed base_file_sha256"
+        assert "preview" not in schema_str, "delphi_file schema must not expose removed preview parameter"
+
+        # write 安全参数
+        assert "force" in props, "delphi_file schema missing 'force' parameter"
+        assert props["force"].get("type") == "boolean", "force 应声明为 boolean"
+        assert props["force"].get("default") is False, "force 默认值应为 False"
+        assert "dry_run" in props, "delphi_file schema must expose dry_run for write previews"
 
     def test_delphi_project_schema_declares_extra_args(self):
         """编译附加参数必须在 schema 中声明，避免 MCP 客户端静默丢弃。"""
-        block = self._extract_tool_block("delphi_project")
-        assert '"extra_args"' in block
-        after = block.split('"extra_args"', 1)[1][:500]
-        assert '"type": "array"' in after
-        assert '"type": "string"' in after
+        schema = self._get_all_schemas()["delphi_project"]
+        props = schema.get("properties", {})
+        assert "extra_args" in props, "delphi_project schema missing 'extra_args'"
+        ea = props["extra_args"]
+        assert ea.get("type") == "array", "extra_args 应声明为 array"
+        assert ea.get("items", {}).get("type") == "string", "extra_args items 应为 string"
 
     def test_delphi_file_schema_mentions_builtin_read_edit_write(self):
         """schema 描述也要给客户端路由模型明确提示，读取 Delphi 文件也走 delphi_file。"""
-        block = self._extract_tool_block("delphi_file")
-        assert "Read/Edit/Write" in block
-        assert "即使只是读取" in block
-        assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in block
+        desc = self._get_all_descriptions()["delphi_file"]
+        assert "Read/Edit/Write" in desc
+        assert "即使只是读取" in desc
+        assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in desc
 
     def test_handler_arguments_match_schema_known_gaps_only(self):
         """回归检查：本次用户反馈的具体 schema 缺失已全部修复

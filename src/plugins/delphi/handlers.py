@@ -444,3 +444,134 @@ DELPHI_HANDLERS = {
     "automate_delphi": _handle_automate_delphi,
     "delphi_rtti": _handle_delphi_rtti,
 }
+
+# ── 工具描述 + inputSchema — list_tools() 从 registry 收取，不再硬编码在 server.py ──
+
+DELPHI_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "delphi_project": "编译/配置/审计/部署",
+    "delphi_kb": "知识库搜索/管理",
+    "delphi_file": "Delphi 文件专用读写/搜索/替换/备份工具 — 即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 也必须用此工具，禁止用内置 Read/Edit/Write/grep",
+    "manage_component": "DFM组件增/删/改/生成",
+    "check_environment": "环境检查/编译器检测/安装",
+    "package": "组件包编译安装/列出",
+    "get_coding_rules": "编码必用编码规则获取工具",
+    "automate_delphi": "Delphi 自动化测试",
+    "delphi_rtti": "RTTI 发现/调用",
+}
+
+DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
+    "delphi_project": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["compile", "compile_file", "dry_run", "info", "create",
+                         "set", "add_config", "remove_config", "add_source",
+                         "remove_source", "audit", "ast", "runtime", "layout",
+                         "devices", "deploy"],
+            },
+            "project_path": {"type": "string", "description": "项目文件路径 (.dproj/.dpr/.dpk)"},
+            "extra_args": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "附加编译参数（如 [\"/p:DCC_DebugInfoInTds=true\"]）",
+            },
+        },
+        "required": ["action"]
+    },
+    "delphi_kb": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"]},
+        }
+    },
+    "delphi_file": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"],
+                "default": "read",
+            },
+            "file_path": {"type": "string", "description": "文件路径"},
+            "edits": {
+                "type": "array",
+                "description": "批量编辑操作（write/replace/insert/delete）",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "start_line": {"type": "integer", "description": "起始行号（1-indexed 闭区间）"},
+                        "end_line": {"type": "integer", "description": "结束行号（1-indexed 闭区间）"},
+                        "content": {"type": "string", "description": "新内容"},
+                        "old_content": {"type": "string", "description": "原内容（非空时作为写入前校验，防止覆盖非预期改动）"},
+                        "position": {"type": "integer", "description": "insert 操作的插入位置（1-indexed 行号）"},
+                    },
+                    "required": ["start_line"],
+                },
+            },
+            "force": {
+                "type": "boolean",
+                "description": "跳过连续重复行检测",
+                "default": False,
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "预览变更，不实际写入",
+                "default": False,
+            },
+            "encoding": {"type": "string", "description": "文件编码（自动检测 BOM）"},
+            "search_pattern": {"type": "string", "description": "搜索正则表达式（action=grep 时使用）"},
+            "line_number": {"type": "integer", "description": "起始行号"},
+            "count": {"type": "integer", "description": "搜索结果数量限制"},
+        },
+        "required": ["action"]
+    },
+    "manage_component": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["create", "add", "remove", "modify"], "default": "create"},
+        },
+        "required": ["action"]
+    },
+    "check_environment": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["check", "detect", "install", "format_install"], "default": "check"},
+        }
+    },
+    "package": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["install", "list"], "default": "install"},
+        },
+        "required": ["action"]
+    },
+    "get_coding_rules": {
+        "type": "object",
+        "properties": {
+            "section": {"type": "string"},
+            "examples": {"type": "string", "description": "示例名称，如 naming/format/debug-log。按名称加载 coding-rules/examples/ 下的示例文件"},
+        }
+    },
+    "automate_delphi": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["auto", "gui", "console", "prepare"],
+                "default": "auto",
+            },
+        },
+        "required": [],
+    },
+    "delphi_rtti": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["guide", "discover", "call"],
+            },
+        },
+        "required": ["action"],
+    },
+}
