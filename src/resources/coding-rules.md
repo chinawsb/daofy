@@ -96,7 +96,7 @@ project/
 
 ---
 
-<!-- 自动化测试架构内容已迁移到 src/resources/automation/architecture.md -->
+<!-- 自动化测试架构内容已迁移到 src/resources/coding-rules/testing/automation/architecture.md -->
 <!-- 详细技术参考：MCP Resource delphi://automation/index（入口），delphi://automation/architecture（架构方法论） -->
 
 ## ⚙ 自动化测试架构
@@ -104,20 +104,20 @@ project/
 自动化测试的完整方法论（RTTI/OCR 决策矩阵、感知-规划-执行-反馈循环、代码感知测试、提示词模板、经验闭环、断言系统等）已迁移到独立目录：
 
 ```
-resources/automation/
+resources/coding-rules/testing/automation/
 ├── index.md              ← 总入口（@when: 自动化测试时）
 ├── architecture.md       ← 架构方法论（原 coding-rules.md §§A-J）
 ├── reference/            ← 框架参考（脚本格式/协议/修复循环）
 └── scenarios/            ← 场景模板（A-O，含可复用 JSON）
 ```
 
-**入口**: `get_coding_rules(section="automation")` → 自动读取 `resources/automation/index.md`
-**架构方法**: `resources/automation/architecture.md`
+**入口**: `get_coding_rules(section="automation")` → 自动读取 `resources/coding-rules/testing/automation/index.md`
+**架构方法**: `resources/coding-rules/testing/automation/architecture.md`
 **命令参考**: `delphi://automation/script-schema`（MCP Resource）
-**场景模板**: `resources/automation/scenarios/`（A-O 文件）
+**场景模板**: `resources/coding-rules/testing/automation/scenarios/`（A-O 文件）
 
 
-<!-- 以下 §§A-J 自动化架构详细内容已迁移到 resources/automation/architecture.md -->
+<!-- 以下 §§A-J 自动化架构详细内容已迁移到 resources/coding-rules/testing/automation/architecture.md -->
 <!-- 此处不再重复 -->
 
 ## ① 环境检查

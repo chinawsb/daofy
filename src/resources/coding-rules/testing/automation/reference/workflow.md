@@ -7,7 +7,7 @@ description: >-
 ---
 
 <!-- @when: 首次进行 Delphi 自动化测试，需了解完整工作流 -->
-<!-- @chain: after=coding-rules/ui-testing.md, before=script-generation-workflow.md -->
+<!-- @chain: after=../ui.md, before=script-generation-workflow.md -->
 
 # Delphi 自动化测试工作流
 

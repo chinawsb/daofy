@@ -348,13 +348,13 @@ async def get_coding_rules(
                 isError=True
             )
 
-        # 特殊章节：section="automation" → 从 resources/automation/ 读取
+        # 特殊章节：section="automation" → 从 resources/coding-rules/testing/automation/ 读取
         if section and _normalize_section_name(section) == "automation":
-            automation_index = Path(__file__).parent.parent / "resources" / "automation" / "index.md"
+            automation_index = Path(__file__).parent.parent / "resources" / "coding-rules" / "testing" / "automation" / "index.md"
             if automation_index.exists():
                 try:
                     text = automation_index.read_text(encoding="utf-8")
-                    logger.info("返回自动化测试章节（来自 resources/automation/index.md）")
+                    logger.info("返回自动化测试章节（来自 resources/coding-rules/testing/automation/index.md）")
                     return CallToolResult(content=[{"type": "text", "text": text}])
                 except Exception as e:
                     logger.error(f"读取自动化索引失败: {str(e)}")

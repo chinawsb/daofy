@@ -1,5 +1,5 @@
 <!-- @when: Console 程序编译通过后，需进行 stdin/stdout 交互验证 -->
-<!-- @chain: before=human-collab.md, after=ui-testing.md -->
+<!-- @chain: before=human-collab.md, after=ui.md -->
 
 ## ⑨ 控制台程序交互验证
 

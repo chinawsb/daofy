@@ -1,5 +1,5 @@
 <!-- @when: 代码编译完成准备审查，按此表逐项检查 -->
-<!-- @chain: before=ui-testing.md, after=compile.md -->
+<!-- @chain: before=testing/ui.md, after=compile.md -->
 
 ## 审核
 

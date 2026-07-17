@@ -1,5 +1,5 @@
 <!-- @when: GUI 程序编译通过后，需进行 UI 交互验证 -->
-<!-- @chain: before=console-testing.md, after=review-table.md -->
+<!-- @chain: before=console.md, after=review-table.md -->
 
 ## ⑧ 自动化 UI 交互测试
 

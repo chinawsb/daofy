@@ -1,5 +1,5 @@
 <!-- @when: 审核完成后，清理代码中遗留的冗余 -->
-<!-- @chain: after=review-guide.md, before=ui-testing.md -->
+<!-- @chain: after=review-guide.md, before=testing/ui.md -->
 
 ## ⑦ 清理 & 验证
 

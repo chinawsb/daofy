@@ -54,7 +54,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Skill-style workflow for source-aware Delphi automation testing.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/workflow.md",
+            "src/resources/coding-rules/testing/automation/reference/workflow.md",
         ),
     ),
     PublicResourceSpec(
@@ -64,7 +64,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Complete AI-facing process for generating executable Delphi automation scripts.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/script-generation-workflow.md",
+            "src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md",
         ),
     ),
     PublicResourceSpec(
@@ -74,7 +74,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="JSON step schema and assert_expr rules for automate_delphi GUI scripts.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/script-schema.md",
+            "src/resources/coding-rules/testing/automation/reference/script-schema.md",
         ),
     ),
     PublicResourceSpec(
@@ -84,7 +84,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Structured report fields returned by automate_delphi and how to interpret them.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/report-schema.md",
+            "src/resources/coding-rules/testing/automation/reference/report-schema.md",
         ),
     ),
     PublicResourceSpec(
@@ -94,7 +94,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Failure diagnosis, script-vs-code decision, coding-mode switch, and rerun flow.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/repair-loop.md",
+            "src/resources/coding-rules/testing/automation/reference/repair-loop.md",
         ),
     ),
     PublicResourceSpec(
@@ -104,7 +104,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="How Delphi projects wire in tools/auto units and the named-pipe protocol notes.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/inline-unit.md",
+            "src/resources/coding-rules/testing/automation/reference/inline-unit.md",
         ),
     ),
     PublicResourceSpec(
@@ -114,7 +114,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Entry point for Delphi automation testing: directory structure, file index, scenario templates.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/index.md",
+            "src/resources/coding-rules/testing/automation/index.md",
         ),
     ),
     PublicResourceSpec(
@@ -124,7 +124,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Core methodology: RTTI/OCR decision matrix, perceive-plan-execute-verify loop, planning methodology, code-aware testing, experience loop, script cache management.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/architecture.md",
+            "src/resources/coding-rules/testing/automation/architecture.md",
         ),
     ),
     PublicResourceSpec(
@@ -134,7 +134,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Complete UIAutomation command reference: click, value, navigation, window operations, scrolling, property reading, screenshot, wait, target finding.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/uia-commands.md",
+            "src/resources/coding-rules/testing/automation/reference/uia-commands.md",
         ),
     ),
     PublicResourceSpec(
@@ -144,7 +144,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Scene-to-command mapping tables: Delphi controls, system dialogs, cross-process, browser, list/tree, validation, priority quick reference.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/capability-matrix.md",
+            "src/resources/coding-rules/testing/automation/reference/capability-matrix.md",
         ),
     ),
     PublicResourceSpec(
@@ -154,7 +154,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Functional verification vs visual integrity verification scene comparison table: when to use RTTI (rget/rinspect/dumpstate) vs OCR (capture/recognize) vs msgscan.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/rtti-ocr-matrix.md",
+            "src/resources/coding-rules/testing/automation/reference/rtti-ocr-matrix.md",
         ),
     ),
     PublicResourceSpec(
@@ -164,7 +164,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Layered degradation strategy, action sequence specification, failure handling modes for automation test planning.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/planning-methodology.md",
+            "src/resources/coding-rules/testing/automation/reference/planning-methodology.md",
         ),
     ),
     PublicResourceSpec(
@@ -174,7 +174,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Experience retrieval/save/merge mechanism: optimization cycle, search strategy, experience fusion principles.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/experience-loop.md",
+            "src/resources/coding-rules/testing/automation/reference/experience-loop.md",
         ),
     ),
     PublicResourceSpec(
@@ -184,7 +184,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Derive test paths and code-derived assertions from DFM/PAS source analysis: workflow, pattern mapping, assertion priorities.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/code-aware-testing.md",
+            "src/resources/coding-rules/testing/automation/reference/code-aware-testing.md",
         ),
     ),
     PublicResourceSpec(
@@ -194,7 +194,7 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         description="Reusable prompt templates for test planning, step execution protocol, failure recovery, experience saving, and MCP prompt catalog.",
         mime_type="text/markdown",
         relative_paths=(
-            "src/resources/automation/reference/prompts.md",
+            "src/resources/coding-rules/testing/automation/reference/prompts.md",
         ),
     ),
 )

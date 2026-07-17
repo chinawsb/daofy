@@ -1,5 +1,5 @@
 <!-- @when: 遇到异常、卡点、不确定下一步时 -->
-<!-- @chain: before=experience.md, after=console-testing.md -->
+<!-- @chain: before=experience.md, after=testing/console.md -->
 
 ## 人机协同 — 异常诊断与人工介入
 

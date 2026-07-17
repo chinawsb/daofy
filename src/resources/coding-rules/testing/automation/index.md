@@ -1,12 +1,12 @@
 <!-- @when: 需要对 Delphi 程序进行自动化 UI/Console 测试时 -->
-<!-- @chain: after=coding-rules/ui-testing.md -->
+<!-- @chain: after=../ui.md -->
 
 ## ⚙ 自动化测试架构 — 感知·规划·执行·反馈循环
 
-自动化测试文档统一位于 `resources/automation/`，按职责分为三层：
+自动化测试文档统一位于 `resources/coding-rules/testing/automation/`，按职责分为三层：
 
 ```
-resources/automation/
+resources/coding-rules/testing/automation/
 ├── index.md                 ← 本文件，总入口
 ├── architecture.md          ← 顶层方法论（RTTI/OCR 决策矩阵、感知-执行-验证循环、代码感知测试）
 ├── reference/               ← 框架参考文档
@@ -56,7 +56,7 @@ resources/automation/
 | O. 控件重建安全 | [scenarios/o-control-rebuild.md](scenarios/o-control-rebuild.md) | Rescan 后控件重建等待 |
 | 核对表 | [scenarios/checklist.md](scenarios/checklist.md) | 27 条黑盒测试质量门禁 |
 
-入口文件：[coding-rules/ui-testing.md](../coding-rules/ui-testing.md)（`## ⑧ 自动化 UI 交互测试`）
+入口文件：[testing/ui.md](../ui.md)（`## ⑧ 自动化 UI 交互测试`）
 
 ### 相关工具
 

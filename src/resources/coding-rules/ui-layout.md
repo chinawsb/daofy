@@ -1,5 +1,5 @@
 <!-- @when: AI 生成或修改 VCL/FMX 窗体、Frame、Dialog 后，需要检查 UI 布局质量 -->
-<!-- @chain: before=ui-testing.md, after=review-table.md -->
+<!-- @chain: before=testing/ui.md, after=review-table.md -->
 
 ## UI 布局规范与审计
 
