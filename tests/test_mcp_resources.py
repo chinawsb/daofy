@@ -27,12 +27,12 @@ def test_public_resource_index_lists_stable_automation_uris() -> None:
     assert "delphi://automation/workflow" in index
     assert "delphi://automation/script-generation-workflow" in index
     assert "`src/resources/coding-rules/index.md`" in index
-    assert "`src/resources/automation/reference/script-generation-workflow.md`" in index
+    assert "`src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md`" in index
     assert "SHA-256" in index
     assert "Version" in index
     assert "Updated" in index
-    assert "1.13.1" in index
-    assert "2026-07-02" in index
+    assert "1.14.0" in index
+    assert "2026-07-17" in index
     assert "client-specific hidden directories" in index
 
 
@@ -195,8 +195,8 @@ def test_public_resource_metadata_matches_file_content() -> None:
     assert metadata.source == "src/resources/coding-rules/index.md"
     assert metadata.byte_size == len(data)
     assert metadata.sha256 == hashlib.sha256(data).hexdigest()
-    assert metadata.version == "1.13.1"
-    assert metadata.updated == "2026-07-02"
+    assert metadata.version == "1.14.0"
+    assert metadata.updated == "2026-07-17"
 
 
 def test_skill_front_matter_name_is_not_resource_version() -> None:
@@ -266,34 +266,34 @@ def test_coding_rules_resource_is_preferred() -> None:
 def test_automation_skill_mirrors_match_resource_sources() -> None:
     mirrors = [
         (
-            "src/resources/automation/reference/workflow.md",
+            "src/resources/coding-rules/testing/automation/reference/workflow.md",
             ".opencode/skills/delphi-automation-workflow/SKILL.md",
             ".claude/skills/delphi-automation-workflow/SKILL.md",
             ".cursor/rules/delphi-automation-workflow.mdc",
             ".windsurfrules",
         ),
         (
-            "src/resources/automation/reference/script-generation-workflow.md",
+            "src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md",
             ".opencode/skills/delphi-automation-workflow/references/script-generation-workflow.md",
             ".claude/skills/delphi-automation-workflow/references/script-generation-workflow.md",
         ),
         (
-            "src/resources/automation/reference/script-schema.md",
+            "src/resources/coding-rules/testing/automation/reference/script-schema.md",
             ".opencode/skills/delphi-automation-workflow/references/script-schema.md",
             ".claude/skills/delphi-automation-workflow/references/script-schema.md",
         ),
         (
-            "src/resources/automation/reference/report-schema.md",
+            "src/resources/coding-rules/testing/automation/reference/report-schema.md",
             ".opencode/skills/delphi-automation-workflow/references/report-schema.md",
             ".claude/skills/delphi-automation-workflow/references/report-schema.md",
         ),
         (
-            "src/resources/automation/reference/repair-loop.md",
+            "src/resources/coding-rules/testing/automation/reference/repair-loop.md",
             ".opencode/skills/delphi-automation-workflow/references/repair-loop.md",
             ".claude/skills/delphi-automation-workflow/references/repair-loop.md",
         ),
         (
-            "src/resources/automation/reference/inline-unit.md",
+            "src/resources/coding-rules/testing/automation/reference/inline-unit.md",
             ".opencode/skills/delphi-automation-workflow/references/inline-unit.md",
             ".claude/skills/delphi-automation-workflow/references/inline-unit.md",
         ),

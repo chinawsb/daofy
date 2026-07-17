@@ -265,7 +265,7 @@ def _list_available_sections(content: str) -> str:
     lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
     lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
     lines_out.append("                 delphi_file_usage_tips")
-    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation, ui-testing, ui_layout, console-testing")
+    lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation, ui-testing(→testing/ui), ui_layout, console-testing(→testing/console)")
     lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
     lines_out.append("  兼容别名: kb-search/kb-rebuild/agent-rules/human-collab/delphi-file-rules")
     lines_out.append("")

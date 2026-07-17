@@ -12,13 +12,13 @@ DEFAULT_SKILL = "delphi-rtti-bridge"
 
 RESOURCE_BACKED_SKILLS = {
     "delphi-automation-workflow": {
-        "skill": Path("src/resources/automation/workflow.md"),
+        "skill": Path("src/resources/coding-rules/testing/automation/reference/workflow.md"),
         "references": {
-            "script-generation-workflow.md": Path("src/resources/automation/script-generation-workflow.md"),
-            "script-schema.md": Path("src/resources/automation/script-schema.md"),
-            "report-schema.md": Path("src/resources/automation/report-schema.md"),
-            "repair-loop.md": Path("src/resources/automation/repair-loop.md"),
-            "inline-unit.md": Path("src/resources/automation/inline-unit.md"),
+            "script-generation-workflow.md": Path("src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md"),
+            "script-schema.md": Path("src/resources/coding-rules/testing/automation/reference/script-schema.md"),
+            "report-schema.md": Path("src/resources/coding-rules/testing/automation/reference/report-schema.md"),
+            "repair-loop.md": Path("src/resources/coding-rules/testing/automation/reference/repair-loop.md"),
+            "inline-unit.md": Path("src/resources/coding-rules/testing/automation/reference/inline-unit.md"),
         },
     },
 }
