@@ -119,11 +119,11 @@ class TestServerDispatch:
         assert "description=MCP_SERVER_DESCRIPTION" in source
 
         instructions_start = source.find("MCP_SERVER_INSTRUCTIONS")
-        instructions_block = source[instructions_start:instructions_start + 1200]
-        assert "Read/Edit/Write" in instructions_block
+        instructions_end = source.find("\n", instructions_start + len("MCP_SERVER_INSTRUCTIONS"))
+        instructions_block = source[instructions_start:instructions_end + 200]
         assert "delphi_file" in instructions_block
-        assert "code_hosting" in instructions_block
-        assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in instructions_block
+        assert "get_coding_rules" in instructions_block
+        assert "tool_help" in instructions_block
 
     def test_raw_initialize_response_includes_description_and_instructions(self):
         """Raw JSON-RPC initialize must expose serverInfo.description and instructions."""
@@ -201,16 +201,24 @@ class TestServerDispatch:
 
     @classmethod
     def _extract_handler_names(cls) -> set:
-        """从 server.py 源码提取 _TOOL_HANDLERS 中的 key 名"""
-        source = cls.SERVER_PATH.read_text(encoding="utf-8")
-        match = re.search(r"_TOOL_HANDLERS\s*=\s*\{(.*?)\}", source, re.DOTALL)
-        assert match, "Cannot find _TOOL_HANDLERS in server.py"
-        body = match.group(1)
-        names = re.findall(r'"(\w+)"\s*:', body)
-        return set(names)
+        """从插件 handlers 模块提取已注册的工具名"""
+        # Phase 3: handler 已提取到 src/plugins/{core,delphi}/handlers.py
+        # 从 CORE_HANDLERS + DELPHI_HANDLERS 字典提取工具名
+        core_path = Path(__file__).parent.parent / "src" / "plugins" / "core" / "handlers.py"
+        delphi_path = Path(__file__).parent.parent / "src" / "plugins" / "delphi" / "handlers.py"
+        names: set = set()
+        for path in (core_path, delphi_path):
+            if not path.exists():
+                continue
+            source = path.read_text(encoding="utf-8")
+            match = re.search(r"(?:CORE_HANDLERS|DELPHI_HANDLERS)\s*=\s*\{(.*?)\}", source, re.DOTALL)
+            if match:
+                names.update(re.findall(r'"(\w+)"\s*:', match.group(1)))
+        assert names, "Cannot find handler registrations in plugin modules"
+        return names
 
     def test_list_tools_vs_handler_dispatch(self):
-        """list_tools() 注册的工具全部在 _TOOL_HANDLERS 中有对应 handler"""
+        """list_tools() 注册的工具全部在插件 handlers 中有对应 handler"""
         list_names = self._extract_list_tool_names()
         handler_names = self._extract_handler_names()
 
@@ -220,7 +228,7 @@ class TestServerDispatch:
         )
 
     def test_no_orphan_handlers(self):
-        """_TOOL_HANDLERS 中的 handler 全部在 list_tools() 中有对应注册（别名除外）"""
+        """插件 handlers 中的 handler 全部在 list_tools() 中有对应注册（别名除外）"""
         list_names = self._extract_list_tool_names()
         handler_names = self._extract_handler_names()
 

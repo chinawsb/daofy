@@ -1,20 +1,28 @@
 """
 插件注册表
 
-管理插件注册、按文件扩展名路由、收集工具列表、handler 分发。
+动态发现 + 注册 + 按文件扩展名路由 + handler 分发。
 
-Phase 2: 从 server.py 接收 _TOOL_HANDLERS 映射，
-将工具名归属到对应插件，提供统一的 list_tools / call_tool 接口。
+核心机制:
+  1. discover(plugins_dir) 扫描 src/plugins/*/plugin.py，
+     importlib 动态加载 CompilerPlugin 子类并实例化。
+  2. register_core_handlers() 注册非插件工具（async_task, code_hosting 等）。
+  3. collect_tools() 返回所有工具（插件 + 核心），用于 list_tools。
+  4. dispatch() 按工具名路由到 handler。
 """
 
+import importlib
+import logging
 from typing import Dict, List, Optional, Any, Callable
 from pathlib import Path
 
 from .base import CompilerPlugin, PluginInfo, ToolDefinition
 
+logger = logging.getLogger(__name__)
+
 
 class PluginRegistry:
-    """插件注册表 — 扩展名路由 + 工具归属 + handler 分发"""
+    """插件注册表 — 动态发现 + handler 分发"""
 
     def __init__(self):
         self._plugins: Dict[str, CompilerPlugin] = {}  # name -> plugin
@@ -22,22 +30,82 @@ class PluginRegistry:
         self._tool_handlers: Dict[str, Callable] = {}  # tool_name -> handler
         self._tool_owner: Dict[str, str] = {}  # tool_name -> plugin_name
 
+    def discover(self, plugins_dir: str | Path) -> None:
+        """扫描 plugins_dir/*/plugin.py，动态加载 CompilerPlugin 子类。
+
+        目录结构约定:
+          src/plugins/<name>/
+            __init__.py
+            plugin.py    # 必须包含 CompilerPlugin 子类
+            handlers.py  # 可选，handler 函数
+
+        跳过:
+          - __pycache__、以 _ 或 . 开头的目录
+          - base.py、registry.py 等非 plugin 目录
+          - core/ 目录（核心工具单独注册）
+        """
+        plugins_path = Path(plugins_dir)
+        if not plugins_path.is_dir():
+            logger.warning(f"插件目录不存在: {plugins_path}")
+            return
+
+        for pkg_dir in sorted(plugins_path.iterdir()):
+            if not pkg_dir.is_dir():
+                continue
+            name = pkg_dir.name
+            # 跳过特殊目录
+            if name.startswith(("_", ".")) or name == "core":
+                continue
+            plugin_file = pkg_dir / "plugin.py"
+            if not plugin_file.exists():
+                continue
+
+            try:
+                module = importlib.import_module(f"src.plugins.{name}.plugin")
+            except Exception as e:
+                logger.error(f"导入插件模块失败: src.plugins.{name}.plugin — {e}", exc_info=True)
+                continue
+
+            # 查找 CompilerPlugin 子类
+            found = False
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (isinstance(attr, type)
+                        and issubclass(attr, CompilerPlugin)
+                        and attr is not CompilerPlugin):
+                    try:
+                        plugin_instance = attr()
+                        self.register(plugin_instance)
+                        found = True
+                        logger.info(f"动态加载插件: {plugin_instance.info.display_name} "
+                                    f"(tools: {plugin_instance.get_owned_tool_names()})")
+                    except Exception as e:
+                        logger.error(f"实例化插件 {attr_name} 失败: {e}", exc_info=True)
+
+            if not found:
+                logger.warning(f"插件目录 {name}/ 中未找到 CompilerPlugin 子类")
+
     def register(self, plugin: CompilerPlugin) -> None:
-        """注册插件"""
+        """注册插件 + 收集其工具 handlers"""
         info = plugin.info
         self._plugins[info.name] = plugin
         for ext in info.supported_extensions:
             self._ext_map[ext.lower()] = info.name
 
-        # 记录工具归属
+        # 收集插件声明的工具归属
         for tool_name in plugin.get_owned_tool_names():
             self._tool_owner[tool_name] = info.name
 
-    def register_handlers(self, handlers: Dict[str, Callable]) -> None:
-        """从 server.py 的 _TOOL_HANDLERS 注入 handler 映射。
+        # 从 get_tools() 收集 handler 引用
+        for tool_def in plugin.get_tools():
+            if tool_def.handler:
+                self._tool_handlers[tool_def.name] = tool_def.handler
 
-        Phase 2: server.py 调用此方法将现有 handler 注册到 registry。
-        Phase 3: handler 迁移到插件模块后，此方法退化为验证工具归属。
+    def register_core_handlers(self, handlers: Dict[str, Callable]) -> None:
+        """注册核心（非插件）工具 handlers。
+
+        core/ 目录的工具不通过 discover() 加载，
+        由 server.py 显式调用此方法注册。
         """
         self._tool_handlers.update(handlers)
 
@@ -80,19 +148,18 @@ class PluginRegistry:
         return self._tool_handlers.get(tool_name)
 
     def dispatch(self, tool_name: str, arguments: dict) -> Any:
-        """分发工具调用到对应 handler
-
-        Returns:
-            handler 异步调用的结果，未找到返回 None
-        """
+        """分发工具调用到对应 handler"""
         handler = self._tool_handlers.get(tool_name)
         if handler:
             return handler(arguments)
         return None
 
     def collect_tools(self) -> List[ToolDefinition]:
-        """收集所有插件注册的 MCP 工具"""
+        """收集所有工具定义（插件 + 核心）"""
         tools: List[ToolDefinition] = []
+        # 插件工具（通过 get_tools() 声明）
         for plugin in self._plugins.values():
             tools.extend(plugin.get_tools())
+        # 核心工具（仅 handler，无完整 ToolDefinition）
+        # 这些由 server.py 的 list_tools 直接提供 schema
         return tools

@@ -812,6 +812,12 @@ async def run_server():
                                      "remove_source", "audit", "ast", "runtime", "layout",
                                      "devices", "deploy"],
                         },
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj/.dpr/.dpk)"},
+                        "extra_args": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "附加编译参数（如 [\"/p:DCC_DebugInfoInTds=true\"]）",
+                        },
                     },
                     "required": ["action"]
                 }
@@ -830,7 +836,7 @@ async def run_server():
 
             Tool(
                 name="delphi_file",
-                description="Delphi 文件必用读写/搜索/替换/备份工具",
+                description="Delphi 文件专用读写/搜索/替换/备份工具 — 即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 也必须用此工具，禁止用内置 Read/Edit/Write/grep",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -839,6 +845,36 @@ async def run_server():
                             "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"],
                             "default": "read",
                         },
+                        "file_path": {"type": "string", "description": "文件路径"},
+                        "edits": {
+                            "type": "array",
+                            "description": "批量编辑操作（write/replace/insert/delete）",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "start_line": {"type": "integer", "description": "起始行号（1-indexed 闭区间）"},
+                                    "end_line": {"type": "integer", "description": "结束行号（1-indexed 闭区间）"},
+                                    "content": {"type": "string", "description": "新内容"},
+                                    "old_content": {"type": "string", "description": "原内容（非空时作为写入前校验，防止覆盖非预期改动）"},
+                                    "position": {"type": "integer", "description": "insert 操作的插入位置（1-indexed 行号）"},
+                                },
+                                "required": ["start_line"],
+                            },
+                        },
+                        "force": {
+                            "type": "boolean",
+                            "description": "跳过连续重复行检测",
+                            "default": False,
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "预览变更，不实际写入",
+                            "default": False,
+                        },
+                        "encoding": {"type": "string", "description": "文件编码（自动检测 BOM）"},
+                        "search_pattern": {"type": "string", "description": "搜索正则表达式（action=grep 时使用）"},
+                        "line_number": {"type": "integer", "description": "起始行号"},
+                        "count": {"type": "integer", "description": "搜索结果数量限制"},
                     },
                     "required": ["action"]
                 }
@@ -874,6 +910,12 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list"},
+                        "task_id": {"type": "string", "description": "任务 ID"},
+                        "long_poll_seconds": {
+                            "type": "integer",
+                            "description": "长轮询等待秒数（可选，默认0即立即返回。MCP请求通道有超时限制，建议≤30秒）",
+                            "default": 0,
+                        },
                     }
                 }
             ),
@@ -1025,667 +1067,15 @@ async def run_server():
             ),
         ]
 
-    # ============================================================
-    # 参数类型校验 — MCP 客户端可能传错类型（如 string 代替 bool）
-    # ============================================================
+    # Handlers 已提取到 src/plugins/{core,delphi}/handlers.py，通过 registry 动态分发
 
-    def _coerce_bool(val, default: bool = False) -> bool:
-        """将任意输入安全转换为 bool。"""
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, str):
-            return val.lower() in ('1', 'true', 'yes', 'on')
-        if isinstance(val, (int, float)):
-            return val != 0
-        return default
-
-    def _coerce_int(val, default: int = 0, minv=None, maxv=None) -> int:
-        """将任意输入安全转换为 int，支持范围裁剪。"""
-        if isinstance(val, int):
-            return val
-        if isinstance(val, str):
-            try:
-                v = int(val)
-            except (ValueError, TypeError):
-                return default
-            if minv is not None:
-                v = max(v, minv)
-            if maxv is not None:
-                v = min(v, maxv)
-            return v
-        if isinstance(val, float):
-            v = int(val)
-            if minv is not None:
-                v = max(v, minv)
-            if maxv is not None:
-                v = min(v, maxv)
-            return v
-        return default
-
-    def _coerce_list(val, default=None):
-        """将任意输入安全转换为 list。"""
-        if isinstance(val, list):
-            return val
-        if isinstance(val, (str, bytes)):
-            return [val]
-        if val is None:
-            return default or []
-        return default or []
-
-    # ============================================================
-    # 工具分发 — 将工具名映射到对应的 handler 函数
-    async def _handle_project_tool(arguments: dict) -> Any:
-        return await _handle_project(**arguments)
-
-    async def _handle_delphi_kb(arguments: dict) -> Any:
-        default_action = "web" if arguments.get("url") else "search"
-        action = arguments.get("action", default_action)
-        kb_type = arguments.get("kb_type", "all")
-        if action == "search":
-            return await doc_tools.search_documents(arguments) if kb_type == "document" else await kb_tools.search_knowledge(arguments)
-        elif action == "stats":
-            return await doc_tools.get_document_statistics(arguments) if kb_type == "document" else await kb_tools.get_unified_knowledge_stats(arguments)
-        elif action == "build":
-            async_mode = _coerce_bool(arguments.get("async_mode"), True)
-            if not async_mode:
-                return await kb_tools.build_unified_knowledge_base(arguments)
-            version = arguments.get("version")
-            rebuild = _coerce_bool(arguments.get("rebuild"), False)
-            kb_type_map = {"all": "build_knowledge_base", "delphi": "build_knowledge_base",
-                           "thirdparty": "build_thirdparty_knowledge_base", "project": "init_project_knowledge_base",
-                           "document": "build_document_knowledge_base"}
-            task_type = kb_type_map.get(kb_type, "build_knowledge_base")
-            incremental = arguments.get("incremental", False)
-            if task_type == "build_document_knowledge_base":
-                directory = arguments.get("directory")
-                start_url = arguments.get("start_url")
-                urls = arguments.get("urls", [])
-                # 只有当没有指定 start_url 和 urls（纯目录扫描）时才自动检测帮助目录
-                if not directory and not start_url and not urls:
-                    detected = _auto_detect_delphi_help_dir()
-                    if detected:
-                        directory = detected
-                        logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
-                    else:
-                        logger.warning("未提供 directory 且未检测到 Delphi 帮助目录")
-
-                # 文档知识库重建确认：force_rebuild 会清除现有所有文档
-                if rebuild:
-                    try:
-                        _scanner = doc_tools._get_scanner()
-                        _stats = _scanner.get_statistics()
-                        _total = _stats.get('total_documents', 0)
-                        if _total > 0:
-                            _confirm = _coerce_bool(arguments.get("confirm"), False)
-                            if not _confirm:
-                                _msg = [f"⚠️ **确认重建文档知识库**\n\n当前知识库包含 **{_total}** 篇文档：\n"]
-                                _by_type = _stats.get('by_type', {})
-                                if _by_type:
-                                    _msg.append("按类型：\n")
-                                    for _t, _c in sorted(_by_type.items(), key=lambda x: x[1], reverse=True):
-                                        _msg.append(f"  - {_t}: {_c}\n")
-                                _by_ext = _stats.get('by_extension', {})
-                                if _by_ext:
-                                    _msg.append("按扩展名：\n")
-                                    for _e, _c in sorted(_by_ext.items(), key=lambda x: x[1], reverse=True):
-                                        _msg.append(f"  - {_e}: {_c}\n")
-                                _msg.append(
-                                    "\n`rebuild=True` 将 **清除以上所有文档** 后重新构建，原有内容不可恢复。\n\n"
-                                    "如需保留旧内容，请：\n"
-                                    "  1. 在本次构建参数中同时包含旧的文档源（如多个 URL 或目录），或\n"
-                                    "  2. 移除 `rebuild=True` 改用增量添加\n\n"
-                                    "**确认继续请添加参数 `confirm=True`**"
-                                )
-                                return CallToolResult(content=[TextContent(type="text", text="".join(_msg))])
-                    except Exception as _e:
-                        logger.warning(f"检查文档知识库状态失败，跳过确认: {_e}")
-
-                task_params = {"urls": arguments.get("urls", []), "directory": directory,
-                               "extensions": arguments.get("extensions", [".chm"]),
-                               "start_url": arguments.get("start_url"), "max_pages": arguments.get("max_pages", 100),
-                               "max_depth": arguments.get("max_depth", 3), "domain_filter": arguments.get("domain_filter"),
-                               "url_pattern": arguments.get("url_pattern"), "exclude": arguments.get("exclude"),
-                               "rebuild": rebuild}
-            elif task_type == "init_project_knowledge_base":
-                resolved_path = _resolve_project_path(arguments.get("project_path"))
-                task_params = {"project_path": resolved_path, "version": version,
-                               "rebuild": rebuild, "build_thirdparty": arguments.get("build_thirdparty", True),
-                               "build_project": arguments.get("build_project", True)}
-            else:
-                task_params = {"version": version, "rebuild": rebuild, "incremental": incremental}
-            return await async_tools.start_async_task({"task_type": task_type, "task_params": task_params,
-                                                         "show_progress": arguments.get("show_progress", True),
-                                                         "_on_complete": arguments.get("_on_complete")})
-        elif action == "build_embedding":
-            pp = _resolve_project_path(arguments.get("project_path"))
-            if not pp:
-                return {"error": "未检测到项目路径"}
-            return await async_tools.start_async_task({"task_type": "build_embedding", "task_params": {"project_path": pp},
-                                                        "show_progress": True,
-                                                        "_on_complete": arguments.get("_on_complete")})
-        elif action == "scan":
-            return await doc_tools.scan_documents(arguments) if kb_type == "document" else {"error": "action=scan 仅支持 kb_type=document"}
-        elif action == "web":
-            return await doc_tools.add_web_document(arguments) if kb_type == "document" else {"error": "action=web 仅支持 kb_type=document"}
-        elif action == "read":
-            if arguments.get("url") or arguments.get("doc_id"):
-                return await doc_tools.read_document(arguments)
-            elif arguments.get("file_path"):
-                return await read_source_file(arguments)
-            return {"error": "action=read 需要 url/doc_id 或 file_path 参数"}
-        return {"error": f"未知action: {action}"}
-
-    async def _handle_file_tool(arguments: dict) -> Any:
-        return await file_tool.handle_file_tool(arguments)
-
-    async def _handle_manage_component(arguments: dict) -> Any:
-        # manage_component_mod 是函数（被 __init__.py re-export 了），直接调用
-        return await manage_component_mod(
-            action=arguments.get("action", "create"),
-            target_dfm=arguments.get("target_dfm"),
-            target_pas=arguments.get("target_pas"),
-            component_name=arguments.get("component_name"),
-            parent_name=arguments.get("parent_name"),
-            new_component_class=arguments.get("new_component_class"),
-            new_component_name=arguments.get("new_component_name"),
-            properties=arguments.get("properties"),
-            dfm_text=arguments.get("dfm_text"),
-            code=arguments.get("code", ""),
-            uses=arguments.get("uses"),
-            type_decl=arguments.get("type_decl", ""),
-            init_code=arguments.get("init_code", ""),
-            compile_timeout=arguments.get("compile_timeout", 60),
-            exec_timeout=arguments.get("exec_timeout", 15),
-        )
-
-    async def _handle_check_environment(arguments: dict) -> Any:
-        action = arguments.get("action", "check")
-        if action == "detect":
-            return await search_compilers(search_path=arguments.get("search_path"))
-        elif action == "check":
-            return await check_environment()
-        elif action == "install":
-            return await pasfmt.download_and_install_pasfmt(install_dir=arguments.get("install_dir"))
-        elif action == "format_install":
-            return await pasfmt.download_and_install_pasfmt_rad(delphi_version=arguments.get("delphi_version", "11"), install_dir=arguments.get("install_dir"))
-        return {"error": f"未知action: {action}"}
-
-    async def _handle_async_task(arguments: dict) -> Any:
-        action = arguments.get("action", "list")
-        handlers = {"start": async_tools.start_async_task, "status": async_tools.get_task_status,
-                     "result": async_tools.get_task_result, "list": async_tools.list_tasks,
-                     "cancel": async_tools.cancel_task}
-        handler = handlers.get(action)
-        if handler:
-            return await handler(arguments)
-        return {"error": f"未知action: {action}"}
-
-    async def _handle_package(arguments: dict) -> Any:
-        return await handle_package(**arguments)
-
-    async def _handle_get_coding_rules(arguments: dict) -> Any:
-        return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"), examples=arguments.get("examples"))
-
-    async def _handle_code_hosting(arguments: dict) -> Any:
-        try:
-            if "action" not in arguments:
-                return {"status": "failed", "message": "missing required parameter: action"}
-            # 使用 asyncio.to_thread 避免同步 HTTP 阻塞事件循环
-            return await asyncio.to_thread(code_hosting, **arguments)
-        except Exception as e:
-            logger.error(f"code_hosting 执行失败: {e}", exc_info=True)
-            return {"status": "failed", "message": f"code_hosting failed: {e}"}
-
-    async def _handle_tool_help(arguments: dict) -> Any:
-        return get_tool_help(
-            tool_name=arguments.get("tool_name", ""),
-            action=arguments.get("action", ""),
-        )
-
-    async def _handle_experience(arguments: dict) -> dict:
-        """处理 experience 工具调用，带 asyncio 超时保护（30s）。"""
-        import asyncio
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_experience, **arguments),
-                timeout=TIMEOUT_EXPERIENCE_TOOL,
-            )
-            return result
-        except asyncio.TimeoutError:
-            return {
-                "status": "failed",
-                "message": "experience 操作超时（30s），可能是 embedding 模型加载/下载耗时过长。"
-                    " 建议：先调用 delphi_kb(action=build_embedding) 预加载模型，"
-                    " 再使用 experience 的语义搜索功能。",
-            }
-        except Exception as e:
-            return {"status": "failed", "message": f"experience failed: {e}"}
-
-    async def _handle_daofy_update(arguments: dict) -> dict:
-        """处理 daofy_update 工具调用（类似 code_hosting 模式：后台异步+定时重试）。"""
-        action = arguments.get("action", "check")
-        task_manager = get_task_manager()
-
-        # ── version: 同步返回，无需网络 ──
-        if action == "version":
-            install_type = "git" if updater.is_git_installation() else "pip"
-            return {
-                "version": updater.get_current_version(),
-                "install_type": install_type,
-                "python": sys.version,
-            }
-
-        # ── check: 先快速尝试（同步），失败后提交后台重试任务 ──
-        if action == "check":
-            # 1. 优先检查缓存
-            cached = updater.get_cached_update_result()
-            if cached is not None:
-                install_type = "git" if updater.is_git_installation() else "pip"
-                cached["install_type"] = install_type
-                status_msg = (
-                    f"发现新版本 v{cached['latest']}！（当前 v{cached['current']}）"
-                    if cached.get("update_available")
-                    else f"当前已是最新版本: v{cached['current']}"
-                )
-                return {**cached, "message": status_msg, "cache_hit": True}
-
-            # 2. 快速同步尝试
-            quick = await asyncio.get_running_loop().run_in_executor(
-                None, updater.check_for_update
-            )
-            if quick is not None:
-                install_type = "git" if updater.is_git_installation() else "pip"
-                quick["install_type"] = install_type
-                if quick["update_available"]:
-                    if install_type == "git":
-                        quick["message"] = (
-                            f"发现新版本 v{quick['latest']}！"
-                            f" 当前版本 v{quick['current']}。"
-                            f" 建议: daofy_update(action='update') 执行 git pull 更新。"
-                        )
-                    else:
-                        quick["message"] = (
-                            f"发现新版本 v{quick['latest']}！"
-                            f" 当前版本 v{quick['current']}。"
-                            f" 请运行: pip install --upgrade daofy-for-delphi"
-                        )
-                else:
-                    quick["message"] = f"当前已是最新版本: v{quick['current']}"
-                return quick
-
-            # 3. 快速尝试失败，提交后台自动重试任务（类似 code_hosting git_push_retry）
-            logger.info("版本检查快速尝试失败，提交后台自动重试任务...")
-            on_complete = arguments.get('_on_complete')
-            task_id = task_manager.submit_task(
-                name="version_check_retry",
-                func=updater.check_for_update_retry,
-                on_complete=on_complete,
-                dedup_key="version_check_retry",
-            )
-            return {
-                "task_id": task_id,
-                "status": "async",
-                "message": (
-                    "快速检查失败（网络不可达），已提交后台自动重试任务。\n"
-                    f"  任务ID: {task_id}\n"
-                    f"  重试间隔: {updater.RETRY_INTERVAL}s | 最多 {updater.MAX_RETRIES} 次\n"
-                    "  使用 async_task(action=status, task_id=...) 查看进度。"
-                ),
-            }
-
-        # ── check_retry: 强制提交后台自动重试任务（返回 task_id） ──
-        if action == "check_retry":
-            on_complete = arguments.get('_on_complete')
-            task_id = task_manager.submit_task(
-                name="version_check_retry",
-                func=updater.check_for_update_retry,
-                on_complete=on_complete,
-                dedup_key="version_check_retry",
-            )
-            return {
-                "task_id": task_id,
-                "status": "async",
-                "message": (
-                    "后台版本检查任务已提交。\n"
-                    f"  任务ID: {task_id}\n"
-                    f"  重试间隔: {updater.RETRY_INTERVAL}s | 最多 {updater.MAX_RETRIES} 次\n"
-                    "  使用 async_task(action=status, task_id=...) 查看进度。"
-                ),
-            }
-
-        # ── update / update_retry: 后台 git pull 更新 ──
-        if action in ("update", "update_retry"):
-            if not updater.is_git_installation():
-                return {
-                    "success": False,
-                    "message": (
-                        "当前为 pip 安装模式，不支持 git pull 更新。\n"
-                        "请手动运行: pip install --upgrade daofy-for-delphi"
-                    ),
-                }
-
-            on_complete = arguments.get('_on_complete')
-            retry_interval = int(arguments.get("retry_interval", 60))
-            max_retries = int(arguments.get("max_retries", 10))
-
-            if action == "update_retry":
-                # 自定义 retry 参数
-                orig_interval = updater.UPDATE_RETRY_INTERVAL
-                orig_max = updater.UPDATE_MAX_RETRIES
-                updater.UPDATE_RETRY_INTERVAL = retry_interval
-                updater.UPDATE_MAX_RETRIES = max_retries
-                try:
-                    task_id = task_manager.submit_task(
-                        name="git_update_retry",
-                        func=updater._do_retry_update,
-                        on_complete=on_complete,
-                        dedup_key="git_update_retry",
-                    )
-                finally:
-                    updater.UPDATE_RETRY_INTERVAL = orig_interval
-                    updater.UPDATE_MAX_RETRIES = orig_max
-                eta_min = (retry_interval * max_retries) // 60
-                return {
-                    "task_id": task_id,
-                    "status": "async",
-                    "message": (
-                        "后台自动重试 git pull 更新任务已提交。\n"
-                        f"  任务ID: {task_id}\n"
-                        f"  重试间隔: {retry_interval}s | 最多 {max_retries} 次 | 预计最长 ~{eta_min}min\n"
-                        "  使用 async_task(action=status, task_id=...) 查看进度。"
-                    ),
-                }
-
-            # update（单次）
-            task_id = task_manager.submit_task(
-                name="git_update",
-                func=updater.git_pull_update_sync,
-                on_complete=on_complete,
-            )
-            return {
-                "task_id": task_id,
-                "status": "async",
-                "message": (
-                    "后台 git pull 更新任务已提交。\n"
-                    f"  任务ID: {task_id}\n"
-                    "  使用 async_task(action=status, task_id=...) 查看进度。"
-                ),
-            }
-
-        return {"error": f"未知 action: {action}"}
-
-    async def _handle_generate_copyright(arguments: dict) -> dict:
-        """处理 generate_copyright 工具调用。"""
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(_generate_copyright, **arguments),
-                timeout=TIMEOUT_GENERATE_COPYRIGHT,
-            )
-            return result
-        except asyncio.TimeoutError:
-            return {"status": "failed", "message": "generate_copyright 执行超时（300s）"}
-        except Exception as e:
-            return {"status": "failed", "message": f"generate_copyright failed: {e}"}
-
-    def _auto_paths() -> list[str]:
-        """返回需要注册到 Delphi 搜索路径的目录列表。"""
-        root = Path(__file__).resolve().parent.parent
-        return [
-            str(root / "tools" / "auto"),
-            str(root / "tools" / "stacktrace"),
-        ]
-
-    def _register_path_for_platform(key, reg_path: str, path: str, platform: str, results: list[dict]):
-        """将单个路径注册到指定平台的 Delphi 搜索路径。"""
-        try:
-            search_path, _ = winreg.QueryValueEx(key, "Search Path")
-            paths = search_path.split(";")
-
-            if path in paths:
-                results.append({
-                    "platform": platform, "status": "already_present",
-                    "path": path,
-                })
-            else:
-                clean_path = search_path.rstrip(";")
-                new_path = clean_path + ";" + path if clean_path else path
-                winreg.SetValueEx(key, "Search Path", 0, winreg.REG_SZ, new_path)
-                results.append({
-                    "platform": platform, "status": "added",
-                    "path": path,
-                })
-        except Exception as e:
-            results.append({
-                "platform": platform, "status": "error",
-                "path": path,
-                "message": f"写入搜索路径失败: {e}",
-            })
-
-    def _register_daofy_auto(version: str, platforms: list[str] | None = None) -> list[dict]:
-        """将 DaofyAutomation + StackTrace 路径写入 Delphi 全局搜索路径（注册表）。"""
-        if platforms is None:
-            platforms = ["Win32", "Win64"]
-
-        reg_paths = _auto_paths()
-        results: list[dict] = []
-
-        for platform in platforms:
-            reg_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Library\\{platform}"
-            try:
-                key = winreg.OpenKey(
-                    winreg.HKEY_CURRENT_USER,
-                    reg_path,
-                    0,
-                    winreg.KEY_READ | winreg.KEY_WRITE,
-                )
-            except FileNotFoundError:
-                for p in reg_paths:
-                    results.append({
-                        "platform": platform, "status": "skipped",
-                        "path": p,
-                        "message": f"注册表路径不存在: HKCU\\{reg_path}",
-                    })
-                continue
-            except PermissionError:
-                for p in reg_paths:
-                    results.append({
-                        "platform": platform, "status": "error",
-                        "path": p,
-                        "message": "权限不足，无法写入注册表",
-                    })
-                continue
-            except Exception as e:
-                for p in reg_paths:
-                    results.append({
-                        "platform": platform, "status": "error",
-                        "path": p,
-                        "message": f"打开注册表失败: {e}",
-                    })
-                continue
-
-            try:
-                for p in reg_paths:
-                    _register_path_for_platform(key, reg_path, p, platform, results)
-            finally:
-                try:
-                    winreg.CloseKey(key)
-                except Exception:
-                    pass
-
-        return results
-
-    async def _handle_automate_delphi(arguments: dict) -> dict:
-        """处理 automate_delphi 工具调用（自动检测或按 action 路由）。"""
-        import asyncio
-        requested_action = arguments.get("action", "auto")
-        action = requested_action
-
-        # ── prepare：注册 DaofyAutomation 到 Delphi 全局搜索路径 ──
-        if action == "prepare":
-            try:
-                from src.utils.delphi_env import get_delphi_version as _get_dv
-                version = _get_dv()
-            except ImportError:
-                version = None
-
-            if not version:
-                return {
-                    "action": "prepare", "status": "error",
-                    "message": "未检测到已安装的 Delphi 编译器",
-                }
-
-            results = _register_daofy_auto(version)
-            added = sum(1 for r in results if r["status"] == "added")
-            already = sum(1 for r in results if r["status"] == "already_present")
-            errors = sum(1 for r in results if r["status"] == "error")
-            skipped = sum(1 for r in results if r["status"] == "skipped")
-
-            return {
-                "action": "prepare",
-                "delphi_version": version,
-                "daofy_auto_paths": _auto_paths(),
-                "results": results,
-                "status": "success" if errors == 0 else "partial",
-                "message": (
-                    f"Delphi {version}: 新增 {added} 个平台, "
-                    f"已存在 {already} 个平台"
-                    + (f", {skipped} 个跳过" if skipped else "")
-                    + (f", {errors} 个失败" if errors else "")
-                ),
-            }
-
-        app_path = arguments.get("app_path", "")
-        keep_alive = _coerce_bool(arguments.get("keep_alive", False))
-        stop_on_failure = _coerce_bool(arguments.get("stop_on_failure", True))
-        env = arguments.get("env", None)
-        subsystem = None
-
-        if not app_path:
-            return {"status": "error", "message": "缺少必需参数: app_path"}
-
-        # auto 检测：读 PE 头 Subsystem
-        if action == "auto":
-            subsystem = _detect_exe_subsystem(app_path)
-            if subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI:
-                action = "console"
-            elif subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI:
-                action = "gui"
-            else:
-                # 无法检测时默认 gui（保持兼容）
-                action = "gui"
-
-        if action == "gui":
-            script = arguments.get("script", "")
-            snapshots_dir = arguments.get("snapshots_dir", "")
-            wait_timeout = arguments.get("wait_timeout", 10)
-
-            if not script:
-                return {"status": "error", "message": "gui 模式缺少必需参数: script"}
-
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(_execute_automation,
-                                      action="gui",
-                                      app_path=app_path,
-                                      script=script,
-                                      snapshots_dir=snapshots_dir,
-                                      wait_for_pipe=wait_timeout,
-                                      keep_alive=keep_alive,
-                                      stop_on_failure=stop_on_failure,
-                                      env=env),
-                    timeout=TIMEOUT_AUTOMATION_GUI,
-                )
-                result.setdefault("requested_action", requested_action)
-                result.setdefault("resolved_action", action)
-                result.setdefault("detected_subsystem", subsystem)
-                return result
-            except asyncio.TimeoutError:
-                return {
-                    "status": "failed",
-                    "message": "automate_delphi(gui) 执行超时（300s）",
-                }
-            except Exception as e:
-                return {"status": "failed", "message": f"automate_delphi(gui) failed: {e}"}
-
-        elif action == "console":
-            input_text = arguments.get("input", "")
-            expect = arguments.get("expect", "")
-            timeout = arguments.get("timeout", 30)
-            args = arguments.get("args", None)
-
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(_execute_automation,
-                                      action="console",
-                                      app_path=app_path,
-                                      input_text=input_text,
-                                      expect=expect,
-                                      timeout=timeout,
-                                      keep_alive=keep_alive,
-                                      args=args,
-                                      env=env),
-                    timeout=max(timeout + 10, 120),
-                )
-                result.setdefault("requested_action", requested_action)
-                result.setdefault("resolved_action", action)
-                result.setdefault("detected_subsystem", subsystem)
-                return result
-            except asyncio.TimeoutError:
-                return {
-                    "status": "failed",
-                    "message": "automate_delphi(console) 执行超时",
-                    "action": "console",
-                }
-            except Exception as e:
-                return {"status": "failed", "message": f"automate_delphi(console) failed: {e}"}
-
-        else:
-            return {"status": "error", "message": f"未知 action: {action}"}
-
-    async def _handle_delphi_rtti(arguments: dict) -> dict:
-        """处理 delphi_rtti 工具调用（RTTI 发现/调用）。"""
-        return await _handle_delphi_rtti(arguments)
-
-    async def _handle_ocr(arguments: dict) -> dict:
-        """处理 ocr 工具调用（延迟导入，无 OCR 依赖时返回友好错误）。"""
-        try:
-            from src.tools.ocr import handle_ocr as _ocr_handler
-        except ImportError as e:
-            return {
-                "status": "failed",
-                "error": (
-                    f"缺少 OCR 依赖: {e}。"
-                    "请安装可选依赖: pip install daofy-for-delphi[ocr]"
-                ),
-            }
-        return await asyncio.to_thread(_ocr_handler, arguments)
-
-    _TOOL_HANDLERS = {
-            "delphi_project": _handle_project_tool,
-        "delphi_kb": _handle_delphi_kb,
-        "delphi_file": _handle_file_tool,
-        "file_tool": _handle_file_tool,  # 旧名兼容别名
-        "manage_component": _handle_manage_component,
-        "check_environment": _handle_check_environment,
-        "async_task": _handle_async_task,
-        "package": _handle_package,
-        "get_coding_rules": _handle_get_coding_rules,
-        "code_hosting": _handle_code_hosting,
-        "tool_help": _handle_tool_help,
-        "experience": _handle_experience,
-        "daofy_update": _handle_daofy_update,
-        "generate_copyright": _handle_generate_copyright,
-        "automate_delphi": _handle_automate_delphi,
-        "delphi_rtti": _handle_delphi_rtti,
-        "ocr": _handle_ocr,
-    }
-
-    # Phase 2: 将 _TOOL_HANDLERS 注入插件注册表
-    _plugin_registry.register_handlers(_TOOL_HANDLERS)
+    # Phase 2: 将核心工具 handlers 注入插件注册表
+    from src.plugins.core.handlers import CORE_HANDLERS
+    _plugin_registry.register_core_handlers(CORE_HANDLERS)
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict):
-        """调用工具（由 _TOOL_HANDLERS dispatch）"""
+        """调用工具（由 _plugin_registry 分发）"""
         import time as _time
         from datetime import datetime as _datetime
         import asyncio as _asyncio
@@ -1697,7 +1087,7 @@ async def run_server():
         result = None
 
         try:
-            handler = _TOOL_HANDLERS.get(name)
+            handler = _plugin_registry.get_handler(name)
             if handler:
                 # ── MCP 推送通知注入 ──
                 # 对于 code_hosting 等支持异步任务的工具，注入 _on_complete 回调

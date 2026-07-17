@@ -2,7 +2,8 @@
 Delphi 编译器插件
 
 Phase 1: 委托到现有 compiler_service / dproj_parser 等模块，零重写。
-工具处理器引用 server.py 中已有的函数引用，不重复包装。
+Phase 2: 工具归属声明 (get_owned_tool_names)。
+Phase 3: handler 提取到 handlers.py，get_tools() 返回完整 ToolDefinition。
 """
 
 from pathlib import Path
@@ -96,8 +97,7 @@ class DelphiPlugin(CompilerPlugin):
         """
         return ""  # Phase 2: 实现完整逻辑
 
-    # ── 工具归属声明 ──
-    # Phase 2: 插件声明拥有哪些工具名，handler 由 server.py 注入到 registry。
+    # ── 工具归属声明 (Phase 2) + handler 提取 (Phase 3) ──
 
     def get_owned_tool_names(self) -> List[str]:
         """Delphi 插件拥有的 MCP 工具名列表"""
@@ -112,3 +112,32 @@ class DelphiPlugin(CompilerPlugin):
             "delphi_rtti",
             "automate_delphi",
         ]
+
+    def get_tools(self) -> List[ToolDefinition]:
+        """返回 Delphi 插件注册的 MCP 工具 (Phase 3: 完整 ToolDefinition)"""
+        from .handlers import DELPHI_HANDLERS
+        return [
+            ToolDefinition(
+                name=name,
+                description=self._TOOL_DESCRIPTIONS.get(name, f"Delphi 工具: {name}"),
+                input_schema=self._TOOL_SCHEMAS.get(name, {"type": "object", "properties": {}}),
+                handler=handler,
+            )
+            for name, handler in DELPHI_HANDLERS.items()
+            if name != "file_tool"  # file_tool 是 delphi_file 的兼容别名，不单独注册
+        ]
+
+    # 工具描述和 schema 元数据
+    _TOOL_DESCRIPTIONS = {
+        "delphi_project": "Delphi 项目全生命周期管理：编译/配置/审计/部署",
+        "delphi_file": "Delphi 文件必用读写/搜索/替换/备份工具",
+        "delphi_kb": "知识库搜索/管理",
+        "manage_component": "DFM组件增/删/改/生成",
+        "get_coding_rules": "编码必用编码规则获取工具",
+        "package": "组件包编译安装/列出",
+        "check_environment": "环境检查/编译器检测/安装",
+        "delphi_rtti": "RTTI 发现/调用",
+        "automate_delphi": "Delphi 自动化测试",
+    }
+
+    _TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {}  # schema 由 server.py list_tools 提供
