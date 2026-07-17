@@ -1,6 +1,6 @@
 <!-- @when: 编译通过后，需对 GUI 程序进行 UI 交互验证。首次接入自动化测试时按此流程操作 -->
 <!-- @part-of: testing -->
-<!-- @chain: after=../ui.md, before=a-smoke.md -->
+<!-- @chain: after=../../ui.md, before=a-smoke.md -->
 
 ## 自动化测试基础设施
 

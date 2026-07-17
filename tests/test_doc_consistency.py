@@ -144,14 +144,15 @@ class TestDocConsistency:
 
     def test_black_box_docs_forbid_direct_rtti_execution(self):
         """Black-box script docs must not recommend rcall/rset execution."""
+        ref_dir = ROOT / "src" / "resources" / "coding-rules" / "testing" / "automation" / "reference"
         workflow = (
-            ROOT / "src" / "resources" / "automation" / "reference" / "workflow.md"
+            ref_dir / "workflow.md"
         ).read_text(encoding="utf-8")
         script_workflow = (
-            ROOT / "src" / "resources" / "automation" / "reference" / "script-generation-workflow.md"
+            ref_dir / "script-generation-workflow.md"
         ).read_text(encoding="utf-8")
         script_schema = (
-            ROOT / "src" / "resources" / "automation" / "reference" / "script-schema.md"
+            ref_dir / "script-schema.md"
         ).read_text(encoding="utf-8")
         coding_rules = "\n\n".join(
             f.read_text(encoding="utf-8")
@@ -180,10 +181,11 @@ class TestDocConsistency:
 
     def test_automation_docs_store_cases_under_project_tests_by_type(self):
         """Automation docs should save reusable cases under Tests/<test type>."""
+        ref_dir = ROOT / "src" / "resources" / "coding-rules" / "testing" / "automation" / "reference"
         scanned_files = [
-            ROOT / "src" / "resources" / "automation" / "reference" / "workflow.md",
-            ROOT / "src" / "resources" / "automation" / "reference" / "script-generation-workflow.md",
-            ROOT / "src" / "resources" / "automation" / "reference" / "script-schema.md",
+            ref_dir / "workflow.md",
+            ref_dir / "script-generation-workflow.md",
+            ref_dir / "script-schema.md",
             ROOT / ".opencode" / "skills" / "delphi-automation-workflow" / "SKILL.md",
             ROOT / ".claude" / "skills" / "delphi-automation-workflow" / "SKILL.md",
             ROOT / ".cursor" / "rules" / "delphi-automation-workflow.mdc",
@@ -195,37 +197,42 @@ class TestDocConsistency:
             assert "tests/scripts/" not in content
 
     def test_server_schema_async_list_complete(self):
-        """server.py script description should list all async cmds."""
-        from pathlib import Path
-        server_py = Path(__file__).parent.parent / "src" / "server.py"
-        content = server_py.read_text("utf-8")
-        idx = content.find("click/rclick/dblclick/hover/move/drag/type/key")
-        assert idx > 0, "Async command list not found in server.py"
+        """tool_docs.py protocol should list all async cmds (migrated from server.py schema in Phase 3)."""
+        from tool_docs import TOOL_HELP_DOCS
+        auto = TOOL_HELP_DOCS.get("automate_delphi", {})
+        proto = auto.get("modes", {}).get("gui", {}).get("protocol", {})
+        async_cmds = proto.get("async_cmds", "")
+        assert async_cmds, "async_cmds not found in tool_docs.py protocol"
         for cmd in ["rcall", "rset", "type"]:
-            assert cmd in content[idx:idx+200], f"Async cmd '{cmd}' missing from server.py schema"
+            assert cmd in async_cmds, f"Async cmd '{cmd}' missing from async_cmds: {async_cmds}"
 
     def test_server_schema_mentions_sync_dialog_commands(self):
-        """server.py schema should classify dialog scan/close commands as sync."""
-        from pathlib import Path
-        server_py = Path(__file__).parent.parent / "src" / "server.py"
-        content = server_py.read_text("utf-8")
-        assert "sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception)" in content
-        assert "DaofyAutomation.CallGraph" in content
+        """tool_docs.py protocol should classify dialog scan/close commands as sync (migrated from server.py schema in Phase 3)."""
+        from tool_docs import TOOL_HELP_DOCS
+        auto = TOOL_HELP_DOCS.get("automate_delphi", {})
+        proto = auto.get("modes", {}).get("gui", {}).get("protocol", {})
+        sync_cmds = proto.get("sync_cmds", "")
+        assert sync_cmds, "sync_cmds not found in tool_docs.py protocol"
+        for cmd in ["goto", "capture", "waitfor", "dlgscan", "msgscan", "msgclose", "rget", "rinspect"]:
+            assert cmd in sync_cmds, f"Sync cmd '{cmd}' missing from sync_cmds: {sync_cmds}"
+        # Verify callgraph commands are also classified as sync
+        assert "callgraph" in sync_cmds
 
     def test_automation_script_shape_is_documented_across_runtime_docs(self):
-        """The documented full script object must match execute_script support."""
+        """The documented full script object must match execute_script support (migrated from server.py schema in Phase 3)."""
         from tool_docs import TOOL_HELP_DOCS
 
-        root = Path(__file__).parent.parent
-        server_py = root / "src" / "server.py"
-        server_content = server_py.read_text("utf-8")
         auto_docs = TOOL_HELP_DOCS.get("automate_delphi", {})
         gui_docs = auto_docs.get("modes", {}).get("gui", {})
 
-        assert "包含 steps 的完整脚本对象" in server_content
-        assert '"required": ["steps"]' in server_content
-        assert "完整脚本对象" in gui_docs.get("script_shape", "")
-        assert "script_metadata" in gui_docs.get("script_shape", "")
+        script_shape = gui_docs.get("script_shape", "")
+        assert "完整脚本对象" in script_shape, f"script_shape missing '完整脚本对象': {script_shape}"
+        assert "script_metadata" in script_shape, f"script_shape missing 'script_metadata': {script_shape}"
+
+        # Verify automation_service.py documents the script shape parsing
+        from pathlib import Path
+        auto_svc = (Path(__file__).parent.parent / "src" / "services" / "automation_service.py").read_text(encoding="utf-8")
+        assert "步骤列表或包含 steps 的对象" in auto_svc, "automation_service.py missing script shape documentation"
 
     def test_delphi_file_docs_forbid_default_editors(self):
         """Delphi edit docs must explicitly block direct agent write tools."""

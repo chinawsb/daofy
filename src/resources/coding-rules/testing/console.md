@@ -46,4 +46,4 @@ proc.wait(timeout=5)
 
 ### 测试质量红线
 
-6 条一票否决红线（禁止跳过式通过、断言验证具体状态、截图必须有验证、外部依赖降级路径、执行时间匹配、运行证据支撑）见 [`automation/scenarios/base.md` § 测试质量红线`](../automation/scenarios/base.md#测试质量红线)。
+6 条一票否决红线（禁止跳过式通过、断言验证具体状态、截图必须有验证、外部依赖降级路径、执行时间匹配、运行证据支撑）见 [`automation/scenarios/base.md` § 测试质量红线`](automation/scenarios/base.md#测试质量红线)。

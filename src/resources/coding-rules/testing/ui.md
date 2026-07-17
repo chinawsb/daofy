@@ -9,7 +9,7 @@
 
 ### 启用流程
 
-首次接入 → 按 [../automation/scenarios/base.md](../automation/scenarios/base.md) 的「启用流程」操作（前置判断 → 修改 .dpr → 编译 → 冒烟验证）。
+首次接入 → 按 [automation/scenarios/base.md](automation/scenarios/base.md) 的「启用流程」操作（前置判断 → 修改 .dpr → 编译 → 冒烟验证）。
 
 关键约束：
 - **`AutoStart` 必须在 `Application.Initialize` 之前调用**
@@ -57,22 +57,22 @@ Python                              Delphi
 
 | 场景 | 对应文件 | 适用时机 |
 |------|---------|---------|
-| A. 冒烟测试 | [../automation/scenarios/a-smoke.md](../automation/scenarios/a-smoke.md) | 验证程序可启动、主窗体就绪 |
-| B. 登录流程 | [../automation/scenarios/b-login.md](../automation/scenarios/b-login.md) | 用户名密码输入、登录状态切换 |
-| C. 表单数据录入 | [../automation/scenarios/c-data-entry.md](../automation/scenarios/c-data-entry.md) | 填写表单并提交保存 |
-| D. 列表/表格行操作 | [../automation/scenarios/d-grid.md](../automation/scenarios/d-grid.md) | 新增/编辑/删除数据行 |
-| E. 树形导航 | [../automation/scenarios/e-tree-navigation.md](../automation/scenarios/e-tree-navigation.md) | 树节点展开/折叠/选中 |
-| F. 搜索/筛选 | [../automation/scenarios/f-search.md](../automation/scenarios/f-search.md) | 搜索命中、未命中、结果更新 |
-| G. 模态对话框 | [../automation/scenarios/g-modal-dialogs.md](../automation/scenarios/g-modal-dialogs.md) | MessageBox / OpenDialog / 确认框 |
-| H. 多步向导 | [../automation/scenarios/h-wizard.md](../automation/scenarios/h-wizard.md) | Wizard 步骤切换和提交 |
-| I. 右键菜单 | [../automation/scenarios/i-context-menu.md](../automation/scenarios/i-context-menu.md) | ContextMenu 弹出和选择 |
-| J. DirectUI 弹窗 | [../automation/scenarios/j-directui.md](../automation/scenarios/j-directui.md) | IFileDialog / TTaskDialog / uia.xxx 命令 |
-| K. 文本完整性 | [../automation/scenarios/k-text-completeness.md](../automation/scenarios/k-text-completeness.md) | OCR 检测截断/省略号/溢出 |
-| L. 布局视觉对齐 | [../automation/scenarios/l-layout.md](../automation/scenarios/l-layout.md) | 左对齐/间距/重叠/跨 DPI |
-| M. 控件定位策略 | [../automation/scenarios/m-control-targeting.md](../automation/scenarios/m-control-targeting.md) | 文本优先/坐标校准/DPI 系数 |
-| N. 等待与条件同步 | [../automation/scenarios/n-wait-strategy.md](../automation/scenarios/n-wait-strategy.md) | waitfor 优先/禁用裸固定延时 |
-| O. 控件重建安全 | [../automation/scenarios/o-control-rebuild.md](../automation/scenarios/o-control-rebuild.md) | Rescan/Reload 后控件重建等待 |
-| 附录: 核对表 | [../automation/scenarios/checklist.md](../automation/scenarios/checklist.md) | 27 条黑盒测试质量门禁 |
+| A. 冒烟测试 | [automation/scenarios/a-smoke.md](automation/scenarios/a-smoke.md) | 验证程序可启动、主窗体就绪 |
+| B. 登录流程 | [automation/scenarios/b-login.md](automation/scenarios/b-login.md) | 用户名密码输入、登录状态切换 |
+| C. 表单数据录入 | [automation/scenarios/c-data-entry.md](automation/scenarios/c-data-entry.md) | 填写表单并提交保存 |
+| D. 列表/表格行操作 | [automation/scenarios/d-grid.md](automation/scenarios/d-grid.md) | 新增/编辑/删除数据行 |
+| E. 树形导航 | [automation/scenarios/e-tree-navigation.md](automation/scenarios/e-tree-navigation.md) | 树节点展开/折叠/选中 |
+| F. 搜索/筛选 | [automation/scenarios/f-search.md](automation/scenarios/f-search.md) | 搜索命中、未命中、结果更新 |
+| G. 模态对话框 | [automation/scenarios/g-modal-dialogs.md](automation/scenarios/g-modal-dialogs.md) | MessageBox / OpenDialog / 确认框 |
+| H. 多步向导 | [automation/scenarios/h-wizard.md](automation/scenarios/h-wizard.md) | Wizard 步骤切换和提交 |
+| I. 右键菜单 | [automation/scenarios/i-context-menu.md](automation/scenarios/i-context-menu.md) | ContextMenu 弹出和选择 |
+| J. DirectUI 弹窗 | [automation/scenarios/j-directui.md](automation/scenarios/j-directui.md) | IFileDialog / TTaskDialog / uia.xxx 命令 |
+| K. 文本完整性 | [automation/scenarios/k-text-completeness.md](automation/scenarios/k-text-completeness.md) | OCR 检测截断/省略号/溢出 |
+| L. 布局视觉对齐 | [automation/scenarios/l-layout.md](automation/scenarios/l-layout.md) | 左对齐/间距/重叠/跨 DPI |
+| M. 控件定位策略 | [automation/scenarios/m-control-targeting.md](automation/scenarios/m-control-targeting.md) | 文本优先/坐标校准/DPI 系数 |
+| N. 等待与条件同步 | [automation/scenarios/n-wait-strategy.md](automation/scenarios/n-wait-strategy.md) | waitfor 优先/禁用裸固定延时 |
+| O. 控件重建安全 | [automation/scenarios/o-control-rebuild.md](automation/scenarios/o-control-rebuild.md) | Rescan/Reload 后控件重建等待 |
+| 附录: 核对表 | [automation/scenarios/checklist.md](automation/scenarios/checklist.md) | 27 条黑盒测试质量门禁 |
 
 ### 场景选择原则
 
@@ -89,4 +89,4 @@ Python                              Delphi
 ]
 ```
 
-> 场景文件位于 `automation/scenarios/` 目录，通过相对路径引用。基础设施（通信/协议/tool 调用）见 [../automation/scenarios/base.md](../automation/scenarios/base.md)。架构方法论见 `automation/architecture.md`。
+> 场景文件位于 `automation/scenarios/` 目录，通过相对路径引用。基础设施（通信/协议/tool 调用）见 [automation/scenarios/base.md](automation/scenarios/base.md)。架构方法论见 `automation/architecture.md`。
