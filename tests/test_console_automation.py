@@ -291,7 +291,7 @@ class TestGuiScriptResultHandling:
             json.dumps({"reqId": "auto_exit", "status": "ok", "data": "bye"}),
         ])
 
-        def fake_send_on_handle(handle, cmd):
+        def fake_send_on_handle(handle, cmd, timeout_ms):
             return next(responses)
 
         with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
@@ -409,6 +409,7 @@ class TestGuiScriptResultHandling:
 
         app_path = r"C:\fake\dummy.exe"
         launched = []
+        cleanup_lock_available = []
 
         def fake_popen(cmd, cwd=None, env=None):
             proc = mock.Mock()
@@ -419,8 +420,16 @@ class TestGuiScriptResultHandling:
             launched.append(proc)
             return proc
 
+        def fake_ensure_cleanup_thread():
+            acquired = automation_service._pool_lock.acquire(blocking=False)
+            cleanup_lock_available.append(acquired)
+            if acquired:
+                automation_service._pool_lock.release()
+
         with mock.patch.object(automation_service.subprocess, "Popen", side_effect=fake_popen), \
-                mock.patch.object(automation_service, "_wait_for_pipe", return_value=True):
+                mock.patch.object(automation_service, "_wait_for_pipe", return_value=True), \
+                mock.patch.object(automation_service, "_ensure_pool_cleanup_thread",
+                                  side_effect=fake_ensure_cleanup_thread):
             try:
                 first = automation_service._ensure_process(
                     app_path, 0.1, {"DAOFY_ENV_TEST": "one"}
@@ -438,6 +447,7 @@ class TestGuiScriptResultHandling:
         assert second == (False, "")
         assert third == (True, "")
         assert len(launched) == 2
+        assert cleanup_lock_available == [True, True]
         assert launched[0].kill.called
         assert launched[0].env["DAOFY_ENV_TEST"] == "one"
         assert launched[1].env["DAOFY_ENV_TEST"] == "two"
@@ -453,7 +463,7 @@ class TestGuiScriptResultHandling:
         ])
 
         with mock.patch.object(automation_service, "_open_pipe", side_effect=lambda *_: next(handles)) as open_mock, \
-                mock.patch.object(automation_service, "_send_command_on_handle", side_effect=lambda handle, cmd: next(responses)), \
+                mock.patch.object(automation_service, "_send_command_on_handle", side_effect=lambda handle, cmd, timeout_ms: next(responses)), \
                 mock.patch.object(automation_service, "_CloseHandle") as close_mock:
             automation_service._begin_pipe_session()
             try:
@@ -467,6 +477,27 @@ class TestGuiScriptResultHandling:
         assert open_mock.call_count == 2
         close_mock.assert_any_call(101)
         close_mock.assert_any_call(202)
+
+    def test_pipe_response_read_honors_timeout(self):
+        """Every pipe command must time out when Delphi accepts but never answers."""
+        from src.services import automation_service
+
+        with mock.patch.object(automation_service, "_write_pipe", return_value=True), \
+                mock.patch.object(
+                    automation_service,
+                    "_read_pipe_message_poll",
+                    return_value=None,
+                ) as read_mock, \
+                mock.patch.object(automation_service, "_GetLastError", return_value=232):
+            response = automation_service._send_command_on_handle(
+                12345,
+                '{"cmd":"listwnd"}',
+                timeout_ms=321,
+            )
+
+        assert response.startswith("ERR:read_failed")
+        assert automation_service._is_pipe_io_error(response)
+        read_mock.assert_called_once_with(12345, timeout_ms=321)
 
     def test_click_step_forwards_client_coordinates(self, tmp_path):
         """click x/y fields should be encoded for the inline automation unit."""

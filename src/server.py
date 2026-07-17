@@ -131,11 +131,9 @@ def _filter_surrogates(text: str) -> str:
     return text
 
 
-MCP_SERVER_INSTRUCTIONS = """你正在使用 Daofy for Delphi MCP Server。
-Delphi 文件处理请严格遵循已安装到你规则目录的 Daofy Rule（必须用 `delphi_file` 工具，
-禁用内置 Read/Edit/Write/grep）；详细用法见 `daofy` skill，深度规范用
-`get_coding_rules(section=...)` 按需获取。
-"""
+MCP_SERVER_INSTRUCTIONS = (
+    "Daofy:Delphi 文件必用 delphi_file 处理，编码前 get_coding_rules，参数用 tool_help(tool_name, action_name)获取"
+)
 
 MCP_SERVER_DESCRIPTION = (
     "Daofy for Delphi MCP Server，提供 Delphi 项目编译、知识库搜索、"
@@ -204,7 +202,7 @@ else:
         build_public_resource_index,
         get_public_resource_text,
     )
-    from src.tool_docs import TOOL_NAMES, TOOL_SHORT_DESC
+    from src.tool_docs import TOOL_NAMES
     from src.utils.logger import init_default_logger, log_api_call
     from src.__version__ import __version__, __copyright__
     from src.utils import updater
@@ -780,7 +778,7 @@ async def run_server():
             # ===== Delphi 项目全生命周期管理 ⭐⭐⭐ =====
             Tool(
                 name="delphi_project",
-                description=TOOL_SHORT_DESC["delphi_project"],
+                description="编译/配置/审计/部署",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -789,338 +787,126 @@ async def run_server():
                             "enum": ["compile", "compile_file", "dry_run", "info", "create",
                                      "set", "add_config", "remove_config", "add_source",
                                      "remove_source", "audit", "ast", "runtime", "layout"],
-                            "description": "操作类型。先 tool_help('delphi_project') 查看各 action 的参数说明。"
-                        },
-                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk/.pas)"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "仅预览编译参数不实际执行"},
-                        "extra_args": {
-                            "type": "array",
-                            "items": {"type": "string", "minLength": 1},
-                            "description": "附加到实际编译后端的完整参数。MSBuild 示例: ['/p:DCC_DebugInfoInTds=true']; 直接 DCC 示例: ['-VT']",
                         },
                     },
-                    "additionalProperties": True,
                     "required": ["action"]
                 }
             ),
 
-            # ===== 知识库搜索/管理 ⭐⭐⭐ =====
             Tool(
                 name="delphi_kb",
-                description=TOOL_SHORT_DESC["delphi_kb"],
+                description="知识库搜索/管理",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "description": "操作类型（默认 search；若提供 url 则自动设为 web）: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
-                        "query": {"type": "string", "description": "搜索关键词（action=search时需要）"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document", "example"], "default": "all", "description": "知识库类型: delphi=Delphi RTL/VCL/FMX 官方源码, project=当前项目源码, thirdparty=第三方组件库(如 FastReport/DevExpress), document=文档(Chm/网页), example=示例代码(Demo), all=所有"},
-                        "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "set", "helper", "type", "const", "resourcestring", "variable", "property", "method", "field", "event", "operator", "string", "dfm", "attribute", "unit", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
-                        "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
-                        "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj/.dpr/.dpk）"},
-                        "version": {"type": "string", "description": "Delphi版本（构建知识库时使用）"},
-                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行（build操作时生效，默认true）"},
-                        "rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（build操作时生效）"},
-                        "incremental": {"type": "boolean", "default": False, "description": "是否增量更新（build操作时生效）"},
-                        "build_thirdparty": {"type": "boolean", "default": True, "description": "构建项目KB时是否同时构建第三方库KB"},
-                        "build_project": {"type": "boolean", "default": True, "description": "是否构建项目KB"},
-                        "directory": {"type": "string", "description": "扫描目录（action=scan时使用，或build document时可以不传自动检测Delphi帮助目录）"},
-                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名过滤（action=scan/build时使用，如[\".chm\"]）"},
-                        "content_type": {"type": "string", "description": "文档类型过滤（action=search kb_type=document时使用）"},
-                        "url": {"type": "string", "description": "网页URL（提供 url 且未传 action 时自动触发 web 模式；或 read 时作为文档URL）"},
-                        "doc_id": {"type": "string", "description": "文档ID（action=read时使用，与url二选一）"},
-                        "file_path": {"type": "string", "description": "文件路径（action=read时使用）"},
-                        "offset": {"type": "integer", "default": 0, "description": "读取偏移量（action=read时使用）"},
-                        "limit": {"type": "integer", "default": 5000, "description": "读取字节数限制（action=read时使用）"},
-                        "max_pages": {"type": "integer", "default": 100, "description": "最大抓取页数（build document KB时使用）"},
-                        "max_depth": {"type": "integer", "default": 3, "description": "最大抓取深度（build document KB时使用）"},
-                        "domain_filter": {"type": "string", "description": "域名过滤（build document KB时使用）"},
-                        "url_pattern": {"type": "string", "description": "URL模式过滤（build document KB时使用）"},
-                        "exclude": {"type": "array", "items": {"type": "string"}, "description": "排除目录列表（build document KB时使用）"},
-                        "max_workers": {"type": "integer", "description": "最大工作进程数（action=scan时使用）"},
-                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
+                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"]},
                     }
                 }
             ),
 
-            # ===== Delphi 文件专用操作 — 读/写/格式化/备份管理 ⭐⭐⭐ =====
             Tool(
                 name="delphi_file",
-                description=TOOL_SHORT_DESC["delphi_file"],
+                description="Delphi 文件必用读写/搜索/替换/备份工具",
                 inputSchema={
                     "type": "object",
-                    "required": ["action"],
                     "properties": {
-                        # ---- 全局参数（所有 action 都可用）----
                         "action": {
                             "type": "string",
                             "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"],
                             "default": "read",
-                            "description": (
-                                "操作类型: read=读文件, write=兼容写入, replace=替换(需old_content), "
-                                "insert=按锚点插入(需old_content), delete=删除(需old_content), format=格式化, "
-                                "backup=备份管理, encode=编码转换, uses=增删uses, fix_garbled=修复中文乱码, "
-                                "grep=正则搜索/替换(file_path自动检测文件/目录,支持include/exclude/多pattern "
-                                "OR搜索+多级过滤+dry_run预览)。路由规则：Delphi 文件必须用 delphi_file "
-                                "读写/搜索/正则匹配+替换，不要用内置 Read/Edit/Write/grep。看到 "
-                                ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj 时，即使只是读取也必须使用 delphi_file。"
-                            ),
                         },
-                        "file_path": {"type": "string", "description": "目标 Delphi 文件路径。支持 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx/.groupproj。grep action 额外支持路径数组（file_path=[\"a.pas\",\"dir/\"]），自动检测文件/目录逐项解析。"},
-
-                        # ---- [read] 参数 ----
-                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "[read] 读取模式: path/class/function/record"},
-                        "type_name": {"type": "string", "description": "[read/class] 类名/接口名/枚举名"},
-                        "class_name": {"type": "string", "description": "[read/class] 类名（与type_name二选一，兼容旧版）"},
-                        "record_name": {"type": "string", "description": "[read/record] Record 类型名"},
-                        "function_name": {"type": "string", "description": "[read/function] 函数/过程名"},
-                        "start_line": {"type": "integer", "default": 1, "description": "[read] 起始行号(1-indexed inclusive)"},
-                        "limit": {"type": "integer", "default": 500, "description": "[read] 最大返回行数(默认500，上限1000)"},
-                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[read] 显示 1-indexed 行号前缀"},
-                        "end_line": {"type": "integer", "description": "[read] 结束行号(1-indexed inclusive)，默认 start_line+limit-1"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "[read/class] 搜索范围 delphi/project/thirdparty/all"},
-                        "project_path": {"type": "string", "description": "[read/class] 项目文件路径，用于搜索项目 KB"},
-
-                        # ---- [write/replace/insert/delete] 参数 ----
-                        # write 兼容旧语义；replace/insert/delete 提供更明确的安全编辑语义。
-                        "edits": {
-                            "type": "array",
-                            "description": "[write/replace/insert/delete] 编辑列表。replace=替换范围，insert=以start_line为锚点按position插入，delete=删除范围。replace/insert/delete 对现有文件要求每个 edit 提供非空 old_content。",
-                            "items": {
-                                "type": "object",
-                                "required": ["start_line"],
-                                "properties": {
-                                    "start_line": {"type": "integer", "description": "起始行号（1-indexed inclusive）"},
-                                    "end_line": {"type": "integer", "description": "结束行号（1-indexed inclusive）；replace/delete 不传则到文件末尾；insert 不使用"},
-                                    "position": {"type": "string", "enum": ["before", "after"], "default": "before", "description": "[insert] 插入位置: before=锚点行前, after=锚点行后"},
-                                    "content": {"type": "string", "description": "replace/write 的替换内容；insert 的插入内容；delete 可省略。兼容 write 中空串=删除该区间"},
-                                    "old_content": {"type": "string", "description": "将被替换/删除区间或 insert 锚点行的非空旧内容。写入前会忽略字符串外空白后比较；replace/insert/delete 对现有文件必填"},
-                                    "description": {"type": "string", "description": "可选的文字描述，仅用于返回消息标记"}
-                                }
-                            }
-                        },
-                        "encoding": {"type": "string", "default": "auto", "description": "[read/write/replace/insert/delete/uses] 读/写编码: auto/utf-8/gbk/utf-16，默认 auto。read 时指定可覆盖自动检测结果"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 写入后自动 pasfmt 格式化，返回偏移量已含格式变化"},
-                        "backup": {"type": "boolean", "default": True, "description": "[write/replace/insert/delete/uses] 写入前自动备份到 __history（建议保持 true）"},
-                        "dry_run": {"type": "boolean", "description": "[write/replace/insert/delete/format/encode/grep] true=只预览/检查不写盘；grep 替换默认 true，其他 action 默认 false"},
-                        "force": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过重复检测和脏标记检查（默认 false 时检测到重复仅警告不阻断）"},
-                        "allow_dirty": {"type": "boolean", "default": False, "description": "[write/replace/insert/delete] 跳过脏标记检查（默认 false）。优先为每个 edit 提供 old_content；仅确认行号准确时才设 true"},
-
-                        # ---- [format] 参数 ----
-                        "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[format] 模式: file/code/check"},
-                        "code": {"type": "string", "description": "[format/code] 待格式化的代码文本"},
-                        "config_path": {"type": "string", "description": "[format] pasfmt 配置文件路径(高级)"},
-                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "[format] uses风格: compact=一行, pasfmt_default=每行一个"},
-
-                        # ---- [backup] 参数 ----
-                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "[backup] 子操作: create/list/restore"},
-                        "version": {"type": "integer", "description": "[backup/restore] 版本号，不传则恢复最新"},
-
-                        # ---- [encode] 参数 ----
-                        "from_encoding": {"type": "string", "default": "auto", "description": "[encode] 源编码（auto=自动检测，推荐始终用 auto；显式指定错误可能导致解码失败或乱码）"},
-                        "to_encoding": {"type": "string", "description": "[encode] 目标编码: utf-8/utf-8-sig/gbk/utf-16/utf-16-le/utf-16-be/ansi"},
-
-                        # ---- [uses] 参数 ----
-                        "uses_action": {"type": "string", "enum": ["add", "remove"], "description": "[uses] add=添加, remove=删除"},
-                        "unit_name": {"type": "string", "description": "[uses] 单元名，如 Vcl.Dialogs"},
-                        "uses_section": {"type": "string", "enum": ["interface", "implementation"], "default": "interface", "description": "[uses] 所在区域: interface/implementation"},
-
-                        # ---- [grep] 参数 ----
-                        "pattern": {"type": "string", "description": "[grep] 单正则搜索模式（与 patterns 二选一），支持 /pattern/flags 语法"},
-                        "patterns": {"type": "array", "items": {"type": "string"}, "description": "[grep] 多 pattern OR 搜索（与 pattern 二选一），每个元素支持 /pattern/flags 语法"},
-                        "include": {"type": "string", "description": "[grep] 文件包含 glob 模式（默认 **/*，仅 file_path 为目录时有效）"},
-                        "exclude": {"type": "string", "description": "[grep] 文件排除 glob 模式（仅 file_path 为目录时有效）"},
-                        "filter_pattern": {"type": "string", "description": "[grep] 二级过滤模式（可选，同一行/匹配文本必须也匹配此模式）"},
-                        "exclude_pattern": {"type": "string", "description": "[grep] 排除模式（可选，同一行/匹配文本必须不匹配此模式）"},
-                        "replace": {"type": "string", "description": "[grep] 替换文本（可选，不传=搜索模式，传了=替换模式）"},
-                        "context": {"type": "integer", "default": 0, "description": "[grep] 上下文行数（默认 0）"},
-                        "count": {"type": "integer", "default": 200, "description": "[grep] 最大返回结果数（默认 200）"},
-                    }
+                    },
+                    "required": ["action"]
                 }
             ),
 
-            # ===== 组件管理 ⭐⭐ =====
             Tool(
                 name="manage_component",
-                description=TOOL_SHORT_DESC["manage_component"],
+                description="DFM组件增/删/改/生成",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["create", "add", "remove", "modify"], "default": "create",
-                                   "description": "操作类型: create=生成DFM, add=添加组件, remove=删除组件, modify=修改属性"},
-                        "target_dfm": {"type": "string", "description": "目标 DFM 文件路径（add/remove/modify 时必需）"},
-                        "target_pas": {"type": "string", "description": "目标 PAS 文件路径（add/remove/modify 时可选，用于自动同步声明）"},
-                        "component_name": {"type": "string", "description": "组件名称（remove/modify 时必需，指定操作的目标组件）"},
-                        "parent_name": {"type": "string", "description": "父组件名称（add 时可选，默认添加到根组件下）"},
-                        "new_component_class": {"type": "string", "description": "新组件类名（add 时必需，如 TButton）"},
-                        "new_component_name": {"type": "string", "description": "新组件实例名（add 时可选，默认自动生成如 Button1）"},
-                        "properties": {"type": "object", "additionalProperties": {"type": "string"},
-                                       "description": "组件属性字典（add/modify 时使用，如 {\"Caption\": \"OK\", \"OnClick\": \"BtnClick\"}）"},
-                        "dfm_text": {"type": "string", "description": "待添加的 DFM 文本片段（add 时可选，替代 new_component_class+properties）"},
-                        "code": {"type": "string", "description": "[create 必需] Pascal 实现代码，必须包含 function CreateComponent(AOwner: TComponent): TComponent; 定义"},
-                        "uses": {"type": "array", "items": {"type": "string"}, "description": "[create] 需引用的单元列表，如 [\"Vcl.Forms\", \"Vcl.StdCtrls\"]"},
-                        "type_decl": {"type": "string", "description": "[create] 类型声明段（可选），用于声明 Form 类、事件桩等"},
-                        "init_code": {"type": "string", "description": "[create] 初始化代码（可选），在 CreateComponent 前执行。自定义 Form 类需 RegisterClass。"},
-                        "compile_timeout": {"type": "integer", "default": 60, "description": "编译超时秒数"},
-                        "exec_timeout": {"type": "integer", "default": 15, "description": "执行超时秒数（组件创建代码可能耗时操作）"},
+                        "action": {"type": "string", "enum": ["create", "add", "remove", "modify"], "default": "create"},
                     },
                     "required": ["action"]
                 }
             ),
 
-            # ===== 环境检查 ⭐⭐⭐ =====
             Tool(
                 name="check_environment",
-                description=TOOL_SHORT_DESC["check_environment"],
+                description="环境检查/编译器检测/安装",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["check", "detect", "install", "format_install"], "default": "check", "description": "操作类型: check=检查, detect=检测编译器, install=安装pasfmt, format_install=安装pasfmt RAD插件"},
-                        "search_path": {"type": "string", "description": "额外搜索路径（action=detect时使用）"},
-                        "install_dir": {"type": "string", "description": "安装目录（action=install/format_install时使用）"},
-                        "delphi_version": {"type": "string", "default": "11", "description": "Delphi版本（action=format_install时使用，如\"11\"、\"12\"）"},
+                        "action": {"type": "string", "enum": ["check", "detect", "install", "format_install"], "default": "check"},
                     }
                 }
             ),
 
-            # ===== 异步任务管理 ⭐ =====
             Tool(
                 name="async_task",
-                description=TOOL_SHORT_DESC["async_task"],
+                description="异步任务管理",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "description": "操作类型", "default": "list"},
-                        "task_id": {"type": "string", "description": "任务ID（action=status/result/cancel时使用）"},
-                        "long_poll_seconds": {"type": "integer", "default": 0, "minimum": 0, "maximum": 30, "description": "[status] 长轮询秒数(默认0=立即返回，建议≤30)"},
-                        "task_type": {"type": "string", "description": "任务类型（action=start时使用），如: build_knowledge_base, build_thirdparty_knowledge_base, init_project_knowledge_base, build_document_knowledge_base, build_embedding"},
-                        "task_params": {"type": "object", "description": "任务参数（action=start时使用，根据task_type不同而不同）"},
-                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
+                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list"},
                     }
                 }
             ),
 
-            # ===== 组件包管理 ⭐⭐ =====
             Tool(
                 name="package",
-                description=TOOL_SHORT_DESC["package"],
+                description="组件包编译安装/列出",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["install", "list"], "default": "install", "description": "操作类型: install=编译安装组件包, list=列出已安装的组件包"},
-                        "package_path": {"type": "string", "description": "[install] 包文件路径(.dproj/.dpk/.groupproj)"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "[install] 目标平台"},
-                        "build_configuration": {"type": "string", "default": "Debug", "description": "[install] 构建配置(Debug/Release)"},
-                        "timeout": {"type": "integer", "default": 300, "description": "[install] 超时时间(秒)"},
-                        "install": {"type": "boolean", "default": True, "description": "[install] 是否自动安装到 IDE"},
+                        "action": {"type": "string", "enum": ["install", "list"], "default": "install"},
                     },
                     "required": ["action"]
                 }
             ),
 
-            # ===== 编码规则（AI 必读）⭐⭐⭐ =====
             Tool(
                 name="get_coding_rules",
-                description=TOOL_SHORT_DESC["get_coding_rules"],
+                description="编码必用编码规则获取工具",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目路径（可选），用于查找项目自定义的编码规则文件(CODING_RULES.mdc)"},
-                        "section": {"type": "string", "description": "章节名称（可选），如 workflow/writing/review/safety/agent_rules/kb_search/format/compile/cleanup/kb_build。不传则返回工作流总览+章节索引"},
+                        "section": {"type": "string"},
                     }
                 }
             ),
 
-            # ===== 代码托管平台统一工具 =====
             Tool(
                 name="code_hosting",
-                description=TOOL_SHORT_DESC["code_hosting"],
+                description="Git操作+代码托管平台API",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "platform": {"type": "string", "enum": ["gitea", "github", "gitlab", "gitee", "gitcode"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
-                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "get_issue", "edit_issue", "set_labels", "close_issue", "add_comment", "list_issues", "create_pull", "get_pull", "list_pulls", "edit_pull", "merge_pull", "close_pull", "reopen_pull", "create_release", "get_release", "list_releases", "edit_release", "delete_release", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status", "git_diff", "git_show", "git_log", "git_fetch", "git_pull", "git_branch", "git_switch", "git_merge", "git_restore", "git_unstage", "git_stash", "git_tag"], "description": "操作类型: git_* 为 Git 本地操作（必须使用此工具，禁止用 bash 执行 git）；create_token/init_labels/create_issue 等为平台 API 操作"},
-                        "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
-                        "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
-                        "repo": {"type": "string", "description": "仓库名，格式 owner/repo (API 操作需要)"},
-                        "issue_number": {"type": "integer", "description": "工单编号 (get_issue/edit_issue/set_labels/close_issue/add_comment 需要)"},
-                        "pull_number": {"type": "integer", "description": "PR/MR 编号 (get_pull/edit_pull/merge_pull/close_pull/reopen_pull 需要)"},
-                        "release_id": {"type": "integer", "description": "Release ID (GitHub/Gitea/Gitee get/edit/delete release 需要)"},
-                        "title": {"type": "string", "description": "工单或 PR/MR 标题 (create_issue/create_pull 需要)"},
-                        "body": {"type": "string", "description": "正文内容，支持 Markdown (create_issue/add_comment/create_pull/create_release 等使用)"},
-                        "labels": {"type": "array", "items": {"type": "string"}, "description": "标签名称列表 (create_issue/edit_issue/set_labels 可选)"},
-                        "comment": {"type": "string", "description": "关闭工单时的说明 (close_issue 可选)"},
-                        "state": {"type": "string", "enum": ["open", "closed", "merged", "all"], "description": "工单/PR 过滤或修改状态；merged 仅用于 list_pulls 过滤，合并请用 merge_pull (list_issues/list_pulls/edit_issue/edit_pull 可选，默认 open)"},
-                        "page": {"type": "integer", "description": "分页页码 (list_issues/list_pulls/list_releases 可选，默认 1)"},
-                        "username": {"type": "string", "description": "用户名 (create_token 需要)"},
-                        "password": {"type": "string", "description": "密码 (create_token 需要)"},
-                        "token_name": {"type": "string", "description": "Token 名称 (create_token 可选，默认 delphi-mcp)"},
-                        "source_branch": {"type": "string", "description": "源分支 (create_pull 需要，edit_pull 可选)"},
-                        "target_branch": {"type": "string", "description": "目标分支 (create_pull 需要，edit_pull 可选)"},
-                        "tag_name": {"type": "string", "description": "Release 标签名 (create_release 需要；GitLab/GitCode get/edit/delete release 需要)"},
-                        "name": {"type": "string", "description": "Release 名称 (create_release/edit_release 可选)"},
-                        "target_commitish": {"type": "string", "description": "GitHub/Gitea/Gitee Release 目标提交 (create_release 可选)"},
-                        "draft": {"type": "boolean", "description": "GitHub/Gitea/Gitee Release 草稿标记 (create_release/edit_release 可选)"},
-                        "prerelease": {"type": "boolean", "description": "GitHub/Gitea/Gitee Release 预发布标记 (create_release/edit_release 可选)"},
-                        # Git 操作参数
-                        "dir": {"type": "string", "description": "Git 仓库本地路径 (git_* 操作需要)"},
-                        "repo_url": {"type": "string", "description": "远程仓库 URL (git_clone 需要)"},
-                        "mirror": {"type": "string", "description": "GitHub 镜像源地址，如 https://hub.fastgit.xyz (git_clone 可选)"},
-                        "branch": {"type": "string", "description": "分支名 (git_clone/git_push/git_fetch/git_pull/git_branch/git_switch/git_merge 可选)"},
-                        "message": {"type": "string", "description": "提交信息 (git_commit 需要)"},
-                        "files": {"type": "array", "items": {"type": "string"}, "description": "文件列表 (git_add/git_diff/git_log/git_restore/git_unstage/git_stash 可选/需要)"},
-                        "ref": {"type": "string", "description": "提交/分支/范围引用 (git_diff/git_show/git_log/git_fetch/git_pull/git_tag 需要)"},
-                        "staged": {"type": "boolean", "description": "查看 staged diff / restore staged 时使用"},
-                        "stat": {"type": "boolean", "description": "输出 diff/show 统计信息"},
-                        "name_only": {"type": "boolean", "description": "只输出文件名 (git_diff/git_show 可选)"},
-                        "limit": {"type": "integer", "description": "输出截断或日志条数 (git_diff/git_show/git_log 可选)"},
-                        "start_point": {"type": "string", "description": "新分支/新标签起点 (git_branch/git_switch/git_tag 可选)"},
-                        "source": {"type": "string", "description": "git_restore 的 --source 引用 (可选)"},
-                        "tag": {"type": "string", "description": "标签名 (git_tag 或 create_release/get_release/edit_release/delete_release 可选/需要)"},
-                        "delete": {"type": "boolean", "description": "删除分支/标签 (git_branch/git_tag 可选)"},
-                        "create": {"type": "boolean", "description": "创建并切换分支 (git_switch 可选)"},
-                        "prune": {"type": "boolean", "description": "git_fetch 使用 --prune"},
-                        "remote_branches": {"type": "boolean", "description": "git_branch 列出远程分支 (-a)"},
-                        "rebase": {"type": "boolean", "description": "git pull 使用 rebase 模式"},
-                        "ff_only": {"type": "boolean", "description": "git pull / git merge 使用 ff-only"},
-                        "no_commit": {"type": "boolean", "description": "git merge 使用 no-commit"},
-                        "async_mode": {"type": "boolean", "description": "git_fetch/git_pull/git_merge 使用后台任务执行，返回 task_id 后配合 async_task 查询"},
-                        "include_untracked": {"type": "boolean", "description": "git stash push 包含未跟踪文件"},
-                        "op": {"type": "string", "description": "git stash 操作: push/list/pop/apply/drop/show"},
-                        "remote": {"type": "string", "description": "远程名称 (git_push/git_push_retry 可选，默认 origin)"},
-                        "retry_interval": {"type": "integer", "description": "重试间隔秒数 (git_push_retry 可选，默认 300)"},
-                        "max_retries": {"type": "integer", "description": "最大重试次数 (git_push_retry 可选，默认 12)"},
-                        "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
+                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "get_issue", "edit_issue", "set_labels", "close_issue", "add_comment", "list_issues", "create_pull", "get_pull", "list_pulls", "edit_pull", "merge_pull", "close_pull", "reopen_pull", "create_release", "get_release", "list_releases", "edit_release", "delete_release", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status", "git_diff", "git_show", "git_log", "git_fetch", "git_pull", "git_branch", "git_switch", "git_merge", "git_restore", "git_unstage", "git_stash", "git_tag"]},
                     },
                     "required": ["action"]
                 }
             ),
 
-            # ===== 工具帮助（按需获取详细文档）=====
             Tool(
                 name="tool_help",
-                description=TOOL_SHORT_DESC["tool_help"],
+                description="获取工具的完整帮助文档",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "tool_name": {
                             "type": "string",
                             "enum": TOOL_NAMES,
-                            "description": "要查询的工具名",
-                        },
-                        "action": {
-                            "type": "string",
-                            "description": "可选，指定 action 名称时只返回该 action 的参数说明，减少无关信息干扰",
                         },
                     },
                     "required": ["tool_name"],
                 }
             ),
 
-            # ===== Daofy 自身更新管理 =====
             Tool(
                 name="daofy_update",
-                description="检查 Daofy 版本更新、执行 git pull 更新。发现新版本时智能提示中会自动通知。"
-                    " check/update 后台异步执行（类似 code_hosting），返回 task_id 配合 async_task 查进度。",
+                description="版本更新检查/git pull",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1128,59 +914,30 @@ async def run_server():
                             "type": "string",
                             "enum": ["check", "check_retry", "update", "update_retry", "version"],
                             "default": "check",
-                            "description": "check=快速检查(失败后自动后台重试), check_retry=强制后台重试(返回task_id), update=后台git pull, update_retry=后台自动重试git pull(返回task_id), version=当前版本号",
-                        },
-                        "retry_interval": {
-                            "type": "integer",
-                            "description": "重试间隔秒数 (update_retry 可选，默认 60)",
-                        },
-                        "max_retries": {
-                            "type": "integer",
-                            "description": "最大重试次数 (update_retry 可选，默认 10)",
-                        },
-                        "task_id": {
-                            "type": "string",
-                            "description": "异步任务ID (配合 async_task 工具查询状态/结果)",
                         },
                     },
                     "required": ["action"],
                 }
             ),
 
-            # ===== 经验记忆管理 =====
             Tool(
                 name="experience",
-                description=TOOL_SHORT_DESC["experience"],
+                description="经验记忆管理",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
                             "enum": ["save", "search", "get", "list", "update", "merge", "prune", "delete", "rebuild_embedding"],
-                            "description": "操作类型: save=保存经验(自动去重), search=语义搜索, get=查看详情, list=浏览列表, update=更新, merge=合并多条, prune=列出低价值待清理条目, delete=删除, rebuild_embedding=重建缺失向量(需模型已加载)",
                         },
-                        "problem": {"type": "string", "description": "[save] 问题描述"},
-                        "solution": {"type": "string", "description": "[save] 解决步骤"},
-                        "tools_used": {"type": "array", "items": {"type": "string"}, "description": "[save] 用到的工具列表"},
-                        "tags": {"type": "array", "items": {"type": "string"}, "description": "[save/search/list] 标签过滤"},
-                        "context": {"type": "object", "description": "[save] 上下文信息"},
-                        "query": {"type": "string", "description": "[search] 搜索关键词"},
-                        "top_k": {"type": "integer", "default": 5, "description": "[search] 返回条数"},
-                        "id": {"type": "string", "description": "[get/update/delete] 经验ID"},
-                        "ids": {"type": "array", "items": {"type": "string"}, "description": "[merge] 待合并的经验ID列表（至少2个）"},
-                        "keep": {"type": "string", "description": "[merge] 保留的目标ID（可选，不传则创建新记录）"},
-                        "sort_by": {"type": "string", "default": "updated_at", "enum": ["updated_at", "created_at", "hit_count", "score"], "description": "[list] 排序字段"},
-                        "limit": {"type": "integer", "default": 20, "description": "[list/prune] 返回条数"},
-                        "force": {"type": "boolean", "default": False, "description": "[save] 发现高相似度经验时仍强制新保存（跳过 >0.7 去重提醒层）"},
                     },
                     "required": ["action"],
                 }
             ),
 
-            # ===== 软著文档生成 =====
             Tool(
                 name="generate_copyright",
-                description=TOOL_SHORT_DESC.get("generate_copyright", "生成软著文档"),
+                description="生成软著文档",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1188,35 +945,15 @@ async def run_server():
                             "type": "string",
                             "enum": ["generate", "validate", "update_config", "status", "list", "generate_content", "audit"],
                             "default": "generate",
-                            "description": "操作类型: generate=生成文档; validate=检查配置; update_config=更新配置; status=检查环境; list=列出已生成; generate_content=生成草稿; audit=审计草稿",
-                        },
-                        "config": {
-                            "type": "object",
-                            "description": "配置更新（仅 action=update_config 时必需）",
-                        },
-                        "doc_type": {
-                            "type": "string",
-                            "enum": ["all", "source", "manual", "summary"],
-                            "default": "all",
-                            "description": "文档类型（仅 action=generate 时生效）",
-                        },
-                        "output_dir": {
-                            "type": "string",
-                            "description": "输出目录（可选，默认 docs/copyright）",
-                        },
-                        "project_path": {
-                            "type": "string",
-                            "description": "目标项目路径（config 存于 <project_path>/docs/copyright/copyright.json），不传时默认当前工作目录。",
                         },
                     },
                     "required": ["action"],
                 }
             ),
 
-            # ===== Delphi 自动化测试（GUI+控制台） =====
             Tool(
                 name="automate_delphi",
-                description=TOOL_SHORT_DESC.get("automate_delphi", "Delphi 自动化测试(GUI+控制台)"),
+                description="Delphi 自动化测试",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1224,96 +961,15 @@ async def run_server():
                             "type": "string",
                             "enum": ["auto", "gui", "console", "prepare"],
                             "default": "auto",
-                            "description": "模式: auto=自动检测(PE头), gui=命名管道GUI自动化(需链接DaofyAutomation单元), console=subprocess控制台交互(无需Delphi端改造), prepare=将DaofyAutomation路径注册到Delphi全局搜索路径",
-                        },
-                        "app_path": {
-                            "type": "string",
-                            "description": "Delphi exe 文件路径",
-                        },
-                        # ── GUI 模式参数 ──
-                        "script": {
-                            "anyOf": [
-                                {"type": "string"},
-                                {"type": "array", "items": {"type": "object"}},
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "steps": {"type": "array", "items": {"type": "object"}}
-                                    },
-                                    "required": ["steps"],
-                                }
-                            ],
-                            "description": "[gui] JSON 脚本（JSON 字符串、文件路径、命令对象数组，或包含 steps 的完整脚本对象）。"
-                                           " 推荐格式: {\"test_name\":\"smoke\",\"steps\":[{\"cmd\":\"goto\",\"target\":\"TMainForm\"}, ...]}"
-                                           " 简写格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
-                                            " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/formsum/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type)立即返回ACK；sync(goto/capture/waitfor/wait/dumpstate/listwnd/dlgscan/msgscan/msgclose/dlgfile/snapdir/exit/rget/rinspect/callgraph/callgraph_diff/callgraph_path/callgraph_impact/callgraph_select_tests/callgraph_failure_diag/callgraph_boundary_check/callgraph_refactor_check/callgraph_orphan_candidates/callgraph_explain_exception)阻塞等待。callgraph 为可选诊断命令，支持 direction=callees/callers、project_only、exclude_prefixes、include_prefixes、edge_limit，并返回 edge_count/returned_count/truncated，边包含 call_addr/call_file/call_line/category/from_category/to_category；callgraph_path 支持 source/target/max_depth/max_paths/include_prefixes，返回 found 和 paths；callgraph_diff 默认 compare_by=name，可选 addr/full；callgraph_impact 为 Python 侧影响分析命令，支持 functions/targets 或 file+line/locations，批量查询 callers；其他 callgraph_* 为 Python 侧用途层命令；Delphi 端需额外 uses DaofyAutomation.CallGraph 并生成 Detailed .map。",
-                        },
-                        "snapshots_dir": {
-                            "type": "string",
-                            "description": "[gui] 截图输出目录（可选，默认 docs/copyright/snapshots）",
-                        },
-                        "wait_timeout": {
-                            "type": "number",
-                            "default": 10,
-                            "description": "[gui] 等待 Delphi 管道就绪的超时秒数（默认 10s）",
-                        },
-                        # ── Console 模式参数 ──
-                        "input": {
-                            "type": "string",
-                            "default": "",
-                            "description": "[console] 发送到 stdin 的文本",
-                        },
-                        "expect": {
-                            "type": "string",
-                            "default": "",
-                            "description": "[console] 等待的 stdout 正则模式（expect 式等待，匹配即返回）",
-                        },
-                        "timeout": {
-                            "type": "number",
-                            "default": 30,
-                            "description": "[console] 超时秒数（默认 30s）",
-                        },
-                        "args": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "[console] 额外命令行参数",
-                        },
-                        # ── 公共参数 ──
-                        "env": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "anyOf": [
-                                    {"type": "string"},
-                                    {"type": "number"},
-                                    {"type": "boolean"},
-                                    {"type": "null"},
-                                ]
-                            },
-                            "description": "[gui/console] Temporary environment variables for the tested child process. Values are not persisted; null unsets a variable. GUI scripts may also declare top-level env/environment.",
-                        },
-                        "keep_alive": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "True=执行完后保持进程运行供后续复用，False=执行完退出（默认）",
-                        },
-                        "stop_on_failure": {
-                            "type": "boolean",
-                            "default": True,
-                            "description": "[gui] True=首个失败后停止执行后续依赖步骤，并在报告中标记 skipped；False=继续执行全部步骤",
                         },
                     },
                     "required": [],
                 }
             ),
 
-            # ===== OCR 图像文字识别（可选功能）⭐ =====
             Tool(
                 name="ocr",
-                description=(
-                    "图像分析: recognize(文字识别)/detect(文本框)/diff(截图对比)/"
-                    "color(颜色分析)/match(图标匹配)/status。"
-                    " 可选功能(pip install daofy-for-delphi[ocr])。"
-                ),
+                description="图像分析",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1322,86 +978,21 @@ async def run_server():
                             "enum": ["recognize", "detect", "status",
                                      "diff", "color", "match"],
                             "default": "recognize",
-                            "description": "recognize/detect/status/diff/color/match",
-                        },
-                        "image_path": {
-                            "type": "string",
-                            "description": "[recognize/detect/color/match] 图片路径",
-                        },
-                        "baseline": {
-                            "type": "string",
-                            "description": "[diff] 基线截图路径",
-                        },
-                        "current": {
-                            "type": "string",
-                            "description": "[diff] 当前截图路径",
-                        },
-                        "threshold": {
-                            "type": "number",
-                            "description": "[diff]像素差异阈值0-255(默认10) / [match]匹配阈值0-1(默认0.8)",
-                        },
-                        "output_dir": {
-                            "type": "string",
-                            "description": "[diff] 差异图输出目录",
-                        },
-                        "region": {
-                            "type": "array",
-                            "items": {"type": "number"},
-                            "description": "[color] 分析区域 [x,y,w,h]",
-                        },
-                        "template_path": {
-                            "type": "string",
-                            "description": "[match] 模板图标路径",
                         },
                     },
                     "required": [],
                 }
             ),
 
-            # ===== Delphi RTTI 桥接 ⭐ =====
             Tool(
                 name="delphi_rtti",
-                description=(
-                    "Delphi RTTI 桥接 — 通过 RTTI 发现和调用 Delphi 应用程序的运行时能力。\n"
-                    "三步法：\n"
-                    "① discover(app_path, class_name?) → 扫描 RTTI 暴露的方法和参数 Schema\n"
-                    "② call(app_path, class_name, method, params) → 调用方法\n"
-                    "③ guide → 返回完整使用指南\n"
-                    "💡 首次使用先 action='guide' 获取完整说明。"
-                ),
+                description="RTTI 发现/调用",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
                             "enum": ["guide", "discover", "call"],
-                            "description": "操作类型: guide=使用指南, discover=发现能力, call=调用方法",
-                        },
-                        "app_path": {
-                            "type": "string",
-                            "description": "Delphi exe 文件路径（discover/call 需要，guide 不需要）",
-                        },
-                        "class_name": {
-                            "type": "string",
-                            "description": "目标类名（discover/call），为空则扫描所有类",
-                        },
-                        "method": {
-                            "type": "string",
-                            "description": "方法名（call 时需要）",
-                        },
-                        "params": {
-                            "type": "object",
-                            "description": "方法参数（call 时需要），如 {\"customerName\": \"张三\"}",
-                        },
-                        "keep_alive": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "是否保持进程运行供后续复用",
-                        },
-                        "force": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "是否强制刷新发现缓存",
                         },
                     },
                     "required": ["action"],

@@ -172,6 +172,7 @@ type
 
     // ── MessageBox / 文件对话框操作（纯 Win32）──
 
+    class function FindProcessDialog(AStartAfter: HWND = 0): HWND; static;
     function DoMsgScan: string;
     function DoMsgClick(const Param: string): string;
     function DoDlgFile(const APath, ATarget: string): string;
@@ -634,14 +635,14 @@ begin
 
       else if Cmd = 'msgclose' then begin
         var hMsgWnd: Winapi.Windows.HWND;
-        hMsgWnd := FindWindowW('#32770', nil);
+        hMsgWnd := FindProcessDialog(0);
         while hMsgWnd <> 0 do begin
           GetWindowTextW(hMsgWnd, Buf, 256);
           if (Target = '') or (Pos(Target, string(Buf)) > 0) then begin
             SendMessage(hMsgWnd, WM_CLOSE, 0, 0);
             Break;
           end;
-          hMsgWnd := GetNextWindow(hMsgWnd, GW_HWNDNEXT);
+          hMsgWnd := FindProcessDialog(hMsgWnd);
         end;
         Result := WriteResp(ReqId, 'ok', 'OK');
       end
@@ -937,6 +938,20 @@ begin
   end;
 end;
 
+class function TAutomationProcessorBase.FindProcessDialog(AStartAfter: HWND): HWND;
+var
+  WindowPID: DWORD;
+begin
+  Result := FindWindowExW(0, AStartAfter, '#32770', nil);
+  while Result <> 0 do begin
+    WindowPID := 0;
+    GetWindowThreadProcessId(Result, @WindowPID);
+    if WindowPID = GetCurrentProcessId then
+      Exit;
+    Result := FindWindowExW(0, Result, '#32770', nil);
+  end;
+end;
+
 { ── MessageBox 扫描/点击（纯 Win32 API，框架无关）── }
 
 function TAutomationProcessorBase.DoMsgScan: string;
@@ -947,20 +962,6 @@ var
   Buf: array[0..511] of Char;
   TextValue: string;
 
-  function FindDialog: HWND;
-  var
-    ClassBuf: array[0..255] of Char;
-  begin
-    Result := GetForegroundWindow;
-    if Result <> 0 then begin
-      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
-      GetClassNameW(Result, ClassBuf, 255);
-      if not SameText(string(ClassBuf), '#32770') then
-        Result := 0;
-    end;
-    if Result = 0 then
-      Result := FindWindowW('#32770', nil);
-  end;
 
   procedure ScanChildren(AParent: HWND);
   var
@@ -987,7 +988,7 @@ var
   end;
 begin
   if FSSDir = '' then Exit('NODIR');
-  hDlg := FindDialog;
+  hDlg := FindProcessDialog(0);
   if hDlg = 0 then Exit('NOD');
 
   Root := TJSONObject.Create;
@@ -1017,20 +1018,6 @@ var
   ID: Integer;
   TargetText: string;
 
-  function FindDialog: HWND;
-  var
-    ClassBuf: array[0..255] of Char;
-  begin
-    Result := GetForegroundWindow;
-    if Result <> 0 then begin
-      FillChar(ClassBuf, SizeOf(ClassBuf), 0);
-      GetClassNameW(Result, ClassBuf, 255);
-      if not SameText(string(ClassBuf), '#32770') then
-        Result := 0;
-    end;
-    if Result = 0 then
-      Result := FindWindowW('#32770', nil);
-  end;
 
   function FindButton(AParent: HWND): HWND;
   var
@@ -1059,7 +1046,7 @@ var
     end;
   end;
 begin
-  hDlg := FindDialog;
+  hDlg := FindProcessDialog(0);
   if hDlg = 0 then Exit('NOD');
 
   ID := BtnID(Param);
@@ -1254,7 +1241,7 @@ var
   Buf: array[0..511] of Char;
   TargetText: string;
 begin
-  hDlg := FindWindowW('#32770', nil);
+  hDlg := FindProcessDialog(0);
   if hDlg = 0 then Exit('NOD');
 
   TargetText := StringReplace(LowerCase(ATarget), '&', '', [rfReplaceAll]);

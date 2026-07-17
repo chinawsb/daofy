@@ -372,13 +372,17 @@ def _read_pipe_message_poll(
         _SetNPHState(handle, ctypes.byref(restore_mode), None, None)
 
 
-def _send_command_on_handle(handle: int, cmd: str) -> str:
+def _send_command_on_handle(
+    handle: int,
+    cmd: str,
+    timeout_ms: int = PIPE_TIMEOUT_MS,
+) -> str:
     if not _write_pipe(handle, cmd.encode('utf-8')):
         return f'ERR:write_failed (err={_GetLastError()})'
 
-    raw = _read_pipe_message(handle)
+    raw = _read_pipe_message_poll(handle, timeout_ms=timeout_ms)
     if raw is None:
-        return f'ERR:read_failed (err={_GetLastError()})'
+        return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
     return raw.decode('utf-8', errors='replace').strip()
 
 
@@ -409,7 +413,7 @@ def _send_command_to_pipe(pipe_name: str, cmd: str, timeout_ms: int = PIPE_TIMEO
             if session_handle is None:
                 return f'ERR:pipe_unavailable (err={_GetLastError()})'
             _pipe_session.handle = session_handle
-        response = _send_command_on_handle(session_handle, cmd)
+        response = _send_command_on_handle(session_handle, cmd, timeout_ms)
         if _is_pipe_io_error(response):
             _CloseHandle(session_handle)
             _pipe_session.handle = None
@@ -420,7 +424,7 @@ def _send_command_to_pipe(pipe_name: str, cmd: str, timeout_ms: int = PIPE_TIMEO
         return f'ERR:pipe_unavailable (err={_GetLastError()})'
 
     try:
-        return _send_command_on_handle(handle, cmd)
+        return _send_command_on_handle(handle, cmd, timeout_ms)
     finally:
         _CloseHandle(handle)
 
@@ -487,6 +491,8 @@ def _extract_actual(cmd: str, resp: dict) -> str:
         return str(resp.get('data', ''))
     if cmd in ('uiaget', 'get', 'uiaclick', 'uiagoto', 'uiawait', 'uiaset', 'set'):
         return resp.get('data', '')
+    if cmd == 'analyze':
+        return str(resp.get('element_count', 0))
     return str(resp.get('data', ''))
 
 
@@ -1819,9 +1825,14 @@ def _check_assert(step: dict, resp: dict) -> dict:
         ast.parse(expression, mode='eval')
         loc = {
             'actual': actual,
+            'elements': resp.get('elements', []),
+            'element_count': resp.get('element_count', 0),
             're': __import__('re'),
             'len': len, 'str': str, 'int': int,
             'float': float, 'bool': bool,
+            'any': any, 'all': all,
+            'sum': sum, 'min': min, 'max': max,
+            'sorted': sorted, 'filter': filter, 'map': map,
         }
         result = bool(eval(expression, {"__builtins__": {}}, loc))
     except SyntaxError as e:
@@ -2183,7 +2194,7 @@ def _ensure_process(
             'last_used': time.time(),
             'env_fingerprint': env_fingerprint,
         }
-        _ensure_pool_cleanup_thread()  # 首次使用时启动清理线程
+    _ensure_pool_cleanup_thread()  # 首次使用时启动清理线程
     return True, ''
 
 def _kill_process(app_path: str):
@@ -2812,6 +2823,49 @@ def _execute_script_unlocked(app_path: str, script,
                 'status': 'ok',
             })
 
+            assert_result = _check_assert(step, resp_json)
+            results[-1]['assert_result'] = assert_result
+            if not assert_result.get('passed', True):
+                results[-1]['status'] = 'assert_fail'
+                success = False
+            time.sleep(POLL_INTERVAL_AUTOMATION)
+            continue
+
+        # ═══════════════ analyze ═══════════════
+        # capture + OCR 分析，返回结构化 UI 元素列表
+        if cmd == 'analyze':
+            import os as _os
+            # 强制截图
+            cap_name = target or f'analyze_{req_id}'
+            cap_raw = _send_command(json.dumps(
+                {"reqId": f"cap_{req_id}", "cmd": "capture", "target": cap_name},
+                ensure_ascii=False))
+            cap_resp = _decode_response(cap_raw)
+            cap_ok = cap_resp.get('status', 'err') in ('ok', 'ack')
+            cap_path = cap_resp.get('path', '')
+            if not cap_ok or not _os.path.isfile(cap_path):
+                resp_json = {'status': 'err', 'data': 'capture_failed', 'path': cap_path}
+            else:
+                try:
+                    from src.tools.ocr import handle_ocr
+                    analyze_result = handle_ocr({'action': 'analyze', 'image_path': cap_path})
+                    resp_json = {
+                        'status': 'ok',
+                        'data': json.dumps(analyze_result, ensure_ascii=False),
+                        'path': cap_path,
+                        'elements': analyze_result.get('elements', []),
+                        'element_count': analyze_result.get('element_count', 0),
+                        'summary': analyze_result.get('summary', ''),
+                    }
+                except Exception as e:
+                    resp_json = {'status': 'err', 'data': f'analyze_failed: {e}', 'path': cap_path}
+            results.append({
+                'step': step, 'command': f'analyze {cap_name}',
+                'response': resp_json,
+                'status': 'ok' if resp_json.get('status') == 'ok' else 'error',
+                'capture': cap_name,
+                'capture_response': cap_resp,
+            })
             assert_result = _check_assert(step, resp_json)
             results[-1]['assert_result'] = assert_result
             if not assert_result.get('passed', True):

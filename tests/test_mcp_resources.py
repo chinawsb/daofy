@@ -328,3 +328,9 @@ def test_inline_automation_units_expose_deterministic_failure_codes() -> None:
     assert "WriteResp(ReqId, 'err', 'NF:' + Target)" in fmx_source
     assert "WriteResp(ReqId, 'ok', DoMsgScan)" in base_source
     assert "WriteResp(ReqId, 'ok', 'scanned')" not in base_source
+    assert "class function FindProcessDialog" in base_source
+    assert "GetWindowThreadProcessId(Result, @WindowPID)" in base_source
+    assert "WindowPID = GetCurrentProcessId" in base_source
+    assert "FindWindowW('#32770', nil)" not in base_source
+    assert "FindWindowW('#32770', nil)" not in vcl_source
+    assert "FindWindowW('#32770', nil)" not in fmx_source

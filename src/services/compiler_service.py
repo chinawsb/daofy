@@ -1054,6 +1054,9 @@ class CompilerService:
             # 条件编译符号
             if request.options.conditional_defines:
                 defines = ";".join(request.options.conditional_defines)
+                # MSBuild 命令行上分号是属性分隔符，必须转义为 %3B
+                # 经批处理文件传递时 % 需写为 %% 才能被 cmd.exe 正确展开
+                defines = defines.replace(";", "%%3B")
                 args.append(f"/p:DCC_Define={defines}")
             
             # 单元搜索路径

@@ -139,8 +139,8 @@ var
 begin
   Result := 'NO_WIN';
 
-  // ① 优先截 MessageBox（#32770 类）
-  hWin := FindWindowW('#32770', nil);
+  // ① 优先截取当前被测进程的 MessageBox（#32770 类）
+  hWin := FindProcessDialog(0);
   // ② 否则取活动窗体
   if hWin = 0 then
     if Screen.ActiveForm <> nil then

@@ -11,6 +11,9 @@ Actions:
   diff       — 截图差异对比：比较两张截图，返回视觉变化区域
   color      — 区域颜色分析：分析指定区域的平均色/主色/亮度
   match      — 图标模板匹配：在截图中查找指定图标/图案
+  analyze    — [统一截图分析] 串联 OCR + OpenCV 检测 + 布局 + 颜色，
+               返回结构化元素列表（含 type/text/rect/state/paired_label），
+               供 LLM 直接从文本推理 UI 结构，不需要多模态模型。
 """
 
 import logging
@@ -247,6 +250,237 @@ def _bbox_overlap(a: list, b: list) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 统一截图分析（串联 OCR + Detection + 布局 + 颜色）
+# ═══════════════════════════════════════════════════════════════
+
+
+def _bbox_iou(a_box: list, b_box: list) -> float:
+    """计算两个 bbox 的 IoU，兼容 OCR 四点格式 [[x1,y1],[x2,y2],...]。"""
+    # 兼容四点格式 → [x1,y1,x2,y2]
+    def _to_xyxy(box):
+        if isinstance(box[0], list):
+            xs = [p[0] for p in box]
+            ys = [p[1] for p in box]
+            return [min(xs), min(ys), max(xs), max(ys)]
+        return box
+
+    a = _to_xyxy(a_box)
+    b = _to_xyxy(b_box)
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    xi1 = max(ax1, bx1)
+    yi1 = max(ay1, by1)
+    xi2 = min(ax2, bx2)
+    yi2 = min(ay2, by2)
+    inter = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+    a_area = (ax2 - ax1) * (ay2 - ay1)
+    b_area = (bx2 - bx1) * (by2 - by1)
+    union = a_area + b_area - inter
+    return inter / union if union > 0 else 0
+
+
+def _infer_element_state(img, x: int, y: int, w: int, h: int) -> str:
+    """基于颜色分析推断 UI 元素状态（enabled/disabled）。
+    
+    简单启发式：平均亮度低 + 低标准偏差 + 低饱和度 → disabled。
+    """
+    import numpy as np
+
+    img_h, img_w = img.shape[:2]
+    x = max(0, x)
+    y = max(0, y)
+    w = min(w, img_w - x)
+    h = min(h, img_h - y)
+    if w <= 0 or h <= 0:
+        return "enabled"
+
+    roi = img[y:y + h, x:x + w].astype(np.float32)
+    brightness = (roi[:, :, 0] * 0.299 + roi[:, :, 1] * 0.587 + roi[:, :, 2] * 0.114) / 255.0
+    avg_b = float(np.mean(brightness))
+    std_b = float(np.std(brightness))
+
+    # 饱和度
+    r, g, b = roi[:, :, 0], roi[:, :, 1], roi[:, :, 2]
+    max_rgb = np.maximum(np.maximum(r, g), b).astype(float)
+    min_rgb = np.minimum(np.minimum(r, g), b).astype(float)
+    sat = float(np.mean((max_rgb - min_rgb) / (max_rgb + 1e-6)))
+
+    # 灰暗 + 低对比度 → disabled
+    if avg_b < 0.45 and std_b < 20 and sat < 0.15:
+        return "disabled"
+    return "enabled"
+
+
+def _pair_labels_with_inputs(elements: list[dict]):
+    """将标签文字与相邻输入框配对（就地修改）。
+    
+    规则：
+    - 标签检测：以 ':'/':'/':' 结尾的文字
+    - 输入框在标签右侧，垂直对齐相近
+    """
+    labels = []
+    inputs = []
+    for elem in elements:
+        text = elem.get("text", "").strip()
+        if text.endswith(":") or text.endswith("：") or text.endswith(":"):
+            labels.append(elem)
+            elem["role"] = "label"
+        elif elem.get("type") in ("edit", "combobox", "listbox", "memo", "textbox", "dropdown"):
+            inputs.append(elem)
+
+    for label in labels:
+        lr = label["rect"]
+        cy = lr["y"] + lr["h"] / 2
+        right = lr["x"] + lr["w"]
+
+        best = None
+        best_dist = float("inf")
+        for inp in inputs:
+            ir = inp["rect"]
+            in_cy = ir["y"] + ir["h"] / 2
+            if ir["x"] < right - 5:
+                continue
+            y_dist = abs(cy - in_cy)
+            if y_dist > max(lr["h"], ir["h"]) * 2:
+                continue
+            dist = (ir["x"] - right) + y_dist * 2
+            if dist < best_dist:
+                best_dist = dist
+                best = inp
+
+        if best:
+            best["paired_label"] = text.rstrip(":： ").strip()
+            best["paired_label_rect"] = label["rect"]
+
+
+def _get_detector():
+    """自动选择检测后端：自定义训练模型 → 通用 YOLO → OpenCV（回退）。
+    
+    Returns:
+        (detector, backend_name) 
+    """
+    base = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    
+    # 1. 优先使用自定义训练的 Delphi 模型
+    custom_path = os.path.join(base, "data", "yolo_models", "daofy_train.onnx")
+    if os.path.isfile(custom_path):
+        try:
+            from src.detection.yolo_onnx import YOLOONNXDetector
+            class_names = {
+                0: "TButton", 1: "TEdit", 2: "TLabel", 3: "TComboBox",
+                4: "TCheckBox", 5: "TRadioButton", 6: "TListBox", 7: "TPanel",
+                8: "TGroupBox", 9: "TPageControl", 10: "TTabSheet", 11: "TStringGrid",
+                12: "TMemo", 13: "TListView", 14: "TTreeView", 15: "TProgressBar",
+                16: "TTrackBar", 17: "TScrollBar", 18: "TScrollBox", 19: "TStatusBar",
+            }
+            return YOLOONNXDetector(custom_path, conf_thresh=0.3, class_names=class_names), "yolo+custom"
+        except Exception as e:
+            logger.warning(f"自定义模型加载失败，尝试通用模型: {e}")
+
+    # 2. 回退到通用 Windows UI 模型
+    yolo_path = os.path.join(base, "data", "yolo_models", "windows-ui-locator.onnx")
+    if os.path.isfile(yolo_path):
+        try:
+            from src.detection.yolo_onnx import YOLOONNXDetector
+            class_names = {
+                0: "button", 1: "textbox", 2: "checkbox",
+                3: "dropdown", 4: "icon", 5: "tab", 6: "menu_item",
+            }
+            return YOLOONNXDetector(yolo_path, conf_thresh=0.3, class_names=class_names), "yolo"
+        except Exception as e:
+            logger.warning(f"通用 YOLO 加载失败，回退 OpenCV: {e}")
+
+    from src.detection.opencv_detector import OpenCVDetector
+    return OpenCVDetector(), "opencv"
+
+
+def _analyze_screenshot(image_path: str) -> dict:
+    """统一截图分析：串联 OCR + YOLO/OpenCV 检测 + 布局 + 颜色。
+    
+    Args:
+        image_path: 截图路径
+        
+    Returns:
+        {
+            elements: [{type, class_hint, text, rect, state, paired_label?}],
+            layout: {树形布局},
+            summary: "共N个元素: ...",
+            ...
+        }
+    """
+    import cv2
+
+    img = cv2.imread(image_path)
+    if img is None:
+        raise FileNotFoundError(f"无法读取图片: {image_path}")
+
+    h, w = img.shape[:2]
+
+    # 1. OCR 识别文字
+    svc = get_ocr_service()
+    ocr_results = svc.recognize(image_path)
+
+    # 2. UI 元素检测（YOLO → OpenCV 回退）
+    from src.detection.layout_parser import LayoutParser
+
+    detector, backend = _get_detector()
+    detections = detector.detect(image_path)
+
+    # 3. 合并 OCR → 检测结果
+    elements = []
+    for det in detections:
+        det_box = [det.x, det.y, det.x + det.w, det.y + det.h]
+        matched = [(ocr["text"], _bbox_iou(det_box, ocr["box"]))
+                   for ocr in ocr_results if _bbox_iou(det_box, ocr["box"]) > 0.1]
+        text = max(matched, key=lambda x: x[1])[0] if matched else ""
+
+        state = _infer_element_state(img, det.x, det.y, det.w, det.h)
+
+        elements.append({
+            "type": det.class_name.removeprefix("T").lower(),
+            "class_hint": det.class_name,
+            "text": text,
+            "rect": {"x": det.x, "y": det.y, "w": det.w, "h": det.h},
+            "confidence": det.confidence,
+            "state": state,
+        })
+
+    # 4. Label-Input 配对
+    _pair_labels_with_inputs(elements)
+
+    # 5. 布局树
+    parser = LayoutParser()
+    layout_roots = parser.build_hierarchy(detections)
+    layout_json = parser.to_json(layout_roots, image_path) if layout_roots else {}
+
+    # 6. 摘要
+    type_counts: dict[str, int] = {}
+    enabled = disabled = 0
+    for el in elements:
+        t = el["type"]
+        type_counts[t] = type_counts.get(t, 0) + 1
+        if el["state"] == "disabled":
+            disabled += 1
+        else:
+            enabled += 1
+
+    parts = [f"{c}个{t}" for t, c in sorted(type_counts.items(), key=lambda x: x[1], reverse=True)]
+
+    return {
+        "status": "ok",
+        "action": "analyze",
+        "backend": backend,
+        "image": os.path.basename(image_path),
+        "dimensions": {"width": w, "height": h},
+        "element_count": len(elements),
+        "elements": elements,
+        "layout": layout_json,
+        "state_summary": f"{enabled}个enabled / {disabled}个disabled",
+        "summary": f"共{len(elements)}个元素: {', '.join(parts)}",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
 # MCP Tool Handler
 # ═══════════════════════════════════════════════════════════════
 
@@ -256,7 +490,7 @@ def handle_ocr(arguments: dict) -> dict:
 
     Args:
         arguments: 工具参数
-            action: "recognize"|"detect"|"status"|"diff"|"color"|"match"
+            action: "recognize"|"detect"|"status"|"diff"|"color"|"match"|"analyze"
             image_path: 图片路径
             baseline/current: diff 的两张图片
             template_path: match 的模板图片
@@ -330,9 +564,12 @@ def handle_ocr(arguments: dict) -> dict:
             return {"status": "ok", "action": "detect",
                     "count": len(results), "results": results}
 
+        elif action == "analyze":
+            return _analyze_screenshot(image_path)
+
         else:
             return {"status": "failed",
-                    "error": "未知 action，支持: recognize/detect/status/diff/color/match"}
+                    "error": "未知 action，支持: recognize/detect/status/diff/color/match/analyze"}
 
     except FileNotFoundError as e:
         return {"status": "failed", "error": str(e)}

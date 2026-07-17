@@ -276,8 +276,8 @@ var
 begin
   Result := 'NO_WIN';
 
-  // Win32 对话框检测（#32770 类 = MessageBox/OpenDialog 等标准对话框）
-  var hDlg := FindWindowW('#32770', nil);
+  // 仅检测当前被测进程的 Win32 对话框，避免捕获其他应用窗口。
+  var hDlg := FindProcessDialog(0);
   if hDlg <> 0 then begin
     Result := CaptureWin32WndToJPEG(hDlg, AFile);
     if Result = 'OK' then
