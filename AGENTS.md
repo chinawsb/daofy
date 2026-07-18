@@ -71,7 +71,7 @@ src/
 | 步骤 | 调用的 MCP 工具 | 说明 |
 |------|----------------|------|
 | ① 环境检查 | `check_environment(action="check")` | 确认编译器可用 |
-| ② 编码规则 | `get_coding_rules(project_path=...)` | 获取 Delphi 编码规范 |
+| ② 编码规则 | `get_coding_rules(section="workflow")` | 获取编码规范，`language="delphi"`（默认）或 `"lazarus"` |
 | ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `get_coding_rules(section="kb_search")` / `delphi://coding-rules` ② 节） |
 | ④ 读源码 | `delphi_file(action="read", file_path=...)` | 读取文件确认修改点 |
 | ⑤ 写代码 | `delphi_file(action="write", edits=[...])` | 写入代码（自动备份到 __history） |
