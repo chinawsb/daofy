@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.07.17] - 2026-07-17
+
+### Added
+
+- **Lazarus/Free Pascal 插件** (`src/plugins/lazarus/`): 完整的 Lazarus 工具链支持，通过插件可用性检测自动注册
+  - `lazarus_compile`: 使用 lazbuild 编译 `.lpi`/`.lpr` 项目（日志含 FPC 行号+错误码）
+  - `lazarus_project`: 解析 `.lpi` 项目信息（info/units/options 三种 action）
+  - `lazarus_kb`: 独立 FPC/LCL 源码知识库（`data/lazarus-knowledge-base/`），复用共享 ZVec 引擎
+  - `lazarus_file`: 文件读写工具（read/write/backup），限制 action 范围（薄包装 `file_tool.py`）
+- **插件可用性检测**: `CompilerPlugin.is_available()` 方法，启动时检查开发工具（lazbuild.exe 等）是否安装，不安装则跳过该插件的工具注册
+- **Lazarus 编码规则** (`coding-rules/lazarus/`): FPC 工作流/编码/编译/审核规则
+- **`get_coding_rules` 多语言支持**: 新增 `language` 参数（`"delphi"`/`"lazarus"`），语言相关的章节映射（`LAZARUS_SECTION_KEYS`）
+- **`OutputParser` FPC 格式支持**: 新增 `FPC_MESSAGE_PATTERN` 和 `FPC_FATAL_PATTERN`，解析 `File(13,3) Fatal: (2003) message` 格式
+
+### Fixed
+
+- **`uses` 子句排序不再重排已有单元**: 改为命名空间分组插入（System → Winapi → Vcl → Data → other），保留原始相对顺序，避免 `Winapi.Windows` 和 `Vcl.Graphics` 顺序变动导致 `TBitmap` 类型解析错误
+- **`_read_first_existing_text` 支持多目录合并**: 现在可合并 `shared/` + `language/` 两个目录的 `.md` 文件
+- **`ProjectCompileRequest` 扩展名验证**: 支持 `.lpi`/`.lpr` 格式（原仅 `.dproj`/`.dpr`/`.dpk`）
+
+### Changed
+
+- **`coding-rules/` 目录重构**: 拆分为 `delphi/`（Delphi 专有）、`lazarus/`（Lazarus 专有）、`shared/`（通用规则）三级结构
+- **MCP 资源 `delphi://coding-rules`**: 指向 `coding-rules/delphi/index.md`
+- **文档同步**: README.md 更新为多语言描述、MCP 工具表分组、系统要求补充 Lazaus/FPC 选项
+
 ## [2026.07.13] - 2026-07-13
 
 ### Added

@@ -20,6 +20,7 @@ Daofy — Python 3.10-3.14, Windows, pytest.
 ```
 src/
 ├── server.py              # MCP entry point
+├── plugins/               # Language plugin system (base, registry, delphi/, lazarus/, core/)
 ├── tools/                 # MCP tool implementations (delphi_file, code_hosting, delphi_project, delphi_kb, ...)
 ├── services/              # Business logic
 │   ├── compiler_service.py, config_manager.py, process_manager.py, args_generator.py
@@ -31,7 +32,7 @@ src/
 │   ├── rtti_bridge.py            # Delphi RTTI 桥接服务
 │   └── knowledge_base/           # KB modules (schema, smart_cache, project, thirdparty, scan, embedding, async_task_manager)
 ├── models/                # Pydantic/dataclass models
-└── utils/                 # Utilities (delphi_env, dproj_parser, validator, logger)
+└── utils/                 # Utilities (delphi_env, dproj_parser, lpi_parser, validator, logger, parser)
 ```
 
 ## 知识库自动生命周期
@@ -70,7 +71,7 @@ src/
 | 步骤 | 调用的 MCP 工具 | 说明 |
 |------|----------------|------|
 | ① 环境检查 | `check_environment(action="check")` | 确认编译器可用 |
-| ② 编码规则 | `get_coding_rules(project_path=...)` | 获取项目编码规范 |
+| ② 编码规则 | `get_coding_rules(project_path=...)` | 获取 Delphi 编码规范 |
 | ③ API 搜索 | `delphi_kb(query=...)` | 搜索 API 定义（详见 `get_coding_rules(section="kb_search")` / `delphi://coding-rules` ② 节） |
 | ④ 读源码 | `delphi_file(action="read", file_path=...)` | 读取文件确认修改点 |
 | ⑤ 写代码 | `delphi_file(action="write", edits=[...])` | 写入代码（自动备份到 __history） |
@@ -86,6 +87,19 @@ src/
 - **⑨ runtime 检查**: 扫描 .pas/.dfm 中组件类名，匹配 `src/rules/runtime_registry.json` 规则表，检测是否遗漏必需 uses 单元（如 FireDAC.DApt）。独立于编译步骤，纯源码级分析。
 
 > 详细 KB 搜索策略、优先级规则、kb_type 范围、Entity Kind Codes 见 `get_coding_rules(section="kb_search")` / `delphi://coding-rules` ② 节。
+
+### 编辑 Lazarus/FPC 文件前
+
+| 步骤 | 调用的 MCP 工具 | 说明 |
+|------|----------------|------|
+| ① 编码规则 | `get_coding_rules(language="lazarus", section="workflow")` | 获取 Lazarus 编码规范 |
+| ② 项目信息 | `lazarus_project(action="info", project_path=...)` | 查看 `.lpi` 项目结构 |
+| ③ 读源码 | `lazarus_file(action="read", file_path=...)` | 读取文件确认修改点 |
+| ④ 写代码 | `lazarus_file(action="write", edits=[...])` | 写入代码（自动备份到 __history） |
+| **⑤ 编译验证** | **`lazarus_compile(project_path=".lpi")`** | **lazbuild 编译项目** |
+| ⑥ 查 API | `lazarus_kb(action="search", query=...)` | 搜索 LCL/FPC 源码定义 |
+
+> 注意：Lazarus 没有 Delphi 的 DFM/uses 管理/自动化测试等专有功能，相关工具（delphi_file 的 format/grep/uses、manage_component、automate_delphi）在 Lazarus 工作流中不可用。请使用 `lazarus_file` 的 read/write/backup 代替。
 
 ## Code Style (Python)
 
