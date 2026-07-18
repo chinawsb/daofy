@@ -15,7 +15,7 @@ check_environment(action="check")
 ### ② 查 API（FPC 文档）
 FPC 标准库文档可查阅 Free Pascal 官方文档或通过知识库搜索：
 ```
-delphi_kb(query="TStringList", kb_type="document")
+lazarus_kb(action="search", query="TStringList")
 ```
 
 ### ③ 编码

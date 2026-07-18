@@ -277,12 +277,12 @@ CORE_HANDLERS = {
 
 CORE_TOOL_DESCRIPTIONS: dict[str, str] = {
     "async_task": "异步任务管理",
-    "code_hosting": "Git操作+代码托管平台API",
-    "tool_help": "获取工具的完整帮助文档",
-    "experience": "经验记忆管理",
-    "daofy_update": "版本更新检查/git pull",
-    "generate_copyright": "生成软著文档",
-    "ocr": "图像分析",
+    "code_hosting": "Git 操作和代码托管平台 API。参数随 action 变化；调用前先执行 tool_help(tool_name='code_hosting', action='<action>')。",
+    "tool_help": "按工具名和可选 action 获取按需帮助文档、参数说明与示例",
+    "experience": "经验记忆管理。参数随 action 变化；调用前先执行 tool_help(tool_name='experience', action='<action>')。",
+    "daofy_update": "版本更新检查和 git pull。参数随 action 变化；调用前先执行 tool_help(tool_name='daofy_update', action='<action>')。",
+    "generate_copyright": "生成软著文档。参数随 action 变化；调用前先执行 tool_help(tool_name='generate_copyright', action='<action>')。",
+    "ocr": "图像分析。参数随 action 变化；调用前先执行 tool_help(tool_name='ocr', action='<action>')。",
 }
 
 CORE_TOOL_SCHEMAS: dict[str, dict] = {
@@ -321,6 +321,10 @@ CORE_TOOL_SCHEMAS: dict[str, dict] = {
             "tool_name": {
                 "type": "string",
                 "enum": TOOL_NAMES,
+            },
+            "action": {
+                "type": "string",
+                "description": "可选；只返回指定工具 action 的参数说明和示例",
             },
         },
         "required": ["tool_name"],

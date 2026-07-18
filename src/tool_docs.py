@@ -18,7 +18,7 @@ TOOL_HELP_DOCS: dict = {
         "constraints": [
             "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）",
         ],
-        "workflow": "tool_help(delphi_project) → delphi_project(action=...) 查看各 action 参数 → 调用",
+        "workflow": "tool_help(tool_name=\"delphi_project\", action=\"<action>\") → delphi_project(action=...) 查看当前 action 参数 → 调用",
         "actions": {
             "compile": "编译 .dproj/.dpr/.dpk 项目",
             "compile_file": "检查 .pas 文件语法（快捷方式，等价于 compile + .pas）",

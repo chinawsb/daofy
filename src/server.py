@@ -132,7 +132,7 @@ def _filter_surrogates(text: str) -> str:
 
 
 MCP_SERVER_INSTRUCTIONS = (
-    "Daofy:Delphi 文件必用 delphi_file 处理，编码前 get_coding_rules，参数用 tool_help(tool_name, action_name)获取"
+    "Daofy:Delphi 文件必用 delphi_file 处理，编码前 get_coding_rules；复杂工具调用前先用 tool_help(tool_name, action) 获取当前 action 的参数"
 )
 
 MCP_SERVER_DESCRIPTION = (

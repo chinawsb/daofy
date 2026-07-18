@@ -453,15 +453,15 @@ DELPHI_HANDLERS = {
 # ── 工具描述 + inputSchema — list_tools() 从 registry 收取，不再硬编码在 server.py ──
 
 DELPHI_TOOL_DESCRIPTIONS: dict[str, str] = {
-    "delphi_project": "编译/配置/审计/部署",
-    "delphi_kb": "知识库搜索/管理",
+    "delphi_project": "Delphi 项目编译、配置、审计和部署。参数随 action 变化；调用前先执行 tool_help(tool_name='delphi_project', action='<action>')。",
+    "delphi_kb": "Delphi 知识库搜索和管理。参数随 action 变化；调用前先执行 tool_help(tool_name='delphi_kb', action='<action>')。",
     "delphi_file": "Delphi 文件专用读写/搜索/替换/备份工具 — 即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 也必须用此工具，禁止用内置 Read/Edit/Write/grep",
-    "manage_component": "DFM组件增/删/改/生成",
-    "check_environment": "环境检查/编译器检测/安装",
-    "package": "组件包编译安装/列出",
+    "manage_component": "DFM 组件增删改和生成。参数随 action 变化；调用前先执行 tool_help(tool_name='manage_component', action='<action>')。",
+    "check_environment": "环境检查、编译器检测和安装。参数随 action 变化；调用前先执行 tool_help(tool_name='check_environment', action='<action>')。",
+    "package": "组件包编译、安装和列出。参数随 action 变化；调用前先执行 tool_help(tool_name='package', action='<action>')。",
     "get_coding_rules": "编码规则获取工具 — 支持 Delphi 和 Lazarus/FPC 编码规范，支持按语言/章节分段获取",
-    "automate_delphi": "Delphi 自动化测试",
-    "delphi_rtti": "RTTI 发现/调用",
+    "automate_delphi": "Delphi 自动化测试。参数随 action 变化；调用前先执行 tool_help(tool_name='automate_delphi', action='<action>')。",
+    "delphi_rtti": "RTTI 发现和调用。参数随 action 变化；调用前先执行 tool_help(tool_name='delphi_rtti', action='<action>')。",
 }
 
 DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
@@ -479,7 +479,7 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
             "extra_args": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "附加编译参数（如 [\"/p:DCC_DebugInfoInTds=true\"]）",
+                "description": "附加编译参数（如 [\"/p:DCC_DebugInfoInTds=true\"]）；其它 action 的参数请先调用 tool_help",
             },
         },
         "required": ["action"]

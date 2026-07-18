@@ -459,14 +459,51 @@ class TestToolSchemaCompleteness:
         assert props["force"].get("default") is False, "force 默认值应为 False"
         assert "dry_run" in props, "delphi_file schema must expose dry_run for write previews"
 
-    def test_delphi_project_schema_declares_extra_args(self):
-        """编译附加参数必须在 schema 中声明，避免 MCP 客户端静默丢弃。"""
+    def test_tool_help_schema_declares_optional_action(self):
+        """tool_help 的 action 过滤参数必须在 MCP schema 中公开。"""
+        schema = self._get_all_schemas()["tool_help"]
+        props = schema.get("properties", {})
+        assert "action" in props, "tool_help schema missing optional 'action'"
+        assert props["action"].get("type") == "string"
+        assert "action" not in schema.get("required", [])
+
+    def test_delphi_project_schema_declares_real_extra_args(self):
+        """delphi_project 的真实编译附加参数仍必须在 schema 中声明。"""
         schema = self._get_all_schemas()["delphi_project"]
         props = schema.get("properties", {})
         assert "extra_args" in props, "delphi_project schema missing 'extra_args'"
         ea = props["extra_args"]
         assert ea.get("type") == "array", "extra_args 应声明为 array"
         assert ea.get("items", {}).get("type") == "string", "extra_args items 应为 string"
+        assert "占位" not in ea.get("description", ""), "extra_args 不应被描述为占位参数"
+
+    def test_dynamic_tool_descriptions_direct_to_tool_help(self):
+        """复杂工具的短描述应指导模型按 action 查询帮助，而不是猜参数。"""
+        descriptions = self._get_all_descriptions()
+        for tool_name in (
+            "code_hosting", "experience", "daofy_update", "generate_copyright", "ocr",
+            "delphi_project", "delphi_kb", "manage_component", "check_environment",
+            "package", "automate_delphi", "delphi_rtti",
+        ):
+            desc = descriptions[tool_name]
+            assert "tool_help(tool_name=" in desc, f"{tool_name} description missing tool_help guidance"
+            assert "action='<action>'" in desc, f"{tool_name} description missing action guidance"
+
+    def test_dynamic_schemas_do_not_expose_fake_extra_args(self):
+        """不支持通用 extra_args 的工具不得暴露伪占位字段。"""
+        schemas = self._get_all_schemas()
+        for tool_name in (
+            "code_hosting", "experience", "daofy_update", "generate_copyright", "ocr",
+            "delphi_kb", "manage_component", "check_environment", "package",
+            "automate_delphi", "delphi_rtti",
+        ):
+            assert "extra_args" not in schemas[tool_name].get("properties", {}), tool_name
+
+    def test_server_instructions_use_public_tool_help_action(self):
+        """服务器总指令必须使用 tool_help 的公开参数名 action。"""
+        source = (Path(__file__).parent.parent / "src" / "server.py").read_text(encoding="utf-8-sig")
+        assert "tool_help(tool_name, action)" in source
+        assert "action_name" not in source
 
     def test_delphi_file_schema_mentions_builtin_read_edit_write(self):
         """schema 描述也要给客户端路由模型明确提示，读取 Delphi 文件也走 delphi_file。"""
