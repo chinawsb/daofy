@@ -430,7 +430,11 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.07.17 (最新)
+### v2026.07.18 (最新)
+
+- **版本发布**: 全量同步 Lazarus 插件支持、多语言编码规则、插件可用性检测
+
+### v2026.07.17
 
 - **Lazarus/Free Pascal 插件支持**: 新增 4 个 Lazarus 专用工具 — `lazarus_compile` (lazbuild编译)、`lazarus_project` (项目信息查询)、`lazarus_kb` (FPC/LCL 源码知识库)、`lazarus_file` (文件读写与备份)
 - **多语言编码规则**: `coding-rules/` 拆分为 `delphi/`、`lazarus/`、`shared/` 三层；`get_coding_rules` 新增 `language` 参数（支持 `"delphi"` 和 `"lazarus"`）
