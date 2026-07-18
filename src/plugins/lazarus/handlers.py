@@ -6,7 +6,7 @@
   3. handler 内部延迟导入 CompilerService / LpiParser，避免模块级依赖
 """
 
-from typing import Any
+from typing import Any, List
 
 from src.utils.logger import init_default_logger
 
@@ -155,27 +155,9 @@ async def _handle_lazarus_kb(arguments: dict) -> dict:
     kb_dir = str(server_root / "data" / "lazarus-knowledge-base")
 
     # ── 自动检测 Lazarus 源码目录 ──
-    def _detect_source_dirs() -> list[str]:
-        candidates = [
-            ("C:\\lazarus\\lcl", "LCL (Lazarus Component Library)"),
-            ("C:\\lazarus\\components", "Lazarus bundled components"),
-        ]
-        # FPC source — check multiple version dirs
-        fpc_root = Path("C:\\lazarus\\fpc")
-        if fpc_root.is_dir():
-            for ver_dir in sorted(fpc_root.iterdir(), reverse=True):
-                src = ver_dir / "source"
-                if src.is_dir():
-                    candidates.append((str(src), f"FPC RTL {ver_dir.name}"))
-                    break
-                elif ver_dir.is_dir():
-                    candidates.append((str(ver_dir), f"FPC {ver_dir.name}"))
-                    break
-        return [
-            {"path": p, "label": label}
-            for p, label in candidates
-            if Path(p).is_dir()
-        ]
+    def _detect_source_dirs() -> List[dict]:
+        from .detect import find_lazarus_source_dirs
+        return find_lazarus_source_dirs()
 
     # ── build ──
     if action == "build":

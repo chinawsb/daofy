@@ -32,40 +32,32 @@ class LazarusPlugin(CompilerPlugin):
     # ── 可用性检测 ──
 
     def is_available(self) -> bool:
-        """检查 lazbuild.exe 是否可用（PATH 或常见安装目录）"""
-        import shutil
-        from pathlib import Path
-        import os
-
-        # 1. PATH 中查找
-        if shutil.which("lazbuild"):
-            return True
-
-        # 2. 常见安装目录
-        common_dirs = [
-            Path("C:/lazarus"),
-            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
-            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Lazarus",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
-        ]
-        return any((d / "lazbuild.exe").exists() for d in common_dirs)
+        """检查 lazbuild.exe 是否可用（PATH/常见目录/开始菜单/注册表）"""
+        from .detect import is_lazarus_available as _check
+        return _check()
 
     # ── detect ──
 
     async def detect(self) -> List[Dict[str, Any]]:
         """检测已安装的 Lazarus/FPC 编译器"""
+        from .detect import find_lazbuild
         from ...services.config_manager import ConfigManager
+
+        lazbuild_paths = find_lazbuild()
+        if not lazbuild_paths:
+            return []
+
         cm = ConfigManager()
-        compilers = cm._detect_lazarus()
-        return [
-            {
-                "name": c.name,
-                "path": c.path,
-                "version": c.version,
-                "compiler_type": c.compiler_type,
-            }
-            for c in compilers
-        ]
+        compilers = []
+        for lb_path in lazbuild_paths:
+            version = cm._get_lazarus_version(str(lb_path))
+            compilers.append({
+                "name": f"Lazarus FPC {version}" if version else "Lazarus FPC",
+                "path": str(lb_path),
+                "version": version or "",
+                "compiler_type": "lazarus",
+            })
+        return compilers
 
     # ── compile ──
 

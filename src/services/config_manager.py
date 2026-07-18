@@ -574,35 +574,13 @@ class ConfigManager:
         """
         检测 Lazarus/FPC 编译器安装
 
-        搜索顺序:
-        1. PATH 环境变量中的 lazbuild.exe
-        2. 常见安装目录 (C:/lazarus, C:/Program Files/Lazarus 等)
-        3. winget 安装目录
-
-        Returns:
-            检测到的 Lazarus 编译器配置列表
+        委托 src.plugins.lazarus.detect.find_lazbuild() 统一查找，
+        然后补充版本号和 FPC 路径检测。
         """
+        from src.plugins.lazarus.detect import find_lazbuild
+
         compilers: List[CompilerConfig] = []
-
-        # 候选 lazbuild.exe 路径
-        candidates: List[Path] = []
-
-        # 1. PATH 中查找
-        lazbuild_path = shutil.which("lazbuild")
-        if lazbuild_path:
-            candidates.append(Path(lazbuild_path))
-
-        # 2. 常见安装目录
-        common_dirs = [
-            Path("C:/lazarus"),
-            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
-            Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Lazarus",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
-        ]
-        for d in common_dirs:
-            lb = d / "lazbuild.exe"
-            if lb.exists() and lb not in candidates:
-                candidates.append(lb)
+        candidates = find_lazbuild()
 
         if not candidates:
             logger.debug("未检测到 Lazarus/FPC 安装")
@@ -613,7 +591,6 @@ class ConfigManager:
             version = self._get_lazarus_version(str(lazbuild_path))
             compiler_name = f"Lazarus FPC {version}" if version else "Lazarus FPC"
 
-            # 检测 fpc.exe 路径（lazarus/fpc/<ver>/bin/x86_64-win64/fpc.exe）
             fpc_path = self._find_fpc_in_lazarus(lazarus_dir)
 
             compilers.append(CompilerConfig(

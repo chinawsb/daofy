@@ -1399,14 +1399,11 @@ class CompilerService:
 
         搜索顺序:
         1. 配置文件中的 Lazarus 编译器路径
-        2. PATH 环境变量
-        3. 常见安装目录
+        2. 共享检测模块（PATH → 常见目录 → 开始菜单 → 注册表）
 
         Returns:
             lazbuild.exe 路径,未找到则返回 None
         """
-        import shutil
-
         # 1. 从配置文件查找 Lazarus 编译器
         config = self.config_manager.config
         for compiler in config.compilers:
@@ -1415,23 +1412,11 @@ class CompilerService:
                 if Path(compiler.path).exists():
                     return compiler.path
 
-        # 2. PATH 中查找
-        path = shutil.which("lazbuild")
-        if path:
-            return path
-
-        # 3. 常见安装目录
-        common_dirs = [
-            Path("C:/lazarus"),
-            Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Lazarus",
-            Path(os.environ.get("ProgramFiles(x86)",
-                                "C:/Program Files (x86)")) / "Lazarus",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Lazarus",
-        ]
-        for d in common_dirs:
-            lb = d / "lazbuild.exe"
-            if lb.exists():
-                return str(lb)
+        # 2. 共享检测模块
+        from src.plugins.lazarus.detect import find_lazbuild
+        paths = find_lazbuild()
+        if paths:
+            return str(paths[0])
 
         return None
 
