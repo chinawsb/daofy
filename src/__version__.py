@@ -6,29 +6,46 @@ Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 致谢: 感谢 Crystalxp (黑夜杀手 QQ:281309196) 的代码贡献，已合并入项目
 
 版本号权威来源: pyproject.toml 中的 version 字段
-__version__.py 在运行时动态读取 pyproject.toml，确保单点维护。
+pip 安装时通过 importlib.metadata 从包元数据读取；
+源码运行时从 pyproject.toml 文件读取（兜底）。
 """
 
 import logging
 import os
+from importlib.metadata import version as _get_installed_version, PackageNotFoundError
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-
-def _get_project_root() -> Path:
-    """获取项目根目录（pyproject.toml 所在目录）。"""
-    # 当前文件在 src/__version__.py，上一级到 src，再上一级到项目根
-    return Path(__file__).resolve().parent.parent
+_PACKAGE_NAME = "daofy-for-delphi"
 
 
 def _read_version() -> str:
-    """从 pyproject.toml 读取版本号。
+    """读取版本号。
+
+    优先级：
+    1. DAOFY_VERSION 环境变量（发布脚本可设置）
+    2. importlib.metadata（pip 安装后从包元数据读取，最可靠）
+    3. pyproject.toml 文件（源码运行时兜底）
+    4. 默认值 "0.0.0"
 
     Returns:
         版本号字符串；读取失败返回 "0.0.0"。
     """
-    pyproject_path = _get_project_root() / "pyproject.toml"
+    # 1. 环境变量
+    env_ver = os.environ.get("DAOFY_VERSION")
+    if env_ver:
+        return env_ver
+
+    # 2. importlib.metadata — pip 安装场景下的标准方式
+    try:
+        return _get_installed_version(_PACKAGE_NAME)
+    except PackageNotFoundError:
+        pass  # 源码运行时 metadata 不可用，继续尝试文件读取
+
+    # 3. 读取 pyproject.toml（源码运行兜底）
+    #    当前文件在 src/__version__.py，上一级到 src，再上一级到项目根
+    pyproject_path = Path(__file__).resolve().parent.parent / "pyproject.toml"
     try:
         with open(pyproject_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -39,9 +56,11 @@ def _read_version() -> str:
                         ver = parts[1].strip().strip('"').strip("'")
                         if ver:
                             return ver
+        logger.debug("pyproject.toml 中未找到 version 字段")
     except Exception as e:
-        logger.debug("读取 pyproject.toml version 失败（回退到环境变量/默认值）: %s", e)
-    # 回退：尝试从环境变量或返回默认值
+        logger.debug("读取 pyproject.toml version 失败: %s", e)
+
+    # 4. 兜底
     return os.environ.get("DAOFY_VERSION", "0.0.0")
 
 
