@@ -33,7 +33,8 @@ type
   TRttiDiscoverer = class
   public
     /// <summary>扫描 TClass 的 published+public 方法/属性，返回 JSON Schema 能力描述</summary>
-    class function DiscoverClass(AClass: TClass; const AName: string = ''): TJSONObject;
+    class function DiscoverClass(AClass: TClass; const AName: string = '';
+      const AVisibility: string = 'public,published'): TJSONObject;
 
     /// <summary>将 Delphi RTTI 类型映射为 JSON Schema 对象</summary>
     class function TypeToSchema(AType: TRttiType): TJSONObject;
@@ -166,7 +167,7 @@ begin
 end;
 
 class function TRttiDiscoverer.DiscoverClass(AClass: TClass;
-  const AName: string): TJSONObject;
+  const AName, AVisibility: string): TJSONObject;
 var
   Ctx: TRttiContext;
   RType: TRttiType;
@@ -180,10 +181,27 @@ var
   ParamProps: TJSONObject;
   Required: TJSONArray;
   ParamContainer: TJSONObject;
+  VisSet: set of TMemberVisibility;
+  VisParts: TArray<string>;
+  VisItem: string;
 begin
   Result := TJSONObject.Create;
   Ctx := TRttiContext.Create;
   try
+    // 解析 visibility 参数
+    VisSet := [mvPublic, mvPublished];
+    if AVisibility <> '' then begin
+      VisSet := [];
+      VisParts := AVisibility.Split([',']);
+      for VisItem in VisParts do begin
+        var VisLower := VisItem.Trim.ToLower;
+        if VisLower = 'private' then Include(VisSet, mvPrivate)
+        else if VisLower = 'protected' then Include(VisSet, mvProtected)
+        else if VisLower = 'public' then Include(VisSet, mvPublic)
+        else if VisLower = 'published' then Include(VisSet, mvPublished);
+      end;
+    end;
+
     RType := Ctx.GetType(AClass);
 
     if AName = '' then
@@ -194,25 +212,12 @@ begin
     if AClass.ClassParent <> nil then
       Result.AddPair('ancestor', TJSONString.Create(AClass.ClassParent.ClassName));
 
-    // ── 扫描 published+public 方法 → "tools" 数组 ──
+    // ── 扫描可见度范围内的方法 → "tools" 数组 ──
 
     ToolsArray := TJSONArray.Create;
     for Method in RType.GetMethods do
     begin
-      // 暴露 published 和 public 可见度的方法
-      // 注：Delphi 13 对 TMemberVisibility 的复合比较可能生成错误代码。
-      // 用 case 语句改写，编译器对 case 的优化路径不同。
-      // 注：Delphi 13 对 TMemberVisibility 的 complex 条件可能生成错误代码，
-      // 隔离为独立函数来避免。
-      if Method.Visibility = mvPublished then
-      begin
-        // published — ok, process
-      end
-      else if Method.Visibility = mvPublic then
-      begin
-        // public — ok, process
-      end
-      else
+      if not (Method.Visibility in VisSet) then
         Continue;
 
       // 排除构造/析构
@@ -300,20 +305,12 @@ begin
     end;
     Result.AddPair('tools', ToolsArray);
 
-    // ── 扫描 published+public 属性 → "properties" 数组 ──
+    // ── 扫描可见度范围内的属性 → "properties" 数组 ──
 
     ResourcesArray := TJSONArray.Create;
     for Prop in RType.GetProperties do
     begin
-      if Prop.Visibility = mvPublished then
-      begin
-        // published — ok, process
-      end
-      else if Prop.Visibility = mvPublic then
-      begin
-        // public — ok, process
-      end
-      else
+      if not (Prop.Visibility in VisSet) then
         Continue;
 
       ResObj := TJSONObject.Create;

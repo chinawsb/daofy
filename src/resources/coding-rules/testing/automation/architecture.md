@@ -21,6 +21,7 @@ MCP 服务器（手脚）:  提供工具感知 UI 状态 + 执行 UI 操作
 | 规划方法论 | `delphi://automation/planning-methodology` | 分层降级策略、动作序列规范、失败处理模式 |
 | 经验驱动优化闭环 | `delphi://automation/experience-loop` | 经验检索/保存/融合机制，让 AI 从历史中学习 |
 | 代码感知测试 | `delphi://automation/code-aware-testing` | 从 DFM/PAS 源码推导测试路径和代码派生断言 |
+| RTTI 单元测试 | `delphi://automation/rtti-test-runner` | 直接测试类方法、fixture 生命周期、逐例超时与稳定统计 |
 
 ## 相关工作流
 
@@ -30,6 +31,7 @@ MCP 服务器（手脚）:  提供工具感知 UI 状态 + 执行 UI 操作
 | 脚本生成工作流 | `delphi://automation/script-generation-workflow` |
 | 能力选型矩阵 | `delphi://automation/capability-matrix` |
 | 脚本格式规范 + 断言 + 缓存 | `delphi://automation/script-schema` |
+| RTTI 单元测试运行器 | `delphi://automation/rtti-test-runner` |
 
 ## 相关参考
 

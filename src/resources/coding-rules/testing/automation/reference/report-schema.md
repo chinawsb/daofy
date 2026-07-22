@@ -64,6 +64,43 @@ MCP resource URI: `delphi://automation/report-schema`。
 }
 ```
 
+## RTTI 测试任务结果
+
+`automate_delphi(action="test", ...)` 先返回 `status="submitted"` 和 `task_id`。通过
+`async_task(action="result")` 取得的任务结果不使用 GUI `report` 包装，其稳定字段如下：
+
+```json
+{
+  "status": "failed",
+  "total": 4,
+  "passed": 1,
+  "failed": 2,
+  "errors": 1,
+  "duration_seconds": 0.475,
+  "process_reused": false,
+  "results": [
+    {
+      "index": 0,
+      "id": "invalid-input",
+      "className": "Tests.TCalculator",
+      "method": "Parse",
+      "status": "ok",
+      "phase": "test",
+      "exception_class": "EConvertError",
+      "exception_message": "invalid value",
+      "assert": "pass"
+    }
+  ],
+  "raw_responses": []
+}
+```
+
+- `passed`：方法完成且全部 Delphi/Python 断言通过。
+- `failed`：返回值、`assert_expr` 或预期异常断言失败。
+- `errors`：启动、传输、setup/构造、未预期 test 异常或 teardown 失败。
+- `phase`：错误发生阶段，取 `prepare`、`setup`、`constructor`、`test` 或 `teardown`。
+- `raw_responses`：逐例 Delphi 原始协议响应，仅用于诊断，不应替代稳定统计字段。
+
 ## 失败信号
 
 | 信号 | 应对策略 |

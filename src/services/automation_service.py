@@ -1,7 +1,8 @@
 r"""
 自动化测试服务 — GUI 命名管道 + 控制台 subprocess 交互。
 
-通信方式：命名管道 \\.\pipe\daofy_auto（Delphi server -> Python client）
+通信方式：新启动进程使用由目标进程 PID 派生的独立命名管道；
+未绑定进程会话时保留旧版默认 \\.\pipe\daofy_auto 兼容路径（Delphi server -> Python client）
 使用 ctypes 直接调用 Windows API，零外部依赖。
 
 协议：JSON 请求/响应 (REST-style)
@@ -22,6 +23,7 @@ import ctypes
 import hashlib
 import io
 import json
+import math
 import os
 import queue
 import re
@@ -38,6 +40,7 @@ from ..constants import (
     TIMEOUT_AUTOMATION_PIPE_MS,
     TIMEOUT_PROCESS_TERMINATE,
 )
+from ..services.knowledge_base.async_task_manager import get_task_manager
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 DEFAULT_SNAPSHOTS_DIR = PROJECT_ROOT / 'docs' / 'copyright' / 'snapshots'
@@ -102,10 +105,34 @@ _UI_ASYNC_PEEK_TIMEOUT = 0.25
 
 # ── UIA 命令集合 ──
 _UIA_PREFIX_CMDS = frozenset({
+    # 基础操作
     'uiagoto', 'uiaclick', 'uiaget', 'uiascan', 'uiawait', 'uiaset',
+    # 鼠标操作
+    'uia.rclick', 'uia.dblclick', 'uia.hover', 'uia.drag', 'uia.wheel',
+    # 输入操作
+    'uia.type', 'uia.key', 'uia.toggle',
+    # 列表/树操作
+    'uia.select', 'uia.expand', 'uia.collapse', 'uia.invoke',
+    # 导航/探查
+    'uia.find', 'uia.list',
+    # 窗口操作
+    'uia.close', 'uia.minimize', 'uia.maximize', 'uia.restore',
+    'uia.move', 'uia.resize', 'uia.state',
+    # 属性/状态
+    'uia.exists', 'uia.rect', 'uia.screenshot',
+    # 滚动
+    'uia.scroll', 'uia.scrollinto',
 })
 _UIA_CAPABLE_CMDS = frozenset({
     'goto', 'click', 'get', 'set', 'wait', 'scan',
+    'rclick', 'dblclick', 'hover', 'drag', 'wheel',
+    'type', 'key', 'toggle',
+    'select', 'expand', 'collapse', 'invoke',
+    'find', 'list',
+    'close', 'minimize', 'maximize', 'restore',
+    'move', 'resize', 'state',
+    'exists', 'rect', 'screenshot',
+    'scroll', 'scrollinto',
 })
 _UIA_AVAILABLE = False
 _UIA_MODULE = None
@@ -120,6 +147,7 @@ _process_pool: dict[str, dict] = {}
 _pool_lock = Lock()
 _gui_execution_lock = RLock()  # RLock 允许同线程重入，防止 UIA 路由死锁
 _pipe_session = threading.local()
+_pipe_wait_state = threading.local()
 PROCESS_KEEPALIVE_TIMEOUT = 300  # 5 分钟无使用则自动清理
 _ENV_METADATA_KEYS = ('environment', 'env')
 _pool_cleanup_interval = 60  # 定时清理间隔（秒）
@@ -172,6 +200,12 @@ _ReadFile = _k32.ReadFile
 _ReadFile.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
                       wintypes.PDWORD, wintypes.LPVOID]
 _ReadFile.restype = wintypes.BOOL
+
+_PeekNamedPipe = _k32.PeekNamedPipe
+_PeekNamedPipe.argtypes = [wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD,
+                           wintypes.LPDWORD, wintypes.LPDWORD,
+                           wintypes.LPDWORD]
+_PeekNamedPipe.restype = wintypes.BOOL
 
 _CloseHandle = _k32.CloseHandle
 _CloseHandle.argtypes = [wintypes.HANDLE]
@@ -331,45 +365,29 @@ def _read_pipe_message_poll(
     poll_interval_ms: int = 50,
     buf_size: int = 65536,
 ) -> bytes | None:
-    """轮询读取管道消息（超时机制），用于 async rcall 等场景。
+    """Poll until a complete pipe response is available or the deadline passes.
 
-    将管道设为 PIPE_NOWAIT 模式进行轮询，到期自动恢复 PIPE_WAIT。
+    PeekNamedPipe is non-blocking for a synchronous pipe handle. Switching the
+    handle to PIPE_NOWAIT is not reliable on every client/server combination;
+    a subsequent ReadFile can still block beyond the caller's deadline.
     Returns:
-        bytes — 消息内容
-        None — 超时或出错
+        bytes: the complete message
+        None: timeout or pipe error
     """
-    PIPE_WAIT = 0x00000000
-    PIPE_NOWAIT = 0x00000001
-    ERROR_NO_DATA = 232
-
-    # 切到非阻塞模式
-    old_mode = wintypes.DWORD(PIPE_READMODE_MESSAGE | PIPE_NOWAIT)
-    _SetNPHState(handle, ctypes.byref(old_mode), None, None)
-
-    deadline = time.time() + (timeout_ms / 1000)
-    try:
-        while time.time() < deadline:
-            chunks: list[bytes] = []
-            while True:
-                buf = ctypes.create_string_buffer(buf_size)
-                read = wintypes.DWORD(0)
-                ok = _ReadFile(handle, buf, buf_size, ctypes.byref(read), None)
-                if ok:
-                    chunks.append(buf.raw[:read.value])
-                    return b''.join(chunks)
-                err = _GetLastError()
-                if err == 234:  # ERROR_MORE_DATA
-                    chunks.append(buf.raw[:read.value])
-                    continue
-                if err == ERROR_NO_DATA:
-                    break  # 暂无数据，继续外层轮询
-                return None  # 非预期错误
-            time.sleep(poll_interval_ms / 1000)
-        return None  # 超时
-    finally:
-        # 恢复阻塞模式
-        restore_mode = wintypes.DWORD(PIPE_READMODE_MESSAGE | PIPE_WAIT)
-        _SetNPHState(handle, ctypes.byref(restore_mode), None, None)
+    del buf_size  # Message chunking remains centralized in _read_pipe_message.
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while time.monotonic() < deadline:
+        available = wintypes.DWORD(0)
+        if not _PeekNamedPipe(
+            handle, None, 0, None, ctypes.byref(available), None
+        ):
+            return None
+        if available.value > 0:
+            return _read_pipe_message(handle)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(poll_interval_ms / 1000, remaining))
+    return None
 
 
 def _send_command_on_handle(
@@ -386,10 +404,11 @@ def _send_command_on_handle(
     return raw.decode('utf-8', errors='replace').strip()
 
 
-def _begin_pipe_session() -> None:
+def _begin_pipe_session(pipe_name: str = PIPE_NAME) -> None:
     _end_pipe_session()
     _pipe_session.enabled = True
     _pipe_session.handle = None
+    _pipe_session.pipe_name = pipe_name
 
 
 def _end_pipe_session() -> None:
@@ -398,6 +417,7 @@ def _end_pipe_session() -> None:
         _CloseHandle(handle)
     _pipe_session.enabled = False
     _pipe_session.handle = None
+    _pipe_session.pipe_name = PIPE_NAME
 
 
 def _is_pipe_io_error(response: str) -> bool:
@@ -430,18 +450,64 @@ def _send_command_to_pipe(pipe_name: str, cmd: str, timeout_ms: int = PIPE_TIMEO
 
 
 def _send_command(cmd: str, timeout_ms: int = PIPE_TIMEOUT_MS) -> str:
-    """发送命令到 Delphi 命名管道（使用默认管道名）。"""
-    return _send_command_to_pipe(PIPE_NAME, cmd, timeout_ms)
+    """发送命令到当前进程管道，未绑定会话时使用兼容管道名。"""
+    pipe_name = getattr(_pipe_session, 'pipe_name', PIPE_NAME)
+    return _send_command_to_pipe(pipe_name, cmd, timeout_ms)
 
 
 def _wait_for_pipe(timeout: float = 10.0, pipe_name: str = PIPE_NAME) -> bool:
     """等待 Delphi 程序创建管道。"""
     deadline = time.time() + timeout
+    last_error = 0
     while time.time() < deadline:
         if _WaitNP(pipe_name, 200):
+            _pipe_wait_state.last_error = 0
             return True
+        last_error = int(_GetLastError())
         time.sleep(0.2)
+    _pipe_wait_state.last_error = last_error
     return False
+
+
+def _process_pipe_name(app_path: str) -> str:
+    """Return the pipe assigned to a pooled process, or the legacy default."""
+    with _pool_lock:
+        entry = _process_pool.get(app_path)
+        if entry is None:
+            return PIPE_NAME
+        return str(entry.get('pipe_name') or PIPE_NAME)
+
+
+def _pipe_start_failure_message(
+    proc: subprocess.Popen,
+    pipe_name: str,
+    wait_for_pipe: float,
+) -> str:
+    """Build a startup error with client and inline-server diagnostics."""
+    last_error = int(getattr(_pipe_wait_state, 'last_error', 0))
+    exit_code = proc.poll()
+    details = [
+        f'pid={proc.pid}',
+        f'pipe={pipe_name}',
+        f'winerror={last_error}',
+        f'exit_code={exit_code if exit_code is not None else "running"}',
+    ]
+
+    temp_dir = os.environ.get('TEMP', '')
+    if temp_dir:
+        status_path = Path(temp_dir) / f'daofy-rtti-{proc.pid}.json'
+        try:
+            status = json.loads(status_path.read_text(encoding='utf-8-sig'))
+        except (OSError, json.JSONDecodeError, TypeError):
+            status = None
+        if isinstance(status, dict) and status.get('pipe') == pipe_name:
+            details.append(f'server_status={status.get("status", "unknown")}')
+            details.append(f'server_error={status.get("error", 0)}')
+
+    return (
+        'Delphi process did not create the automation pipe within '
+        f'{wait_for_pipe}s ({", ".join(details)})'
+    )
 
 
 # ── 进程池管理 ──
@@ -538,6 +604,31 @@ def _walk_uia_tree(control, depth: int = 0, max_depth: int = 8) -> dict:
         return {}
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    """安全转换为 int，失败时返回默认值"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _find_uia_ctrl(target: str, resp: dict) -> object | None:
+    """查找 UIA 控件，不存在时设置 resp 错误并返回 None"""
+    if not target:
+        resp['status'] = 'err'
+        resp['data'] = 'TARGET_MISSING: target parameter required'
+        return None
+    ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+    if not ctrl.Exists():
+        resp['status'] = 'err'
+        resp['data'] = f'NF: {target}'
+        return None
+    return ctrl
+
+
+_SNAPSHOTS_DIR = str(DEFAULT_SNAPSHOTS_DIR)
+
+
 def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
     """在 Python 端直接执行 UIA 自动化步骤。
 
@@ -624,13 +715,432 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
             resp['data'] = json.dumps(tree, ensure_ascii=False, default=str)
             resp['state'] = tree
         elif cmd in ('uiawait', 'wait'):
-            timeout_ms = int(step.get('timeout', 5000))
-            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
-            if ctrl.Exists():
-                resp['data'] = f'found: {target}'
+            timeout_s = _safe_int(step.get('timeout', 5), 5)  # 默认5秒
+            condition = step.get('condition', 'exist')
+            deadline = time.time() + timeout_s
+            found = False
+            while time.time() < deadline:
+                ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+                if condition == 'notexist':
+                    if not ctrl.Exists():
+                        found = True
+                        break
+                elif ctrl.Exists():
+                    found = True
+                    break
+                time.sleep(0.1)
+            if found:
+                resp['data'] = f'waited: {target} ({condition})'
             else:
                 resp['status'] = 'err'
-                resp['data'] = f'TIMEOUT: {target}'
+                resp['data'] = f'TIMEOUT({timeout_s}s): {target} ({condition})'
+
+        # ── 鼠标操作 ──
+        elif cmd in ('uia.rclick', 'rclick'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                ctrl.RightClick()
+                resp['data'] = f'rclicked: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.dblclick', 'dblclick'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                ctrl.DoubleClick()
+                resp['data'] = f'dblclicked: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.hover', 'hover'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                ctrl.MoveCursorTo()
+                resp['data'] = f'hovered: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.drag', 'drag'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            x = int(step.get('x', 0))
+            y = int(step.get('y', 0))
+            if ctrl.Exists():
+                ctrl.Drag(x, y)
+                resp['data'] = f'dragged: {target} to ({x}, {y})'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.wheel', 'wheel'):
+            delta = int(step.get('delta', -120))
+            ctrl = None
+            if target:
+                ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+                if not ctrl.Exists():
+                    resp['status'] = 'err'
+                    resp['data'] = f'NF: {target}'
+                    return resp, False, False
+            if ctrl is not None:
+                ctrl.Wheel(delta)
+            else:
+                _UIA_MODULE.Wheel(delta)
+            resp['data'] = f'wheeled delta={delta}'
+
+        # ── 滚动操作 ──
+        elif cmd in ('uia.scroll', 'scroll'):
+            ctrl = _find_uia_ctrl(target, resp)
+            if ctrl is not None:
+                direction = step.get('direction', 'down').lower()
+                amount = _safe_int(step.get('amount', 3), 3)
+                # 验证 direction 是否有效
+                valid_directions = {'up', 'down', 'left', 'right', 'pageup', 'pagedown', 'pageleft', 'pageright'}
+                if direction not in valid_directions:
+                    resp['status'] = 'err'
+                    resp['data'] = f'INVALID_DIRECTION: {direction}. Valid: {", ".join(sorted(valid_directions))}'
+                else:
+                    scroll_pattern = ctrl.GetScrollPattern()
+                    if scroll_pattern is not None:
+                        # ScrollAmount: NoAmount=0, SmallIncrement=1, LargeIncrement=2, SmallDecrement=3, LargeDecrement=4
+                        amount_map = {
+                            'up': (3, 0), 'down': (1, 0),
+                            'left': (0, 3), 'right': (0, 1),
+                            'pageup': (4, 0), 'pagedown': (2, 0),
+                            'pageleft': (0, 4), 'pageright': (0, 2),
+                        }
+                        h_amount, v_amount = amount_map[direction]
+                        for _ in range(amount):
+                            scroll_pattern.Scroll(h_amount, v_amount)
+                        resp['data'] = f'scrolled: {target} {direction} x{amount}'
+                    else:
+                        resp['status'] = 'err'
+                        resp['data'] = f'SCROLL_UNSUPPORTED: {target}'
+        elif cmd in ('uia.scrollinto', 'scrollinto'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            item_name = step.get('item', '')
+            if ctrl.Exists():
+                item_ctrl = ctrl.Control(Name=item_name, searchDepth=8)
+                if item_ctrl.Exists():
+                    item_ctrl.ScrollIntoView()
+                    resp['data'] = f'scrolled into view: {item_name} in {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'NF_ITEM: {item_name}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+
+        # ── 输入操作 ──
+        elif cmd in ('uia.type', 'type'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            text = str(step.get('text', ''))
+            if ctrl.Exists():
+                ctrl.SetFocus()
+                if hasattr(ctrl, 'SendKeys'):
+                    ctrl.SendKeys(text)
+                elif hasattr(_UIA_MODULE, 'SendKeys'):
+                    _UIA_MODULE.SendKeys(text)
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'TYPE_UNSUPPORTED: {target}'
+                    return resp, False, False
+                resp['data'] = f'typed: {text} into {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.key', 'key'):
+            keys = str(step.get('keys', ''))
+            if keys:
+                if hasattr(_UIA_MODULE, 'SendKeys'):
+                    _UIA_MODULE.SendKeys(keys)
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = 'KEY_UNSUPPORTED: SendKeys not available'
+                    return resp, False, False
+                resp['data'] = f'key sent: {keys}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = 'KEY_MISSING: keys parameter required'
+        elif cmd in ('uia.toggle', 'toggle'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                toggle_pattern = ctrl.GetTogglePattern()
+                if toggle_pattern is not None:
+                    toggle_pattern.Toggle()
+                    resp['data'] = f'toggled: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'TOGGLE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+
+        # ── 列表/树操作 ──
+        elif cmd in ('uia.select', 'select'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            item_name = step.get('item', '')
+            if ctrl.Exists():
+                if item_name:
+                    item_ctrl = ctrl.Control(Name=item_name, searchDepth=8)
+                    if item_ctrl.Exists():
+                        selection_pattern = item_ctrl.GetSelectionItemPattern()
+                        if selection_pattern is not None:
+                            selection_pattern.Select()
+                            resp['data'] = f'selected: {item_name} in {target}'
+                        else:
+                            item_ctrl.Click()
+                            resp['data'] = f'clicked to select: {item_name}'
+                    else:
+                        resp['status'] = 'err'
+                        resp['data'] = f'NF_ITEM: {item_name}'
+                else:
+                    selection_pattern = ctrl.GetSelectionPattern()
+                    if selection_pattern is not None:
+                        resp['data'] = f'selection available: {target}'
+                    else:
+                        resp['status'] = 'err'
+                        resp['data'] = f'SELECT_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.expand', 'expand'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                expand_pattern = ctrl.GetExpandCollapsePattern()
+                if expand_pattern is not None:
+                    expand_pattern.Expand()
+                    resp['data'] = f'expanded: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'EXPAND_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.collapse', 'collapse'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                expand_pattern = ctrl.GetExpandCollapsePattern()
+                if expand_pattern is not None:
+                    expand_pattern.Collapse()
+                    resp['data'] = f'collapsed: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'COLLAPSE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.invoke', 'invoke'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                invoke_pattern = ctrl.GetInvokePattern()
+                if invoke_pattern is not None:
+                    invoke_pattern.Invoke()
+                    resp['data'] = f'invoked: {target}'
+                else:
+                    ctrl.Click()
+                    resp['data'] = f'clicked (invoke fallback): {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+
+        # ── 导航/探查 ──
+        elif cmd in ('uia.find', 'find'):
+            root = _UIA_MODULE.GetRootControl()
+            if target:
+                t = _UIA_MODULE.Control(Name=target, searchDepth=8)
+                if t.Exists():
+                    root = t
+            condition = step.get('condition', '')
+            depth = int(step.get('depth', 8))
+            found_ctrl = None
+            if condition:
+                # 支持复合条件 "ClassName && ControlType"
+                parts = [p.strip() for p in condition.split('&&')]
+                kwargs = {}
+                for part in parts:
+                    if part.startswith('.'):
+                        kwargs['ClassName'] = part[1:]
+                    elif part.startswith('@'):
+                        kwargs['ControlType'] = part[1:]
+                    elif part.startswith('#'):
+                        kwargs['AutomationId'] = part[1:]
+                    else:
+                        kwargs['Name'] = part
+                kwargs['searchDepth'] = depth
+                found_ctrl = root.Control(**kwargs)
+            else:
+                found_ctrl = root.Control(Name=target, searchDepth=depth)
+            if found_ctrl is not None and found_ctrl.Exists():
+                info = {
+                    'Name': found_ctrl.Name,
+                    'ClassName': found_ctrl.ClassName,
+                    'ControlType': found_ctrl.ControlTypeName,
+                    'AutomationId': getattr(found_ctrl, 'AutomationId', ''),
+                    'BoundingRectangle': str(found_ctrl.BoundingRectangle),
+                }
+                resp['data'] = json.dumps(info, ensure_ascii=False)
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target or condition}'
+        elif cmd in ('uia.list', 'list'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8) if target else _UIA_MODULE.GetRootControl()
+            depth = int(step.get('depth', 1))
+            control_type = step.get('controltype', '')
+            if ctrl.Exists():
+                children = ctrl.GetChildren()
+                items = []
+                for child in children[:50]:  # 限制返回数量
+                    if control_type and child.ControlTypeName != control_type:
+                        continue
+                    items.append({
+                        'Name': child.Name,
+                        'ClassName': child.ClassName,
+                        'ControlType': child.ControlTypeName,
+                        'Rect': str(child.BoundingRectangle),
+                    })
+                resp['data'] = json.dumps(items, ensure_ascii=False)
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+
+        # ── 窗口操作 ──
+        elif cmd in ('uia.close', 'close'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                window_pattern = ctrl.GetWindowPattern()
+                if window_pattern is not None:
+                    window_pattern.Close()
+                    resp['data'] = f'closed: {target}'
+                else:
+                    ctrl.Click()
+                    resp['data'] = f'clicked close (fallback): {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.minimize', 'minimize'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                window_pattern = ctrl.GetWindowPattern()
+                if window_pattern is not None:
+                    window_pattern.SetWindowVisualState(1)  # Minimized
+                    resp['data'] = f'minimized: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'MINIMIZE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.maximize', 'maximize'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                window_pattern = ctrl.GetWindowPattern()
+                if window_pattern is not None:
+                    window_pattern.SetWindowVisualState(2)  # Maximized
+                    resp['data'] = f'maximized: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'MAXIMIZE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.restore', 'restore'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                window_pattern = ctrl.GetWindowPattern()
+                if window_pattern is not None:
+                    window_pattern.SetWindowVisualState(0)  # Normal
+                    resp['data'] = f'restored: {target}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'RESTORE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.move', 'move'):
+            ctrl = _find_uia_ctrl(target, resp)
+            if ctrl is not None:
+                x = _safe_int(step.get('x', 0))
+                y = _safe_int(step.get('y', 0))
+                # 使用 Win32 API 移动窗口
+                hwnd = ctrl.NativeWindowHandle
+                if hwnd:
+                    # 先恢复正常状态
+                    window_pattern = ctrl.GetWindowPattern()
+                    if window_pattern is not None:
+                        window_pattern.SetWindowVisualState(0)
+                    # 移动窗口
+                    _user32.SetWindowPos(hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004)  # SWP_NOSIZE | SWP_NOZORDER
+                    resp['data'] = f'moved: {target} to ({x}, {y})'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'NO_HWND: {target}'
+        elif cmd in ('uia.resize', 'resize'):
+            ctrl = _find_uia_ctrl(target, resp)
+            if ctrl is not None:
+                width = _safe_int(step.get('width', 800))
+                height = _safe_int(step.get('height', 600))
+                hwnd = ctrl.NativeWindowHandle
+                if hwnd:
+                    # 先恢复正常状态
+                    window_pattern = ctrl.GetWindowPattern()
+                    if window_pattern is not None:
+                        window_pattern.SetWindowVisualState(0)
+                    # 调整窗口大小
+                    _user32.SetWindowPos(hwnd, 0, 0, 0, width, height, 0x0002 | 0x0004)  # SWP_NOMOVE | SWP_NOZORDER
+                    resp['data'] = f'resized: {target} to {width}x{height}'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'NO_HWND: {target}'
+        elif cmd in ('uia.state', 'state'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                window_pattern = ctrl.GetWindowPattern()
+                if window_pattern is not None:
+                    state_map = {0: 'normal', 1: 'minimized', 2: 'maximized'}
+                    state_val = window_pattern.WindowVisualState
+                    resp['data'] = state_map.get(state_val, f'unknown({state_val})')
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'STATE_UNSUPPORTED: {target}'
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+
+        # ── 属性/状态 ──
+        elif cmd in ('uia.exists', 'exists'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            resp['data'] = 'true' if ctrl.Exists() else 'false'
+        elif cmd in ('uia.rect', 'rect'):
+            ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
+            if ctrl.Exists():
+                rect = ctrl.BoundingRectangle
+                resp['data'] = json.dumps({
+                    'left': rect.left, 'top': rect.top,
+                    'right': rect.right, 'bottom': rect.bottom,
+                    'width': rect.width(), 'height': rect.height(),
+                })
+            else:
+                resp['status'] = 'err'
+                resp['data'] = f'NF: {target}'
+        elif cmd in ('uia.screenshot', 'screenshot'):
+            ctrl = _find_uia_ctrl(target, resp)
+            if ctrl is not None:
+                if hasattr(ctrl, 'CaptureToImage'):
+                    img = ctrl.CaptureToImage()
+                    if img is not None:
+                        # 使用与非 uia capture 相同的目录
+                        path = step.get('path', '')
+                        if path:
+                            save_path = path
+                        else:
+                            save_path = str(_os.path.join(_SNAPSHOTS_DIR, f'{target}.png'))
+                        img.Save(save_path)
+                        resp['data'] = f'screenshot saved: {save_path}'
+                    else:
+                        resp['status'] = 'err'
+                        resp['data'] = f'SCREENSHOT_FAILED: capture returned None'
+                else:
+                    resp['status'] = 'err'
+                    resp['data'] = f'SCREENSHOT_UNSUPPORTED: {target}'
+
         else:
             resp['status'] = 'err'
             resp['data'] = f'unknown UIA command: {cmd}'
@@ -2145,8 +2655,10 @@ def _ensure_process(
             entry = _process_pool[app_path]
             if entry['proc'].poll() is None:
                 if entry.get('env_fingerprint', 'base') == env_fingerprint:
-                    entry['last_used'] = time.time()
-                    return False, ''
+                    pipe_name = str(entry.get('pipe_name') or PIPE_NAME)
+                    if _wait_for_pipe(wait_for_pipe, pipe_name):
+                        entry['last_used'] = time.time()
+                        return False, ''
                 try:
                     entry['proc'].kill()
                     wait_proc = getattr(entry['proc'], 'wait', None)
@@ -2165,12 +2677,13 @@ def _ensure_process(
     except Exception as e:
         return True, f'launch failed: {e}'
 
-    if not _wait_for_pipe(wait_for_pipe):
+    pipe_name = f'{PIPE_NAME}_{proc.pid}'
+    if not _wait_for_pipe(wait_for_pipe, pipe_name):
         try:
             proc.kill()
         except Exception:
             pass
-        return True, f'Delphi process did not create the automation pipe within {wait_for_pipe}s'
+        return True, _pipe_start_failure_message(proc, pipe_name, wait_for_pipe)
 
     with _pool_lock:
         if app_path in _process_pool:
@@ -2193,6 +2706,7 @@ def _ensure_process(
             'proc': proc,
             'last_used': time.time(),
             'env_fingerprint': env_fingerprint,
+            'pipe_name': pipe_name,
         }
     _ensure_pool_cleanup_thread()  # 首次使用时启动清理线程
     return True, ''
@@ -2334,6 +2848,8 @@ def execute_automation(action: str, **kwargs) -> dict:
         result = execute_script(**kwargs)
     elif action == 'console':
         result = console_execute(**kwargs)
+    elif action == 'test':
+        result = run_tests(**kwargs)
     else:
         return {'status': 'error', 'message': f'未知 action: {action}', 'requested_action': requested_action}
 
@@ -2506,7 +3022,7 @@ def execute_script(app_path: str, script,
                    keep_alive: bool = False,
                    stop_on_failure: bool = True,
                    env: dict[str, object] | None = None) -> dict:
-    """Execute one GUI automation script through the fixed Daofy pipe."""
+    """Execute one GUI automation script through its process-specific pipe."""
     with _gui_execution_lock:
         return _execute_script_unlocked(
             app_path,
@@ -2517,6 +3033,389 @@ def execute_script(app_path: str, script,
             stop_on_failure=stop_on_failure,
             env=env,
         )
+
+
+def _evaluate_assert_expr(expr: str, actual: str) -> tuple[bool, str]:
+    """评估 assert_expr Python 表达式。
+
+    Args:
+        expr: Python 表达式（如 "actual == '42'", "'Error' in actual"）
+        actual: 方法返回值的字符串表示
+
+    Returns:
+        (passed, message) 元组
+    """
+    try:
+        result = eval(expr, {'actual': actual})
+        if result:
+            return True, ''
+        return False, f'assert_expr failed: {expr} (actual={actual!r})'
+    except Exception as e:
+        return False, f'assert_expr error: {expr} → {e}'
+
+
+def _validate_run_test_specs(tests: object) -> list[dict]:
+    """Validate and normalize RTTI test specifications before launching the app."""
+    if not isinstance(tests, list) or not tests:
+        raise ValueError('tests must be a non-empty list')
+
+    normalized: list[dict] = []
+    for index, test in enumerate(tests):
+        if not isinstance(test, dict):
+            raise ValueError(f'test {index} must be an object')
+
+        target = str(test.get('target', '')).strip()
+        class_name = str(test.get('className', '')).strip()
+        method = str(test.get('method', '')).strip()
+        if bool(target) == bool(class_name):
+            raise ValueError(f'test {index} must specify exactly one of target or className')
+        if not method:
+            raise ValueError(f'test {index} is missing method')
+
+        normalized_test = dict(test)
+        for field in ('params', 'constructor_params'):
+            value = normalized_test.get(field)
+            if value in (None, ''):
+                continue
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f'test {index} {field} is invalid JSON: {exc.msg}') from exc
+            if not isinstance(value, list):
+                raise ValueError(f'test {index} {field} must be a JSON array')
+            normalized_test[field] = value
+
+        expected_exception = normalized_test.get('expected_exception')
+        if expected_exception is not None:
+            if not isinstance(expected_exception, str) or not expected_exception.strip():
+                raise ValueError(
+                    f'test {index} expected_exception must be a non-empty string'
+                )
+            normalized_test['expected_exception'] = expected_exception.strip()
+            if 'expected' in normalized_test:
+                raise ValueError(
+                    f'test {index} cannot combine expected with expected_exception'
+                )
+
+        if 'expected_message' in normalized_test:
+            expected_message = normalized_test['expected_message']
+            if not isinstance(expected_message, str):
+                raise ValueError(f'test {index} expected_message must be a string')
+            if expected_exception is None:
+                raise ValueError(
+                    f'test {index} expected_message requires expected_exception'
+                )
+
+        if 'timeout' in normalized_test:
+            try:
+                timeout = float(normalized_test['timeout'])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f'test {index} has invalid timeout: {exc}') from exc
+            if not math.isfinite(timeout) or timeout <= 0:
+                raise ValueError(f'test {index} timeout must be a finite value greater than zero')
+
+        try:
+            json.dumps(normalized_test, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'test {index} is not JSON serializable: {exc}') from exc
+        normalized.append(normalized_test)
+    return normalized
+
+
+def _run_test_timeout_ms(test: dict, default_timeout: float) -> int:
+    """Return the per-test transport timeout in milliseconds."""
+    try:
+        timeout = float(test.get('timeout', default_timeout))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid timeout for {test.get('method', '?')}: {exc}") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(
+            f"timeout for {test.get('method', '?')} must be a finite value greater than zero"
+        )
+    return max(1, int(timeout * 1000))
+
+
+def _run_tests_response_data(resp: dict) -> dict:
+    """Decode the Delphi protocol's JSON-in-data response shape."""
+    data = resp.get('data', {})
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _normalize_run_test_result(index: int, test: dict, resp: dict) -> dict:
+    """Convert one Delphi response into one stable test result."""
+    data = _run_tests_response_data(resp)
+    raw_results = data.get('results', [])
+    if resp.get('status') == 'ok' and isinstance(raw_results, list) and raw_results:
+        raw = raw_results[0]
+        result_item = dict(raw) if isinstance(raw, dict) else {
+            'status': 'error',
+            'error': 'invalid Delphi test result',
+        }
+    else:
+        error = resp.get('data', 'missing Delphi test result')
+        if isinstance(error, (dict, list)):
+            error = json.dumps(error, ensure_ascii=False)
+        result_item = {'status': 'error', 'error': str(error)}
+
+    result_item['index'] = index
+    if test.get('id'):
+        result_item['id'] = str(test['id'])
+    if test.get('name'):
+        result_item['name'] = str(test['name'])
+
+    assert_expr = str(test.get('assert_expr', '')).strip()
+    if assert_expr and result_item.get('status') == 'ok':
+        actual = str(result_item.get('result', ''))
+        expr_passed, expr_msg = _evaluate_assert_expr(assert_expr, actual)
+        result_item['assert_expr'] = assert_expr
+        if expr_passed:
+            result_item['assert'] = 'pass'
+        else:
+            result_item['assert'] = 'fail'
+            result_item['assert_expr_error'] = expr_msg
+    return result_item
+
+
+def _summarize_run_test_results(
+    tests: list[dict],
+    results: list[dict],
+    raw_responses: list[dict],
+    process_reused: bool,
+    duration_seconds: float,
+) -> dict:
+    """Build the deterministic suite-level result used by MCP and CI callers."""
+    passed = sum(
+        1 for item in results
+        if item.get('status') == 'ok' and item.get('assert') != 'fail'
+    )
+    failed = sum(
+        1 for item in results
+        if item.get('status') == 'ok' and item.get('assert') == 'fail'
+    )
+    errors = sum(1 for item in results if item.get('status') != 'ok')
+    return {
+        'status': 'ok' if passed == len(tests) else 'failed',
+        'results': results,
+        'total': len(tests),
+        'passed': passed,
+        'failed': failed,
+        'errors': errors,
+        'duration_seconds': round(duration_seconds, 3),
+        'process_reused': process_reused,
+        'raw_responses': raw_responses,
+    }
+
+
+def _run_tests_impl(
+    app_path: str,
+    tests: list[dict],
+    visibility: str,
+    keep_alive: bool,
+    wait_for_pipe: float,
+    test_timeout: float,
+    env: dict[str, object] | None,
+    progress_callback=None,
+    cancellation_check=None,
+) -> dict:
+    """Execute RTTI tests serially with per-test timeout and crash recovery."""
+    try:
+        env_overrides = _normalize_env_overrides(env) if env else {}
+        wait_for_pipe = float(wait_for_pipe)
+        test_timeout = float(test_timeout)
+        if (not math.isfinite(wait_for_pipe) or not math.isfinite(test_timeout)
+                or wait_for_pipe <= 0 or test_timeout <= 0):
+            raise ValueError(
+                'wait_for_pipe and test_timeout must be finite values greater than zero'
+            )
+        normalized_tests = _validate_run_test_specs(tests)
+    except (TypeError, ValueError) as exc:
+        return {'status': 'error', 'message': str(exc)}
+
+    results: list[dict] = []
+    raw_responses: list[dict] = []
+    process_reused = False
+    needs_process = True
+    started = time.perf_counter()
+
+    with _gui_execution_lock:
+        try:
+            for index, original_test in enumerate(normalized_tests):
+                if cancellation_check:
+                    cancellation_check()
+                if progress_callback:
+                    progress_callback(
+                        10 + int((index / len(normalized_tests)) * 80),
+                        f'执行测试 {index + 1}/{len(normalized_tests)}: '
+                        f"{original_test.get('method', '?')}",
+                    )
+
+                if needs_process:
+                    is_new, err = _ensure_process(app_path, wait_for_pipe, env_overrides)
+                    if index == 0:
+                        process_reused = not is_new
+                    if err:
+                        result_item = {
+                            'index': index,
+                            'status': 'error',
+                            'error': err,
+                        }
+                        results.append(result_item)
+                        raw_responses.append({'status': 'err', 'data': err})
+                        continue
+                    _begin_pipe_session(_process_pipe_name(app_path))
+                    needs_process = False
+
+                test = dict(original_test)
+                test.setdefault('visibility', visibility)
+                req = {
+                    'reqId': f'run_test_{index}',
+                    'cmd': 'run_tests',
+                    'tests': [test],
+                }
+                try:
+                    timeout_ms = _run_test_timeout_ms(test, test_timeout)
+                except ValueError as exc:
+                    results.append({
+                        'index': index,
+                        'status': 'error',
+                        'error': str(exc),
+                    })
+                    raw_responses.append({'status': 'err', 'data': str(exc)})
+                    continue
+
+                resp_raw = _send_command(
+                    json.dumps(req, ensure_ascii=False),
+                    timeout_ms=timeout_ms,
+                )
+                resp = _decode_response(resp_raw)
+                raw_responses.append(resp)
+                results.append(_normalize_run_test_result(index, test, resp))
+
+                if _is_pipe_io_error(resp_raw) or resp_raw.startswith('ERR:pipe_unavailable'):
+                    _end_pipe_session()
+                    _kill_process(app_path)
+                    needs_process = True
+                else:
+                    with _pool_lock:
+                        entry = _process_pool.get(app_path)
+                        process_alive = entry is not None and entry['proc'].poll() is None
+                    if not process_alive:
+                        _end_pipe_session()
+                        needs_process = True
+
+            if progress_callback:
+                progress_callback(95, '整理测试结果...')
+        finally:
+            _end_pipe_session()
+            if not keep_alive:
+                _kill_process(app_path)
+
+    return _summarize_run_test_results(
+        normalized_tests,
+        results,
+        raw_responses,
+        process_reused,
+        time.perf_counter() - started,
+    )
+
+
+def run_tests(
+    app_path: str,
+    tests: list[dict],
+    visibility: str = 'public,published',
+    keep_alive: bool = True,
+    wait_for_pipe: float = 10.0,
+    test_timeout: float = 30.0,
+    env: dict[str, object] | None = None,
+) -> dict:
+    """Execute RTTI tests with deterministic aggregation and per-test timeout.
+
+    Args:
+        app_path: Delphi exe 路径
+        tests: 测试用例列表，每项支持：
+            - target: 控件名（GUI 模式，与 className 二选一）
+            - className: 类全名如 Unit.TMyClass（直接实例化模式，与 target 二选一）
+            - method: 要调用的方法名
+            - params: 方法参数 JSON 数组
+            - constructor_params: className 模式的构造参数（可选）
+            - expected: 期望返回值（可选，用于 Delphi 侧精确字符串断言）
+            - expected_exception: 期望测试阶段抛出的异常类名（可选，与 expected 二选一）
+            - expected_message: 期望异常消息包含的文本（可选，需配合 expected_exception）
+            - assert_expr: Python 断言表达式（可选，在 Python 侧评估，如 "actual == '42'"）
+            - visibility: 可见度过滤（可选，如 'private' 或 'all'）
+        visibility: 全局 RTTI 可见度过滤（默认 public,published）
+        keep_alive: 执行后保持进程运行
+        wait_for_pipe: 等待管道超时秒数
+        test_timeout: 每个测试的默认超时秒数，可由测试项 timeout 覆盖
+        env: 环境变量覆盖
+
+    Returns:
+        dict: {status, results, total, passed, failed, errors}
+    """
+    return _run_tests_impl(
+        app_path=app_path,
+        tests=tests,
+        visibility=visibility,
+        keep_alive=keep_alive,
+        wait_for_pipe=wait_for_pipe,
+        test_timeout=test_timeout,
+        env=env,
+    )
+
+
+def submit_run_tests(
+    app_path: str,
+    tests: list[dict],
+    visibility: str = 'public,published',
+    keep_alive: bool = True,
+    wait_for_pipe: float = 10.0,
+    test_timeout: float = 30.0,
+    env: dict[str, object] | None = None,
+) -> str:
+    """提交后台测试执行，返回 task_id（避免 MCP 超时）。
+
+    Args:
+        参数同 run_tests()（支持 visibility 全局 + per-test、assert_expr）。
+        注意：tests 中每个条目可包含：
+            - visibility: 可见度过滤（可选，覆盖全局 visibility）
+            - assert_expr: Python 断言表达式（可选）
+            - expected_exception: 期望测试阶段抛出的异常类名（可选）
+            - expected_message: 期望异常消息包含的文本（可选）
+
+    Returns:
+        task_id: 异步任务 ID，通过 async_task(action='status', task_id=...) 查询进度。
+    """
+    task_manager = get_task_manager()
+
+    def _run_tests_task(
+        _progress_callback=None,
+        _cancellation_check=None,
+        _task_id=None,
+        **kwargs,
+    ):
+        return _run_tests_impl(
+            app_path=app_path,
+            tests=tests,
+            visibility=visibility,
+            keep_alive=keep_alive,
+            wait_for_pipe=wait_for_pipe,
+            test_timeout=test_timeout,
+            env=env,
+            progress_callback=_progress_callback,
+            cancellation_check=_cancellation_check,
+        )
+
+    return task_manager.submit_task(
+        name="run_tests",
+        func=_run_tests_task,
+        dedup_key=None,
+    )
 
 
 def _execute_script_unlocked(app_path: str, script,
@@ -2566,6 +3465,7 @@ def _execute_script_unlocked(app_path: str, script,
     if err:
         return {'status': 'error', 'message': err}
     _begin_pipe_session()
+    _pipe_session.pipe_name = _process_pipe_name(app_path)
 
     # 新建进程时需要设置截图目录
     if is_new:

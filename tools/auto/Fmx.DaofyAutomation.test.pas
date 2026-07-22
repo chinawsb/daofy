@@ -59,7 +59,7 @@ type
     // ── RTTI ──
     function HandleRGet(const ReqId, Target, Prop: string): string; override;
     function HandleRSet(const ReqId, Target, Prop, Val: string): string; override;
-    function HandleRInsp(const ReqId, Target: string): string; override;
+    function HandleRInsp(const ReqId, Target, Visibility: string): string; override;
 
     // ── 辅助 ──
     procedure DoTerminateApp; override;
@@ -217,7 +217,7 @@ function TAutomationProcessor.HandleRSet(const ReqId, Target, Prop,
 begin
 end;
 
-function TAutomationProcessor.HandleRInsp(const ReqId, Target: string): string;
+function TAutomationProcessor.HandleRInsp(const ReqId, Target, Visibility: string): string;
 begin
   Result := 'TODO';
 end;

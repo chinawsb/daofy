@@ -38,7 +38,7 @@ MCP resource URI: `delphi://automation/controls-reference`。
 | 级别 | 命令 | 说明 |
 |------|------|------|
 | **黑盒**（用户视角）| `click` / `type` / `key` / `drag` / `hover` / `move` / `textbounds` / `capture` / `waitfor` / `wait` / `msgscan` / `msgclick` / `dlgfile` / `uia.*` / `rget`（只读验证）| 模拟真实用户操作或读取可见状态，**黑盒测试默认只用这一类** |
-| **灰盒**（RTTI 介入）| `rset` / `rcall` / `rinspect` / `dumpstate` / `formsum` | 绕过 UI 直接改属性/调方法，**黑盒禁用**，仅用于灰盒/白盒测试或夹具初始化 |
+| **灰盒**（RTTI 介入）| `rset` / `rcall` / `rinspect` / `run_tests` / `dumpstate` / `formsum` | 绕过 UI 直接改属性/调方法，**黑盒禁用**，仅用于灰盒/白盒测试或夹具初始化 |
 | **白盒**（深度 RTTI）| `delphi_rtti(action=call)` | 直接调内部方法，**黑盒禁用**，仅白盒诊断 |
 
 **核心原则**：

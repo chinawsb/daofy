@@ -25,7 +25,8 @@ MCP URI: `delphi://automation/capability-matrix`
 | 1 | **读取 Delphi 组件属性** | 白盒/灰盒 | `rget` | — | `uia.get` | RTTI 暴露全部 published 属性；UIA 仅读 Name/Value/ControlType |
 | 2 | **修改 Delphi 组件属性** | 白盒/灰盒 | `rset` | `click`（仅 Toggle） | `uia.set` | RTTI 直接写属性；黑盒应改用 click 模拟用户操作 |
 | 3 | **调用 Delphi 组件方法** | 白盒/灰盒 | `rcall` | — | `click` | RTTI 方法调用最精确；仅用于测试夹具初始化/诊断 |
-| 4 | **探查 Delphi 组件结构** | 白盒/灰盒 | `rinspect` | — | `uia.scan` | RTTI 返回完整类型信息，UIA 只返回有限属性 |
+| 4 | **探查 Delphi 组件结构** | 白盒/灰盒 | `rinspect`(支持 visibility 参数) | — | `uia.scan` | RTTI 返回完整类型信息，UIA 只返回有限属性 |
+| 4b | **RTTI 单元测试** | 白盒/灰盒 | `automate_delphi(action="test")` | `run_tests`(底层协议) | `rcall`(单步) | `target/className` 双模式；支持 `RegisterTestClass`、`RegisterFixture`、构造/方法参数、重载、`expected`、`expected_exception`、`assert_expr`、逐例 timeout 和稳定统计。详见 `delphi://automation/rtti-test-runner` |
 | 5 | **黑盒操作 Delphi 控件** | 黑盒 | `click` | — | `rcall`/`rset` | click 模拟真实用户操作，不依赖内部实现 |
 | 6 | **向 Delphi 输入框输文本** | 黑盒 | `type` | — | `rset` | 黑盒应模拟用户打字完整行为 |
 | 7 | **发送键盘按键** | 黑盒 | `key` | — | — | key 发送虚拟键码 |

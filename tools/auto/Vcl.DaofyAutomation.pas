@@ -68,8 +68,8 @@ type
 
     function HandleRGet(const ReqId, Target, Prop: string): string; override;
     function HandleRSet(const ReqId, Target, Prop, Val: string): string; override;
-    function HandleRCall(const ReqId, Target, Method, ParamsJSON: string): string; override;
-    function HandleRInsp(const ReqId, Target: string): string; override;
+    function HandleRCall(const ReqId, Target, Method, ParamsJSON, Visibility: string): string; override;
+    function HandleRInsp(const ReqId, Target, Visibility: string): string; override;
     function HandleCmdListWnd(const ReqId: string): string; override;
 
     // ── 辅助 ──
@@ -97,9 +97,15 @@ begin
 end;
 
 procedure AutoStop;
+var
+  Processor: TAutomationProcessorBase;
 begin
-  if TAutomationProcessorBase.Current <> nil then
-    TAutomationProcessorBase.Current.Terminate;
+  Processor := TAutomationProcessorBase.Current;
+  if Processor <> nil then
+  begin
+    Processor.Stop;
+    Processor.Free;
+  end;
 end;
 
 procedure AutoCapture(const AName: string);
@@ -107,7 +113,6 @@ begin
   if TAutomationProcessorBase.Current <> nil then
     TAutomationProcessorBase.Current.DoCapPub(AName);
 end;
-
 procedure SetScreenshotDir(const ADir: string);
 begin
   if TAutomationProcessorBase.Current <> nil then begin
@@ -1171,7 +1176,7 @@ begin
   end;
 end;
 
-function TAutomationProcessor.HandleRInsp(const ReqId, Target: string): string;
+function TAutomationProcessor.HandleRInsp(const ReqId, Target, Visibility: string): string;
 var
   Ctrl: TControl;
   Ctx: TRttiContext;
@@ -1181,7 +1186,24 @@ var
   Root: TJSONObject;
   Methods: TJSONArray;
   Props: TJSONArray;
+  VisSet: set of TMemberVisibility;
+  VisParts: TArray<string>;
+  VisItem: string;
 begin
+  // 解析 visibility 参数，默认 public+published
+  VisSet := [mvPublic, mvPublished];
+  if Visibility <> '' then begin
+    VisSet := [];
+    VisParts := Visibility.Split([',']);
+    for VisItem in VisParts do begin
+      var VisLower := VisItem.Trim.ToLower;
+      if VisLower = 'private' then Include(VisSet, mvPrivate)
+      else if VisLower = 'protected' then Include(VisSet, mvProtected)
+      else if VisLower = 'public' then Include(VisSet, mvPublic)
+      else if VisLower = 'published' then Include(VisSet, mvPublished);
+    end;
+  end;
+
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
@@ -1200,7 +1222,7 @@ begin
 
         Methods := TJSONArray.Create;
         for M in Ty.GetMethods do
-          if (M.Visibility = mvPublic) and (M.MethodKind = mkProcedure)
+          if (M.Visibility in VisSet) and (M.MethodKind = mkProcedure)
             and (Length(M.GetParameters) = 0) then
             Methods.AddElement(TJSONString.Create(M.Name));
         Root.AddPair('methods', Methods);
@@ -1231,7 +1253,7 @@ end;
 { ── RTTI 调用方法 ── }
 
 function TAutomationProcessor.HandleRCall(const ReqId, Target,
-  Method, ParamsJSON: string): string;
+  Method, ParamsJSON, Visibility: string): string;
 var
   Ctrl: TObject;
   Ctx: TRttiContext;
@@ -1281,7 +1303,8 @@ begin
       end;
 
       // 最后一段是方法名
-      M := Ctx.GetType(Obj.ClassType).GetMethod(Parts[High(Parts)]);
+      // 最后一段是方法名（支持可见度过滤）
+      M := FindMethodByVisibility(Ctx.GetType(Obj.ClassType), Parts[High(Parts)], Visibility);
       if M = nil then begin
         if (Length(Parts) = 1) and SameText(Parts[0], 'Execute') and (Obj is TBasicAction) then begin
           TBasicAction(Obj).Execute;
@@ -1423,11 +1446,13 @@ end;
 
 function TAutomationProcessor.GetRttiClasses: TArray<TClass>;
 var
-  I: Integer;
+  I, RegisteredCount: Integer;
 begin
-  SetLength(Result, Screen.FormCount);
+  Result := inherited GetRttiClasses;
+  RegisteredCount := Length(Result);
+  SetLength(Result, RegisteredCount + Screen.FormCount);
   for I := 0 to Screen.FormCount - 1 do
-    Result[I] := Screen.Forms[I].ClassType;
+    Result[RegisteredCount + I] := Screen.Forms[I].ClassType;
 end;
 
 end.

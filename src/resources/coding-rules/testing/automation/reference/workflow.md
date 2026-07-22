@@ -18,19 +18,25 @@ MCP resource URI: `delphi://automation/workflow`。
 ## 核心循环
 
 1. 加载 `delphi://automation/workflow`。
-2. 生成新脚本前，先读 `delphi://automation/script-generation-workflow`。
-3. 先分析源码：读目标 `.pas/.dfm`，映射控件、事件和源码推导的断言。
-4. 构造脚本：可执行检查用 `assert_expr`，说明文字放 `expected` 或 `note`。
-5. 执行 `automate_delphi(action="auto"|"gui"|"console", ...)`。
-6. 读取 `result.report.first_failure`。若存在，停止依赖步骤。
-7. 根据 `result.report.solution` 和失败证据生成修复方案。
-8. 切换到编码模式，修复确定性缺陷，编译，重跑。
-9. 将通过的脚本保存在项目根目录 `Tests\<测试类型>\` 下，
-   将有用的事故恢复存入 `experience`。
+2. 先选择测试入口：纯业务类方法用 `action="test"`；UI 用户路径用
+   `action="gui"`；控制台交互用 `action="console"`。
+3. RTTI 单元测试先读 `delphi://automation/rtti-test-runner`；GUI/console 新脚本先读
+   `delphi://automation/script-generation-workflow`。
+4. 分析源码：读目标 `.pas/.dfm`，映射分支、异常、控件、事件和代码派生断言。
+5. 构造可执行测试：RTTI suite 使用 `expected`、`expected_exception` 或
+   `assert_expr`；GUI 脚本的说明文字放 `expected` 或 `note`。
+6. 执行 `automate_delphi(action="test"|"auto"|"gui"|"console", ...)`。
+7. test action 通过 `async_task` 读取结果；GUI action 读取
+   `result.report.first_failure`。存在失败时停止依赖步骤。
+8. 根据结构化结果和失败证据生成修复方案。
+9. 切换到编码模式，修复确定性缺陷，编译，重跑完整 suite/脚本。
+10. 将通过的测试定义保存在项目根目录 `Tests\<测试类型>\` 下，
+    将有用的事故恢复存入 `experience`。
 
 ## 关联文档
 
 - `delphi://automation/script-schema` — 创建或编辑脚本前必读。
+- `delphi://automation/rtti-test-runner` — 创建或执行 RTTI 单元测试 suite 时必读。
 - `delphi://automation/script-generation-workflow` — 从源码推导脚本时必读。
 - `delphi://automation/report-schema` — 解释结果或生成测试报告时必读。
 - `delphi://automation/inline-unit` — 将 Delphi 项目接入 `tools/auto` 时必读。
@@ -39,6 +45,7 @@ MCP resource URI: `delphi://automation/workflow`。
 ## 硬性规则
 
 - 不得在 `assert_expr` 中写自然语言。
+- RTTI 异常路径用 `expected_exception`；setup/teardown 异常不得作为预期 test 异常通过。
 - 黑盒执行步骤不得使用 `rcall`、`rset` 或直接 RTTI 调用。
 - 优先用 `rget/waitfor/msgscan` 做断言，而非纯视觉检查。
 - 集合类控件（TCategoryButtons、TListBox 等）应使用基于标题的点击

@@ -452,6 +452,87 @@ class TestGuiScriptResultHandling:
         assert launched[0].env["DAOFY_ENV_TEST"] == "one"
         assert launched[1].env["DAOFY_ENV_TEST"] == "two"
 
+    def test_gui_process_gets_a_process_specific_pipe(self):
+        """New GUI processes must not share the legacy global pipe instance."""
+        from src.services import automation_service
+
+        app_path = r"C:\fake\specific-pipe.exe"
+        launched = []
+        waited = []
+
+        def fake_popen(cmd, cwd=None, env=None):
+            proc = mock.Mock()
+            proc.pid = 4321
+            proc.poll.return_value = None
+            proc.kill = mock.Mock()
+            proc.wait = mock.Mock()
+            proc.env = env or {}
+            launched.append(proc)
+            return proc
+
+        def fake_wait(timeout, pipe_name):
+            waited.append((timeout, pipe_name))
+            return True
+
+        with mock.patch.object(automation_service.subprocess, "Popen", side_effect=fake_popen), \
+                mock.patch.object(automation_service, "_wait_for_pipe", side_effect=fake_wait), \
+                mock.patch.object(automation_service, "_ensure_pool_cleanup_thread"):
+            try:
+                is_new, err = automation_service._ensure_process(app_path, 3.0)
+            finally:
+                automation_service._kill_process(app_path)
+
+        assert (is_new, err) == (True, "")
+        assert len(launched) == 1
+        pipe_name = automation_service.PIPE_NAME + "_4321"
+        assert "DAOFY_AUTOMATION_PIPE" not in launched[0].env
+        assert waited == [(3.0, pipe_name)]
+
+    def test_gui_process_restarts_when_pipe_disappears(self):
+        """A live pooled process with a dead pipe must be replaced."""
+        from src.services import automation_service
+
+        app_path = r"C:\fake\dead-pipe.exe"
+        old_proc = mock.Mock()
+        old_proc.poll.return_value = None
+        old_proc.kill = mock.Mock()
+        old_proc.wait = mock.Mock()
+        launched = []
+        waits = []
+
+        def fake_popen(cmd, cwd=None, env=None):
+            proc = mock.Mock()
+            proc.pid = 5678
+            proc.poll.return_value = None
+            proc.kill = mock.Mock()
+            proc.wait = mock.Mock()
+            launched.append(proc)
+            return proc
+
+        def fake_wait(timeout, pipe_name):
+            waits.append(pipe_name)
+            return len(waits) > 1
+
+        automation_service._process_pool[app_path] = {
+            "proc": old_proc,
+            "last_used": time.time(),
+            "env_fingerprint": "base",
+            "pipe_name": r"\\.\pipe\daofy_auto_stale",
+        }
+        with mock.patch.object(automation_service.subprocess, "Popen", side_effect=fake_popen), \
+                mock.patch.object(automation_service, "_wait_for_pipe", side_effect=fake_wait), \
+                mock.patch.object(automation_service, "_ensure_pool_cleanup_thread"):
+            try:
+                is_new, err = automation_service._ensure_process(app_path, 3.0)
+            finally:
+                automation_service._kill_process(app_path)
+
+        assert (is_new, err) == (True, "")
+        assert waits[0] == r"\\.\pipe\daofy_auto_stale"
+        assert waits[1] == automation_service.PIPE_NAME + "_5678"
+        assert len(launched) == 1
+        assert old_proc.kill.called
+
     def test_pipe_session_reopens_after_io_failure(self):
         """A failed persistent pipe handle should be discarded before retrying."""
         from src.services import automation_service
@@ -498,6 +579,41 @@ class TestGuiScriptResultHandling:
         assert response.startswith("ERR:read_failed")
         assert automation_service._is_pipe_io_error(response)
         read_mock.assert_called_once_with(12345, timeout_ms=321)
+
+    def test_pipe_poll_does_not_read_before_data_is_available(self):
+        """A synchronous ReadFile must not be entered while the pipe is empty."""
+        from src.services import automation_service
+
+        def fake_peek(_handle, _buffer, _size, _read, available, _left):
+            available._obj.value = 0
+            return True
+
+        with mock.patch.object(automation_service, "_PeekNamedPipe", side_effect=fake_peek), \
+                mock.patch.object(automation_service, "_read_pipe_message") as read_mock, \
+                mock.patch.object(automation_service.time, "monotonic", side_effect=[0.0, 0.0, 0.0, 0.2]), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service._read_pipe_message_poll(
+                12345,
+                timeout_ms=100,
+            )
+
+        assert result is None
+        read_mock.assert_not_called()
+
+    def test_pipe_poll_reads_after_data_is_available(self):
+        """Once PeekNamedPipe reports bytes, read the complete message."""
+        from src.services import automation_service
+
+        def fake_peek(_handle, _buffer, _size, _read, available, _left):
+            available._obj.value = 3
+            return True
+
+        with mock.patch.object(automation_service, "_PeekNamedPipe", side_effect=fake_peek), \
+                mock.patch.object(automation_service, "_read_pipe_message", return_value=b"ok") as read_mock:
+            result = automation_service._read_pipe_message_poll(12345)
+
+        assert result == b"ok"
+        read_mock.assert_called_once_with(12345)
 
     def test_click_step_forwards_client_coordinates(self, tmp_path):
         """click x/y fields should be encoded for the inline automation unit."""
@@ -2084,6 +2200,203 @@ end.
         assert result["status"] == "ok"
         assert result["report"]["failed"] == 0
         assert result["report"]["passed"] == 3
+
+
+class TestRttiRunTests:
+    """RTTI test runner protocol, aggregation, timeout, and lifecycle tests."""
+
+    @staticmethod
+    def _delphi_response(result: dict) -> str:
+        return json.dumps({
+            "reqId": "run_test",
+            "status": "ok",
+            "data": json.dumps({"results": [result]}),
+        })
+
+    @staticmethod
+    def _alive_pool_entry():
+        proc = mock.Mock()
+        proc.poll.return_value = None
+        return {"proc": proc, "pipe_name": r"\\.\pipe\daofy_auto_123"}
+
+    def test_decodes_nested_data_and_marks_assertion_failure(self):
+        from src.services import automation_service
+
+        app_path = r"C:\fake\rtti-tests.exe"
+        tests = [
+            {
+                "className": "Tests.TCalculator",
+                "method": "Add",
+                "params": [1, 2],
+                "expected": "3",
+            },
+            {
+                "className": "Tests.TCalculator",
+                "method": "Add",
+                "params": [1, 1],
+                "assert_expr": "actual == '3'",
+            },
+        ]
+        responses = [
+            self._delphi_response({"status": "ok", "result": "3", "assert": "pass"}),
+            self._delphi_response({"status": "ok", "result": "2"}),
+        ]
+
+        automation_service._process_pool[app_path] = self._alive_pool_entry()
+        try:
+            with mock.patch.object(
+                automation_service, "_ensure_process", return_value=(False, "")
+            ), mock.patch.object(
+                automation_service, "_begin_pipe_session"
+            ) as begin_session, mock.patch.object(
+                automation_service, "_end_pipe_session"
+            ), mock.patch.object(
+                automation_service, "_kill_process"
+            ) as kill_process, mock.patch.object(
+                automation_service, "_send_command", side_effect=responses
+            ) as send_command:
+                result = automation_service.run_tests(
+                    app_path=app_path,
+                    tests=tests,
+                    visibility="private,public",
+                    keep_alive=False,
+                )
+        finally:
+            automation_service._process_pool.pop(app_path, None)
+
+        assert result["status"] == "failed"
+        assert result["passed"] == 1
+        assert result["failed"] == 1
+        assert result["errors"] == 0
+        assert len(result["results"]) == 2
+        assert result["results"][1]["assert"] == "fail"
+        assert begin_session.call_count == 1
+        kill_process.assert_called_once_with(app_path)
+
+        first_request = json.loads(send_command.call_args_list[0].args[0])
+        assert first_request["tests"][0]["visibility"] == "private,public"
+        assert send_command.call_args_list[0].kwargs["timeout_ms"] == 30000
+
+    def test_assert_expr_success_has_explicit_pass_status(self):
+        from src.services import automation_service
+
+        result = automation_service._normalize_run_test_result(
+            0,
+            {"id": "expr", "assert_expr": "actual == '42'"},
+            json.loads(self._delphi_response({"status": "ok", "result": "42"})),
+        )
+
+        assert result["assert"] == "pass"
+        assert result["assert_expr"] == "actual == '42'"
+
+    def test_pipe_timeout_restarts_before_next_test(self):
+        from src.services import automation_service
+
+        app_path = r"C:\fake\timeout-tests.exe"
+        tests = [
+            {"className": "Tests.TCalculator", "method": "Slow", "timeout": 0.25},
+            {"className": "Tests.TCalculator", "method": "Fast"},
+        ]
+        responses = [
+            "ERR:read_failed_or_timeout (err=0)",
+            self._delphi_response({"status": "ok", "result": "done"}),
+        ]
+
+        automation_service._process_pool[app_path] = self._alive_pool_entry()
+        try:
+            with mock.patch.object(
+                automation_service,
+                "_ensure_process",
+                side_effect=[(False, ""), (True, "")],
+            ) as ensure_process, mock.patch.object(
+                automation_service, "_begin_pipe_session"
+            ) as begin_session, mock.patch.object(
+                automation_service, "_end_pipe_session"
+            ), mock.patch.object(
+                automation_service, "_kill_process"
+            ) as kill_process, mock.patch.object(
+                automation_service, "_send_command", side_effect=responses
+            ) as send_command:
+                result = automation_service.run_tests(
+                    app_path=app_path,
+                    tests=tests,
+                    keep_alive=True,
+                )
+        finally:
+            automation_service._process_pool.pop(app_path, None)
+
+        assert result["status"] == "failed"
+        assert result["passed"] == 1
+        assert result["failed"] == 0
+        assert result["errors"] == 1
+        assert ensure_process.call_count == 2
+        assert begin_session.call_count == 2
+        kill_process.assert_called_once_with(app_path)
+        assert send_command.call_args_list[0].kwargs["timeout_ms"] == 250
+
+    @pytest.mark.parametrize(
+        "test_spec, message",
+        [
+            ({"method": "Add"}, "exactly one"),
+            ({"target": "Button1", "className": "Tests.TButton", "method": "Click"}, "exactly one"),
+            ({"className": "Tests.TCalculator"}, "missing method"),
+            ({"className": "Tests.TCalculator", "method": "Add", "params": {}}, "must be a JSON array"),
+            ({"className": "Tests.TCalculator", "method": "Add", "timeout": 0}, "finite value greater than zero"),
+            ({"className": "Tests.TCalculator", "method": "Add", "timeout": "later"}, "invalid timeout"),
+            ({"className": "Tests.TCalculator", "method": "Add", "params": [{1, 2}]}, "not JSON serializable"),
+            ({"className": "Tests.TCalculator", "method": "Add", "expected_exception": ""}, "non-empty string"),
+            ({"className": "Tests.TCalculator", "method": "Add", "expected_message": "bad"}, "requires expected_exception"),
+            ({"className": "Tests.TCalculator", "method": "Add", "expected": "3", "expected_exception": "EInvalidOpException"}, "cannot combine"),
+        ],
+    )
+    def test_invalid_specs_fail_before_process_launch(self, test_spec, message):
+        from src.services import automation_service
+
+        with mock.patch.object(automation_service, "_ensure_process") as ensure_process:
+            result = automation_service.run_tests(
+                app_path=r"C:\fake\invalid-tests.exe",
+                tests=[test_spec],
+            )
+
+        assert result["status"] == "error"
+        assert message in result["message"]
+        ensure_process.assert_not_called()
+
+    def test_string_encoded_arrays_are_normalized_before_send(self):
+        from src.services import automation_service
+
+        app_path = r"C:\fake\normalized-tests.exe"
+        tests = [{
+            "className": "Tests.TCalculator",
+            "method": "Add",
+            "params": "[1, 2]",
+            "constructor_params": "[]",
+        }]
+
+        automation_service._process_pool[app_path] = self._alive_pool_entry()
+        try:
+            with mock.patch.object(
+                automation_service, "_ensure_process", return_value=(False, "")
+            ), mock.patch.object(
+                automation_service, "_begin_pipe_session"
+            ), mock.patch.object(
+                automation_service, "_end_pipe_session"
+            ), mock.patch.object(
+                automation_service, "_send_command",
+                return_value=self._delphi_response({"status": "ok", "result": "3"}),
+            ) as send_command:
+                result = automation_service.run_tests(
+                    app_path=app_path,
+                    tests=tests,
+                    keep_alive=True,
+                )
+        finally:
+            automation_service._process_pool.pop(app_path, None)
+
+        assert result["status"] == "ok"
+        sent_test = json.loads(send_command.call_args.args[0])["tests"][0]
+        assert sent_test["params"] == [1, 2]
+        assert sent_test["constructor_params"] == []
 
 
 class TestDetectEdgeCases:

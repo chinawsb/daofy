@@ -76,10 +76,15 @@ delphi_file(action="read", search_type="class", type_name="TNewCustomerForm")
 
 ## H4. 代码派生断言优先级
 
-1. `rget` 直接检查属性值——最精确、最稳定
-2. `waitfor` + `msgscan` — 检查弹窗内容
-3. `capture` + OCR — 视觉验证（兜底）
-4. `rcall` 调用业务方法 — 仅灰盒/白盒验证数据层
+1. 纯业务类方法：`automate_delphi(action="test")`，通过参数化输入、`expected`、
+   `expected_exception` 或 `assert_expr` 验证。
+2. UI 状态：`rget` 直接检查属性值——最精确、最稳定。
+3. `waitfor` + `msgscan` — 检查弹窗内容。
+4. `capture` + OCR — 视觉验证（兜底）。
+5. `rcall` 调用业务方法 — 仅用于单步灰盒诊断；可复用测试应进入 RTTI test suite。
+
+纯业务方法测试先读取 `delphi://automation/rtti-test-runner`。用户可见交互仍生成 GUI
+黑盒脚本，不能因为 RTTI 更方便就跳过真实 UI 路径。
 
 ## H5. 与自动化流程融合
 

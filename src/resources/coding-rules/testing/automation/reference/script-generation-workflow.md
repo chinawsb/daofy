@@ -76,6 +76,7 @@ result.report.steps
 |------|---------|
 | `target_not_found` | 执行 `formsum/dumpstate`；更新脚本 target 或修复缺失控件 |
 | `property_not_found` | 执行 `rinspect`；更新属性路径 |
+| `method_not_found`（rcall/run_tests 时报错） | 执行 `rinspect`(加 visibility=private,protected,public,published 查看所有方法)；确认方法名和可见度 |
 | `assertion_failed` | 对比源码推导的预期行为与实际值 |
 | `timeout` | 截取状态，执行 `msgscan/formsum`，再决定等待还是修复代码 |
 | `command_error` | 检查 `response_data`；优先用低风险证据命令 |

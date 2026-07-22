@@ -11,11 +11,12 @@ resources/coding-rules/testing/automation/
 ├── architecture.md          ← 顶层方法论（RTTI/OCR 决策矩阵、感知-执行-验证循环、代码感知测试）
 ├── reference/               ← 框架参考文档
 │   ├── workflow.md          — 自动化测试工作流总览
+│   ├── rtti-test-runner.md  — 白盒/灰盒 RTTI 单元测试、fixture、超时与报告
 │   ├── script-schema.md     — 脚本格式、命令列表、参数说明
 │   ├── script-generation-workflow.md — AI 生成脚本流程
 │   ├── report-schema.md     — 报告结构、first_failure 处理
 │   ├── repair-loop.md       — 失败信号分类 → 修复 → 重试循环
-│   └── inline-unit.md       — Delphi 端注入式自动化单元与命名管道协议
+│   └── inline-unit.md       — 进程内自动化单元与跨平台传输协议
 └── scenarios/               ← 场景模板（A-O，含策略描述和可复用 JSON）
     ├── base.md, a-smoke.md … o-control-rebuild.md, checklist.md
 ```
@@ -26,7 +27,8 @@ resources/coding-rules/testing/automation/
 |------|---------------|------|
 | [architecture.md](architecture.md) | 理解 RTTI/OCR 决策、感知-规划-执行循环、代码感知方法论 | 顶层自动化架构 |
 | [reference/workflow.md](reference/workflow.md) | 首次进行自动化测试时 | 自动化测试工作流总览 |
-| [reference/inline-unit.md](reference/inline-unit.md) | 需了解 Delphi 端自动化单元结构和命名管道协议时 | 内联自动化单元文档 |
+| [reference/rtti-test-runner.md](reference/rtti-test-runner.md) | 直接测试 Delphi 类方法或替代 DUnitX 运行能力时 | RTTI 测试接入、注册、断言、超时和报告 |
+| [reference/inline-unit.md](reference/inline-unit.md) | 需了解进程内自动化单元和 NamedPipe/Unix Socket 传输时 | 内联自动化单元文档 |
 | [reference/script-schema.md](reference/script-schema.md) | 编写 `automate_delphi` 脚本命令时 | 脚本格式、命令列表、参数说明 |
 | [reference/script-generation-workflow.md](reference/script-generation-workflow.md) | 从 Delphi 源码生成自动化脚本时 | AI 生成脚本的工作流程 |
 | [reference/report-schema.md](reference/report-schema.md) | 分析自动化测试报告时 | 报告结构、first_failure 处理 |
@@ -64,9 +66,11 @@ resources/coding-rules/testing/automation/
 automate_delphi(action="auto", app_path="App.exe", script=[...])
 automate_delphi(action="gui",  app_path="App.exe", script=[...])
 automate_delphi(action="console", app_path="Tool.exe", input="Y\n", expect="Continue?")
+automate_delphi(action="test", app_path="TestHost.exe", tests=[...])
 ```
 
 > 详细命令列表、协议格式和示例见 `reference/script-schema.md`。
+> RTTI 单元测试与 fixture 接入见 `reference/rtti-test-runner.md`。
 > AI 脚本生成流程见 `reference/script-generation-workflow.md`。
 > 修复循环见 `reference/repair-loop.md`。
 > UI 测试场景模板见 `scenarios/` 目录下的 A-O 文件。

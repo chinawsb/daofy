@@ -1,4 +1,4 @@
-<!-- @when: 需将 Delphi 项目接入自动化框架，或了解命名管道协议 -->
+<!-- @when: 需将 Delphi 项目接入自动化框架，或了解进程内自动化传输协议 -->
 <!-- @chain: after=workflow.md -->
 
 # Delphi 内联自动化单元
@@ -11,7 +11,9 @@ MCP resource URI: `delphi://automation/inline-unit`。
 
 | 文件 | 功能 |
 |------|------|
-| `DaofyAutomation.Base.pas` | 命名管道协议、命令分发、共享 Win32 命令、异步结果缓存 |
+| `DaofyAutomation.Base.pas` | 传输接口、JSON 协议、命令分发和异步结果缓存 |
+| `DaofyAutomation.Windows.pas` | Windows NamedPipe 传输实现和 Overlapped I/O |
+| `DaofyAutomation.Posix.pas` | POSIX Unix Domain Socket 传输实现和 self-pipe 唤醒 |
 | `Vcl.DaofyAutomation.pas` | VCL 控件查找、截图、RTTI 操作 |
 | `Fmx.DaofyAutomation.pas` | FMX 控件查找、截图、RTTI 操作 |
 | `DaofyAutomation.RttiDiscovery.pas` | 运行时 RTTI 能力发现 |
@@ -40,7 +42,11 @@ FMX 使用 `Fmx.DaofyAutomation`。
 
 ## 协议说明
 
-- 管道：`\\.\pipe\daofy_auto`，JSON 请求/响应。
+- 传输由 `IAutomationTransport` 抽象；`TAutomationProcessorBase.CreateTransport` 在 Windows
+  选择 `TNamedPipeTransport`，在 POSIX 选择 `TUnixSocketTransport`。
+- Windows 端点基于 `\\.\pipe\daofy_auto` 派生；POSIX 端点使用 Unix Domain Socket。
+  进程注册文件的 `pipe` 字段为兼容旧协议保留，值是传输层返回的实际端点地址。
+- 两种传输承载相同的 UTF-8 JSON 请求/响应，命令层不依赖具体端点类型。
 - 异步命令（返回 ACK，Python 轮询 `peekresult`）：`click`/`rclick`/`dblclick`/`hover`/`move`/`drag`/`msgclick`/`dlgclick`/`rcall`/`key`/`rset`/`type`。
 - 同步命令（阻塞等待）：`goto`/`capture`/`waitfor`/`wait`/`dumpstate`/`listwnd`/`dlgscan`/`msgscan`/`msgclose`/`dlgfile`/`snapdir`/`exit`/`rget`/`rinspect`/`peekresult`；可选诊断命令 `callgraph`/`callgraph_diff`/`callgraph_path`/`callgraph_impact` 和用途层 `callgraph_*` 需要额外引用 `DaofyAutomation.CallGraph` 并生成 Detailed 级别 `.map`。`callgraph` 支持 `direction=callees|callers`、`project_only`、`exclude_prefixes`、`include_prefixes`、`edge_limit`，响应包含 `edge_count`、`returned_count`、`truncated`，每条边包含 `call_addr`、`call_file`、`call_line`、`category`、`from_category`、`to_category`；`callgraph_path` 支持 `source`、`target`、`max_depth`、`max_paths`、`include_prefixes`；`callgraph_diff` 默认 `compare_by=name`，可选 `addr|full`，`baseline_path`/`save_as` 和用途层文件型 graph/impact 输入都限制在 `snapshots_dir` 内；`callgraph_impact` 支持 `functions`/`targets` 或 `file`+`line`/`locations`，批量查询 callers 并汇总入口候选。
 

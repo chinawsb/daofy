@@ -80,8 +80,8 @@ type
     // --- RTTI ---
     function HandleRGet(const ReqId, Target, Prop: string): string; override;
     function HandleRSet(const ReqId, Target, Prop, Val: string): string; override;
-    function HandleRCall(const ReqId, Target, Method, ParamsJSON: string): string; override;
-    function HandleRInsp(const ReqId, Target: string): string; override;
+    function HandleRCall(const ReqId, Target, Method, ParamsJSON, Visibility: string): string; override;
+    function HandleRInsp(const ReqId, Target, Visibility: string): string; override;
     function HandleCmdListWnd(const ReqId: string): string; override;
 
     // --- 辅助 ---
@@ -107,11 +107,16 @@ begin
 end;
 
 procedure AutoStop;
+var
+  Processor: TAutomationProcessorBase;
 begin
-  if TAutomationProcessorBase.Current <> nil then
-    TAutomationProcessorBase.Current.Terminate;
+  Processor := TAutomationProcessorBase.Current;
+  if Processor <> nil then
+  begin
+    Processor.Stop;
+    Processor.Free;
+  end;
 end;
-
 procedure AutoCapture(const AName: string);
 begin
   if TAutomationProcessorBase.Current <> nil then
@@ -1140,7 +1145,7 @@ end;
 
 { ── RTTI 调用方法 ── }
 
-function TAutomationProcessor.HandleRCall(const ReqId, Target, Method, ParamsJSON: string): string;
+function TAutomationProcessor.HandleRCall(const ReqId, Target, Method, ParamsJSON, Visibility: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -1190,7 +1195,7 @@ begin
           Exit(WriteResp(ReqId, 'err', 'nil:' + PropName));
       end;
 
-      M := Ctx.GetType(Obj.ClassType).GetMethod(Parts[High(Parts)]);
+      M := FindMethodByVisibility(Ctx.GetType(Obj.ClassType), Parts[High(Parts)], Visibility);
       if M = nil then
         Exit(WriteResp(ReqId, 'err', 'NM:' + Parts[High(Parts)]));
 
@@ -1231,7 +1236,7 @@ begin
   end;
 end;
 
-function TAutomationProcessor.HandleRInsp(const ReqId, Target: string): string;
+function TAutomationProcessor.HandleRInsp(const ReqId, Target, Visibility: string): string;
 var
   Ctrl: TComponent;
   Ctx: TRttiContext;
@@ -1241,7 +1246,24 @@ var
   Root: TJSONObject;
   Methods: TJSONArray;
   Props: TJSONArray;
+  VisSet: set of TMemberVisibility;
+  VisParts: TArray<string>;
+  VisItem: string;
 begin
+  // 解析 visibility 参数，默认 public+published
+  VisSet := [mvPublic, mvPublished];
+  if Visibility <> '' then begin
+    VisSet := [];
+    VisParts := Visibility.Split([',']);
+    for VisItem in VisParts do begin
+      var VisLower := VisItem.Trim.ToLower;
+      if VisLower = 'private' then Include(VisSet, mvPrivate)
+      else if VisLower = 'protected' then Include(VisSet, mvProtected)
+      else if VisLower = 'public' then Include(VisSet, mvPublic)
+      else if VisLower = 'published' then Include(VisSet, mvPublished);
+    end;
+  end;
+
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
@@ -1260,7 +1282,7 @@ begin
 
         Methods := TJSONArray.Create;
         for M in Ty.GetMethods do
-          if (M.Visibility = mvPublic) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
+          if (M.Visibility in VisSet) and (M.MethodKind = mkProcedure) and (Length(M.GetParameters) = 0) then
             Methods.AddElement(TJSONString.Create(M.Name));
         Root.AddPair('methods', Methods);
 
