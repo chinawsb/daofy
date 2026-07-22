@@ -441,7 +441,7 @@ automate_delphi(app_path="MyApp.exe", script=[exit])
 ## 调试技巧
 
 1. **先 `listwnd` 再操作**：查看当前有哪些窗体可用，确认窗体名
-2. **`rinspect` 了解控件**：查看控件有哪些方法和属性
+2. **`rinspect` 了解控件**：查看控件有哪些方法和属性。默认只显示 public+published 方法，需查看 private/protected 时传 `visibility=private,protected,public,published`
 3. **`dumpstate` 获取全量状态**：排查控件属性值
 4. **`capture` 直观验证**：截图确认界面状态
 5. **`rget` 断言**：AI 自行比较预期值

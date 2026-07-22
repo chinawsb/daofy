@@ -459,6 +459,32 @@ class TestToolSchemaCompleteness:
         assert props["force"].get("default") is False, "force 默认值应为 False"
         assert "dry_run" in props, "delphi_file schema must expose dry_run for write previews"
 
+    def test_delphi_file_schema_matches_read_insert_and_grep_contract(self):
+        """delphi_file schema 必须与 file_tool 的现行参数契约一致。"""
+        schema = self._get_all_schemas()["delphi_file"]
+        props = schema.get("properties", {})
+
+        file_path_schema = props.get("file_path", {})
+        variants = file_path_schema.get("oneOf", [])
+        assert {variant.get("type") for variant in variants} == {"string", "array"}
+        array_variant = next(variant for variant in variants if variant.get("type") == "array")
+        assert array_variant.get("items", {}).get("type") == "string"
+
+        for name in (
+            "start_line", "end_line", "limit", "pattern", "patterns",
+            "include", "exclude", "filter_pattern", "exclude_pattern",
+        ):
+            assert name in props, f"delphi_file schema missing {name!r}"
+
+        assert props["patterns"].get("type") == "array"
+        assert props["patterns"].get("items", {}).get("type") == "string"
+        assert "search_pattern" not in props
+        assert "line_number" not in props
+
+        edit_props = props["edits"]["items"]["properties"]
+        assert edit_props["position"].get("type") == "string"
+        assert edit_props["position"].get("enum") == ["before", "after"]
+
     def test_tool_help_schema_declares_optional_action(self):
         """tool_help 的 action 过滤参数必须在 MCP schema 中公开。"""
         schema = self._get_all_schemas()["tool_help"]

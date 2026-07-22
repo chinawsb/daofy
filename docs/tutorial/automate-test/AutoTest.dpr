@@ -4,6 +4,7 @@ uses
   Vcl.Forms,
   Vcl.DaofyAutomation in '..\..\..\tools\auto\Vcl.DaofyAutomation.pas',
   DaofyAutomation.Base in '..\..\..\tools\auto\DaofyAutomation.Base.pas',
+  AutomationTestCases in 'AutomationTestCases.pas',
   MainForm in 'MainForm.pas' {Form1};
 
 begin

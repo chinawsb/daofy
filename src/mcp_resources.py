@@ -68,6 +68,19 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         ),
     ),
     PublicResourceSpec(
+        uri="delphi://automation/rtti-test-runner",
+        name="automation-rtti-test-runner",
+        title="RTTI unit test runner",
+        description=(
+            "White-box Delphi method tests with fixtures, overload binding, "
+            "per-test timeout, assertions, and stable reports."
+        ),
+        mime_type="text/markdown",
+        relative_paths=(
+            "src/resources/coding-rules/testing/automation/reference/rtti-test-runner.md",
+        ),
+    ),
+    PublicResourceSpec(
         uri="delphi://automation/script-schema",
         name="automation-script-schema",
         title="Automation script schema",

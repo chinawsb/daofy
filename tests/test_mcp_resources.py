@@ -26,6 +26,7 @@ def test_public_resource_index_lists_stable_automation_uris() -> None:
     assert "delphi://coding-rules" in index
     assert "delphi://automation/workflow" in index
     assert "delphi://automation/script-generation-workflow" in index
+    assert "delphi://automation/rtti-test-runner" in index
     assert "`src/resources/coding-rules/delphi/index.md`" in index
     assert "`src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md`" in index
     assert "SHA-256" in index
@@ -45,6 +46,20 @@ def test_reads_packaged_automation_resource() -> None:
     assert "automate_delphi" in text
 
 
+def test_reads_packaged_rtti_test_runner_resource() -> None:
+    mime_type, text = get_public_resource_text(
+        "delphi://automation/rtti-test-runner"
+    )
+
+    assert mime_type == "text/markdown"
+    assert "# RTTI 单元测试运行器" in text
+    assert "expected_exception" in text
+    assert "RegisterTestClass" in text
+    assert "无需调用" in text
+    assert "智能链接器" in text
+    assert "test_timeout" in text
+
+
 def test_server_resource_list_exposes_registry_resources() -> None:
     from src.server import _build_mcp_resource_list
 
@@ -55,6 +70,7 @@ def test_server_resource_list_exposes_registry_resources() -> None:
     assert "delphi://coding-rules" in uris
     assert "delphi://automation/workflow" in uris
     assert "delphi://automation/script-generation-workflow" in uris
+    assert "delphi://automation/rtti-test-runner" in uris
     assert "delphi://health" in uris
 
 

@@ -316,6 +316,20 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 }
 ```
 
+> **路径含空格时报错？** 如果 Python 安装在 `D:\Program Files\...` 等含空格的路径，部分 MCP 客户端无法正确处理。解决方案：将 `command` 改为 Python 解释器完整路径，`args` 改为 `-m src`：
+> ```json
+> {
+>   "mcpServers": {
+>     "daofy": {
+>       "command": "D:\\Program Files\\Python311\\python.exe",
+>       "args": ["-m", "src"],
+>       "env": { ... }
+>     }
+>   }
+> }
+> ```
+> 也可直接指定 `server.py`：`"args": ["D:\\path\\to\\daofy\\src\\server.py"]`
+
 ### 源码安装配置
 
 以下配置适用于通过 git clone 源码安装的用户，请将路径替换为实际安装路径。
@@ -411,6 +425,21 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 - 检查 Python 环境是否正确配置
 - 检查依赖是否已安装: `pip install -r requirements.txt`
 - 检查 MCP 库版本: `pip show mcp`
+
+### 2a. `Spawn D:\Program ENOENT` 路径含空格报错
+
+pip 安装后，部分 MCP 客户端（Trae 等）在路径含空格时无法正确 spawn。
+
+**解决方案**：在 MCP 配置中用 Python 解释器完整路径替代 `daofy` 命令：
+
+```json
+{
+  "command": "D:\\Program Files\\Python311\\python.exe",
+  "args": ["-m", "src"]
+}
+```
+
+也可用源码安装方式：`"args": ["D:\\path\\to\\daofy\\src\\server.py"]`
 
 ### 3. 知识库搜索无结果
 

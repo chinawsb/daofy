@@ -139,6 +139,10 @@ class TestDocConsistency:
             for path in base.rglob("*"):
                 if path.suffix.lower() not in {".md", ".mdc", ".json"}:
                     continue
+                # `assert` is a valid field in RTTI test result reports; this
+                # guard targets GUI/script input examples only.
+                if path.name in {"rtti-test-runner.md", "report-schema.md"}:
+                    continue
                 content = path.read_text(encoding="utf-8")
                 assert '"assert":' not in content, f"{path} still uses unsupported assert field"
 
@@ -217,6 +221,29 @@ class TestDocConsistency:
             assert cmd in sync_cmds, f"Sync cmd '{cmd}' missing from sync_cmds: {sync_cmds}"
         # Verify callgraph commands are also classified as sync
         assert "callgraph" in sync_cmds
+
+    def test_rtti_test_mode_documents_per_test_contract(self):
+        """The model-facing test help must expose lifecycle and timeout controls."""
+        from tool_docs import TOOL_HELP_DOCS
+
+        test_docs = TOOL_HELP_DOCS["automate_delphi"]["action_params"]["test"]
+        optional = test_docs["optional"]
+        assert "test_timeout" in optional
+        assert "wait_timeout" in optional
+        assert "默认 true" in optional["keep_alive"]
+        tests_help = optional["tests"]
+        for term in (
+            "id/name",
+            "assert_expr",
+            "expected_exception",
+            "expected_message",
+            "timeout",
+            "RTTI 可发现",
+            "链接器裁剪",
+            "RegisterTestClass",
+            "RegisterFixture",
+        ):
+            assert term in tests_help
 
     def test_automation_script_shape_is_documented_across_runtime_docs(self):
         """The documented full script object must match execute_script support (migrated from server.py schema in Phase 3)."""
