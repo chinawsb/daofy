@@ -789,10 +789,16 @@ class CompilerService:
             # 使用目标平台名（首字母大写，用于注册表查询）
             from ..services.args_generator import ArgsGenerator
             platform = ArgsGenerator._PLATFORM_LIB_DIR.get(options.target_platform, 'Win32')
-            delphi_lib_paths = get_delphi_library_paths(platform=platform)
+            # 获取编译器对应的 Delphi 版本号（registry_version），用于读取该版本的搜索路径
+            registry_version = None
+            if options.compiler_version:
+                compiler_cfg = self.config_manager.get_compiler(options.compiler_version)
+                if compiler_cfg:
+                    registry_version = compiler_cfg.registry_version
+            delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
             # 展开路径中的宏变量
             for p in delphi_lib_paths:
-                expanded = expand_delphi_path_macros(p, version=None, platform=platform)
+                expanded = expand_delphi_path_macros(p, version=registry_version, platform=platform)
                 if expanded and expanded not in unit_paths:
                     unit_paths.append(expanded)
         

@@ -74,21 +74,31 @@ def _get_search_paths_from_dproj(dproj_path: str, platform: str = "Win32") -> Li
         return []
 
 
-def _get_delphi_default_library_paths(platform: str = "Win32") -> List[str]:
+def _get_delphi_default_library_paths(platform: str = "Win32", compiler_version: Optional[str] = None) -> List[str]:
     """
     获取 Delphi 默认的库搜索路径
 
     Args:
         platform: 目标平台
+        compiler_version: 编译器版本名称（可选）
 
     Returns:
         库搜索路径列表
     """
     try:
-        delphi_lib_paths = get_delphi_library_paths(platform=platform)
+        # 获取编译器对应的 Delphi 版本号
+        registry_version = None
+        if compiler_version:
+            from ..services.config_manager import get_config_manager
+            cfg_mgr = get_config_manager()
+            if cfg_mgr:
+                compiler_cfg = cfg_mgr.get_compiler(compiler_version)
+                if compiler_cfg:
+                    registry_version = compiler_cfg.registry_version
+        delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
         expanded_paths = []
         for p in delphi_lib_paths:
-            expanded = expand_delphi_path_macros(p, version=None, platform=platform)
+            expanded = expand_delphi_path_macros(p, version=registry_version, platform=platform)
             if expanded:
                 expanded_paths.append(expanded)
         return expanded_paths
@@ -157,7 +167,7 @@ async def compile_file(
             logger.info(f"从 .dproj 获取搜索路径: {len(project_paths)} 个")
         else:
             logger.info("未找到 .dproj 文件，使用 Delphi 默认库路径")
-            default_paths = _get_delphi_default_library_paths()
+            default_paths = _get_delphi_default_library_paths(compiler_version=compiler_version)
             search_paths.extend(default_paths)
             logger.info(f"从 Delphi 默认配置获取搜索路径: {len(default_paths)} 个")
 
