@@ -456,7 +456,7 @@ async def compile_project(
     编译 Delphi 工程
 
     Args:
-        project_path: 项目文件路径(.dproj/.dpr/.dpk)
+        project_path: 项目文件路径(.dproj/.dpr/.dpk/.groupproj)
         target_platform: 目标平台(win32/win64/osx64/osxarm64/iosdevice64/android/linux64等，不传时从 .dproj 读取)
         output_path: 输出路径
         compiler_version: 编译器版本名称
@@ -519,6 +519,17 @@ async def compile_project(
             return CallToolResult(
                 content=[{"type": "text", "text": result_text}],
                 isError=result.status.value != "success",
+            )
+
+        if project_ext == '.groupproj':
+            # 处理项目组文件 (.groupproj)
+            return await _compile_group_project(
+                project_path=project_path,
+                target_platform=target_platform,
+                build_configuration=build_configuration or "Debug",
+                timeout=timeout,
+                compiler_version=compiler_version,
+                extra_args=extra_args,
             )
 
         if project_ext == '.dpk':
@@ -856,6 +867,179 @@ async def _compile_dpk_package(
     return CallToolResult(
         content=[{"type": "text", "text": output_text}],
         isError=not success
+    )
+
+
+async def _compile_group_project(
+    project_path: str,
+    target_platform: Optional[str],
+    build_configuration: str,
+    timeout: int,
+    compiler_version: Optional[str] = None,
+    extra_args: Optional[List[str]] = None,
+) -> CallToolResult:
+    """
+    编译项目组 (.groupproj) 中的所有子项目
+
+    解析 .groupproj XML 文件，提取所有 Projects 条目，
+    按 <BuildOrder> 排序后逐个编译，汇总所有结果。
+
+    支持的 XML 节点：
+      - <Projects Include="..."> + <Dependencies>  (旧格式)
+      - <ProjectReference Include="...">             (新格式)
+      - <BuildOrder>                                 (编译顺序)
+
+    Args:
+        project_path: .groupproj 文件路径
+        target_platform: 目标平台
+        build_configuration: 编译配置
+        timeout: 单个子项目超时时间
+        compiler_version: 编译器版本
+        extra_args: 附加编译参数
+
+    Returns:
+        汇总编译结果
+    """
+    import xml.etree.ElementTree as ET
+    from ..utils.groupproj_parser import (
+        parse_groupproj,
+        get_platform_for_project,
+        get_config_for_project,
+    )
+    from ..utils.dproj_parser import resolve_target_platform_from_dproj
+
+    logger.info("编译项目组: %s", project_path)
+    group_path = Path(project_path)
+
+    try:
+        info = parse_groupproj(group_path)
+    except FileNotFoundError:
+        return CallToolResult(
+            content=[{"type": "text", "text": f".groupproj 文件不存在: {project_path}"}],
+            isError=True,
+        )
+    except ET.ParseError as e:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"解析 .groupproj XML 失败: {e}"}],
+            isError=True,
+        )
+
+    child_projects = info.child_projects
+
+    if not child_projects:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"项目组中未找到有效的子项目: {project_path}"}],
+            isError=True,
+        )
+
+    # 使用 .groupproj 中的默认配置（如果未指定）
+    if not build_configuration or build_configuration == "Debug":
+        build_configuration = get_config_for_project(info, fallback=build_configuration or "Debug")
+
+    logger.info(
+        "项目组包含 %d 个子项目 (BuildOrder: %s): %s",
+        len(child_projects),
+        "有" if info.build_order else "无",
+        [p.name for p in child_projects],
+    )
+
+    # 逐个子项目编译并汇总结果
+    total_errors = 0
+    total_warnings = 0
+    success_count = 0
+    skip_count = 0
+    results_text_parts: List[str] = []
+    all_success = True
+
+    for child in child_projects:
+        child_ext = child.suffix.lower()
+        logger.info(f"编译子项目 [{child.name}] ...")
+
+        try:
+            if child_ext in ('.dproj', '.dpr'):
+                # 解析子项目的目标平台
+                child_platform = (target_platform or "win32").lower()
+                if child_ext == '.dproj' or (child_ext == '.dpr' and child.with_suffix('.dproj').exists()):
+                    try:
+                        resolved = resolve_target_platform_from_dproj(str(child))
+                        if resolved:
+                            child_platform = resolved
+                    except Exception:
+                        pass
+
+                # 构建 CompileOptions
+                options = CompileOptions(
+                    target_platform=TargetPlatform(child_platform),
+                    build_configuration=build_configuration,
+                    timeout=timeout,
+                    compiler_version=compiler_version,
+                    extra_args=extra_args or [],
+                )
+                request = ProjectCompileRequest(
+                    project_path=str(child),
+                    options=options,
+                )
+                result = await _compiler_service.compile_project(request)
+                child_success = result.status.value == "success"
+                child_errors = result.errors or []
+                child_warnings = result.warnings or []
+
+            elif child_ext == '.dpk':
+                # DPK 包通过 _compile_dpk_package 编译
+                dpk_result = await _compile_dpk_package(
+                    project_path=str(child),
+                    target_platform=target_platform or "win32",
+                    build_configuration=build_configuration,
+                    timeout=timeout,
+                    auto_install=False,
+                    extra_args=extra_args,
+                )
+                # 从 dpk_result 提取状态（CallToolResult）
+                child_success = not dpk_result.isError
+                child_errors = [dpk_result.content[0].text] if not child_success else []
+                child_warnings = []
+            else:
+                logger.warning(f"项目组中子项目类型不受支持，已跳过: {child} (扩展名: {child_ext})")
+                results_text_parts.append(f"  ⚠ {child.name}: 不支持的文件类型 ({child_ext})，已跳过")
+                skip_count += 1
+                continue
+
+            if child_success:
+                success_count += 1
+                results_text_parts.append(f"  ✅ {child.name}: 编译成功")
+            else:
+                results_text_parts.append(f"  ❌ {child.name}: 编译失败")
+                all_success = False
+
+            total_errors += len(child_errors) if isinstance(child_errors, list) else (1 if child_errors else 0)
+            total_warnings += len(child_warnings) if isinstance(child_warnings, list) else 0
+
+            # 错误详情（截断显示）
+            if not child_success and child_errors:
+                for err in (child_errors[:5] if isinstance(child_errors, list) else [str(child_errors)[:300]]):
+                    results_text_parts.append(f"      {err}")
+            if child_warnings and len(child_warnings) <= 10:
+                for w in child_warnings:
+                    results_text_parts.append(f"      ⚠ {w}")
+
+        except Exception as e:
+            logger.error(f"编译子项目 {child.name} 异常: {e}", exc_info=True)
+            results_text_parts.append(f"  ❌ {child.name}: 异常 — {e}")
+            all_success = False
+            total_errors += 1
+
+    output_text = (
+        f"项目组编译{'完成' if all_success else '完成（部分失败）'}\n"
+        f"项目组: {group_path.name}\n"
+        f"子项目: {len(child_projects)} 个, "
+        f"成功: {success_count}, 失败: {len(child_projects) - success_count - skip_count}, 跳过: {skip_count}\n"
+        f"总错误: {total_errors}, 总警告: {total_warnings}\n\n"
+        + "\n".join(results_text_parts)
+    )
+
+    return CallToolResult(
+        content=[{"type": "text", "text": output_text}],
+        isError=not all_success,
     )
 
 
