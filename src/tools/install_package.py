@@ -97,34 +97,51 @@ async def _install_group_project(
     timeout: int,
     install: bool
 ) -> CallToolResult:
-    """处理项目组"""
-    import xml.etree.ElementTree as ET
+    """
+    处理项目组 (.groupproj)
 
-    tree = ET.parse(group_path)
-    root = tree.getroot()
-    
-    ns = 'http://schemas.microsoft.com/developer/msbuild/2003'
-    
+    支持的 XML 节点：
+      - <Projects Include="..."> + <Dependencies>  (旧格式)
+      - <ProjectReference Include="...">             (新格式)
+      - <BuildOrder>                                 (编译顺序)
+    """
+    import xml.etree.ElementTree as ET
+    from ..utils.groupproj_parser import (
+        parse_groupproj,
+        get_platform_for_project,
+    )
+
+    try:
+        info = parse_groupproj(group_path)
+    except ET.ParseError as e:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"解析 .groupproj XML 失败: {e}"}],
+            isError=True,
+        )
+    except FileNotFoundError:
+        return CallToolResult(
+            content=[{"type": "text", "text": f".groupproj 文件不存在: {group_path}"}],
+            isError=True,
+        )
+
     results = []
-    for project in root.findall(f'.//{{{ns}}}Projects'):
-        proj_file = project.get('Include')
-        if proj_file:
-            proj_path = str(Path(group_path).parent / proj_file)
-            if Path(proj_path).exists():
-                is_runtime = _is_runtime_only_package(proj_path)
-                result = await _compile_single_package(proj_path, target_platform, build_configuration, timeout)
-                results.append((proj_path, is_runtime, result))
-    
+
+    for proj_path in info.child_projects:
+        proj_str = str(proj_path)
+        # 从 .groupproj 获取默认平台，如果未指定则使用传入的 platform
+        child_platform = target_platform or get_platform_for_project(info, fallback="win32")
+        is_runtime = _is_runtime_only_package(proj_str)
+        result = await _compile_single_package(
+            proj_str, child_platform, build_configuration, timeout
+        )
+        results.append((proj_str, is_runtime, result))
+
     if not results:
-        for project in root.findall('.//Projects'):
-            proj_file = project.get('Include')
-            if proj_file:
-                proj_path = str(Path(group_path).parent / proj_file)
-                if Path(proj_path).exists():
-                    is_runtime = _is_runtime_only_package(proj_path)
-                    result = await _compile_single_package(proj_path, target_platform, build_configuration, timeout)
-                    results.append((proj_path, is_runtime, result))
-    
+        return CallToolResult(
+            content=[{"type": "text", "text": f"项目组中未找到有效的子项目: {group_path}"}],
+            isError=True,
+        )
+
     return _format_group_results(results, install, target_platform)
 
 
@@ -201,15 +218,6 @@ async def _compile_single_package(
     output_file = None
     if result.status.value == "success":
         output_file = _find_bpl_file(project_path, target_platform, build_configuration)
-    
-    return {
-        "success": result.status.value == "success",
-        "output_file": output_file if output_file else result.output_file,
-        "errors": result.errors,
-        "warnings": result.warnings,
-        "log": result.log,
-        "duration": result.duration
-    }
     
     return {
         "success": result.status.value == "success",
@@ -395,10 +403,21 @@ def _is_runtime_only_package(project_path: str) -> bool:
 
 
 def _format_results(results: List[tuple], install: bool, target_platform: str) -> CallToolResult:
-    """格式化单个项目编译结果"""
-    return _format_group_results([(proj, is_runtime, result) for proj, (is_runtime, result) in [
-        (r[0], (False, r[1])) for r in results
-    ]], install, target_platform)
+    """
+    格式化单个项目编译结果。
+
+    Args:
+        results: [(project_path, compile_result_dict), ...]
+        install: 是否显示安装指南
+        target_platform: 目标平台
+    """
+    grouped = []
+    for r in results:
+        proj_path = r[0]
+        result = r[1]
+        # 单项目无法确定是否为运行时包，默认 False（设计时包）
+        grouped.append((proj_path, False, result))
+    return _format_group_results(grouped, install, target_platform)
 
 
 def _format_group_results(results: List[tuple], install: bool, target_platform: str) -> CallToolResult:

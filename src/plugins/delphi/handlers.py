@@ -14,6 +14,7 @@ from src.constants import (
 from src.services.automation_service import (
     execute_automation as _execute_automation,
     detect_exe_subsystem as _detect_exe_subsystem,
+    submit_run_tests as _submit_run_tests,
     IMAGE_SUBSYSTEM_WINDOWS_GUI,
     IMAGE_SUBSYSTEM_WINDOWS_CUI,
 )
@@ -425,6 +426,37 @@ async def _handle_automate_delphi(arguments: dict) -> dict:
         except Exception as e:
             return {"status": "failed", "message": f"automate_delphi(console) failed: {e}"}
 
+    elif action == "test":
+        tests = arguments.get("tests", [])
+        visibility = arguments.get("visibility", "public,published")
+        test_keep_alive = _coerce_bool(arguments.get("keep_alive", True))
+        wait_timeout = arguments.get("wait_timeout", 10)
+        test_timeout = arguments.get("test_timeout", 30)
+
+        if not tests:
+            return {"status": "error", "message": "test 模式缺少必需参数: tests"}
+
+        # 提交后台异步执行，避免 MCP 通道超时
+        try:
+            task_id = _submit_run_tests(
+                app_path=app_path,
+                tests=tests,
+                visibility=visibility,
+                keep_alive=test_keep_alive,
+                wait_for_pipe=wait_timeout,
+                test_timeout=test_timeout,
+                env=env,
+            )
+            return {
+                "status": "submitted",
+                "task_id": task_id,
+                "message": "测试任务已提交后台执行",
+                "requested_action": requested_action,
+                "resolved_action": action,
+            }
+        except Exception as e:
+            return {"status": "failed", "message": f"automate_delphi(test) 提交失败: {e}"}
+
     else:
         return {"status": "error", "message": f"未知 action: {action}"}
 
@@ -455,7 +487,7 @@ DELPHI_HANDLERS = {
 DELPHI_TOOL_DESCRIPTIONS: dict[str, str] = {
     "delphi_project": "Delphi 项目编译、配置、审计和部署。参数随 action 变化；调用前先执行 tool_help(tool_name='delphi_project', action='<action>')。",
     "delphi_kb": "Delphi 知识库搜索和管理。参数随 action 变化；调用前先执行 tool_help(tool_name='delphi_kb', action='<action>')。",
-    "delphi_file": "Delphi 文件专用读写/搜索/替换/备份工具 — 即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 也必须用此工具，禁止用内置 Read/Edit/Write/grep",
+    "delphi_file": "Delphi 文件专用读写/搜索/替换/备份工具 — 即使只是读取 .pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx 也必须用此工具，禁止用内置 Read/Edit/Write/grep；参数随 action 变化，调用前先执行 tool_help(tool_name='delphi_file', action='<action>')。",
     "manage_component": "DFM 组件增删改和生成。参数随 action 变化；调用前先执行 tool_help(tool_name='manage_component', action='<action>')。",
     "check_environment": "环境检查、编译器检测和安装。参数随 action 变化；调用前先执行 tool_help(tool_name='check_environment', action='<action>')。",
     "package": "组件包编译、安装和列出。参数随 action 变化；调用前先执行 tool_help(tool_name='package', action='<action>')。",
@@ -475,7 +507,7 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
                          "remove_source", "audit", "ast", "runtime", "layout",
                          "devices", "deploy"],
             },
-            "project_path": {"type": "string", "description": "项目文件路径 (.dproj/.dpr/.dpk)"},
+            "project_path": {"type": "string", "description": "项目文件路径 (.dproj/.dpr/.dpk/.groupproj)"},
             "extra_args": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -498,7 +530,13 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
                 "enum": ["read", "write", "replace", "insert", "delete", "format", "backup", "encode", "uses", "fix_garbled", "grep"],
                 "default": "read",
             },
-            "file_path": {"type": "string", "description": "文件路径"},
+            "file_path": {
+                "oneOf": [
+                    {"type": "string"},
+                    {"type": "array", "items": {"type": "string"}},
+                ],
+                "description": "文件路径；grep 还支持目录路径或路径数组",
+            },
             "edits": {
                 "type": "array",
                 "description": "批量编辑操作（write/replace/insert/delete）",
@@ -509,7 +547,11 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
                         "end_line": {"type": "integer", "description": "结束行号（1-indexed 闭区间）"},
                         "content": {"type": "string", "description": "新内容"},
                         "old_content": {"type": "string", "description": "原内容（非空时作为写入前校验，防止覆盖非预期改动）"},
-                        "position": {"type": "integer", "description": "insert 操作的插入位置（1-indexed 行号）"},
+                        "position": {
+                            "type": "string",
+                            "enum": ["before", "after"],
+                            "description": "insert 相对 start_line 锚点的插入位置",
+                        },
                     },
                     "required": ["start_line"],
                 },
@@ -525,9 +567,41 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
                 "default": False,
             },
             "encoding": {"type": "string", "description": "文件编码（自动检测 BOM）"},
-            "search_pattern": {"type": "string", "description": "搜索正则表达式（action=grep 时使用）"},
-            "line_number": {"type": "integer", "description": "起始行号"},
-            "count": {"type": "integer", "description": "搜索结果数量限制"},
+            "backup": {"type": "boolean", "description": "写入前创建备份"},
+            "auto_format": {"type": "boolean", "description": "写入后自动格式化"},
+            "allow_dirty": {"type": "boolean", "description": "允许写入已标记为脏的文件"},
+            "project_path": {"type": "string", "description": "项目路径，用于限定文件范围或解析相对路径"},
+            "start_line": {"type": "integer", "minimum": 1, "description": "read 起始行号（1-indexed inclusive）"},
+            "end_line": {"type": "integer", "minimum": 1, "description": "read 结束行号（1-indexed inclusive）"},
+            "limit": {"type": "integer", "minimum": 1, "description": "read 最大返回行数"},
+            "show_line_numbers": {"type": "boolean", "description": "read 输出 1-indexed 行号"},
+            "search_type": {"type": "string", "enum": ["path", "class", "function", "record"]},
+            "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"]},
+            "type_name": {"type": "string", "description": "类名或接口名"},
+            "function_name": {"type": "string", "description": "函数或过程名"},
+            "class_name": {"type": "string", "description": "类名"},
+            "record_name": {"type": "string", "description": "record 类型名"},
+            "mode": {"type": "string", "enum": ["file", "code", "check"], "description": "format 模式"},
+            "code": {"type": "string", "description": "format mode=code 时的代码文本"},
+            "config_path": {"type": "string", "description": "pasfmt 配置文件路径"},
+            "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"]},
+            "to_encoding": {"type": "string", "description": "encode 目标编码"},
+            "from_encoding": {"type": "string", "description": "encode 源编码"},
+            "uses_action": {"type": "string", "enum": ["add", "remove"]},
+            "unit_name": {"type": "string", "description": "uses 单元名"},
+            "uses_section": {"type": "string", "enum": ["interface", "implementation"]},
+            "backup_action": {"type": "string", "enum": ["create", "list", "restore"]},
+            "version": {"type": "integer", "minimum": 1, "description": "备份版本号"},
+            "include": {"type": "string", "description": "grep 目录包含 glob"},
+            "exclude": {"type": "string", "description": "grep 目录排除 glob"},
+            "pattern": {"type": "string", "description": "grep 单个正则模式"},
+            "patterns": {"type": "array", "items": {"type": "string"}, "description": "grep 多个 OR 正则模式"},
+            "filter_pattern": {"type": "string", "description": "grep 二级 AND 过滤模式"},
+            "exclude_pattern": {"type": "string", "description": "grep NOT 排除模式"},
+            "replace": {"type": "string", "description": "grep 替换文本"},
+            "context": {"type": "integer", "minimum": 0, "description": "grep 上下文行数"},
+            "count": {"type": "integer", "minimum": 1, "description": "grep 每文件最大返回结果数"},
+            "target_encoding": {"type": "string", "description": "fix_garbled 目标编码"},
         },
         "required": ["action"]
     },
@@ -569,7 +643,7 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["auto", "gui", "console", "prepare"],
+                "enum": ["auto", "gui", "console", "prepare", "test"],
                 "default": "auto",
             },
         },

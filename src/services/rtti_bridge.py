@@ -23,15 +23,25 @@ from typing import Optional
 
 from src.constants import POLL_INTERVAL_AUTOMATION
 from src.services.automation_service import (
+    PIPE_NAME,
     _send_command,
     _send_command_to_pipe,
     _ensure_process,
+    _process_pipe_name,
     _pool_lock,
     _process_pool,
     _WaitNP,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _send_rtti_command(app_path: str, command: str) -> str:
+    """Send RTTI traffic to the pooled process without breaking legacy mocks."""
+    pipe_name = _process_pipe_name(app_path)
+    if pipe_name == PIPE_NAME:
+        return _send_command(command)
+    return _send_command_to_pipe(pipe_name, command)
 
 # ── 注册文件发现（%TEMP%\daofy-rtti-*.json）──
 
@@ -274,7 +284,10 @@ class RttiBridge:
             "cmd": "rtti_discover",
             "target": class_name,
         }
-        resp_raw = _send_command(json.dumps(req, ensure_ascii=False))
+        resp_raw = _send_rtti_command(
+            app_path,
+            json.dumps(req, ensure_ascii=False),
+        )
         if resp_raw.startswith("ERR:"):
             return {"status": "error", "message": resp_raw}
 
@@ -332,7 +345,10 @@ class RttiBridge:
         if params:
             req["params"] = json.dumps(params, ensure_ascii=False)
 
-        resp_raw = _send_command(json.dumps(req, ensure_ascii=False))
+        resp_raw = _send_rtti_command(
+            app_path,
+            json.dumps(req, ensure_ascii=False),
+        )
         if resp_raw.startswith("ERR:"):
             return {"status": "error", "message": resp_raw}
 

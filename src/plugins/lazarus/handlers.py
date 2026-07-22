@@ -25,6 +25,7 @@ async def _handle_lazarus_compile(arguments: dict) -> dict:
         target_platform (str, optional): win32 / win64，默认 win32
         build_configuration (str, optional): Default / Release / Debug
         timeout (int, optional): 超时秒数，默认 600
+        run_verify (bool, optional): 编译成功后启动程序 3 秒验证是否崩溃，默认 false
     """
     from src.services.compiler_service import CompilerService
     from src.services.config_manager import ConfigManager
@@ -44,6 +45,7 @@ async def _handle_lazarus_compile(arguments: dict) -> dict:
     )
     build_config = arguments.get("build_configuration")
     timeout = int(arguments.get("timeout", 600))
+    run_verify = arguments.get("run_verify", False)
 
     compile_opts = CompileOptions(
         target_platform=target,
@@ -59,7 +61,16 @@ async def _handle_lazarus_compile(arguments: dict) -> dict:
     cs = CompilerService(cm)
     try:
         result = await cs.compile_with_lazbuild(request)
-        return result.to_dict()
+        result_dict = result.to_dict()
+
+        # ── 运行验证 ──
+        if run_verify and result.status.value == "success":
+            verify_info = await _run_lazarus_verify(
+                cs, request, project_path, target, build_config
+            )
+            result_dict["_verify"] = verify_info
+
+        return result_dict
     except Exception as e:
         logger.error(f"lazarus_compile 失败: {e}", exc_info=True)
         return {
@@ -67,6 +78,256 @@ async def _handle_lazarus_compile(arguments: dict) -> dict:
             "error": f"编译失败: {e}",
             "project_path": project_path,
         }
+
+
+# ============================================================
+# run_verify 辅助函数
+# ============================================================
+
+def _get_verify_tools_dir() -> Path:
+    """获取 StackTrace 工具目录"""
+    from pathlib import Path
+    return Path(__file__).resolve().parents[3] / "tools" / "stacktrace"
+
+
+def _inject_lazarus_verify_units(lpi_path: str, lpr_path: str) -> dict:
+    """修改 .lpi + .lpr 注入 StackTraceFPC 验证单元，返回备份路径。
+
+    注入内容 (.lpi):
+       1. 添加 StackTraceFPC 到 Uses 部分
+       2. 添加 tools/stacktrace 到搜索路径
+       3. 启用调试信息 (-gl -gw)
+
+    注入内容 (.lpr):
+       1. uses 子句追加 StackTraceFPC
+       2. begin 块后插入 TStackTraceManagerFPC.Initialize 调用
+
+    Args:
+        lpi_path: .lpi 文件路径
+        lpr_path: .lpr 文件路径
+
+    Returns:
+        dict with backup paths
+    """
+    import shutil
+    import re
+    from pathlib import Path
+
+    lpi = Path(lpi_path)
+    lpr = Path(lpr_path)
+    tools_dir = _get_verify_tools_dir()
+
+    backs = {
+        '.lpi': lpi.with_suffix('.lpi.verify_bak'),
+        '.lpr': lpr.with_suffix('.lpr.verify_bak'),
+    }
+
+    # 备份
+    shutil.copy2(str(lpi), str(backs['.lpi']))
+    if lpr.exists():
+        shutil.copy2(str(lpr), str(backs['.lpr']))
+
+    # ── 修改 .lpi ──
+    content = lpi.read_text(encoding="utf-8-sig")
+
+    # 添加 StackTraceFPC 到 Uses
+    rel_stacktrace = tools_dir.name + '/Fpc.StackTrace.pas'
+    if 'Fpc_StackTrace' not in content:
+        # 查找 <Units> 节点并添加
+        units_pattern = r'(<Units>)'
+        inject_unit = (
+            f'    <Unit Filename="{rel_stacktrace}">\n'
+            f'      <IsPartOfProject Value="False"/>\n'
+            f'    </Unit>'
+        )
+        if re.search(units_pattern, content):
+            content = re.sub(
+                units_pattern,
+                lambda m: m.group(1) + '\n' + inject_unit,
+                content
+            )
+        else:
+            # 如果没有 <Units>，添加到 <CompilerOptions> 前
+            content = content.replace(
+                '<CompilerOptions>',
+                '<Units>\n' + inject_unit + '\n  </Units>\n  <CompilerOptions>'
+            )
+
+    # 添加搜索路径
+    rel_path = tools_dir.name
+    paths_pattern = r'(<OtherUnitFiles[^>]*Value=")(.*?)(")'
+    if re.search(paths_pattern, content):
+        content = re.sub(
+            paths_pattern,
+            lambda m: m.group(1) + m.group(2) + (';' if m.group(2).strip() else '') + rel_path + m.group(3),
+            content
+        )
+    else:
+        # 添加 OtherUnitFiles
+        content = content.replace(
+            '</CompilerOptions>',
+            '    <OtherUnitFiles Value="' + rel_path + '"/>\n  </CompilerOptions>'
+        )
+
+    # 启用调试信息 (-gl -gw)
+    if '-gl' not in content:
+        content = content.replace(
+            '</CompilerOptions>',
+            '    <CustomOptions Value="-gl -gw"/>\n  </CompilerOptions>'
+        )
+
+    lpi.write_text(content, encoding="utf-8-sig")
+    logger.info("已注入 StackTraceFPC 单元到 .lpi: %s", lpi_path)
+
+    # ── 修改 .lpr ──
+    if lpr.exists():
+        original = lpr.read_text(encoding='utf-8-sig')
+        if 'Fpc_StackTrace' not in original:
+            # 在 uses 中追加
+            uses_pos = original.lower().find('uses')
+            if uses_pos >= 0:
+                end_uses = original.find(';', uses_pos + 4)
+                if end_uses > uses_pos:
+                    uses_section = original[uses_pos:end_uses]
+                    if 'Fpc_StackTrace' not in uses_section:
+                        original = original[:end_uses] + ', Fpc_StackTrace' + original[end_uses:]
+
+            # 在 begin 后添加初始化
+            lines = original.split('\n')
+            begin_idx = -1
+            for i, line in enumerate(lines):
+                if line.strip() == 'begin':
+                    begin_idx = i
+                    break
+
+            if begin_idx >= 0:
+                inject_lines = [
+                    '{STACKTRACE_INJECT}',
+                    '  TStackTraceManagerFPC.Initialize;',
+                ]
+                for j, line in enumerate(inject_lines):
+                    lines.insert(begin_idx + 1 + j, line)
+
+                lpr.write_text('\n'.join(lines), encoding='utf-8-sig')
+                logger.info("已注入 Fpc_StackTrace 初始化到 .lpr: %s", lpr_path)
+
+    return backs
+
+
+def _restore_lazarus_files(lpi_path: str, lpr_path: str, backs: dict):
+    """恢复备份的 .lpi 和 .lpr 文件"""
+    import shutil
+    from pathlib import Path
+
+    lpi = Path(lpi_path)
+    lpr = Path(lpr_path)
+
+    if backs.get('.lpi') and backs['.lpi'].exists():
+        shutil.copy2(str(backs['.lpi']), str(lpi))
+        backs['.lpi'].unlink()
+        logger.info("已恢复 .lpi: %s", lpi_path)
+
+    if backs.get('.lpr') and backs['.lpr'].exists():
+        shutil.copy2(str(backs['.lpr']), str(lpr))
+        backs['.lpr'].unlink()
+        logger.info("已恢复 .lpr: %s", lpr_path)
+
+
+async def _run_lazarus_verify(
+    cs: 'CompilerService',
+    request: 'ProjectCompileRequest',
+    project_path: str,
+    target_platform: 'TargetPlatform',
+    build_configuration: str
+) -> dict:
+    """运行 Lazarus 项目的运行验证
+
+    1. 注入 StackTraceFPC 单元
+    2. 重新编译
+    3. 运行 exe 3 秒
+    4. 检查 exception.log
+    """
+    import asyncio
+    from pathlib import Path
+
+    TIMEOUT_PROCESS_TERMINATE = 3.5  # 秒
+
+    try:
+        lpi_path = Path(project_path)
+        lpr_path = lpi_path.with_suffix('.lpr')
+        if not lpr_path.exists():
+            # 尝试从 .lpi 获取主源文件
+            from src.utils.lpi_parser import LpiParser
+            parser = LpiParser(str(lpi_path))
+            if parser.parse():
+                main_src = parser.get_project_info().get('main_source', '')
+                if main_src:
+                    lpr_path = lpi_path.parent / main_src
+
+        if not lpr_path.exists():
+            return {"error": "未找到 .lpr 主源文件"}
+
+        # 1. 注入 StackTraceFPC
+        backs = _inject_lazarus_verify_units(str(lpi_path), str(lpr_path))
+
+        try:
+            # 2. 重新编译
+            verify_result = await cs.compile_with_lazbuild(request)
+
+            if verify_result.status.value != "success":
+                err_detail = verify_result.log or verify_result.error_message or "(no log)"
+                logger.warning("注入 StackTraceFPC 后编译失败: %s", err_detail[:500])
+                return {"error": "injected compile failed", "log": err_detail[:1000]}
+
+            # 3. 查找 exe 路径
+            # Lazarus 输出路径通常在 output 目录
+            exe_name = lpr_path.stem + '.exe'
+            output_dir = lpi_path.parent / 'bin'
+            if not output_dir.exists():
+                output_dir = lpi_path.parent
+            exe_path = output_dir / exe_name
+
+            if not exe_path.exists():
+                return {"error": f"未找到输出文件: {exe_path}"}
+
+            # 4. 运行验证
+            exe_dir = exe_path.parent
+            log_path = exe_dir / 'exception.log'
+            if log_path.exists():
+                try:
+                    log_path.unlink()
+                except Exception as e:
+                    logger.debug("清理 exception.log 失败: %s", e)
+
+            import subprocess
+            proc = subprocess.Popen([str(exe_path)], cwd=str(exe_dir))
+            try:
+                proc.wait(timeout=TIMEOUT_PROCESS_TERMINATE)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+            # 5. 检查 exception.log
+            if log_path.exists():
+                try:
+                    from src.utils.detect_encoding import detect_encoding
+                    enc = detect_encoding(str(log_path))
+                    log_content = log_path.read_text(encoding=enc, errors='replace')
+                    logger.warning("运行时异常: %s", log_content[:200])
+                    return {"error": "runtime exception", "log": log_content}
+                except Exception as read_err:
+                    return {"error": "runtime exception", "read_error": str(read_err)}
+            else:
+                logger.info("运行验证通过")
+                return {"passed": True}
+
+        finally:
+            # 恢复原始文件
+            _restore_lazarus_files(str(lpi_path), str(lpr_path), backs)
+
+    except Exception as e:
+        logger.warning("运行验证异常: %s", e, exc_info=True)
+        return {"error": str(e)}
 
 
 async def _handle_lazarus_project(arguments: dict) -> dict:
@@ -398,6 +659,11 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
             "timeout": {
                 "type": "integer",
                 "default": 600,
+            },
+            "run_verify": {
+                "type": "boolean",
+                "default": False,
+                "description": "编译成功后启动程序 3 秒验证是否崩溃",
             },
         },
         "required": ["project_path"],

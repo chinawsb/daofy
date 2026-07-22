@@ -5,7 +5,7 @@
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 
 功能:
-  - get_current_version()       从 pyproject.toml 读取当前版本
+  - get_current_version()       读取当前版本（metadata→pyproject.toml→环境变量）
   - fetch_latest_release()      查询 GitHub 最新 Release（带镜像回退）
   - fetch_pypi_version()        查询 PyPI 最新版本（pip 安装专用，无需认证）
   - compare_versions(a, b)      比较 YYYY.MM.DD 版本号
@@ -25,6 +25,7 @@ import sys
 import time as _time
 import urllib.error
 import urllib.request
+from importlib.metadata import version as _get_installed_version, PackageNotFoundError
 from pathlib import Path
 from typing import Optional
 
@@ -81,11 +82,28 @@ def _get_project_root() -> Path:
 
 
 def get_current_version() -> str:
-    """从 pyproject.toml 读取当前版本号。
+    """读取当前版本号。
+
+    优先级：
+    1. DAOFY_VERSION 环境变量
+    2. importlib.metadata（pip 安装场景）
+    3. pyproject.toml 文件（源码运行兜底）
 
     Returns:
-        版本号字符串，如 "2026.06.01"；读取失败返回 "0.0.0"。
+        版本号字符串，如 "2026.07.18.1"；读取失败返回 "0.0.0"。
     """
+    # 1. 环境变量
+    env_ver = os.environ.get("DAOFY_VERSION")
+    if env_ver:
+        return env_ver
+
+    # 2. importlib.metadata — pip 安装后的标准方式
+    try:
+        return _get_installed_version(PYPI_PACKAGE)
+    except PackageNotFoundError:
+        pass
+
+    # 3. 读取 pyproject.toml（源码运行兜底）
     pyproject_path = _get_project_root() / "pyproject.toml"
     try:
         with open(pyproject_path, "r", encoding="utf-8") as f:
@@ -98,10 +116,10 @@ def get_current_version() -> str:
                         if ver:
                             return ver
         logger.debug("pyproject.toml 中未找到 version 字段")
-        return os.environ.get("DAOFY_VERSION", "0.0.0")
     except Exception as e:
         logger.warning("读取版本号失败: %s", e)
-        return os.environ.get("DAOFY_VERSION", "0.0.0")
+
+    return os.environ.get("DAOFY_VERSION", "0.0.0")
 
 
 def compare_versions(a: str, b: str) -> int:
