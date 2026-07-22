@@ -3725,11 +3725,26 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return _wrap_error(err)
 
     # ── 路由：单文件 + 单 pattern → 快速路径 ──
-    # 只有 file_path 是字符串且指向具体文件时才走快速路径；数组或目录自动走批量
+    # 判断原始输入而不是展开后的 targets；目录只匹配一个文件时仍须返回批量结果契约。
+    raw_file_path = arguments.get("file_path")
+    resolved_input_path: Optional[str] = None
+    if isinstance(raw_file_path, str) and raw_file_path.strip():
+        raw_file_path = raw_file_path.strip()
+        base_dir = _resolve_project_path(arguments)
+        if base_dir:
+            base_dir = os.path.abspath(base_dir)
+            if not os.path.isdir(base_dir):
+                base_dir = None
+        if not os.path.isabs(raw_file_path) and base_dir:
+            resolved_input_path = os.path.normpath(os.path.join(base_dir, raw_file_path))
+        else:
+            resolved_input_path = os.path.abspath(raw_file_path)
+
     is_single_file = (
-        isinstance(arguments.get("file_path"), str)
+        resolved_input_path is not None
         and len(targets) == 1
-        and os.path.isfile(targets[0])
+        and os.path.normcase(resolved_input_path) == os.path.normcase(targets[0])
+        and os.path.isfile(resolved_input_path)
     )
     if is_single_file and len(compiled_patterns) == 1 and pattern_str:
         if _is_dfm_file(targets[0]):

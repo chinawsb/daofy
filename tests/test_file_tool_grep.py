@@ -140,36 +140,47 @@ class TestGlobFiles:
 
 class TestResolveGrepTargets:
     def test_file_path(self):
-        targets, err = _resolve_grep_targets({"file_path": "test.pas"})
-        assert err is None
-        assert targets == ["test.pas"]
+        tmp = tempfile.NamedTemporaryFile(suffix=".pas", delete=False)
+        tmp.close()
+        try:
+            targets, err = _resolve_grep_targets({"file_path": tmp.name})
+            assert err is None
+            assert targets == [os.path.abspath(tmp.name)]
+        finally:
+            os.unlink(tmp.name)
 
-    def test_files(self):
-        targets, err = _resolve_grep_targets({"files": ["a.pas", "b.pas"]})
-        assert err is None
-        assert targets == ["a.pas", "b.pas"]
+    def test_file_path_array(self):
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            a_path = _make_file(os.path.join(tmp_dir, "a.pas"), "unit a;")
+            b_path = _make_file(os.path.join(tmp_dir, "b.pas"), "unit b;")
+            targets, err = _resolve_grep_targets({"file_path": [a_path, b_path]})
+            assert err is None
+            assert targets == [os.path.abspath(a_path), os.path.abspath(b_path)]
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def test_files_empty(self):
-        targets, err = _resolve_grep_targets({"files": []})
+    def test_file_path_array_empty(self):
+        targets, err = _resolve_grep_targets({"file_path": []})
         assert err is not None
         assert targets is None
 
-    def test_path(self):
+    def test_directory_path(self):
         tmp_dir = tempfile.mkdtemp()
         try:
             _make_file(os.path.join(tmp_dir, "a.pas"), "unit a;")
             _make_file(os.path.join(tmp_dir, "b.pas"), "unit b;")
-            targets, err = _resolve_grep_targets({"path": tmp_dir, "include": "*.pas"})
+            targets, err = _resolve_grep_targets({"file_path": tmp_dir, "include": "*.pas"})
             assert err is None
             assert len(targets) == 2
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def test_path_no_match(self):
+    def test_directory_path_no_match(self):
         tmp_dir = tempfile.mkdtemp()
         try:
             _make_file(os.path.join(tmp_dir, "a.txt"), "text")
-            targets, err = _resolve_grep_targets({"path": tmp_dir, "include": "*.pas"})
+            targets, err = _resolve_grep_targets({"file_path": tmp_dir, "include": "*.pas"})
             assert err is not None
             assert targets is None
         finally:
@@ -180,15 +191,20 @@ class TestResolveGrepTargets:
         assert err is not None
         assert "file_path" in err
 
-    def test_file_path_priority(self):
-        """file_path 优先于 files 和 path"""
-        targets, err = _resolve_grep_targets({
-            "file_path": "a.pas",
-            "files": ["b.pas", "c.pas"],
-            "path": "/tmp",
-        })
-        assert err is None
-        assert targets == ["a.pas"]
+    def test_file_path_array_accepts_files_and_directories(self):
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            a_path = _make_file(os.path.join(tmp_dir, "a.pas"), "unit a;")
+            sub_dir = os.path.join(tmp_dir, "sub")
+            b_path = _make_file(os.path.join(sub_dir, "b.pas"), "unit b;")
+            targets, err = _resolve_grep_targets({
+                "file_path": [a_path, sub_dir],
+                "include": "*.pas",
+            })
+            assert err is None
+            assert targets == [os.path.abspath(a_path), os.path.abspath(b_path)]
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ============================================================
@@ -384,7 +400,7 @@ class TestGrepBatch:
                            "unit Unit2;\ninterface\ntype\n  TMyClass = class\nend;\n")
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "pattern": "TMyClass",
             })
@@ -402,7 +418,7 @@ class TestGrepBatch:
             _make_pas_file(os.path.join(tmp_dir, "Unit1.pas"))
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "pattern": "NonExistentSymbolXYZ",
             })
@@ -420,7 +436,7 @@ class TestGrepBatch:
                                 "unit B;\ninterface\ntype\n  TMyClass = class\nend;\n")
             result = await handle_file_tool({
                 "action": "grep",
-                "files": [f1, f2],
+                "file_path": [f1, f2],
                 "pattern": "TMyClass",
             })
             assert result.get("status") == "success"
@@ -437,7 +453,7 @@ class TestGrepBatch:
             _make_pas_file(os.path.join(sub_dir, "Deep.pas"))
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "**/*.pas",
                 "pattern": "TMyClass",
             })
@@ -454,12 +470,12 @@ class TestGrepBatch:
                        "TMyClass = something")
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "pattern": "TMyClass",
             })
             assert result.get("status") == "success"
-            # path 模式走 batch 输出，使用 total_matches
+            # 目录模式走 batch 输出，使用 total_matches
             assert result.get("file_count", 0) == 1
             assert result.get("total_matches", 0) >= 1
         finally:
@@ -472,7 +488,7 @@ class TestGrepBatch:
             _make_pas_file(os.path.join(tmp_dir, "generated.pas"))
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "exclude": "generated.pas",
                 "pattern": "TMyClass",
@@ -493,7 +509,7 @@ class TestGrepBatch:
                                 "unit B;\ninterface\ntype\n  TMyClass = class\nend;\n")
             result = await handle_file_tool({
                 "action": "grep",
-                "files": [f1, f2],
+                "file_path": [f1, f2],
                 "pattern": "TMyClass",
                 "replace": "TNewClass",
                 "dry_run": True,
@@ -515,7 +531,7 @@ class TestGrepBatch:
             # 搜一个 pas 中存在的词，DFM 文件自动跳过
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*",
                 "pattern": "TMyClass",
             })
@@ -528,7 +544,7 @@ class TestGrepBatch:
     async def test_batch_path_not_found(self):
         result = await handle_file_tool({
             "action": "grep",
-            "path": r"C:\nonexistent_dir_xyz_54321",
+            "file_path": r"C:\nonexistent_dir_xyz_54321",
             "pattern": "test",
         })
         assert result.get("status") == "failed"
@@ -593,7 +609,7 @@ end.
             _make_pas_file(os.path.join(tmp_dir, "B.pas"))
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "patterns": ["TMyClass", "TOtherClass"],
             })
@@ -686,10 +702,10 @@ class TestGrepEdgeCases:
         finally:
             os.unlink(tmp.name)
 
-    async def test_empty_files_array(self):
+    async def test_empty_file_path_array(self):
         result = await handle_file_tool({
             "action": "grep",
-            "files": [],
+            "file_path": [],
             "pattern": "test",
         })
         assert result.get("status") == "failed"
@@ -704,7 +720,7 @@ class TestGrepEdgeCases:
                        "unit b;\nTMyClass = class\nend;\n")
             result = await handle_file_tool({
                 "action": "grep",
-                "path": tmp_dir,
+                "file_path": tmp_dir,
                 "include": "*.pas",
                 "pattern": "TMyClass",
             })
