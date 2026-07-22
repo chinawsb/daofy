@@ -74,13 +74,18 @@ def _get_search_paths_from_dproj(dproj_path: str, platform: str = "Win32") -> Li
         return []
 
 
-def _get_delphi_default_library_paths(platform: str = "Win32", compiler_version: Optional[str] = None) -> List[str]:
+def _get_delphi_default_library_paths(
+    platform: str = "Win32",
+    compiler_version: Optional[str] = None,
+    project_version: Optional[str] = None,
+) -> List[str]:
     """
     获取 Delphi 默认的库搜索路径
 
     Args:
         platform: 目标平台
         compiler_version: 编译器版本名称（可选）
+        project_version: .dproj ProjectVersion（可选，用于 compiler_version 未指定时的 fallback）
 
     Returns:
         库搜索路径列表
@@ -95,6 +100,15 @@ def _get_delphi_default_library_paths(platform: str = "Win32", compiler_version:
                 compiler_cfg = cfg_mgr.get_compiler(compiler_version)
                 if compiler_cfg:
                     registry_version = compiler_cfg.registry_version
+        # Fallback: compiler_version 未指定时，从 .dproj ProjectVersion 推断
+        if not registry_version and project_version:
+            from ..utils.delphi_versions import project_version_to_registry_version
+            registry_version = project_version_to_registry_version(project_version)
+            if registry_version:
+                logger.debug(
+                    "从 .dproj ProjectVersion=%s 推断 registry_version=%s",
+                    project_version, registry_version,
+                )
         delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
         expanded_paths = []
         for p in delphi_lib_paths:

@@ -754,6 +754,7 @@ class CompilerService:
         # 中间文件目录（存放 .dcu 文件）
         dcu_dir = None
         dproj_path_dcu = Path(project_path).with_suffix('.dproj')
+        project_version = None  # .dproj <ProjectVersion>，用于推断 registry_version
         if dproj_path_dcu.exists():
             try:
                 from ..utils.dproj_parser import DprojParser
@@ -763,6 +764,7 @@ class CompilerService:
                     plat_dir = plat_map.get(options.target_platform.lower(), "Win32")
                     cfg = options.build_configuration or "Debug"
                     dcu_dir = parser.get_dcu_output_path(config=cfg, platform=plat_dir)
+                    project_version = parser.get_project_version()
             except Exception:
                 logger.debug("读取 .dproj DCC_DcuOutput 失败，使用默认路径")
         if not dcu_dir:
@@ -795,6 +797,15 @@ class CompilerService:
                 compiler_cfg = self.config_manager.get_compiler(options.compiler_version)
                 if compiler_cfg:
                     registry_version = compiler_cfg.registry_version
+            # Fallback: compiler_version 未指定时，从 .dproj ProjectVersion 推断
+            if not registry_version and project_version:
+                from ..utils.delphi_versions import project_version_to_registry_version
+                registry_version = project_version_to_registry_version(project_version)
+                if registry_version:
+                    logger.debug(
+                        "从 .dproj ProjectVersion=%s 推断 registry_version=%s",
+                        project_version, registry_version,
+                    )
             delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
             # 展开路径中的宏变量
             for p in delphi_lib_paths:

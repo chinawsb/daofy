@@ -20,6 +20,8 @@ from src.utils.delphi_versions import (
     get_project_version_name,
     parse_compiler_version_from_output,
     detect_registry_version_from_compiler,
+    project_version_to_registry_version,
+    registry_to_project_version,
 )
 
 
@@ -170,6 +172,59 @@ def test_detect_registry_version_unknown_compiler():
     """不存在的编译器路径应返回 None"""
     version = detect_registry_version_from_compiler(r"C:\NonExistent\dcc32.exe")
     assert version is None
+
+
+# ============================================================
+# .dproj ProjectVersion → registry_version 反向映射测试
+# ============================================================
+
+def test_project_version_to_registry_version_direct_match():
+    """多数版本 ProjectVersion == registry_version（直接匹配）"""
+    assert project_version_to_registry_version("22.0") == "22.0"   # Delphi 11
+    assert project_version_to_registry_version("23.0") == "23.0"   # Delphi 12
+    assert project_version_to_registry_version("37.0") == "37.0"   # Delphi 13
+    assert project_version_to_registry_version("19.0") == "19.0"   # Delphi 10.2
+    assert project_version_to_registry_version("17.0") == "17.0"   # Delphi 10
+
+
+def test_project_version_to_registry_version_berlin():
+    """Delphi 10.1 Berlin 特例：.dproj 18.2 → 注册表 18.0"""
+    assert project_version_to_registry_version("18.2") == "18.0"
+
+
+def test_project_version_to_registry_version_integer_prefix():
+    """整数前缀匹配（如 .dproj 中可能只写 "19" 而非 "19.0"）"""
+    assert project_version_to_registry_version("19") == "19.0"
+    assert project_version_to_registry_version("22") == "22.0"
+    assert project_version_to_registry_version("15") == "15.0"
+
+
+def test_project_version_to_registry_version_unknown():
+    """未知版本返回 None"""
+    assert project_version_to_registry_version("99.0") is None
+    assert project_version_to_registry_version("0.0") is None
+    assert project_version_to_registry_version("") is None
+
+
+def test_registry_project_version_roundtrip():
+    """registry → project → registry 往返一致性（Berlin 除外）"""
+    for reg_ver in ("22.0", "23.0", "37.0", "19.0", "17.0", "15.0"):
+        proj_ver = registry_to_project_version(reg_ver)
+        back = project_version_to_registry_version(proj_ver)
+        assert back == reg_ver, f"往返失败: {reg_ver} → {proj_ver} → {back}"
+
+    # Berlin 特例：往返不一致（18.0 → 18.2 → 18.0 是反向，但 18.2 → 18.0 是正向）
+    assert registry_to_project_version("18.0") == "18.2"
+    assert project_version_to_registry_version("18.2") == "18.0"
+
+
+def test_all_project_versions_have_registry_mapping():
+    """PROJECT_VERSION_PREFIX_MAP 中所有前缀都能通过 project_version_to_registry_version 反推"""
+    for prefix, _name in PROJECT_VERSION_PREFIX_MAP.items():
+        proj_ver = f"{prefix}.0"
+        reg_ver = project_version_to_registry_version(proj_ver)
+        assert reg_ver is not None, f"ProjectVersion {proj_ver} 无法映射到 registry_version"
+        assert reg_ver in DELPHI_VERSION_NAMES, f"registry_version {reg_ver} 不在已知版本中"
 
 
 if __name__ == "__main__":

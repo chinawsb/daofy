@@ -176,3 +176,41 @@ def registry_to_project_version(registry_ver: str) -> str:
         .dproj 文件 ProjectVersion 值，如 "22.0"
     """
     return REGISTRY_TO_PROJECT_VERSION.get(registry_ver, registry_ver)
+
+
+# .dproj ProjectVersion → 注册表版本号（反向映射）
+# 多数版本两者相同，此处仅记录有差异的
+PROJECT_VERSION_TO_REGISTRY: dict[str, str] = {
+    "18.2": "18.0",   # Delphi 10.1 Berlin：.dproj 18.2 → 注册表 18.0
+}
+
+
+def project_version_to_registry_version(project_ver: str) -> Optional[str]:
+    """
+    将 .dproj ProjectVersion 映射为注册表版本号（registry_version）。
+
+    用于在 compiler_version 未指定时，从 .dproj 文件推断正确的 Delphi 版本，
+    以获取该版本对应的库搜索路径。
+
+    Delphi 10.2 及更新版本两者相同。
+    Delphi 10.1 Berlin 是特例：.dproj 18.2 → 注册表 18.0。
+
+    Args:
+        project_ver: .dproj 文件 ProjectVersion 值，如 "22.0" 或 "18.2"
+
+    Returns:
+        注册表版本号如 "22.0"，无法映射返回 None
+    """
+    # 精确匹配（处理 Berlin 等例外）
+    if project_ver in PROJECT_VERSION_TO_REGISTRY:
+        return PROJECT_VERSION_TO_REGISTRY[project_ver]
+    # 多数版本两者相同，直接验证是否已知
+    if project_ver in DELPHI_VERSION_NAMES:
+        return project_ver
+    # 尝试整数前缀匹配（如 "19" → "19.0"）
+    parts = project_ver.split(".")
+    if parts and parts[0].isdigit():
+        candidate = f"{parts[0]}.0"
+        if candidate in DELPHI_VERSION_NAMES:
+            return candidate
+    return None
