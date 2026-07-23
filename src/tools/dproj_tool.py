@@ -634,9 +634,9 @@ def _sanitized_project_name(main_source: str) -> str:
 def _default_namespace(framework_type: str) -> str:
     """根据框架类型返回默认命名空间"""
     if framework_type == "VCL":
-        return "System;System.Win;Winapi;Vcl;Vcl.Forms"
+        return "System;System.Win;Winapi;Xml;Data;Datasnap;Web;Soap;Vcl"
     elif framework_type == "FMX":
-        return "System;System.Win;Winapi;FMX;FMX.Forms"
+        return "System;System.Win;Winapi;Xml;Data;Datasnap;Web;Soap;FMX"
     else:
         # None (Console / Library / Package) — 无 GUI 引用
         return "System;Xml;Data;Datasnap;Web;Soap"
