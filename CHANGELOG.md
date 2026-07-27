@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.07.27] - 2026-07-27
+
+### Added
+
+- **`automate_delphi` list_tests action**: 新增测试用例列表查询，支持按 visibility 过滤已注册的测试用例
+- **reqId 请求隔离**: `automation_service` 发送前清理 pipe 残留响应，循环读取按 reqId 派发，避免旧响应污染新命令
+- **pipe 健康检查**: `_is_pipe_alive()` 检测对端是否存活，`_drain_stale_responses()` 发送前清理残留
+- **断言互斥校验**: `expected`/`expected_exception`/`assert_expr` 三选一，防止 Delphi 侧断言被 Python 表达式静默覆盖
+- **FPC 堆栈追踪工具** (`tools/stacktrace/`): DWARF 符号解析 + Map 文件序列化，支持 FPC 异常堆栈可读化
+- **训练数据集** (`training/`): UI 控件状态分类数据集（288 样本）+ 数据增强脚本
+- **`src/__main__.py`**: 包入口文件，支持 `python -m src` 启动
+
+### Changed
+
+- **异步任务轮询建议**: 文档更新推荐 `action="result"` 轮询（立即返回，零等待），替代 `action="status"` + `long_poll_seconds`
+- **RTTI 测试文档**: 补充 className 查找顺序（注册名 > RTTI 全限定名 > FindClass）、断言模式互斥规则
+
+### Fixed
+
+- **`_send_command_on_handle` 读取循环**: 修复单次读取可能拿到旧请求残留响应导致误判超时的问题
+- **`_is_pipe_io_error` 扩展**: 新增 `ERR:pipe_peer_dead` 错误类型识别
+
 ## [2026.07.18] - 2026-07-18
 
 ### Changed
