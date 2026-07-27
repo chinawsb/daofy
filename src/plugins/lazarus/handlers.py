@@ -6,6 +6,7 @@
   3. handler 内部延迟导入 CompilerService / LpiParser，避免模块级依赖
 """
 
+from pathlib import Path
 from typing import Any, List
 
 from src.utils.logger import init_default_logger
@@ -86,7 +87,6 @@ async def _handle_lazarus_compile(arguments: dict) -> dict:
 
 def _get_verify_tools_dir() -> Path:
     """获取 StackTrace 工具目录"""
-    from pathlib import Path
     return Path(__file__).resolve().parents[3] / "tools" / "stacktrace"
 
 
