@@ -390,18 +390,116 @@ def _read_pipe_message_poll(
     return None
 
 
+def _is_pipe_alive(handle: int) -> bool:
+    """Check if the pipe peer is still connected.
+
+    Uses PeekNamedPipe with a zero-length peek: if the pipe is broken the
+    call fails immediately, otherwise it succeeds (with or without data
+    available).
+    """
+    available = wintypes.DWORD(0)
+    return bool(_PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None))
+
+
+def _extract_req_id(cmd: str) -> str:
+    """从命令 JSON 中提取 reqId（Delphi 侧响应会带同一 reqId 返回）。
+
+    用于请求 ID 隔离：读取响应时按 reqId 派发，避免残留旧响应污染新命令。
+    """
+    if not cmd:
+        return ''
+    try:
+        obj = json.loads(cmd)
+    except (json.JSONDecodeError, TypeError):
+        return ''
+    if isinstance(obj, dict):
+        return str(obj.get('reqId', '') or '')
+    return ''
+
+
+def _extract_resp_req_id(resp_raw: str) -> str:
+    """从响应原始文本中提取 reqId（容错：非 JSON / 解析失败时返回空串）。"""
+    if not resp_raw or resp_raw.startswith('ERR:'):
+        return ''
+    try:
+        obj = json.loads(resp_raw)
+    except (json.JSONDecodeError, TypeError):
+        return ''
+    if isinstance(obj, dict):
+        return str(obj.get('reqId', '') or '')
+    return ''
+
+
+def _drain_stale_responses(handle, skip_req_id: str = '') -> None:
+    """发送前清理 pipe 中的残留响应。
+
+    残留是旧请求的响应——发起方早已超时返回（或不再等待），
+    按 reqId 隔离原则，这些残留可安全跳过。
+
+    Args:
+        skip_req_id: 当前即将发送的命令的 reqId。残留中若恰好包含此 ID
+                     （极小概率，通常意味着上次同 ID 命令的迟到响应），
+                     也应跳过——因为当前命令尚未发送，不可能有合法响应。
+    """
+    while True:
+        available = wintypes.DWORD(0)
+        if not _PeekNamedPipe(
+            handle, None, 0, None, ctypes.byref(available), None
+        ):
+            return
+        if available.value == 0:
+            return
+        raw = _read_pipe_message(handle)
+        if raw is None:
+            return
+        # 残留响应属于已超时的旧请求，发起方已返回，安全忽略
+
+
 def _send_command_on_handle(
     handle: int,
     cmd: str,
     timeout_ms: int = PIPE_TIMEOUT_MS,
 ) -> str:
+    # ── Pre-send check: detect dead pipe peer before writing ──
+    if not _is_pipe_alive(handle):
+        return 'ERR:pipe_peer_dead'
+
+    # ── 请求 ID 隔离：发送前清理残留旧响应 ──
+    expected_req_id = _extract_req_id(cmd)
+    _drain_stale_responses(handle, skip_req_id=expected_req_id)
+
     if not _write_pipe(handle, cmd.encode('utf-8')):
         return f'ERR:write_failed (err={_GetLastError()})'
 
-    raw = _read_pipe_message_poll(handle, timeout_ms=timeout_ms)
-    if raw is None:
-        return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
-    return raw.decode('utf-8', errors='replace').strip()
+    # ── 循环读取，直到拿到匹配 reqId 的响应或超时 ──
+    # Delphi 侧可能对单个命令发回多条 message（如进度通知 + 最终响应），
+    # 循环读取并按 reqId 派发：匹配则返回，不匹配则跳过（旧请求残留）。
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while True:
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0:
+            return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
+        remaining_ms = int(remaining_s * 1000)
+        raw = _read_pipe_message_poll(handle, timeout_ms=remaining_ms)
+        if raw is None:
+            return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
+        resp_str = raw.decode('utf-8', errors='replace').strip()
+        # 协议层错误（非 JSON）直接返回
+        if resp_str.startswith('ERR:'):
+            return resp_str
+
+        # 无期望 reqId（命令未带 reqId）→ 兼容旧协议，直接返回
+        if not expected_req_id:
+            return resp_str
+
+        # 按 reqId 派发
+        resp_req_id = _extract_resp_req_id(resp_str)
+        if resp_req_id == expected_req_id:
+            return resp_str  # 匹配，返回
+
+        # 不匹配 → 是旧请求的残留响应，发起方已超时，安全跳过继续读
+        # （能明确知道它属于哪个旧请求，不是盲丢弃）
+        continue
 
 
 def _begin_pipe_session(pipe_name: str = PIPE_NAME) -> None:
@@ -421,7 +519,9 @@ def _end_pipe_session() -> None:
 
 
 def _is_pipe_io_error(response: str) -> bool:
-    return response.startswith('ERR:write_failed') or response.startswith('ERR:read_failed')
+    return (response.startswith('ERR:write_failed')
+            or response.startswith('ERR:read_failed')
+            or response.startswith('ERR:pipe_peer_dead'))
 
 
 def _send_command_to_pipe(pipe_name: str, cmd: str, timeout_ms: int = PIPE_TIMEOUT_MS) -> str:
@@ -3087,13 +3187,16 @@ def _validate_run_test_specs(tests: object) -> list[dict]:
             normalized_test[field] = value
 
         expected_exception = normalized_test.get('expected_exception')
+        has_expected = 'expected' in normalized_test
+        has_assert_expr = bool(str(normalized_test.get('assert_expr', '')).strip())
+
         if expected_exception is not None:
             if not isinstance(expected_exception, str) or not expected_exception.strip():
                 raise ValueError(
                     f'test {index} expected_exception must be a non-empty string'
                 )
             normalized_test['expected_exception'] = expected_exception.strip()
-            if 'expected' in normalized_test:
+            if has_expected:
                 raise ValueError(
                     f'test {index} cannot combine expected with expected_exception'
                 )
@@ -3106,6 +3209,18 @@ def _validate_run_test_specs(tests: object) -> list[dict]:
                 raise ValueError(
                     f'test {index} expected_message requires expected_exception'
                 )
+
+        # Prevent combining Delphi-side assertions with Python assert_expr.
+        # assert_expr overwrites the Delphi assert field, making the Delphi
+        # result invisible and causing confusing result=PASS + assert=fail.
+        if has_assert_expr and (has_expected or expected_exception is not None):
+            raise ValueError(
+                f'test {index} cannot combine assert_expr with expected/expected_exception; '
+                f'use one assertion mode: expected (Delphi exact match), '
+                f'expected_exception (Delphi exception match), '
+                f'or assert_expr (Python expression). '
+                f'assert_expr overwrites the Delphi-side assert when present.'
+            )
 
         if 'timeout' in normalized_test:
             try:
@@ -3147,8 +3262,21 @@ def _run_tests_response_data(resp: dict) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _normalize_run_test_result(index: int, test: dict, resp: dict) -> dict:
-    """Convert one Delphi response into one stable test result."""
+def _normalize_run_test_result(
+    index: int,
+    test: dict,
+    resp: dict,
+    elapsed_ms: float = 0.0,
+) -> dict:
+    """Convert one Delphi response into one stable test result.
+
+    Args:
+        index: Test index in the suite.
+        test: Normalized test specification dict.
+        resp: Decoded pipe response dict.
+        elapsed_ms: Wall-clock time in milliseconds spent waiting for this
+            test's response. Used to distinguish timeout from slow execution.
+    """
     data = _run_tests_response_data(resp)
     raw_results = data.get('results', [])
     if resp.get('status') == 'ok' and isinstance(raw_results, list) and raw_results:
@@ -3168,6 +3296,12 @@ def _normalize_run_test_result(index: int, test: dict, resp: dict) -> dict:
         result_item['id'] = str(test['id'])
     if test.get('name'):
         result_item['name'] = str(test['name'])
+
+    # Attach elapsed_ms so callers can distinguish timeout from slow execution.
+    # Delphi responses already include 'ms' for successful tests; for transport
+    # errors (timeout / pipe broken) we supply the wall-clock measurement.
+    if elapsed_ms > 0 and 'ms' not in result_item:
+        result_item['ms'] = round(elapsed_ms, 1)
 
     assert_expr = str(test.get('assert_expr', '')).strip()
     if assert_expr and result_item.get('status') == 'ok':
@@ -3295,12 +3429,49 @@ def _run_tests_impl(
                 )
                 resp = _decode_response(resp_raw)
                 raw_responses.append(resp)
-                results.append(_normalize_run_test_result(index, test, resp))
+
+                # Determine per-test elapsed time for timeout diagnostics.
+                # When Delphi returns 'ms' in its result, use that (more
+                # accurate). Otherwise fall back to the wall-clock measurement.
+                delphi_ms = 0.0
+                try:
+                    _data = resp.get('data', {})
+                    if isinstance(_data, str):
+                        _data = json.loads(_data)
+                    if isinstance(_data, dict):
+                        _results = _data.get('results', [])
+                        if isinstance(_results, list) and _results:
+                            delphi_ms = float(_results[0].get('ms', 0))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    pass
+                elapsed_ms = delphi_ms if delphi_ms > 0 else timeout_ms
+
+                results.append(
+                    _normalize_run_test_result(index, test, resp, elapsed_ms)
+                )
 
                 if _is_pipe_io_error(resp_raw) or resp_raw.startswith('ERR:pipe_unavailable'):
+                    # Pipe is dead — do NOT retry.  Break immediately so
+                    # _gui_execution_lock is released and the task can be
+                    # marked FAILED.
+                    timeout_sec = timeout_ms / 1000
+                    is_timeout = 'timeout' in resp_raw.lower()
+                    is_peer_dead = 'pipe_peer_dead' in resp_raw
+                    err_detail = (
+                        'Delphi process terminated or pipe broke'
+                        + (f' after {timeout_sec:.1f}s'
+                           if not is_peer_dead else '')
+                        + (' (likely stuck or infinite loop)' if is_timeout else '')
+                        + (' (pipe peer dead — process exited)' if is_peer_dead else '')
+                    )
+                    if results and results[-1].get('index') == index:
+                        existing_err = results[-1].get('error', '')
+                        if not existing_err or 'pipe' in existing_err.lower():
+                            results[-1]['error'] = err_detail
+                            results[-1]['timeout_sec'] = timeout_sec
                     _end_pipe_session()
                     _kill_process(app_path)
-                    needs_process = True
+                    break  # ← release _gui_execution_lock immediately
                 else:
                     with _pool_lock:
                         entry = _process_pool.get(app_path)
@@ -3416,6 +3587,94 @@ def submit_run_tests(
         func=_run_tests_task,
         dedup_key=None,
     )
+
+
+def list_tests(
+    app_path: str,
+    visibility: str = 'public,published',
+    wait_for_pipe: float = 10.0,
+    env: dict[str, object] | None = None,
+) -> dict:
+    """List registered test classes and their methods via the TestHost pipe.
+
+    Sends a ``list_tests`` command to the Delphi TestHost process, which
+    enumerates:
+    - All classes registered via ``RegisterTestClass``
+    - For each class, all methods visible at the given RTTI visibility level
+    - Method parameter signatures (name + type) for constructor_params/params
+
+    This eliminates the need to grep Delphi source code to discover available
+    test classes and methods.
+
+    Args:
+        app_path: Delphi exe path (must already be running with keep_alive,
+            or will be started fresh).
+        visibility: RTTI visibility filter (default ``public,published``).
+        wait_for_pipe: Seconds to wait for the TestHost pipe (default 10).
+        env: Optional environment variable overrides for child process.
+
+    Returns:
+        dict with structure::
+
+            {
+              "status": "ok",
+              "classes": [
+                {
+                  "name": "Agent.EditEngineV3Test",
+                  "unit": "Test.EditEngine",
+                  "methods": [
+                    {
+                      "name": "RunTest",
+                      "params": [{"name": "ABackupDir", "type": "string"}],
+                      "return_type": "string",
+                      "visibility": "public"
+                    }
+                  ]
+                }
+              ],
+              "visibility": "public,published"
+            }
+
+    Raises:
+        RuntimeError: If the TestHost process cannot be reached.
+    """
+    env_overrides = _normalize_env_overrides(env) if env else {}
+
+    with _gui_execution_lock:
+        is_new, err = _ensure_process(app_path, wait_for_pipe, env_overrides)
+        if err:
+            return {'status': 'error', 'error': err}
+
+        pipe_name = _process_pipe_name(app_path)
+        _begin_pipe_session(pipe_name)
+        try:
+            req = {
+                'reqId': 'list_tests_0',
+                'cmd': 'list_tests',
+                'visibility': visibility,
+            }
+            resp_raw = _send_command(
+                json.dumps(req, ensure_ascii=False),
+                timeout_ms=15000,
+            )
+            resp = _decode_response(resp_raw)
+            if resp.get('status') == 'ok':
+                data = resp.get('data', '{}')
+                if isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except json.JSONDecodeError:
+                        data = {'status': 'error', 'error': 'invalid JSON from TestHost'}
+                return data if isinstance(data, dict) else {'status': 'error', 'error': 'unexpected response'}
+            else:
+                error = resp.get('data', resp.get('error', 'unknown error'))
+                return {'status': 'error', 'error': str(error)}
+        finally:
+            _end_pipe_session()
+            if not (is_new is False):
+                # If we started a new process just for listing, kill it
+                # unless the caller intends to keep it alive.
+                pass
 
 
 def _execute_script_unlocked(app_path: str, script,

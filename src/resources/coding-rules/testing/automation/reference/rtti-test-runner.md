@@ -87,22 +87,49 @@ async_task(action="status", task_id=submitted["task_id"], long_poll_seconds=10)
 result = async_task(action="result", task_id=submitted["task_id"])
 ```
 
+> **⚠️ 轮询建议**：对于慢任务（如自动化测试），推荐用 `action="result"` 轮询而非 `action="status"` + `long_poll_seconds`。
+> `action="result"` 立即返回当前状态（零等待），不会阻塞 MCP 通道。
+> `action="status"` + `long_poll_seconds` 会阻塞等待进度变化，如果任务长时间未完成，可能导致客户端超时。
+
 ## 3. 用例字段
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
 | `id` / `name` | 否 | 稳定标识和显示名称，原样进入结果 |
 | `target` | 二选一 | GUI 控件名；与 `className` 互斥 |
-| `className` | 二选一 | RTTI 全限定类名，或注册类/fixture 的名称或别名；与 `target` 互斥 |
+| `className` | 二选一 | 类名（见下方查找顺序）；与 `target` 互斥 |
 | `method` | 是 | RTTI 方法名 |
 | `params` | 否 | 方法参数 JSON 数组，也接受可解析为数组的 JSON 字符串 |
 | `constructor_params` | 否 | 直接发现类或显式注册类的构造参数 JSON 数组；省略时绑定无参数构造器 |
 | `expected` | 否 | 返回值的精确字符串断言，允许空字符串 |
 | `expected_exception` | 否 | 测试阶段应抛出的异常类名，与 `expected` 互斥 |
 | `expected_message` | 否 | 异常消息应包含的文本，不区分大小写；需配合 `expected_exception` |
-| `assert_expr` | 否 | Python 表达式，变量 `actual` 为返回值字符串 |
+| `assert_expr` | 否 | Python 表达式，变量 `actual` 为返回值字符串；与 `expected`/`expected_exception` 互斥 |
 | `visibility` | 否 | 覆盖全局 RTTI 可见度，如 `private,protected,public,published` |
 | `timeout` | 否 | 覆盖该例的超时秒数，必须为有限正数 |
+
+### className 查找顺序（优先级从高到低）
+
+1. **RegisterTestClass 注册名**（如 `'Agent.EditEngineV3Test'`）— 通过 `GetTestClass` 查字典，最稳定，不会被链接器裁剪
+2. **TRttiContext.FindType 全限定名**（如 `'Tests.TCalculator'`）— RTTI 必须可发现，且类必须是 instance type
+3. **FindClass**（Delphi VCL 类名）— 仅限 `TComponent` 派生类
+
+> ⚠️ **不要传 Delphi 源码中的裸类名**（如 `TEditEngineV3Test`）。必须传上述三种之一。
+> 推荐优先使用 `RegisterTestClass` 注册名，因为它不依赖 RTTI 链接且不会被智能链接器裁掉。
+
+### 断言模式互斥规则
+
+三种断言模式**互斥**，每例只能选一种：
+
+| 模式 | 字段 | 执行方 | 语义 |
+|------|------|--------|------|
+| 精确匹配 | `expected` | Delphi | `result.ToString = expected` |
+| 异常匹配 | `expected_exception` | Delphi | `phase=test` 时异常类名 + 消息匹配 |
+| Python 表达式 | `assert_expr` | Python | `eval(assert_expr, actual=返回值)` |
+
+> ❌ **禁止组合**：`assert_expr` 会覆盖 Delphi 侧的 `assert` 字段。如果同时设置
+> `expected` 和 `assert_expr`，Delphi 的精确匹配结果会被 Python 表达式静默覆盖，
+> 导致 `result=PASS` + `assert=fail` 的困惑。验证层会拒绝这种组合。
 
 `assert_expr` 在 MCP 服务进程中按标准 Python 表达式执行，可使用 Python 内建能力；
 只运行可信测试定义。自然语言说明应放在 `name` 或外部测试说明中，不要写进表达式。
@@ -128,8 +155,9 @@ result = async_task(action="result", task_id=submitted["task_id"])
 6. Python 侧执行 `assert_expr` 并汇总稳定统计。
 
 默认 `test_timeout=30` 秒，可由每例 `timeout` 覆盖。传输读取达到 deadline 后会终止
-TestHost，下一例自动启动新进程。`keep_alive=true` 是 test action 默认值；传 false 时
-suite 完成后关闭传输连接并终止 TestHost。
+TestHost，下一例自动启动新进程。超时结果包含 `ms` 字段（实际耗时）和 `timeout_sec`
+字段（超时阈值），便于区分"卡死"和"真慢"。`keep_alive=true` 是 test action 默认值；
+传 false 时 suite 完成后关闭传输连接并终止 TestHost。
 
 只有 `phase=test` 的异常能满足 `expected_exception`。setup、构造和 teardown 异常始终是
 error；异常类型错误、消息不匹配或没有抛出预期异常属于 assertion failure。

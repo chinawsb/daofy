@@ -710,7 +710,7 @@ TOOL_HELP_DOCS: dict = {
         "actions": {
             "start": "启动异步任务（通常 delphi_kb(action=build) 已自动启动，无需手动调用）",
             "status": "查询任务状态（返回进度百分比和状态）",
-            "result": "获取任务结果",
+            "result": "获取任务结果（大结果自动写入临时文件，返回摘要+文件路径）",
             "list": "列出所有任务",
             "cancel": "取消运行中的任务",
         },
@@ -735,13 +735,15 @@ TOOL_HELP_DOCS: dict = {
                     "long_poll_seconds": "长轮询秒数，默认 0（立即返回），最大 30",
                     "show_progress": "是否显示进度，默认 true",
                 },
+                "note": "⚠️ 对于慢任务（如自动化测试），不要使用 long_poll_seconds，改用 action=result 轮询，避免 MCP 通道超时",
             },
             "result": {
-                "description": "获取任务结果",
+                "description": "获取任务结果（立即返回，零等待）",
                 "required": [],
                 "optional": {
                     "task_id": "任务 ID",
                 },
+                "note": "✅ 推荐用于轮询慢任务状态：立即返回当前结果，不阻塞。任务未完成时返回「任务尚未完成」+ 当前进度。结果超过 10KB 时自动写入临时文件，返回摘要+文件路径，读取后调用 cleanup 清理",
             },
             "list": {
                 "description": "列出所有任务",
@@ -1649,12 +1651,14 @@ TOOL_HELP_DOCS: dict = {
         },
         "examples": [
             'automate_delphi(action="prepare")  # ← 首次使用前先注册全局搜索路径',
+            'automate_delphi(action="list_tests", app_path="TestHost.exe")  # ← 列出已注册测试类和方法',
             'automate_delphi(action="gui", app_path="App.exe", script={"test_name":"main-smoke","steps":[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}]})',
             'automate_delphi(action="gui", app_path="App.exe", stop_on_failure=true, script=[{"cmd":"rget","target":"StatusBar.Caption","assert_expr":"actual==\'OK\'"}])',
             'automate_delphi(action="gui", app_path="App.exe", script=[{"cmd":"listwnd"}])',
             'automate_delphi(action="console", app_path="Tool.exe", input="Y\\n", expect="Continue?", timeout=10)',
             'automate_delphi(action="console", app_path="Deploy.exe", input="\\n", expect="success", args=["--silent"])',
-            'automate_delphi(action="test", app_path="App.exe", test_timeout=30, tests=[{"id":"add","className":"Tests.TCalculator","method":"Add","params":[1,2],"expected":"3","assert_expr":"actual == \'3\'"}])',
+            'automate_delphi(action="test", app_path="App.exe", test_timeout=30, tests=[{"id":"add","className":"Tests.TCalculator","method":"Add","params":[1,2],"expected":"3"}])',
+            'automate_delphi(action="test", app_path="App.exe", tests=[{"id":"exception","className":"Tests.TCalculator","method":"Parse","params":["bad"],"expected_exception":"EConvertError","expected_message":"invalid"}])',
             '# 感知-规划-执行-反馈 完整循环示例见 get_coding_rules(section="automation")',
         ],
         "action_params": {
@@ -1698,17 +1702,48 @@ TOOL_HELP_DOCS: dict = {
                 "required": [],
                 "optional": {},
             },
+            "list_tests": {
+                "description": (
+                    "列出 TestHost 中已注册的测试类和方法。返回每个类的注册名、单元名、"
+                    "方法名、参数签名（名称+类型）和返回类型，无需 grep 源码。"
+                    "需要 TestHost 进程已启动（keep_alive=True）或自动启动新进程。"
+                ),
+                "required": ["app_path"],
+                "optional": {
+                    "visibility": "RTTI 可见度过滤（默认 public,published）",
+                    "wait_timeout": "等待 TestHost 管道就绪的超时秒数（默认 10s）",
+                    "env": "临时环境变量 dict",
+                },
+            },
             "test": {
                 "description": "批量执行 RTTI 测试 — 每例独立发送 run_tests 命令，超时后重启 TestHost，并返回稳定统计与逐例结果",
                 "required": ["app_path", "tests"],
                 "optional": {
-                    "tests": "测试用例列表；每项支持 id/name、target(控件名) 或 className(类全名)、method、params、constructor_params、expected(允许空字符串)、expected_exception(测试阶段应抛出的异常类名，与expected二选一)、expected_message(异常消息包含文本)、assert_expr(Python表达式，actual为字符串结果)、visibility、timeout(覆盖该例超时秒数)。RTTI 可发现且有兼容构造器的 className 可直接使用；类型被链接器裁剪、RTTI 无法发现或需要别名时用 RegisterTestClass；需要 setup/teardown 时用 RegisterFixture",
+                    "tests": (
+                        "测试用例列表；每项支持 id/name、target(控件名) 或 className、method、params、"
+                        "constructor_params、expected、expected_exception、expected_message、assert_expr、"
+                        "visibility、timeout(覆盖该例超时秒数)。"
+                        "\n\nclassName 查找顺序（优先级从高到低）："
+                        "\n  1. RegisterTestClass 注册名（如 'Agent.EditEngineV3Test'）— 不会被链接器裁剪"
+                        "\n  2. TRttiContext.FindType 全限定名（如 'Tests.TCalculator'）— 需 RTTI 可发现"
+                        "\n  3. FindClass（Delphi VCL 类名）— 仅限 TComponent 派生类"
+                        "\n推荐：优先用 RegisterTestClass 注册名（最稳定）；RTTI 可发现的类可用全限定名。"
+                        "\n需要 setup/teardown 时用 RegisterFixture。"
+                        "\n⚠️ 传入的必须是上述三种之一，不是 Delphi 源码中的类名（如 TEditEngineV3Test）"
+                    ),
                     "visibility": "全局 RTTI 可见度过滤（默认 public,published，可由每个测试项覆盖；测试私有方法时设 private,protected,public,published）",
                     "wait_timeout": "等待 TestHost 管道就绪的超时秒数（默认 10s）",
-                    "test_timeout": "每个测试的默认超时秒数（默认 30s；由测试项 timeout 覆盖）",
+                    "test_timeout": "每个测试的默认超时秒数（默认 30s；由测试项 timeout 覆盖）。超时后进程自动终止，下一例启动新进程",
                     "keep_alive": "True=执行后保持进程运行（默认 true）",
                     "env": "临时环境变量 dict",
                 },
+                "assert_modes": (
+                    "三种断言模式互斥，每例只能选一种："
+                    "\n  1. expected: Delphi 侧精确字符串匹配（result.ToString = expected）"
+                    "\n  2. expected_exception: Delphi 侧异常匹配（phase=test 时异常类名+消息）"
+                    "\n  3. assert_expr: Python 表达式（变量 actual 为返回值字符串，如 \"actual == '3'\")"
+                    "\n❌ 禁止组合：assert_expr 会覆盖 Delphi 侧 assert 字段，导致 result=PASS + assert=fail 困惑"
+                ),
             },
         },
     },

@@ -8,7 +8,13 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 提供异步任务的启动、查询和管理功能
 """
 
+import json
+import os
+import tempfile
+import time
+from pathlib import Path
 from typing import Any, Optional
+
 from mcp.types import CallToolResult
 
 from ..constants import DIR_DELPHI_KB, REG_KEY_EMBARCADERO_BDS
@@ -16,6 +22,56 @@ from ..services.knowledge_base.async_task_manager import get_task_manager, TaskS
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 大结果阈值：超过此大小写入临时文件（字节）
+_RESULT_FILE_THRESHOLD = 10 * 1024  # 10 KB
+# 临时结果文件目录（写到项目 .tmp 子目录，避免系统 Temp 权限问题）
+_RESULT_FILE_DIR = Path(__file__).resolve().parent.parent.parent / ".tmp" / "async_results"
+# 自动清理：超过此时间的临时文件删除（秒）
+_RESULT_FILE_TTL = 3600  # 1 hour
+
+
+def _ensure_result_dir() -> Path:
+    """确保临时结果目录存在"""
+    _RESULT_FILE_DIR.mkdir(parents=True, exist_ok=True)
+    return _RESULT_FILE_DIR
+
+
+def _cleanup_old_result_files() -> int:
+    """删除过期的临时结果文件，返回删除数量"""
+    now = time.time()
+    count = 0
+    try:
+        for f in _RESULT_FILE_DIR.glob("task_*.json"):
+            if now - f.stat().st_mtime > _RESULT_FILE_TTL:
+                f.unlink(missing_ok=True)
+                count += 1
+    except OSError:
+        pass
+    return count
+
+
+def _format_result_text(task_info: Any) -> str:
+    """将任务结果格式化为文本"""
+    result_text = "任务执行成功!\n\n"
+    if isinstance(task_info.result, dict):
+        for key, value in task_info.result.items():
+            result_text += f"{key}: {value}\n"
+    else:
+        result_text += f"结果: {task_info.result}\n"
+    return result_text
+
+
+def _write_result_to_file(task_id: str, result_text: str) -> str:
+    """将大结果写入临时文件，返回文件路径"""
+    _ensure_result_dir()
+    file_path = _RESULT_FILE_DIR / f"{task_id}.json"
+    try:
+        file_path.write_text(result_text, encoding="utf-8")
+        return str(file_path)
+    except OSError as e:
+        logger.error(f"写入结果文件失败: {e}")
+        return ""
 
 
 async def start_async_task(arguments: Any) -> CallToolResult:
@@ -355,6 +411,10 @@ async def get_task_status(arguments: Any) -> CallToolResult:
     """
     获取任务状态（支持长轮询）
 
+    ⚠️ 注意：对于慢任务（如自动化测试、知识库构建），不要使用 long_poll_seconds。
+    长轮询会阻塞 MCP 请求通道，如果任务长时间未完成，可能导致客户端超时。
+    应改用 action="result" 轮询：立即返回当前状态，零等待。
+
     Args:
         arguments: 包含以下参数:
             - task_id: 任务ID (必需)
@@ -406,14 +466,17 @@ async def get_task_status(arguments: Any) -> CallToolResult:
 
 async def get_task_result(arguments: Any) -> CallToolResult:
     """
-    获取任务结果
+    获取任务结果（立即返回，零等待）
+
+    ✅ 推荐用于轮询慢任务状态：立即返回当前结果，不阻塞 MCP 通道。
+    任务未完成时返回「任务尚未完成」+ 当前进度；完成后返回完整结果。
 
     Args:
         arguments: 包含以下参数:
             - task_id: 任务ID (必需)
 
     Returns:
-        任务结果
+        任务结果（CallToolResult）
     """
     task_id = arguments.get("task_id")
     if not task_id:
@@ -447,12 +510,21 @@ async def get_task_result(arguments: Any) -> CallToolResult:
         )
 
     # 格式化结果
-    result_text = f"任务执行成功!\n\n"
-    if isinstance(task_info.result, dict):
-        for key, value in task_info.result.items():
-            result_text += f"{key}: {value}\n"
-    else:
-        result_text += f"结果: {task_info.result}\n"
+    result_text = _format_result_text(task_info)
+
+    # 大结果写入临时文件，返回摘要 + 文件路径
+    if len(result_text.encode("utf-8")) > _RESULT_FILE_THRESHOLD:
+        file_path = _write_result_to_file(task_id, result_text)
+        if file_path:
+            # 同时清理过期文件
+            _cleanup_old_result_files()
+            summary = (
+                f"任务执行成功!\n\n"
+                f"结果较大（{len(result_text):,} 字符），已写入临时文件:\n"
+                f"{file_path}\n\n"
+                f"请用 Read 工具读取文件获取完整结果，读取后删除该文件。"
+            )
+            return CallToolResult(content=[{"type": "text", "text": summary}])
 
     return CallToolResult(content=[{"type": "text", "text": result_text}])
 

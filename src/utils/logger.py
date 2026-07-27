@@ -216,6 +216,23 @@ _initialized = False
 
 
 _root_handlers_initialized = False
+_file_logging_warning_emitted = False
+
+
+def _warn_file_logging_unavailable(log_path: Path, exc: OSError) -> None:
+    """Report a file logging failure without depending on logger setup."""
+    global _file_logging_warning_emitted
+    if _file_logging_warning_emitted:
+        return
+
+    _file_logging_warning_emitted = True
+    print(
+        "[Daofy] 日志目录无法写入: "
+        f"{log_path.parent}；需宿主授权写入或配置可写目录，"
+        f"后续文件日志将被忽略。原因: {exc}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def setup_logger(
@@ -253,13 +270,9 @@ def setup_logger(
         format_string = _LOG_FORMAT
     formatter = logging.Formatter(format_string)
 
-    # 控制台处理器 (stderr, 避免干扰 MCP stdio)
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
     # 文件处理器
+    file_handler: Optional[logging.FileHandler] = None
+    file_logging_failed = False
     if log_file or _load_log_config().log_dir:
         if log_file:
             log_path = Path(log_file)
@@ -267,11 +280,27 @@ def setup_logger(
             log_dir = _get_project_root() / _load_log_config().log_dir
             log_path = _get_today_log_path(log_dir)
 
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(str(log_path), encoding="utf-8")
+            file_handler.setLevel(level)
+            file_handler.setFormatter(formatter)
+        except OSError as exc:
+            file_logging_failed = True
+            _warn_file_logging_unavailable(log_path, exc)
+
+    if file_logging_failed:
+        # File logging is best-effort.  A NullHandler prevents later log calls
+        # from raising or falling back to repeated stderr output.
+        logger.addHandler(logging.NullHandler())
+    else:
+        # 控制台处理器 (stderr, 避免干扰 MCP stdio)
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        if file_handler is not None:
+            logger.addHandler(file_handler)
 
     # 同时挂载 handler 到 root logger
     # 否则 get_logger(__name__) 创建的子 logger 日志传播到 root 时，

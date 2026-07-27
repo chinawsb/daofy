@@ -172,6 +172,10 @@ type
     /// <summary>批量执行测试 — 解析 tests 数组，逐个 rcall，返回结构化报告</summary>
     function HandleRunTests(const ReqId: string; Tests: TJSONArray): string; virtual;
 
+    /// <summary>列出已注册测试类及其方法签名 — 枚举 FTestClasses + RTTI 方法信息</summary>
+    function HandleListTests(const ReqId: string;
+      const AVisibility: string): string; virtual;
+
     /// <summary>终止应用程序</summary>
     procedure DoTerminateApp; virtual; abstract;
 
@@ -813,6 +817,10 @@ begin
         else
           Result := HandleRunTests(ReqId, TestsArr);
       end
+
+      else if Cmd = 'list_tests' then
+        Result := HandleListTests(ReqId,
+          GetJSONStr(J, 'visibility', 'public,published'))
 
       else if Cmd = 'rtti_discover' then
         Result := HandleRttiDiscover(ReqId, Target)
@@ -1937,6 +1945,139 @@ begin
     Root.Free;
   end;
 end;
+
+{ ── list_tests: 枚举已注册测试类及其方法签名 ── }
+
+function TAutomationProcessorBase.HandleListTests(const ReqId: string;
+  const AVisibility: string): string;
+var
+  Root, ClassObj, MethodObj, ParamObj: TJSONObject;
+  ClassesArr, MethodsArr, ParamsArr: TJSONArray;
+  Pair: TPair<string, TClass>;
+  Ctx: TRttiContext;
+  RType: TRttiType;
+  Method: TRttiMethod;
+  Param: TRttiParameter;
+  VisSet: set of TMemberVisibility;
+  VisItem: string;
+  UnitName: string;
+begin
+  Root := TJSONObject.Create;
+  ClassesArr := TJSONArray.Create;
+  Ctx := TRttiContext.Create;
+  try
+    { 解析可见性过滤 }
+    VisSet := [mvPublic, mvPublished];
+    if AVisibility <> '' then
+    begin
+      VisSet := [];
+      for VisItem in AVisibility.Split([',']) do
+      begin
+        if SameText(VisItem.Trim, 'private') then
+          Include(VisSet, mvPrivate)
+        else if SameText(VisItem.Trim, 'protected') then
+          Include(VisSet, mvProtected)
+        else if SameText(VisItem.Trim, 'public') then
+          Include(VisSet, mvPublic)
+        else if SameText(VisItem.Trim, 'published') then
+          Include(VisSet, mvPublished)
+        else if SameText(VisItem.Trim, 'all') then
+          VisSet := [mvPrivate, mvProtected, mvPublic, mvPublished];
+      end;
+    end;
+
+    { 枚举所有已注册测试类 }
+    if FTestClasses <> nil then
+    begin
+      for Pair in FTestClasses do
+      begin
+        ClassObj := TJSONObject.Create;
+        MethodsArr := TJSONArray.Create;
+        try
+          ClassObj.AddPair('name', Pair.Key);
+
+          { 从类名推断单元名（取最后一个 '.' 之前的部分） }
+          UnitName := '';
+          var DotPos := Pos('.', Pair.Key);
+          if DotPos > 0 then
+            UnitName := Copy(Pair.Key, 1, DotPos - 1);
+          ClassObj.AddPair('unit', UnitName);
+
+          { RTTI 枚举方法 }
+          RType := Ctx.GetType(Pair.Value);
+          if RType <> nil then
+          begin
+            for Method in RType.GetMethods do
+            begin
+              { 跳过父类方法（只列出当前类声明的方法） }
+              if Method.Parent <> RType then
+                Continue;
+              { 跳过不在可见性范围内的方法 }
+              if not (Method.Visibility in VisSet) then
+                Continue;
+              { 跳过构造器/析构器（内部方法） }
+              if (Method.IsConstructor) or (Method.IsDestructor) then
+                Continue;
+
+              MethodObj := TJSONObject.Create;
+              ParamsArr := TJSONArray.Create;
+              try
+                MethodObj.AddPair('name', Method.Name);
+
+                { 参数签名 }
+                for Param in Method.GetParameters do
+                begin
+                  ParamObj := TJSONObject.Create;
+                  ParamObj.AddPair('name', Param.Name);
+                  if Param.ParamType <> nil then
+                    ParamObj.AddPair('type', Param.ParamType.Name)
+                  else
+                    ParamObj.AddPair('type', 'unknown');
+                  ParamsArr.AddElement(ParamObj);
+                end;
+                MethodObj.AddPair('params', ParamsArr);
+
+                { 返回类型 }
+                if Method.ReturnType <> nil then
+                  MethodObj.AddPair('return_type', Method.ReturnType.Name)
+                else
+                  MethodObj.AddPair('return_type', 'void');
+
+                { 可见性 }
+                case Method.Visibility of
+                  mvPrivate:   MethodObj.AddPair('visibility', 'private');
+                  mvProtected: MethodObj.AddPair('visibility', 'protected');
+                  mvPublic:    MethodObj.AddPair('visibility', 'public');
+                  mvPublished: MethodObj.AddPair('visibility', 'published');
+                end;
+
+                MethodsArr.AddElement(MethodObj);
+              except
+                on E: Exception do
+                  MethodObj.Free;
+              end;
+            end;
+          end;
+
+          ClassObj.AddPair('methods', MethodsArr);
+          ClassesArr.AddElement(ClassObj);
+        except
+          on E: Exception do
+            ClassObj.Free;
+        end;
+      end;
+    end;
+
+    Root.AddPair('classes', ClassesArr);
+    Root.AddPair('total', TJSONNumber.Create(ClassesArr.Count));
+    Root.AddPair('visibility', AVisibility);
+    Result := WriteResp(ReqId, 'ok', Root.ToJSON);
+  finally
+    Ctx.Free;
+    Root.Free;
+  end;
+end;
+
 function TAutomationProcessorBase.DoDlgFile(const APath,
   ATarget: string): string;
 var

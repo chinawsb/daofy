@@ -12,6 +12,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.utils.dproj_parser import DprojParser
+from src.tools.compile_file import _get_search_paths_from_dproj
 
 GUID = "{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}"
 
@@ -29,6 +30,7 @@ XML = (
     '  <PropertyGroup Condition="' + "'" + D + "(Config)'=='Debug'" + '">\n'
     '    <DCC_Define>DEBUG;TEST</DCC_Define>\n'
     '    <DCC_Output>DebugOut</DCC_Output>\n'
+    '    <DCC_UnitSearchPath>units;shared</DCC_UnitSearchPath>\n'
     '  </PropertyGroup>\n'
     '  <PropertyGroup Condition="' + "'" + D + "(Config)'=='Release'" + '">\n'
     '    <DCC_Define>RELEASE</DCC_Define>\n'
@@ -97,6 +99,18 @@ def test_events():
         ev = p.get_build_events()
         assert "Pre" in ev.get("pre_build", "")
         assert "Post" in ev.get("post_build", "")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_compile_file_keeps_dproj_unit_search_paths():
+    """Project search paths must survive dproj parsing for single-file compile."""
+    d = tempfile.mkdtemp()
+    try:
+        dproj_path = _w(d)
+        paths = _get_search_paths_from_dproj(dproj_path, platform=None)
+        assert str((Path(d) / "units").resolve()) in paths
+        assert str((Path(d) / "shared").resolve()) in paths
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

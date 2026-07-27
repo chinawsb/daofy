@@ -13,7 +13,9 @@ delphi_kb(action="build", kb_type="document", rebuild=True, confirm=True, async_
 # 项目 KB
 delphi_kb(action="build", kb_type="project", project_path="Project.dproj", rebuild=True)
 
-# 进度查询（long_poll ≤30s）
+# 进度查询（推荐 action=result，立即返回，零等待）
+async_task(action="result", task_id="task_xxx")
+# 或用短轮询 action=status（long_poll ≤30s）
 async_task(action="status", task_id="task_xxx")
 ```
 

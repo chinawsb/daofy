@@ -563,7 +563,8 @@ class TestGuiScriptResultHandling:
         """Every pipe command must time out when Delphi accepts but never answers."""
         from src.services import automation_service
 
-        with mock.patch.object(automation_service, "_write_pipe", return_value=True), \
+        with mock.patch.object(automation_service, "_is_pipe_alive", return_value=True), \
+                mock.patch.object(automation_service, "_write_pipe", return_value=True), \
                 mock.patch.object(
                     automation_service,
                     "_read_pipe_message_poll",
@@ -2290,6 +2291,14 @@ class TestRttiRunTests:
         assert result["assert_expr"] == "actual == '42'"
 
     def test_pipe_timeout_restarts_before_next_test(self):
+        """Pipe error now breaks immediately — no retry, no restart.
+
+        The old behavior was to restart the process and continue with
+        remaining tests.  This caused _gui_execution_lock to be held
+        forever when the process was dead.  The new behavior is to
+        break out of the loop, release the lock, and mark the task as
+        failed.
+        """
         from src.services import automation_service
 
         app_path = r"C:\fake\timeout-tests.exe"
@@ -2299,6 +2308,7 @@ class TestRttiRunTests:
         ]
         responses = [
             "ERR:read_failed_or_timeout (err=0)",
+            # This response should never be sent because the loop breaks
             self._delphi_response({"status": "ok", "result": "done"}),
         ]
 
@@ -2307,7 +2317,7 @@ class TestRttiRunTests:
             with mock.patch.object(
                 automation_service,
                 "_ensure_process",
-                side_effect=[(False, ""), (True, "")],
+                return_value=(False, ""),
             ) as ensure_process, mock.patch.object(
                 automation_service, "_begin_pipe_session"
             ) as begin_session, mock.patch.object(
@@ -2326,11 +2336,12 @@ class TestRttiRunTests:
             automation_service._process_pool.pop(app_path, None)
 
         assert result["status"] == "failed"
-        assert result["passed"] == 1
+        assert result["passed"] == 0
         assert result["failed"] == 0
         assert result["errors"] == 1
-        assert ensure_process.call_count == 2
-        assert begin_session.call_count == 2
+        # Only one _ensure_process call — loop breaks before second test
+        assert ensure_process.call_count == 1
+        assert begin_session.call_count == 1
         kill_process.assert_called_once_with(app_path)
         assert send_command.call_args_list[0].kwargs["timeout_ms"] == 250
 

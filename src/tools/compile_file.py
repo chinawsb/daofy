@@ -65,9 +65,6 @@ def _get_search_paths_from_dproj(dproj_path: str, platform: str = "Win32") -> Li
         unit_paths = parser.get_unit_search_paths(platform=platform)
         paths.extend(unit_paths)
 
-        browsing_paths = parser.get_browsing_paths(platform=platform)
-        paths.extend(browsing_paths)
-
         return list(set(paths))
     except Exception as e:
         logger.warning(f"解析 .dproj 文件失败: {e}")

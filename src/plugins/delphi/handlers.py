@@ -457,13 +457,35 @@ async def _handle_automate_delphi(arguments: dict) -> dict:
         except Exception as e:
             return {"status": "failed", "message": f"automate_delphi(test) 提交失败: {e}"}
 
+    elif action == "list_tests":
+        visibility = arguments.get("visibility", "public,published")
+        wait_timeout = arguments.get("wait_timeout", 10)
+
+        try:
+            from ..services.automation_service import list_tests as _list_tests
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    _list_tests,
+                    app_path=app_path,
+                    visibility=visibility,
+                    wait_for_pipe=wait_timeout,
+                    env=env,
+                ),
+                timeout=30,
+            )
+            result.setdefault("requested_action", requested_action)
+            result.setdefault("resolved_action", action)
+            return result
+        except asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "message": "automate_delphi(list_tests) 执行超时（30s）",
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"automate_delphi(list_tests) failed: {e}"}
+
     else:
         return {"status": "error", "message": f"未知 action: {action}"}
-
-
-async def _handle_delphi_rtti(arguments: dict) -> dict:
-    """处理 delphi_rtti 工具调用（RTTI 发现/调用）。"""
-    return await _handle_delphi_rtti(arguments)
 
 
 # ============================================================
