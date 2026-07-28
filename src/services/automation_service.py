@@ -3750,7 +3750,18 @@ def _execute_script_unlocked(app_path: str, script,
 
         cmd = step.get('cmd', '')
         target = step.get('target', step.get('name', ''))
-        ms = step.get('ms', step.get('wait', 500))
+        # Priority: ms(ms) > timeout_seconds(s→ms) > timeout(ms) > wait(ms) > 500(ms)
+        if 'timeout_seconds' in step:
+            raw_ms = float(step['timeout_seconds']) * 1000
+        elif 'ms' in step:
+            raw_ms = step['ms']
+        elif 'timeout' in step:
+            raw_ms = step['timeout']
+        elif 'wait' in step:
+            raw_ms = step['wait']
+        else:
+            raw_ms = 500
+        ms = _safe_int(raw_ms, 500)
         capture_name = step.get('capture', '')
         req_id = f'step_{req_index}'
         req_index += 1

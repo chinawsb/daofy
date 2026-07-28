@@ -3,7 +3,7 @@
 
 ### 8.8 DCC 编译错误分类与解码
 
-#### 文档知识库搜索（首选）
+#### 8.8.1 文档知识库搜索（首选）
 Delphi CHM 文档包含 1278 个 DCC 错误/警告 HTML 文件（875 EXXXX + 20 FXXXX + W/H 系列）。
 ```python
 # 构建一次后即可搜索
@@ -14,7 +14,7 @@ delphi_kb(query="E2003", kb_type="document", search_type="semantic")
 delphi_kb(query="F2613 unit not found", kb_type="document", search_type="semantic")
 ```
 
-#### 错误级别速查
+#### 8.8.2 错误级别速查
 | 级别 | 前缀 | 策略 |
 |------|------|------|
 | Fatal | Fxxxx | 先修复路径/配置 |
@@ -22,7 +22,7 @@ delphi_kb(query="F2613 unit not found", kb_type="document", search_type="semanti
 | Warning | Wxxxx | 评估影响；已知可忽略 |
 | Hint | Hxxxx | 整理时处理，调试跳过 |
 
-#### 常见 DCC 错误速查表
+#### 8.8.3 常见 DCC 错误速查表
 | 错误号 | 常见原因 | 解决方向 |
 |--------|---------|---------|
 | E2003 | 缺 uses / 拼写错误 | 检查 uses + 大小写 |
@@ -34,7 +34,7 @@ delphi_kb(query="F2613 unit not found", kb_type="document", search_type="semanti
 | E2506 | DCU 缓存过期 | 全量编译或删 .dcu |
 | F2613 | 搜索路径不含目标单元 | 检查 DCC_UnitSearchPath |
 
-#### 处理流程
+#### 8.8.4 处理流程
 ```
 失败
  ├─ ① 分类级别: Fatal先→Error主→Warning暂缓
@@ -47,7 +47,7 @@ delphi_kb(query="F2613 unit not found", kb_type="document", search_type="semanti
  └─ ④ 疑难: 二分法隔离 → 查经验库 → 3次失败介入
 ```
 
-#### 增量缓存问题
+#### 8.8.5 增量缓存问题
 - `.dcu`/`.map`/`.dres` 缓存损坏导致幽灵错误
 - 症状：修复仍报相同错，或指向已删代码
 - 解决：清缓存全量编译（Windows 上先关 IDE）

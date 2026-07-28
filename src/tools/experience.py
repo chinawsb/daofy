@@ -2,10 +2,15 @@
 experience MCP 工具 — 经验记忆管理
 
 通过 action 参数分派操作，语义搜索复用 embedding_service。
+
+新增 suggest action: 分析最近工具调用历史，自动检测经验保存机会，
+预填 problem/solution/tags/context 草稿，供 AI 审核后 save。
 """
 
+import json
 from typing import Any, Optional
 from ..services.experience_service import get_experience_service
+from ..services.experience_tracker import get_tracker
 
 import logging
 logger = logging.getLogger(__name__)
@@ -45,8 +50,10 @@ def experience(**kwargs) -> dict:
             return _act_delete(svc, **kwargs)
         elif action == "rebuild_embedding":
             return _act_rebuild_embedding(svc, **kwargs)
+        elif action == "suggest":
+            return _act_suggest(**kwargs)
         else:
-            return _err(f"未知 action: {action}，可用: save/search/get/list/update/merge/prune/delete/rebuild_embedding")
+            return _err(f"未知 action: {action}，可用: save/search/get/list/update/merge/prune/delete/rebuild_embedding/suggest")
     except Exception as e:
         logger.exception("experience 执行失败")
         return _err(str(e))
@@ -254,3 +261,43 @@ def _act_rebuild_embedding(svc, **kw):
     lines.append(f"  本次重建: {result['rebuilt']}")
     lines.append(f"  失败: {result['failed']}")
     return _ok("\n".join(lines), data=result)
+
+
+def _act_suggest(**kw) -> dict:
+    """分析最近工具调用历史，自动检测经验保存机会，预填草稿。
+
+    返回预填的 problem/solution/tags/context，供 AI 审核后
+    调用 experience(action="save", ...) 正式保存。
+    """
+    tracker = get_tracker()
+    draft = tracker.suggest()
+    if draft is None:
+        return _ok(
+            "未检测到值得保存的经验。\n"
+            "  suggest 需要 2+ 次工具调用，且检测到以下模式之一：\n"
+            "  - fix_cycle:  编译失败 → 修改代码 → 编译成功\n"
+            "  - learn_apply: 查知识库 → 修改代码 → 编译成功\n"
+            "  - clean_fix:  修改代码 → 编译成功（无前置失败）"
+        )
+
+    # 格式化输出
+    lines = [
+        "📋 检测到经验保存机会，审核后可用以下命令保存：",
+        "",
+        f"experience(action=\"save\",",
+        f'  problem="""{draft["problem"]}""",',
+        f'  solution="""{draft["solution"]}""",',
+        f'  tags={json.dumps(draft["tags"], ensure_ascii=False)},',
+        f'  context={json.dumps(draft["context"], ensure_ascii=False)},',
+        f'  force=true',
+        f")",
+    ]
+    note = (
+        "\n💡 建议：审核后泛化 problem 描述（去掉 auto 标记、"
+        "抽象通用场景），可用 force=true 跳过 >0.7 去重提醒层。"
+    )
+
+    return _ok(
+        "\n".join(lines) + note,
+        data=draft,
+    )

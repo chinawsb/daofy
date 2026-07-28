@@ -538,6 +538,32 @@ class TestToolSchemaCompleteness:
         assert "即使只是读取" in desc
         assert ".pas/.dfm/.dproj/.dpk/.dpr/.inc/.fmx" in desc
 
+    def test_delphi_descriptions_keep_discovery_keywords_without_split_tools(self):
+        """提升检索命中率只能收紧现有描述，不能拆出额外 delphi_file alias 工具。"""
+        descriptions = self._get_all_descriptions()
+
+        delphi_file_desc = descriptions["delphi_file"]
+        for term in (
+            "read", "write", "search", "grep", "replace", "insert", "delete",
+            ".pas", ".dfm", ".dproj", "Read/Edit/Write", "apply_patch", "tool_help",
+        ):
+            assert term in delphi_file_desc, f"delphi_file description missing {term!r}"
+
+        rules_desc = descriptions["get_coding_rules"]
+        for term in ("writing", "compile", "review", "automation", "Delphi", "Lazarus"):
+            assert term in rules_desc, f"get_coding_rules description missing {term!r}"
+
+        environment_desc = descriptions["check_environment"]
+        for term in ("detect", "check", "install", "RAD Studio", "dcc32", "dcc64", "tool_help"):
+            assert term in environment_desc, f"check_environment description missing {term!r}"
+
+        split_tool_names = {
+            "delphi_file_read", "delphi_file_write", "delphi_file_search",
+            "delphi_file_grep", "delphi_file_replace", "delphi_file_insert",
+            "delphi_file_delete",
+        }
+        assert not (split_tool_names & set(TOOL_NAMES))
+
     def test_handler_arguments_match_schema_known_gaps_only(self):
         """回归检查：本次用户反馈的具体 schema 缺失已全部修复
 

@@ -20,11 +20,8 @@
 
 ## 异常诊断
 ```
-get_coding_rules(section="human_collab")  # 六步法总纲
- ├─ DCC错误 → ../shared/debugging/dcc-error-classification.md
- ├─ 崩溃 → ../shared/debugging/runtime-crash-classification.md
- ├─ 3次失败 → ../shared/debugging/escalation-checkpoints.md
- └─ 人工介入 → ../shared/debugging/escalation-handover.md
+入门 → get_coding_rules(section="human_collab")   # 触发条件 + 前置自检
+调试 → get_coding_rules(section="debugging")      # 8.1–8.14 全文合集（六步法/崩溃分类/DCC解码/…）
 ```
 
 ## 自动化测试
@@ -36,6 +33,7 @@ get_coding_rules(section="human_collab")  # 六步法总纲
 
 ## 其他
 ```
+多改动排序 → get_coding_rules(section="multi_change")
 经验保存 → get_coding_rules(section="experience")
 知识库 → get_coding_rules(section="kb_build")
 Agent规范 → get_coding_rules(section="agent_rules")

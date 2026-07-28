@@ -478,6 +478,27 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                             "check Delphi installation, "
                             "or use check_environment(action='detect', search_path=...)")
 
+    elif name == "delphi_project":
+        action = arguments.get("action", "")
+        if action == "compile":
+            # 判断编译是否成功
+            is_success = False
+            if isinstance(result, CallToolResult):
+                is_success = not result.isError
+            elif isinstance(result, dict):
+                is_success = (
+                    result.get('status') != 'failed'
+                    and result.get('success') is not False
+                )
+            if is_success:
+                return (
+                    "编译通过 ✅ — 工作流后续步骤（按顺序执行）：\n"
+                    "  1️⃣  代码审核: get_coding_rules(section=\"review\")\n"
+                    "  2️⃣  清理: 删未用变量/导入/死代码\n"
+                    "  3️⃣  automate_delphi 测试: tool_help(tool_name=\"automate_delphi\")\n"
+                    "  4️⃣  经验沉淀: experience(action=\"suggest\") → save"
+                )
+
     elif name == "package":
         action = arguments.get("action", "")
         if action == "install":

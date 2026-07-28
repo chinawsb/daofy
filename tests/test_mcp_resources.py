@@ -350,3 +350,18 @@ def test_inline_automation_units_expose_deterministic_failure_codes() -> None:
     assert "FindWindowW('#32770', nil)" not in base_source
     assert "FindWindowW('#32770', nil)" not in vcl_source
     assert "FindWindowW('#32770', nil)" not in fmx_source
+
+
+def test_inline_automation_peekresult_rebinds_response_req_id() -> None:
+    """peekresult responses must be routed by the polling request ID."""
+    base_source = (
+        PROJECT_ROOT / "tools" / "auto" / "DaofyAutomation.Base.pas"
+    ).read_text(encoding="utf-8")
+    peek_source = base_source.split(
+        "else if Cmd = 'peekresult'", maxsplit=1
+    )[1].split("else if Cmd = 'listwnd'", maxsplit=1)[0]
+
+    assert "Result := AR.Resp;" not in peek_source
+    assert "Result := WriteResp(ReqId," in peek_source
+    assert "GetJSONStr(AsyncObj, 'status', 'err')" in peek_source
+    assert "GetJSONStr(AsyncObj, 'data', '')" in peek_source

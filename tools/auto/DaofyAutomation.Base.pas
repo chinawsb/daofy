@@ -65,8 +65,28 @@ type
     Resp: string;
     Tick: UInt64;
   end;
+  /// <summary>子元素信息，描述一个路径段。</summary>
+  TChildElementInfo = record
+    Segment: string;  // 路径段名，如 "Nodes"、"[0]"、"btnOK"
+    Kind: string;     // "named" / "indexed" / "collection"
+    TypeName: string; // 元素类名，如 "TTreeView"、"TTreeNode"
+  end;
 
+  /// <summary>命名元素宿主接口。实现此接口的控件支持按名称路径查找子元素，
+  /// 路径格式为以 "." 分隔的段，支持 "[N]" 索引访问。
+  /// 示例：TreeView1.[0].btnReset → FindNamedElement(['[0]', 'btnReset'])。</summary>
+  INamedElementHost = interface
+    ['{498C2D30-4B7E-4F5C-9A21-8E12B5F3D1E0}']
+    /// <summary>按拆解后的路径段数组查找子元素。
+    /// ASegments 是不含根控件名的子路径段，如 ['[0]', 'btnReset']。
+    /// 实现方逐段访问子元素，返回最终目标。</summary>
+    function FindNamedElement(const ASegments: TArray<string>): TObject;
 
+    /// <summary>枚举当前元素下的所有直接子路径段。
+    /// 调用方遍历此数组可发现当前元素支持哪些路径段，
+    /// 然后用 FindNamedElement 访问目标子元素。</summary>
+    function EnumElements: TArray<TChildElementInfo>;
+  end;
   TAutomationCommandHandler = function(const ReqId, Target: string;
     const J: TJSONObject): string;
   /// <summary>
@@ -233,7 +253,11 @@ type
     // ── 截图入口 ──
 
     procedure DoCap(const AName: string);
-  public
+
+    /// <summary>解析点号分隔的名称路径（如 TreeView1.[0].btnReset）。
+    /// 先查根控件，再通过 INamedElementHost 逐段解析。</summary>
+    function ResolveNamedControlPath(const AFullPath: string): TObject; virtual;
+    public
     class procedure RegisterCommandHandler(const Cmd: string;
       Handler: TAutomationCommandHandler); static;
     class procedure UnregisterCommandHandler(const Cmd: string); static;
@@ -380,11 +404,15 @@ end;
 constructor TAutomationProcessorBase.Create(const APipeName: string);
 begin
   inherited Create(True);
-  FPipeName := APipeName;
-  FMsgWnd := AllocateHWnd(WndProc);
+  // FMsgWnd 必须在 VCL 主线程上创建，确保管道工作线程的 PostMessage/SendMessage
+  // 正确编组到主线程（主线程有消息泵，SendInput 等操作不会挂死）。
+  TThread.Synchronize(nil, procedure begin
+    FMsgWnd := AllocateHWnd(WndProc);
+  end);
   FAsyncResults := TDictionary<string, TAsyncResultRec>.Create;
   FAsyncQueue := TList<string>.Create;
   FTransport := CreateTransport;
+  FPipeName := APipeName;
   if FTransport <> nil then
     FTransport.Open(FPipeName);
   InitializeCriticalSection(FAsyncQueueCS);
@@ -670,7 +698,8 @@ var
   Cmd, ReqId, Target, ExtraResp: string;
   WaitMs: Integer;
   Buf: array[0..255] of Char;
-  V: TJSONValue;
+  V, AsyncResp: TJSONValue;
+  AsyncObj: TJSONObject;
 begin
   try
     V := TJSONObject.ParseJSONValue(AReq);
@@ -845,7 +874,18 @@ begin
         try
           if FAsyncResults.TryGetValue(Target, AR) then begin
             FAsyncResults.Remove(Target);
-            Result := AR.Resp;
+            AsyncResp := TJSONObject.ParseJSONValue(AR.Resp);
+            try
+              if AsyncResp is TJSONObject then begin
+                AsyncObj := AsyncResp as TJSONObject;
+                Result := WriteResp(ReqId,
+                  GetJSONStr(AsyncObj, 'status', 'err'),
+                  GetJSONStr(AsyncObj, 'data', ''));
+              end else
+                Result := WriteResp(ReqId, 'err', 'invalid async response');
+            finally
+              AsyncResp.Free;
+            end;
           end else
             Result := WriteResp(ReqId, 'err', 'NR:' + Target);
         finally
@@ -946,6 +986,37 @@ begin
             (Cmd = 'msgclick') or (Cmd = 'dlgclick') or (Cmd = 'hover') or
             (Cmd = 'move') or (Cmd = 'drag') or (Cmd = 'rcall') or
             (Cmd = 'key') or (Cmd = 'rset') or (Cmd = 'type');
+end;
+
+function TAutomationProcessorBase.ResolveNamedControlPath(const AFullPath: string): TObject;
+var
+  Segments: TArray<string>;
+  SubSegments: TArray<string>;
+  RootName: string;
+  Host: INamedElementHost;
+  I: Integer;
+begin
+  // 按 '.' 拆解路径："TreeView1.[0].btnReset" → ['TreeView1', '[0]', 'btnReset']
+  Segments := AFullPath.Split(['.'], TStringSplitOptions.ExcludeEmpty);
+  if Length(Segments) = 0 then
+    Exit(nil);
+
+  // 首段 = 根控件名
+  RootName := Segments[0];
+  Result := FindNamedControl(RootName);
+  if Result = nil then
+    Exit;
+
+  // 剩余段通过 INamedElementHost 链式解析
+  if Length(Segments) > 1 then begin
+    SetLength(SubSegments, Length(Segments) - 1);
+    for I := 1 to High(Segments) do
+      SubSegments[I - 1] := Segments[I];
+    if Supports(Result, INamedElementHost, Host) then
+      Result := Host.FindNamedElement(SubSegments)
+    else
+      Result := nil;
+  end;
 end;
 
 { ── RTTI 辅助 ── }

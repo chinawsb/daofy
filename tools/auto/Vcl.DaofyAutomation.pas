@@ -243,6 +243,24 @@ function TAutomationProcessor.DoDump: string;
     end;
     Result.AddPair('props', Props);
 
+    // INamedElementHost 路径段：枚举可用子路径名
+    var NEHost: INamedElementHost;
+    if Supports(Ctrl, INamedElementHost, NEHost) then begin
+      var Paths := TJSONArray.Create;
+      var Elements := NEHost.EnumElements;
+      for var EI in Elements do begin
+        var EObj := TJSONObject.Create;
+        EObj.AddPair('segment', EI.Segment);
+        EObj.AddPair('kind', EI.Kind);
+        EObj.AddPair('type', EI.TypeName);
+        Paths.AddElement(EObj);
+      end;
+      if Paths.Count > 0 then
+        Result.AddPair('named_paths', Paths)
+      else
+        Paths.Free;
+    end;
+
     if Ctrl is TWinControl then begin
       W := TWinControl(Ctrl);
       if W.ControlCount > 0 then begin
@@ -1237,6 +1255,24 @@ begin
           end;
         Root.AddPair('props', Props);
 
+        // INamedElementHost 路径段
+        var NEHost: INamedElementHost;
+        if Supports(Ctrl, INamedElementHost, NEHost) then begin
+          var Paths := TJSONArray.Create;
+          var Elements := NEHost.EnumElements;
+          for var EI in Elements do begin
+            var EObj := TJSONObject.Create;
+            EObj.AddPair('segment', EI.Segment);
+            EObj.AddPair('kind', EI.Kind);
+            EObj.AddPair('type', EI.TypeName);
+            Paths.AddElement(EObj);
+          end;
+          if Paths.Count > 0 then
+            Root.AddPair('named_paths', Paths)
+          else
+            Paths.Free;
+        end;
+
         Result := WriteResp(ReqId, 'ok', Root.ToJSON);
       finally
         Ctx.Free;
@@ -1428,6 +1464,10 @@ function TAutomationProcessor.FindNamedControl(const AName: string): TObject;
 var
   Component: TComponent;
 begin
+  // 支持点号分隔的名称路径（如 TreeView1.[0].btnReset），委托基类解析
+  if Pos('.', AName) > 0 then
+    Exit(ResolveNamedControlPath(AName));
+
   Result := nil;
   if Screen.ActiveForm = nil then
     Exit;

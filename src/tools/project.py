@@ -4,6 +4,7 @@ project 统一工具 — 合并 compile_project + dproj_tool + run_audit + deplo
 通过 action 路由到各子功能，复用现有实现。
 """
 
+import json
 import logging
 from typing import Any
 
@@ -108,21 +109,23 @@ async def handle_project(**kwargs) -> Any:
 
 
 async def _handle_compile(kwargs: dict) -> Any:
-    """处理 compile action"""
+    """处理 compile action，完成后记录到经验追踪器。"""
     project_path = kwargs.get("project_path", "")
     if not project_path:
         return {"status": "failed", "message": "缺少必需参数: project_path"}
 
     if project_path.lower().endswith('.pas'):
-        return await _compile_file(
+        result = await _compile_file(
             file_path=project_path,
             unit_search_paths=kwargs.get('unit_search_paths'),
             conditional_defines=kwargs.get('conditional_defines'),
             compiler_version=kwargs.get('compiler_version'),
             extra_args=kwargs.get('extra_args'),
         )
+        _record_compile_to_tracker(project_path, result, "compile_file")
+        return result
 
-    return await _compile_project(
+    result = await _compile_project(
         project_path=project_path,
         target_platform=kwargs.get("target_platform", "win32"),
         build_configuration=kwargs.get("build_configuration", "Debug"),
@@ -142,6 +145,37 @@ async def _handle_compile(kwargs: dict) -> Any:
         auto_install=kwargs.get("auto_install", True),
         run_verify=kwargs.get("run_verify", False),
     )
+    _record_compile_to_tracker(project_path, result, "compile")
+    return result
+
+
+def _record_compile_to_tracker(project_path: str, result: Any, action: str) -> None:
+    """将编译结果记录到经验追踪器。"""
+    try:
+        from ..services.experience_tracker import get_tracker
+
+        # 判断是否成功
+        success = True
+        result_text = ""
+        if hasattr(result, 'isError'):
+            success = not result.isError
+            if result.content and len(result.content) > 0:
+                ct = result.content[0]
+                if hasattr(ct, 'text'):
+                    result_text = ct.text
+        elif isinstance(result, dict):
+            success = result.get('status') != 'failed'
+            result_text = result.get('message', result.get('error', ''))
+
+        tracker = get_tracker()
+        tracker.record(
+            name="delphi_project",
+            arguments={"action": action, "project_path": project_path},
+            success=success,
+            result_text=result_text,
+        )
+    except Exception as e:
+        logger.debug("记录编译结果到追踪器失败（不影响编译）: %s", e)
 
 
 async def _handle_dry_run(kwargs: dict) -> Any:

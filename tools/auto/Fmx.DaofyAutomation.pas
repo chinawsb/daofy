@@ -1246,7 +1246,7 @@ var
   Root: TJSONObject;
   Methods: TJSONArray;
   Props: TJSONArray;
-  VisSet: set of TMemberVisibility;
+  VisSet: TMethodVisibilities;
   VisParts: TArray<string>;
   VisItem: string;
 begin
@@ -1352,6 +1352,10 @@ end;
 
 function TAutomationProcessor.FindNamedControl(const AName: string): TObject;
 begin
+  // 支持点号分隔的名称路径（如 TreeView1.[0].btnReset），委托基类解析
+  if Pos('.', AName) > 0 then
+    Exit(ResolveNamedControlPath(AName));
+
   if Screen.ActiveForm <> nil then
     Result := Screen.ActiveForm.FindComponent(AName)
   else

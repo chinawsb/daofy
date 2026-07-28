@@ -130,12 +130,12 @@ class DelphiPlugin(CompilerPlugin):
     # 工具描述和 schema 元数据
     _TOOL_DESCRIPTIONS = {
         "delphi_project": "Delphi 项目全生命周期管理：编译/配置/审计/部署",
-        "delphi_file": "Delphi 文件必用读写/搜索/替换/备份工具",
+        "delphi_file": "Delphi 文件统一入口: read/write/search/grep/replace/insert/delete/backup",
         "delphi_kb": "知识库搜索/管理",
         "manage_component": "DFM组件增/删/改/生成",
-        "get_coding_rules": "编码规则获取工具 — 支持 Delphi 和 Lazarus/FPC 编码规范，支持按语言/章节分段获取",
+        "get_coding_rules": "编码规则获取工具 — writing/compile/review/automation 前获取 Delphi 或 Lazarus/FPC 规范",
         "package": "组件包编译安装/列出",
-        "check_environment": "环境检查/编译器检测/安装",
+        "check_environment": "环境检查/RAD Studio 编译器 detect/check/install/dcc32/dcc64",
         "delphi_rtti": "RTTI 发现/调用",
         "automate_delphi": "Delphi 自动化测试",
     }

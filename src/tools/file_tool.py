@@ -3761,6 +3761,25 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def _record_file_write_to_tracker(arguments: dict, result: dict) -> None:
+    """将文件写操作记录到经验追踪器。"""
+    try:
+        from ..services.experience_tracker import get_tracker
+        action = arguments.get("action", "")
+        file_path = arguments.get("file_path", "")
+        success = result.get("status") != "failed"
+        result_text = result.get("message", result.get("error", ""))
+        tracker = get_tracker()
+        tracker.record(
+            name="delphi_file",
+            arguments={"action": action, "file_path": file_path},
+            success=success,
+            result_text=str(result_text) if result_text else "",
+        )
+    except Exception as e:
+        logger.debug("记录文件写入到追踪器失败（不影响写入）: %s", e)
+
+
 async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     file_tool 主入口。
@@ -3772,27 +3791,38 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     action = arguments.get("action", "read")
 
-    if action == "read":
-        return await handle_read(arguments)
-    elif action == "write":
-        return await handle_write(arguments)
-    elif action == "replace":
-        return await handle_replace(arguments)
-    elif action == "insert":
-        return await handle_insert(arguments)
-    elif action == "delete":
-        return await handle_delete(arguments)
-    elif action == "format":
-        return await handle_format(arguments)
-    elif action == "backup":
-        return await handle_backup(arguments)
-    elif action == "encode":
-        return await handle_encode(arguments)
-    elif action == "uses":
-        return await handle_uses(arguments)
-    elif action == "fix_garbled":
-        return await handle_fix_garbled(arguments)
-    elif action == "grep":
-        return await handle_grep(arguments)
-    else:
-        return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled, grep")
+    try:
+        if action == "read":
+            return await handle_read(arguments)
+        elif action == "write":
+            result = await handle_write(arguments)
+            _record_file_write_to_tracker(arguments, result)
+            return result
+        elif action == "replace":
+            result = await handle_replace(arguments)
+            _record_file_write_to_tracker(arguments, result)
+            return result
+        elif action == "insert":
+            result = await handle_insert(arguments)
+            _record_file_write_to_tracker(arguments, result)
+            return result
+        elif action == "delete":
+            result = await handle_delete(arguments)
+            _record_file_write_to_tracker(arguments, result)
+            return result
+        elif action == "format":
+            return await handle_format(arguments)
+        elif action == "backup":
+            return await handle_backup(arguments)
+        elif action == "encode":
+            return await handle_encode(arguments)
+        elif action == "uses":
+            return await handle_uses(arguments)
+        elif action == "fix_garbled":
+            return await handle_fix_garbled(arguments)
+        elif action == "grep":
+            return await handle_grep(arguments)
+        else:
+            return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled, grep")
+    finally:
+        pass  # ensure clean exit even if recording raises

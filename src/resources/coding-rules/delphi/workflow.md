@@ -15,8 +15,8 @@
  ⑤ 编译验证 → delphi_project(action="compile")       # 失败 → 回 ③
  ⑥ 代码审核 → get_coding_rules(section="review")      # 不通过 → 回 ③
  ⑦ 清理     → 删未用变量/导入/死代码                  # 先审再清
- ⑧ UI测试   → automate_delphi                         # 失败 → 回 ③
- ⑨ 控制台   → subprocess                               # 失败 → 回 ③
+  ⑧ 自动化测试 → automate_delphi（GUI/Console 均可）     # 失败 → 回 ③
+  ⑨ ─── 已合并到 ⑧ ───
  §⑩ 前置自检 → get_coding_rules(section="human_collab")  # 任意步骤可触发
  §⑪ 经验沉淀 → experience(action="save")
 ```

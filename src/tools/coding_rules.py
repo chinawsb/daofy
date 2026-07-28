@@ -39,6 +39,9 @@ SECTION_KEYS: Dict[str, str] = {
     "ui-testing": "⑧ 自动化 UI 交互测试",
     "ui_layout": "UI 布局规范与审计",
     "console-testing": "⑨ 控制台程序交互验证",
+    # shared 跨语言章节
+    "debugging": "异常诊断与调试（8.1–8.14 合集）",
+    "multi_change": "多修改优先级排序",
     # ③ 写 Delphi 代码 内的子章节
     "delphi_file_write_rule": "delphi_file 写入规则",
     "delphi_file_dirty_flag": "脏标记保护（v2026.06.12+）",
@@ -74,6 +77,9 @@ LAZARUS_SECTION_KEYS: Dict[str, str] = {
     "automation": "⚙ 自动化测试架构 — 感知·规划·执行·反馈循环",
     "ui-testing": "⑧ 自动化 UI 交互测试",
     "console-testing": "⑨ 控制台程序交互验证",
+    # shared 跨语言章节
+    "debugging": "异常诊断与调试（8.1–8.14 合集）",
+    "multi_change": "多修改优先级排序",
     # 审核子章节（### 级别，与 Delphi 共享）
     "consistency": "一致性",
     "completeness": "完整性",
@@ -255,6 +261,63 @@ def _strip_trailing_separator(text: str) -> str:
     return re.sub(r'\n---+\s*$', '', text)
 
 
+def _extract_debugging_sections(content: str) -> Optional[str]:
+    """提取所有 ### 级标题内容（debugging 合集）。
+
+    shared/debugging/ 下的文件全部使用 ### 级标题（如 ### 8.1 人工介入触发条件），
+    在合并后的 rules 中散落在各处。此函数收集所有 8.x 编号的 ### 标题及其内容，
+    按原文顺序拼接为一个合集返回。
+
+    只匹配标题以 "8." 开头的 ### 标题（调试章节编号），过滤掉其他 ### 标题
+    （如 writing/review/planning 等文件中的 ### 子章节）。
+
+    Args:
+        content: 合并后的 markdown 内容
+
+    Returns:
+        拼接后的调试章节全文，无匹配标题时返回 None
+    """
+    lines = content.split('\n')
+    heading_pattern = re.compile(r'^###\s+(8\.(\d+))\s+(.+)$')
+    # sections: (start_line, section_num_float, title, raw_heading_text)
+    sections: List[Tuple[int, float, str, str]] = []
+
+    for i, line in enumerate(lines):
+        m = heading_pattern.match(line)
+        if m:
+            num_str = m.group(1)     # "8.1"
+            num_float = float(m.group(2)) if m.group(2).isdigit() else 0.0
+            # Actually let me keep the full number for proper sorting
+            # 8.1 → 8.01, 8.10 → 8.10
+            # Split "8.1" into (8, 1), "8.10" into (8, 10)
+            parts_num = num_str.split('.')
+            major = int(parts_num[0])
+            minor = int(parts_num[1]) if len(parts_num) > 1 else 0
+            numeric_key = major + minor / 100.0  # 8.01, 8.02, ..., 8.10, 8.11, ...
+            sections.append((i, numeric_key, m.group(3).strip(), num_str))
+
+    if not sections:
+        return None
+
+    # 按章节编号排序（8.1 < 8.2 < ... < 8.14）
+    sections.sort(key=lambda s: s[1])
+
+    parts: List[str] = []
+    for start, num_key, title, raw_num in sections:
+        # 找下一个 ### 或更高级别（## / #）标题作为结束边界
+        # 注意：debugging 文件之间没有 ## 分隔，必须用 ^#{1,3} 匹配 ### 级别
+        end = len(lines)
+        for j in range(start + 1, len(lines)):
+            line = lines[j]
+            # 遇到 #/##/### 标题都停止（#### 不停止，保留子章节内容）
+            if re.match(r'^#{1,3}\s+', line):
+                end = j
+                break
+        parts.append('\n'.join(lines[start:end]))
+
+    return _strip_trailing_separator('\n\n'.join(parts))
+
+
 def _extract_section(content: str, section_name: str, language: str = "delphi") -> Optional[str]:
     """从 markdown 内容中提取指定章节。
 
@@ -266,9 +329,15 @@ def _extract_section(content: str, section_name: str, language: str = "delphi") 
         section_name: 章节短键名
         language: 语言（影响章节标题映射）
     """
+    # 特殊处理：debugging 合集 — 收集所有 ### 级标题（shared/debugging/ 的内容）
+    canonical_section = _normalize_section_name(section_name)
+    if canonical_section == "debugging":
+        result = _extract_debugging_sections(content)
+        if result:
+            return result
+
     lines = content.split('\n')
     ranges = _find_heading_ranges(lines)
-    canonical_section = _normalize_section_name(section_name)
 
     # 直接标题匹配
     if section_name in ranges:
@@ -329,7 +398,8 @@ def _list_available_sections(content: str, language: str = "delphi") -> str:
         lines_out.append("  基础流程: planning, workflow, env, kb_search, writing, compile, cleanup, review_guide")
         lines_out.append("  审核细化: review(合集), consistency, completeness, resource_leak,")
         lines_out.append("           common_errors, code_quality, safety, performance")
-        lines_out.append("  其他:     kb_build, agent_rules, human_collab, experience, maintenance, automation")
+        lines_out.append("  其他:     kb_build, agent_rules, human_collab, experience, maintenance, automation,")
+        lines_out.append("           debugging(8.1–8.14 合集), multi_change")
         lines_out.append("  组合:     review(审核指南+审核表), coding(writing+compile)")
     else:
         lines_out.append("  基础流程: planning, workflow, env, kb_search, writing, format, compile, cleanup, review_guide")
@@ -337,7 +407,8 @@ def _list_available_sections(content: str, language: str = "delphi") -> str:
         lines_out.append("           common_errors, code_quality, data_conversion, safety, performance")
         lines_out.append("  writing 子章节: delphi_file_write_rule, delphi_file_dirty_flag, delphi_file_output_format,")
         lines_out.append("                 delphi_file_usage_tips")
-        lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation, ui-testing(→testing/ui), ui_layout, console-testing(→testing/console)")
+        lines_out.append("  其他:     review_detail, kb_build, agent_rules, human_collab, experience, maintenance, automation,")
+        lines_out.append("           debugging(8.1–8.14 合集), multi_change, ui-testing(→testing/ui), ui_layout, console-testing(→testing/console)")
         lines_out.append("  组合:     review(审核指南+审核表), coding(写代码+格式化+compile)")
         lines_out.append("  兼容别名: kb-search/kb-rebuild/agent-rules/human-collab/delphi-file-rules")
 
@@ -495,6 +566,28 @@ async def get_coding_rules(
                     logger.error(f"读取自动化索引失败: {str(e)}")
                     # fall through to default handling
 
+        # 特殊章节：section="ui-testing" → 从 resources/coding-rules/testing/ui.md 读取
+        if section and _normalize_section_name(section) == "ui-testing":
+            ui_path = Path(__file__).parent.parent / "resources" / "coding-rules" / "testing" / "ui.md"
+            if ui_path.exists():
+                try:
+                    text = ui_path.read_text(encoding="utf-8")
+                    logger.info("返回 UI 自动化测试章节（来自 resources/coding-rules/testing/ui.md）")
+                    return CallToolResult(content=[{"type": "text", "text": text}])
+                except Exception as e:
+                    logger.error(f"读取 UI 测试文件失败: {str(e)}")
+
+        # 特殊章节：section="console-testing" → 从 resources/coding-rules/testing/console.md 读取
+        if section and _normalize_section_name(section) == "console-testing":
+            console_path = Path(__file__).parent.parent / "resources" / "coding-rules" / "testing" / "console.md"
+            if console_path.exists():
+                try:
+                    text = console_path.read_text(encoding="utf-8")
+                    logger.info("返回控制台测试章节（来自 resources/coding-rules/testing/console.md）")
+                    return CallToolResult(content=[{"type": "text", "text": text}])
+                except Exception as e:
+                    logger.error(f"读取控制台测试文件失败: {str(e)}")
+
         # section 参数处理
         if section == "list":
             output = _list_available_sections(merged, lang)
@@ -557,12 +650,14 @@ async def get_coding_rules(
                 "| `section=\"cleanup\"` | ⑥ 清理 | 编译通过后先清理冗余 |",
                 "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
                 "| `section=\"human_collab\"` | 人机协同 — 异常诊断与人工介入 | 异常诊断或需要人工介入时 |",
+                "| `section=\"debugging\"` | 异常诊断与调试（8.1–8.14 合集） | 运行时崩溃/编译报错/排查困难时 |",
+                "| `section=\"multi_change\"` | 多修改优先级排序 | 多个改动同时处理时 |",
                 "| `section=\"experience\"` | ⑪ 经验沉淀 | 问题解决后保存经验时 |",
                 "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
                 "| `section=\"automation\"` | ⚙ 自动化测试架构 | 执行自动化 UI 测试前 |",
                 "| `section=\"coding\"` | 组合：writing + compile | 完整编码流程 |",
                 "",
-                "也可获取细分章节：planning, consistency, completeness, resource_leak,",
+                "也可获取细分章节：planning, debugging, multi_change, consistency, completeness, resource_leak,",
                 "common_errors, code_quality, safety, performance, agent_rules, human_collab, experience",
                 "",
                 "使用示例：",
@@ -594,6 +689,8 @@ async def get_coding_rules(
             "| `section=\"performance\"` | 性能规则 | 性能敏感路径 |",
              "| `section=\"agent_rules\"` | Agent 操作硬规则 | 执行脚本或操作文件时 |",
              "| `section=\"human_collab\"` | 人机协同 — 异常诊断与人工介入 | 异常诊断或需要人工介入时（任意步骤可触发） |",
+             "| `section=\"debugging\"` | 异常诊断与调试（8.1–8.14 合集） | 运行时崩溃/编译报错/排查困难时 |",
+             "| `section=\"multi_change\"` | 多修改优先级排序 | 多个改动同时处理时 |",
              "| `section=\"experience\"` | ⑪ 经验沉淀 — 知识沉淀到经验库 | 问题解决后保存经验时 |",
             "| `section=\"kb_build\"` | 知识库重建 | 需要重建 KB 时 |",
              "| `section=\"automation\"` | ⚙ 自动化测试架构（含提示词模板F + 经验优化闭环G） | 执行自动化 UI 测试前，规划测试计划/恢复策略 |",
@@ -603,7 +700,7 @@ async def get_coding_rules(
              "| `section=\"coding\"` | 组合：writing + format + compile | 完整编码流程 |",
              "| `section=\"delphi_file_write_rule\"` | delphi_file 写入规则（1-indexed/edits 参数） | 编辑 Delphi 文件需了解行号规则时 |",
              "",
-             "也可获取细分章节：planning, consistency, completeness, resource_leak, delphi_specific, common_errors,",
+             "也可获取细分章节：planning, debugging, multi_change, consistency, completeness, resource_leak, delphi_specific, common_errors,",
              "code_quality, data_conversion, safety, performance, delphi_file_write_rule,",
              "delphi_file_dirty_flag, delphi_file_output_format, delphi_file_usage_tips, human_collab, experience, maintenance,",
              "ui-testing, ui_layout, console-testing",
