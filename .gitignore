@@ -31,10 +31,12 @@ env/
 *.swp
 *.swo
 *~
+.windsurfrules
 
 # Logs
 logs/
 *.log
+docs/@AutomationLog.txt
 
 # Type checking
 .mypy_cache/
@@ -79,6 +81,23 @@ tests/*.py
 !tests/test_*.py
 !tests/run_*.py
 
+# Temp scripts & debug files
+*_old_*.txt
+*_debug_*.txt
+*_timing_*.txt
+*_output.txt
+*_result.txt
+*_dump_*.py
+*_bump_*.py
+fpcdebug.txt
+nul
+
+# Training data (ML model training)
+training/
+
+# Test projects (temporary Delphi test projects)
+test_write_project/
+
 # Delphi build output directories
 Win32/
 Win64/
@@ -88,6 +107,9 @@ snapshots/
 # Temp scripts
 tmp_*.py
 tmp_*.ps1
+install.bat
+uninstall.bat
+install_mcp.py
 
 # npm artifacts (accidental)
 node_modules/
@@ -117,6 +139,9 @@ docs/tofix.md
 _debug_*.py
 _test_*.py
 test_*.png
+
+# Images (non-essential)
+*.svg
 
 # Commercial paid tools (not in version control)
 tools/daudit/
