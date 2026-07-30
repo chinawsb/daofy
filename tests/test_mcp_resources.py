@@ -175,7 +175,7 @@ def test_server_health_accepts_legacy_epoch_start_time() -> None:
 
 
 def test_experimental_task_support_is_feature_detected() -> None:
-    import src.server as server_module
+    from src.mcp_compat import _get_experimental_task_support_v1
 
     class LegacyServer:
         pass
@@ -189,10 +189,10 @@ def test_experimental_task_support_is_feature_detected() -> None:
     class CurrentServer:
         _experimental_handlers = ExperimentalHandlers()
 
-    assert server_module._get_experimental_task_support(LegacyServer()) is None
-    assert server_module._get_experimental_task_support(DisabledServer()) is None
+    assert _get_experimental_task_support_v1(LegacyServer()) is None
+    assert _get_experimental_task_support_v1(DisabledServer()) is None
     assert (
-        server_module._get_experimental_task_support(CurrentServer())
+        _get_experimental_task_support_v1(CurrentServer())
         is CurrentServer._experimental_handlers.task_support
     )
 

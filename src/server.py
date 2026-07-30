@@ -154,16 +154,23 @@ if _is_multiprocessing_child:
     pass
 else:
 
-    from mcp.server import Server
-    from mcp.server.lowlevel.server import ReadResourceContents
-    from mcp.server.session import (
-        InitializationState,
-        SUPPORTED_PROTOCOL_VERSIONS,
-        ServerSession,
+    from src.mcp_compat import (
+        CompatibleServer,
+        ReadResourceContents,
+        stdio_server,
+        CallToolResult,
+        TextContent,
+        Prompt,
+        PromptArgument,
+        PromptMessage,
+        GetPromptResult,
+        make_tool,
+        make_resource,
+        make_text_resource_contents,
+        make_read_resource_result,
+        run_mcp_server,
+        get_server_session,
     )
-    from mcp.server.stdio import stdio_server
-    import mcp.types as mcp_types
-    from mcp.types import CallToolResult, TextContent, Tool, Resource, ReadResourceResult, TextResourceContents, Prompt, PromptArgument, PromptMessage, GetPromptResult
 
     from src.services.config_manager import ConfigManager
     from src.services.compiler_service import CompilerService
@@ -257,48 +264,6 @@ else:
     # handler 已全部提取到插件模块 (Phase 3 / Phase 5)。
 
 
-    class DaofyServerSession(ServerSession):
-        """ServerSession with MCP 2025-11-25 serverInfo.description metadata."""
-
-        async def _received_request(self, responder):
-            match responder.request.root:
-                case mcp_types.InitializeRequest(params=params):
-                    requested_version = params.protocolVersion
-                    self._initialization_state = InitializationState.Initializing
-                    self._client_params = params
-                    with responder:
-                        await responder.respond(
-                            mcp_types.ServerResult(
-                                mcp_types.InitializeResult(
-                                    protocolVersion=requested_version
-                                    if requested_version in SUPPORTED_PROTOCOL_VERSIONS
-                                    else mcp_types.LATEST_PROTOCOL_VERSION,
-                                    capabilities=self._init_options.capabilities,
-                                    serverInfo=mcp_types.Implementation(
-                                        name=self._init_options.server_name,
-                                        title="Daofy for Delphi",
-                                        version=self._init_options.server_version,
-                                        websiteUrl=self._init_options.website_url,
-                                        icons=self._init_options.icons,
-                                        description=MCP_SERVER_DESCRIPTION,
-                                    ),
-                                    instructions=self._init_options.instructions,
-                                )
-                            )
-                        )
-                    self._initialization_state = InitializationState.Initialized
-                case _:
-                    await super()._received_request(responder)
-
-
-    def _get_experimental_task_support(server_obj: Any) -> Optional[Any]:
-        """Return MCP task support when the installed SDK exposes it."""
-        experimental_handlers = getattr(server_obj, "_experimental_handlers", None)
-        if experimental_handlers is None:
-            return None
-        return getattr(experimental_handlers, "task_support", None)
-
-
     async def _fetch_workspace_roots(session) -> None:
         """异步获取 AI Agent 工作区根目录并缓存到 file_tool。
 
@@ -351,42 +316,14 @@ else:
 
 
     async def _run_mcp_server(server, read_stream, write_stream) -> None:
-        """Run the MCP server with Daofy initialize metadata."""
-        initialization_options = server.create_initialization_options()
-        async with AsyncExitStack() as stack:
-            lifespan_context = await stack.enter_async_context(server.lifespan(server))
-            session = await stack.enter_async_context(
-                DaofyServerSession(
-                    read_stream,
-                    write_stream,
-                    initialization_options,
-                    stateless=False,
-                )
-            )
-
-            task_support = _get_experimental_task_support(server)
-            if task_support is not None:
-                task_support.configure_session(session)
-                await stack.enter_async_context(task_support.run())
-
-            async with anyio.create_task_group() as tg:
-                # 后台获取工作区根目录
-                tg.start_soon(_fetch_workspace_roots, session)
-                # 后台将 Daofy 规则安装到所连 MCP 客户端的规则目录
-                tg.start_soon(_install_client_rules, session)
-
-                try:
-                    async for message in session.incoming_messages:
-                        logger.debug("Received message: %s", message)
-                        tg.start_soon(
-                            server._handle_message,
-                            message,
-                            session,
-                            lifespan_context,
-                            False,
-                        )
-                finally:
-                    tg.cancel_scope.cancel()
+        """Run the MCP server (version-adaptive, delegates to mcp_compat)."""
+        await run_mcp_server(
+            server,
+            read_stream,
+            write_stream,
+            fetch_workspace_roots=_fetch_workspace_roots,
+            install_client_rules=_install_client_rules,
+        )
 
 
 def _auto_detect_delphi_help_dir() -> Optional[str]:
@@ -600,28 +537,28 @@ def _get_delphi_file_footnote(name: str, arguments: dict) -> Optional[str]:
 def _build_mcp_resource_list(root: Path = project_root) -> list:
     """Build MCP Resource objects exposed by Daofy."""
     resources = [
-        Resource(
+        make_resource(
             uri="delphi://resources",
             name="resources",
             title="Daofy public resource index",
             description="Index of stable Daofy MCP resource URIs for AI agents.",
-            mimeType="text/markdown",
+            mime_type="text/markdown",
         )
     ]
     for spec in available_public_resources(root):
-        resources.append(Resource(
+        resources.append(make_resource(
             uri=spec.uri,
             name=spec.name,
             title=spec.title,
             description=spec.description,
-            mimeType=spec.mime_type,
+            mime_type=spec.mime_type,
         ))
-    resources.append(Resource(
+    resources.append(make_resource(
         uri="delphi://health",
         name="health",
         title="Daofy 服务器状态",
         description="服务器运行状态、版本号、文件监听器状态等健康检查信息",
-        mimeType="application/json"
+        mime_type="application/json"
     ))
     return resources
 
@@ -645,10 +582,10 @@ def _read_mcp_resource(uri: str, root: Path = project_root):
     uri = str(uri)
 
     if uri == "delphi://resources":
-        return ReadResourceResult(
-            contents=[TextResourceContents(
+        return make_read_resource_result(
+            contents=[make_text_resource_contents(
                 uri=AnyUrl(uri),
-                mimeType="text/markdown",
+                mime_type="text/markdown",
                 text=build_public_resource_index(root),
             )]
         )
@@ -656,18 +593,18 @@ def _read_mcp_resource(uri: str, root: Path = project_root):
     if uri.startswith("delphi://automation/") or uri == "delphi://coding-rules":
         try:
             mime_type, content = get_public_resource_text(uri, root)
-            return ReadResourceResult(
-                contents=[TextResourceContents(
+            return make_read_resource_result(
+                contents=[make_text_resource_contents(
                     uri=AnyUrl(uri),
-                    mimeType=mime_type,
+                    mime_type=mime_type,
                     text=content
                 )]
             )
         except FileNotFoundError as e:
-            return ReadResourceResult(
-                contents=[TextResourceContents(
+            return make_read_resource_result(
+                contents=[make_text_resource_contents(
                     uri=AnyUrl(uri),
-                    mimeType="text/plain",
+                    mime_type="text/plain",
                     text=str(e),
                 )]
             )
@@ -694,10 +631,10 @@ def _read_mcp_resource(uri: str, root: Path = project_root):
                 "enabled": False,
                 "error": str(e),
             }
-        return ReadResourceResult(
-            contents=[TextResourceContents(
+        return make_read_resource_result(
+            contents=[make_text_resource_contents(
                 uri=AnyUrl(uri),
-                mimeType="application/json",
+                mime_type="application/json",
                 text=_json.dumps(health, ensure_ascii=False, indent=2)
             )]
         )
@@ -805,7 +742,7 @@ async def run_server():
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
-    server = Server(
+    server = CompatibleServer(
         "daofy-for-delphi",
         version=__version__,
         instructions=MCP_SERVER_INSTRUCTIONS,
@@ -820,10 +757,10 @@ async def run_server():
     async def list_tools():
         """列出所有可用工具（schema 由插件 handler 模块注册，registry 统一收集）"""
         return [
-            Tool(
+            make_tool(
                 name=td.name,
                 description=td.description,
-                inputSchema=td.input_schema,
+                input_schema=td.input_schema,
             )
             for td in _plugin_registry.collect_tools()
         ]
@@ -868,7 +805,7 @@ async def run_server():
                     from mcp.types import (
                         TaskStatusNotification, TaskStatusNotificationParams,
                     )
-                    _session = server.request_context.session
+                    _session = get_server_session(server)
                     _loop = _asyncio.get_running_loop()
 
                     def _make_on_complete(session, loop):
@@ -1030,7 +967,7 @@ async def run_server():
     @server.read_resource()
     async def read_resource(uri: str):
         """读取资源内容"""
-        return _read_mcp_resource_contents(uri, project_root)
+        return _read_mcp_resource(uri, project_root)
 
     # ============================================================
     # MCP 提示词注册

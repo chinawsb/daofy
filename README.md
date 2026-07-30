@@ -145,6 +145,7 @@ Daofy 内置 Delphi GUI/Console 自动化测试框架，支持 AI 驱动的 UI �
 | `generate_copyright` | 软著文档生成：源代码/说明书/摘要自动生成（PDF 浏览器渲染+自动校验） |
 | `experience` | 经验记忆管理：保存/搜索/更新/合并/删除 AI 成功解决问题的做法；定期清理低价值条目（prune）；模型加载后重建缺失向量（rebuild_embedding） |
 | `ocr` | 图像分析：文字识别(recognize)/文本框(detect)/截图比对(diff)/颜色分析(color)/图标匹配(match) |
+| `structured_content` | 结构化文档统一读写/搜索/修改 — DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf。read(读取)/get_schema(生成JSON Schema)/set(按JSONPath修改)/search(路径搜索) |
 
 ## 系统要求
 

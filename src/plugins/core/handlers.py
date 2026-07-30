@@ -17,6 +17,7 @@ from src.tools.tool_help import get_tool_help
 from src.utils import updater
 from src.tool_docs import TOOL_NAMES
 from src.utils.logger import init_default_logger
+from src.tools.structured_content import handle_structured_content as _sc_handler
 
 logger = init_default_logger()
 
@@ -263,6 +264,14 @@ async def _handle_ocr(arguments: dict) -> dict:
     return await asyncio.to_thread(_ocr_handler, arguments)
 
 
+async def _handle_structured_content(arguments: dict) -> dict:
+    """结构化文档统一读写/搜索/修改（DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf）。"""
+    try:
+        return await _sc_handler(arguments)
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
+
+
 CORE_HANDLERS = {
     "async_task": _handle_async_task,
     "code_hosting": _handle_code_hosting,
@@ -271,6 +280,7 @@ CORE_HANDLERS = {
     "daofy_update": _handle_daofy_update,
     "generate_copyright": _handle_generate_copyright,
     "ocr": _handle_ocr,
+    "structured_content": _handle_structured_content,
 }
 
 # ── 工具描述 + inputSchema — list_tools() 从 registry 收取，不再硬编码在 server.py ──
@@ -283,6 +293,7 @@ CORE_TOOL_DESCRIPTIONS: dict[str, str] = {
     "daofy_update": "版本更新检查和 git pull。参数随 action 变化；调用前先执行 tool_help(tool_name='daofy_update', action='<action>')。",
     "generate_copyright": "生成软著文档。参数随 action 变化；调用前先执行 tool_help(tool_name='generate_copyright', action='<action>')。",
     "ocr": "图像分析。参数随 action 变化；调用前先执行 tool_help(tool_name='ocr', action='<action>')。",
+    "structured_content": "结构化文档统一读写/搜索/修改 — DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf。按 JSONPath 路径读写，生成 JSON Schema。参数随 action 变化；调用前先执行 tool_help(tool_name='structured_content', action='<action>')。",
 }
 
 CORE_TOOL_SCHEMAS: dict[str, dict] = {
@@ -371,5 +382,49 @@ CORE_TOOL_SCHEMAS: dict[str, dict] = {
             },
         },
         "required": [],
+    },
+    "structured_content": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["read", "get_schema", "set", "search"],
+                "description": "操作类型：read(读取为JSON/Schema) / get_schema(生成JSON Schema) / set(按路径修改) / search(按JSONPath搜索)",
+                "default": "read",
+            },
+            "file_path": {
+                "type": "string",
+                "description": "文件路径（read/set/search必需）",
+            },
+            "path": {
+                "type": "string",
+                "description": "JSONPath路径，如 $.Form.Left 或 $..Button1, 默认 $（根）",
+                "default": "$",
+            },
+            "value": {
+                "type": "string",
+                "description": "set action时设置的新值",
+            },
+            "format": {
+                "type": "string",
+                "enum": ["dfm", "lfm", "fmx", "xml", "json", "msgpack", "protobuf"],
+                "description": "强制格式（默认从扩展名检测）",
+            },
+            "output": {
+                "type": "string",
+                "enum": ["json", "schema", "both"],
+                "description": "read action的输出格式：json(默认)/schema/both",
+                "default": "json",
+            },
+            "proto_file": {
+                "type": "string",
+                "description": "ProtoBuf模式时传入 .proto 文件路径",
+            },
+            "message_name": {
+                "type": "string",
+                "description": "ProtoBuf模式时传入消息名",
+            },
+        },
+        "required": ["action"],
     },
 }

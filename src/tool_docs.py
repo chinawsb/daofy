@@ -1878,6 +1878,84 @@ TOOL_HELP_DOCS: dict = {
             },
         },
     },
+    "structured_content": {
+        "summary": "结构化文档统一读写/搜索/修改 — DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf。按 JSONPath 路径读写，自动生成 JSON Schema。",
+        "description": "结构化文档统一读写/搜索/修改 — DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf。按 JSONPath 路径读写，自动生成 JSON Schema。",
+        "triggers": [
+            "结构化文档、DFM文件、XML配置、JSON数据、MessagePack、ProtoBuf、读写配置文件",
+            "修改组件属性、添加组件、搜索组件、路径查询、JSON Schema生成",
+        ],
+        "constraints": [
+            "❌ 不能用于非结构化文本文件（.pas/.dpr/.txt/.md）",
+            "❌ ProtoBuf 需要先有 .proto 文件或已编译的 pb2 模块",
+        ],
+        "workflow": "structured_content(action=\"get_schema\", file_path=...) → 查看 Schema → 按 JSONPath 路径读写",
+        "actions": {
+            "read": "读取结构化文件，返回 JSON / Schema / both。path 参数截取子树，output 控制返回格式。",
+            "get_schema": "生成目标文件的 JSON Schema，帮助 LLM 理解文档结构用于后续路径构造。",
+            "set": "按 JSONPath 路径修改节点值。例如 path='$.Form.Left' value='200'。",
+            "search": "按 JSONPath 路径搜索节点，支持通配符 (*)、递归下降 (..)、过滤表达式 ([?@.name=='Button1'])。",
+        },
+        "action_params": {
+            "read": {
+                "description": "读取结构化文件为 JSON / Schema / both",
+                "required": ["file_path"],
+                "optional": {
+                    "path": "JSONPath 路径，默认 $（根）",
+                    "format": "强制格式：dfm/lfm/fmx/xml/json/msgpack/protobuf（默认从扩展名检测）",
+                    "output": "输出格式：json(默认)/schema/both",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "message_name": "ProtoBuf 模式时传入消息名",
+                },
+                "examples": [
+                    'structured_content(action="read", file_path="MainForm.dfm")',
+                    'structured_content(action="read", file_path="config.json", path="$.database")',
+                    'structured_content(action="read", file_path="data.msgpack", output="schema")',
+                ],
+            },
+            "get_schema": {
+                "description": "生成目标文件的 JSON Schema",
+                "required": ["file_path"],
+                "optional": {
+                    "format": "强制格式（默认从扩展名检测）",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "message_name": "ProtoBuf 模式时传入消息名",
+                },
+                "examples": [
+                    'structured_content(action="get_schema", file_path="MainForm.dfm")',
+                    'structured_content(action="get_schema", file_path="config.xml")',
+                ],
+            },
+            "set": {
+                "description": "按 JSONPath 路径修改节点值",
+                "required": ["file_path", "path", "value"],
+                "optional": {
+                    "format": "强制格式（默认从扩展名检测）",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "message_name": "ProtoBuf 模式时传入消息名",
+                },
+                "examples": [
+                    'structured_content(action="set", file_path="MainForm.dfm", path="$.Form.Left", value="200")',
+                    'structured_content(action="set", file_path="config.json", path="$.debug", value="true")',
+                ],
+            },
+            "search": {
+                "description": "按 JSONPath 路径搜索节点",
+                "required": ["file_path"],
+                "optional": {
+                    "path": "JSONPath 路径，支持通配符/递归下降/过滤表达式，默认 $",
+                    "format": "强制格式（默认从扩展名检测）",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "message_name": "ProtoBuf 模式时传入消息名",
+                },
+                "examples": [
+                    'structured_content(action="search", file_path="MainForm.dfm", path="$..Button1")',
+                    'structured_content(action="search", file_path="MainForm.dfm", path="$.Form.*")',
+                    'structured_content(action="search", file_path="MainForm.dfm", path="$..[?@.ClassName==\'TButton\']")',
+                ],
+            },
+        },
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -1902,6 +1980,7 @@ TOOL_NAMES: list = [
     "lazarus_project",
     "lazarus_kb",
     "lazarus_file",
+    "structured_content",
 ]
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
@@ -1990,5 +2069,11 @@ TOOL_SHORT_DESC: dict = {
         "Lazarus/FPC 文件读写。"
         " read(读)/write(edits修改，自动备份到__history)/backup(手动备份)。"
         " 只读/写/备份，不支持 grep/format/uses 等 Delphi 特有操作。"
+    ),
+    "structured_content": (
+        "结构化文档统一读写/搜索/修改。格式: DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf。"
+        " read(读取为JSON或Schema)/get_schema(生成JSON Schema)/set(按JSONPath路径修改)/search(路径搜索)。"
+        " 自动检测格式（支持 .dfm/.lfm/.fmx/.xml/.json/.msgpack/.proto/.pb）。"
+        " ProtoBuf需额外指定 proto_file 和 message_name。"
     ),
 }

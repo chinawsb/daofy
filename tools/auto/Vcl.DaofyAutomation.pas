@@ -1073,7 +1073,7 @@ var
   Ch: HWND;
   C: Char;
 begin
-  if (Target <> '') and (Screen.ActiveForm <> nil) then begin
+  if Screen.ActiveForm <> nil then begin
     WC := TWinControl(FindNamedControl(Target));
     if WC <> nil then begin
       Ch := WC.Handle;
@@ -1464,6 +1464,11 @@ function TAutomationProcessor.FindNamedControl(const AName: string): TObject;
 var
   Component: TComponent;
 begin
+  // 运行时创建的内置编辑器通常没有 Name，通过当前焦点控件访问。
+  if (AName = '') or SameText(AName, 'ActiveControl') or
+    SameText(AName, 'Screen.ActiveControl') then
+    Exit(Screen.ActiveControl);
+
   // 支持点号分隔的名称路径（如 TreeView1.[0].btnReset），委托基类解析
   if Pos('.', AName) > 0 then
     Exit(ResolveNamedControlPath(AName));

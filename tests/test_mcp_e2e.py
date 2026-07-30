@@ -118,7 +118,9 @@ class TestServerDispatch:
         assert "MCP_SERVER_DESCRIPTION" in source
         assert "instructions=MCP_SERVER_INSTRUCTIONS" in source
         assert "version=__version__" in source
-        assert "description=MCP_SERVER_DESCRIPTION" in source
+        # description is now set in mcp_compat.py via _V1DaofyServerSession
+        compat_source = (Path(__file__).parent.parent / "src" / "mcp_compat.py").read_text(encoding="utf-8")
+        assert "Delphi 项目编译" in compat_source
 
         instructions_start = source.find("MCP_SERVER_INSTRUCTIONS")
         instructions_end = source.find("\n", instructions_start + len("MCP_SERVER_INSTRUCTIONS"))

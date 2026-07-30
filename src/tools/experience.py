@@ -202,11 +202,13 @@ def _act_update(svc, **kw):
     solution = kw.get("solution")
     tags = kw.get("tags")
     problem = kw.get("problem")
+    tools_used = kw.get("tools_used")
+    context = kw.get("context")
 
-    if solution is None and tags is None and problem is None:
-        return _err("至少需要提供一项更新内容: solution/tags/problem")
+    if solution is None and tags is None and problem is None and tools_used is None and context is None:
+        return _err("至少需要提供一项更新内容: solution/tags/problem/tools_used/context")
 
-    result = svc.update(exp_id=exp_id, solution=solution, tags=tags, problem=problem)
+    result = svc.update(exp_id=exp_id, solution=solution, tags=tags, problem=problem, tools_used=tools_used, context=context)
     if result is None:
         return _err(f"经验不存在: {exp_id}")
 

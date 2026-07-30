@@ -506,6 +506,8 @@ class ExperienceMemoryService:
         solution: Optional[str] = None,
         tags: Optional[list] = None,
         problem: Optional[str] = None,
+        tools_used: Optional[list] = None,
+        context: Optional[dict] = None,
     ) -> Optional[dict]:
         """更新经验。
 
@@ -514,6 +516,8 @@ class ExperienceMemoryService:
             solution: 新的解决步骤（可选）
             tags: 新的标签列表（可选）
             problem: 新的问题描述（可选，会重新生成 embedding）
+            tools_used: 新的工具名列表（可选）
+            context: 新的上下文信息（可选）
 
         Returns:
             更新后的经验 dict，不存在返回 None
@@ -541,6 +545,14 @@ class ExperienceMemoryService:
         if tags is not None:
             updates.append("tags = ?")
             params.append(json.dumps(tags, ensure_ascii=False))
+
+        if tools_used is not None:
+            updates.append("tools_used = ?")
+            params.append(json.dumps(tools_used, ensure_ascii=False))
+
+        if context is not None:
+            updates.append("context = ?")
+            params.append(json.dumps(context, ensure_ascii=False))
 
         updates.append("updated_at = ?")
         params.append(now)
