@@ -96,7 +96,7 @@ async def test_msbuild_command_includes_extra_args(tmp_path):
     )
     service._check_process_running = lambda name: None
     service._get_delphi_root_from_registry = lambda: None
-    service._get_rsvars_path = lambda: r"C:\fake\rsvars.bat"
+    service._get_rsvars_path = lambda version=None: r"C:\fake\rsvars.bat"
     service._save_history = lambda *args: None
 
     request = ProjectCompileRequest(

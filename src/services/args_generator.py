@@ -76,10 +76,10 @@ class ArgsGenerator:
         if options.output_path:
             args.append('-E' + options.output_path)
 
-        # 条件编译符号
+        # 条件编译符号（注意：defines 语法是 -D，-$D+ 是调试信息开关，二者不可混用）
         if options.conditional_defines:
             defines = ";".join(options.conditional_defines)
-            args.append('-$D+' + defines)
+            args.append('-D' + defines)
 
         # 单元搜索路径
         if options.unit_search_paths:

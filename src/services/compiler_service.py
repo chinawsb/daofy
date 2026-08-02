@@ -554,6 +554,14 @@ class CompilerService:
                     duration=int((time.time() - start_time) * 1000)
                 )
 
+            # 1.5 从同目录 .dproj 提取配置（条件编译符号/搜索路径/输出路径）
+            # 直接 DCC 编译不会自动读取 .dproj，需手动合并该配置的 DCC_Define，
+            # 否则默认配置（如 Debug）的条件编译符号不会生效，编出的 exe 是 "plain"
+            try:
+                self._extract_config_from_dproj(request.project_path, request.options)
+            except Exception as e:
+                logger.debug("从 .dproj 提取配置失败（继续直接编译）: %s", e)
+
             # 2. 确定输出路径 - 默认输出到 Win32/Debug 子目录
             project_dir = str(Path(request.project_path).parent)
             project_name = Path(request.project_path).stem
@@ -771,10 +779,10 @@ class CompilerService:
             dcu_dir = output_base
         args.append(f'-N{dcu_dir}')
 
-        # 条件编译符号
+        # 条件编译符号（注意：defines 语法是 -D，-$D+ 是调试信息开关，二者不可混用）
         if options.conditional_defines:
             defines = ";".join(options.conditional_defines)
-            args.append(f'-$D+{defines}')
+            args.append(f'-D{defines}')
 
         # 命名空间搜索路径 - 默认添加 System 命名空间
         default_namespaces = ["System", "Winapi", "System.Win", "Vcl", "Vcl.Imaging",
@@ -1114,7 +1122,23 @@ class CompilerService:
             logger.info(f"MSBuild 参数: {msbuild_cmd}")
             
             # 5. 获取 rsvars.bat 路径
-            rsvars_path = self._get_rsvars_path()
+            # 必须按 compiler_version（或 .dproj ProjectVersion 回退）定位对应版本的 rsvars.bat，
+            # 否则总是加载注册表中最新的 Delphi，指定的 compiler_version 不生效
+            registry_version = None
+            if request.options.compiler_version:
+                compiler_cfg = self.config_manager.get_compiler(request.options.compiler_version)
+                if compiler_cfg:
+                    registry_version = compiler_cfg.registry_version
+            if not registry_version:
+                try:
+                    from ..utils.delphi_versions import project_version_to_registry_version
+                    project_version = parser.get_project_version()
+                    registry_version = project_version_to_registry_version(project_version)
+                except Exception as e:
+                    logger.debug("从 .dproj 推断 registry_version 失败，使用最新版本: %s", e)
+            if registry_version:
+                logger.info("定位 Delphi %s 的 rsvars.bat", registry_version)
+            rsvars_path = self._get_rsvars_path(registry_version)
             if not rsvars_path:
                 error_msg = "无法找到 rsvars.bat，请检查 Delphi 安装"
                 logger.error(error_msg)
@@ -1749,8 +1773,11 @@ class CompilerService:
         # 根据目标平台选择编译器
         compiler_path = compiler_config.path
         if request.options.target_platform == TargetPlatform.WIN64:
-            if 'dcc32.exe' in compiler_path:
-                compiler_path = compiler_path.replace('dcc32.exe', 'dcc64.exe')
+            # 大小写不敏感匹配 dcc32 可执行文件名（兼容 DCC32.EXE / Dcc32.exe 等手动配置）
+            lower_path = compiler_path.lower()
+            idx = lower_path.find('dcc32.exe')
+            if idx != -1:
+                compiler_path = compiler_path[:idx] + 'dcc64.exe' + compiler_path[idx + len('dcc32.exe'):]
 
         # 生成参数
         args = self.args_generator.generate(request.project_path, request.options)

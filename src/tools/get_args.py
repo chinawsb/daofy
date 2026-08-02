@@ -74,8 +74,9 @@ async def get_compiler_args(
         )
 
     try:
-        # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
-        if not target_platform or target_platform == "win32":
+        # 仅当用户未指定目标平台时才从 .dproj 读取
+        # （显式传入 win32/win64 等均不得被 .dproj 的 Active Platform 覆盖）
+        if not target_platform:
             target_platform = resolve_target_platform_from_dproj(project_path)
             logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
         else:

@@ -63,7 +63,8 @@ def test_args_generator_conditional_defines():
     
     args = gen.generate("Project.dpr", options)
     
-    assert any("DEBUG;WIN32;TEST" in arg for arg in args), "条件编译符号应合并"
+    assert "-DDEBUG;WIN32;TEST" in args, "条件编译符号应使用 -D 语法（-$D+ 是调试信息开关，不是 define）"
+    assert not any("-$D+DEBUG" in arg for arg in args), "defines 不得拼接到调试信息开关上"
     assert "-CC" in args, "应为控制台输出"
     assert "-$Y+" in args, "应为动态运行时库"
     print("  条件编译符号正确合并")
