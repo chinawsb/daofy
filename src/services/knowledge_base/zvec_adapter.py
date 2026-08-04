@@ -73,9 +73,14 @@ class ZVecKnowledgeBaseAdapter:
 
         # 去旧库（rebuild）
         if rebuild:
-            # 重建：删整目录（不 mkdir，让 create_and_open 自行创建）
+            # 重建：先关闭已打开的集合释放 Windows 句柄，再删整目录
+            # （不 mkdir，让 create_and_open 自行创建）。
             import shutil as _shutil
             if self.kb_dir.exists():
+                try:
+                    self._zvec.close()
+                except Exception:
+                    pass
                 _shutil.rmtree(str(self.kb_dir), ignore_errors=True)
             from .zvec_knowledge_base import ZVecKnowledgeBase
             self._zvec = ZVecKnowledgeBase(str(self.kb_dir))

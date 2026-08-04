@@ -182,6 +182,7 @@ OPEN_EXISTING = 3
 PIPE_READMODE_MESSAGE = 2
 INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
 PIPE_TIMEOUT_MS = TIMEOUT_AUTOMATION_PIPE_MS
+GUI_PIPE_RESPONSE_GRACE_MS = 1000
 
 _k32 = ctypes.windll.kernel32
 
@@ -479,7 +480,10 @@ def _send_command_on_handle(
         remaining_s = deadline - time.monotonic()
         if remaining_s <= 0:
             return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
-        remaining_ms = int(remaining_s * 1000)
+        # Do not round a positive deadline down: doing so can shave a
+        # millisecond from short command budgets and make boundary tests (and
+        # real UI waits) fail before the requested timeout has elapsed.
+        remaining_ms = max(1, math.ceil(remaining_s * 1000))
         raw = _read_pipe_message_poll(handle, timeout_ms=remaining_ms)
         if raw is None:
             return f'ERR:read_failed_or_timeout (err={_GetLastError()})'
@@ -4266,7 +4270,21 @@ def _execute_script_unlocked(app_path: str, script,
                     req['edge_limit'] = str(edge_limit_int)
 
         cmd_str = json.dumps(req, ensure_ascii=False)
-        resp_raw = _send_command(cmd_str)
+        pipe_timeout_ms = PIPE_TIMEOUT_MS
+        if cmd in ('wait', 'waitfor'):
+            # These commands block inside the Delphi process.  The transport
+            # deadline must cover the command's own deadline plus enough time
+            # for the final JSON response to cross the pipe.
+            pipe_timeout_ms = max(
+                PIPE_TIMEOUT_MS,
+                max(ms, 0) + GUI_PIPE_RESPONSE_GRACE_MS,
+            )
+        if pipe_timeout_ms == PIPE_TIMEOUT_MS:
+            # Preserve the existing call shape for ordinary commands and
+            # third-party callers that wrap _send_command positionally.
+            resp_raw = _send_command(cmd_str)
+        else:
+            resp_raw = _send_command(cmd_str, timeout_ms=pipe_timeout_ms)
 
         # 解析 JSON 响应
         resp_json = _decode_response(resp_raw)

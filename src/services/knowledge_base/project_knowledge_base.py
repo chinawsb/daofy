@@ -382,7 +382,12 @@ class ProjectKnowledgeBase:
         if has_valid:
             col = zvec.open(kv_dir)
             if rebuild:
-                # 重建：删集合目录后重新 create_and_open
+                # 重建：先关闭集合释放 Windows 句柄，再删目录。
+                # 若不关闭，打开的句柄会让 rmtree 静默失败。
+                try:
+                    col.close()
+                except Exception:
+                    pass
                 import shutil as _shutil
                 _shutil.rmtree(kv_dir, ignore_errors=True)
                 has_valid = False

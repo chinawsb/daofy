@@ -581,6 +581,41 @@ class TestGuiScriptResultHandling:
         assert automation_service._is_pipe_io_error(response)
         read_mock.assert_called_once_with(12345, timeout_ms=321)
 
+    def test_waitfor_pipe_timeout_covers_command_deadline(self, tmp_path):
+        """A long Delphi waitfor must not be cut off by the default pipe timeout."""
+        from src.services import automation_service
+
+        calls = []
+
+        def fake_send(cmd, timeout_ms=automation_service.PIPE_TIMEOUT_MS):
+            request = json.loads(cmd)
+            calls.append((request, timeout_ms))
+            return json.dumps({
+                "reqId": request["reqId"],
+                "status": "ok",
+                "data": "ok",
+            })
+
+        with mock.patch.object(automation_service, "_ensure_process", return_value=(False, "")), \
+                mock.patch.object(automation_service, "_send_command", side_effect=fake_send), \
+                mock.patch.object(automation_service.time, "sleep"):
+            result = automation_service.execute_script(
+                app_path="dummy.exe",
+                script=[{
+                    "cmd": "waitfor",
+                    "target": "QueueTree",
+                    "prop": "RootNodeCount",
+                    "value": "0",
+                    "timeout": 900000,
+                    "interval": 250,
+                }],
+                snapshots_dir=str(tmp_path),
+            )
+
+        assert result["status"] == "ok"
+        assert calls[0][0]["timeout"] == "900000"
+        assert calls[0][1] == 901000
+
     def test_pipe_poll_does_not_read_before_data_is_available(self):
         """A synchronous ReadFile must not be entered while the pipe is empty."""
         from src.services import automation_service

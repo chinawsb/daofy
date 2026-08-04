@@ -23,6 +23,27 @@ STRUCTURED_TYPES = {'class', 'record', 'interface', 'object'}
 """需要独立结构 chunk 的类型"""
 
 
+def _sanitize_unicode(text: str) -> str:
+    """移除无法编码为 UTF-8 的孤立代理项（lone surrogate）。
+
+    部分源文件编码被误判（如 UTF-16 截断、混合编码）时，读入的文本可能包含
+    孤立代理项（U+D800–U+DFFF）。这类字符无法编码为 UTF-8，传入 zvec 等
+    Rust 绑定集合的 Doc.insert 会抛 ``expected STRING, got str``，导致索引崩溃。
+    这里统一替换为 U+FFFD（替换符），保证 chunk 输出始终可安全编码。
+
+    Args:
+        text: 原始文本
+
+    Returns:
+        已清理的文本（UTF-8 可编码）
+    """
+    try:
+        text.encode('utf-8')
+        return text
+    except UnicodeEncodeError:
+        return text.encode('utf-8', errors='replace').decode('utf-8')
+
+
 # ═══════════════════════════════════════════
 # 文本预处理
 # ═══════════════════════════════════════════
@@ -95,6 +116,9 @@ def chunk_delphi_file(file_path: str) -> List[Dict]:
     except Exception as e:
         logger.warning(f"读取文件失败: {file_path}: {e}")
         return []
+
+    # 清理编码误判可能引入的孤立代理项，防止下游 zvec 插入崩溃
+    raw_text = _sanitize_unicode(raw_text)
 
     lines = raw_text.split('\n')
     text = _strip_comments(raw_text)

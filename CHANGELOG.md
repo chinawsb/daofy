@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.08.04] - 2026-08-04
+
+### Fixed
+
+- **知识库长驻缓存失效**: `ThirdPartyKnowledgeBase.get_library_paths()` 在版本缓存为空时重新检测注册表，
+  避免「服务在安装编译器前启动」后 `delphi_kb build kb_type=thirdparty` 空跑成功
+- **孤立代理项崩溃**: `delphi_chunker` 读取后统一清理 lone surrogate（编码误判产物），
+  防止 zvec 插入时 `expected STRING, got str` 崩溃
+- **rebuild 删除旧库失败**: Windows 下 rebuild 前先 `col.close()` 释放集合句柄再 `rmtree`，
+  覆盖 thirdparty/project/zvec_adapter 三处
+- **`waitfor`/`wait` 管道超时**: 传输层 deadline 覆盖命令自身超时 + 1s 响应宽限，
+  长轮询命令不再被默认管道超时截断；读取剩余时间改为向上取整避免边界测试误超时
+
 ## [2026.07.27.1] - 2026-07-27
 
 ### Fixed

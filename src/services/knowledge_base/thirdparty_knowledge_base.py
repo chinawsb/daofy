@@ -287,6 +287,13 @@ class ThirdPartyKnowledgeBase:
         """
         import winreg
 
+        # 长驻服务场景：服务在安装编译器前启动，__init__ 时 detect_delphi_versions
+        # 的结果被缓存为空。若直接返回 [] 会让 delphi_kb build kb_type=thirdparty
+        # 空跑成功。此处缓存为空时重新检测注册表，拾取新安装的编译器。
+        if not self.delphi_versions:
+            logger.info("Delphi 版本缓存为空，重新检测注册表...")
+            self.detect_delphi_versions()
+
         # 选择 Delphi 版本
         if not self.delphi_versions:
             logger.error("未检测到 Delphi 版本")
@@ -499,7 +506,12 @@ class ThirdPartyKnowledgeBase:
         if has_valid:
             col = zvec.open(kv_dir)
             if rebuild:
-                # 重建：删集合目录，下一行 create_and_open 重新创建
+                # 重建：先关闭集合释放 Windows 句柄，再删目录。
+                # 若不关闭，打开的句柄（如 RocksDB LOCK）会让 rmtree 静默失败。
+                try:
+                    col.close()
+                except Exception:
+                    pass
                 import shutil as _shutil
                 _shutil.rmtree(kv_dir, ignore_errors=True)
                 has_valid = False  # fall through to create_and_open
