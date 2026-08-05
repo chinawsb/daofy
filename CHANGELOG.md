@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.08.05] - 2026-08-05
+
+### Added
+
+- **编码规则示例文件补齐** (`coding-rules/delphi/examples/writing/`): 新增 `naming.md`（命名规范）、
+  `formatting.md`（格式化）、`documentation.md`（文档注释）、`error-handling.md`（错误处理）四个示例，
+  使 `get_coding_rules(examples=...)` 广告的常用示例全部可解析
+
+### Fixed
+
+- **skill 示例与服务端资源不一致**: daofy skill 广告的 `naming`/`formatting`/`documentation`/`error-handling`
+  示例在服务端 `examples/` 目录中不存在，`get_coding_rules(examples="error-handling")` 返回「未找到示例」。
+  补齐文件后全部可解析，并同步修正 `tool_docs.py`/`handlers.py`/`coding_rules.py` 中的示例名引用
+  （`format`→`formatting`、`debug-log`→`debug-log-template`）
+
 ## [2026.08.04] - 2026-08-04
 
 ### Fixed

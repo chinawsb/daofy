@@ -423,7 +423,7 @@ def _load_example(example_name: str, language: str = "delphi") -> Optional[str]:
     按名称加载示例文件。在 coding-rules/{language}/examples/ 下递归搜索匹配的 .md 文件。
 
     Args:
-        example_name: 示例名称（不含扩展名），如 "naming"、"dirty-flag"
+        example_name: 示例名称（不含扩展名），如 "naming"、"error-handling"、"dirty-flag"
         language: 编程语言，默认 "delphi"
 
     Returns:
@@ -466,7 +466,7 @@ async def get_coding_rules(
         section: 章节名称（可选），如 "workflow"、"writing"、"review" 等。
                  不传或传 None 时返回工作流总览 + 章节索引，引导按需获取。
                  传 "list" 返回可用章节列表。
-        examples: 示例名称（可选），如 "naming"、"format"。
+        examples: 示例名称（可选），如 "naming"、"formatting"、"error-handling"。
                   指定后从 coding-rules/{language}/examples/ 加载对应示例文件。
         language: 编程语言（可选），"delphi"（默认）或 "lazarus"。
                   不传时默认 "delphi"（向后兼容）。

@@ -14,7 +14,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 SKILL_NAME = "daofy"
-SKILL_VERSION = "2026.07.17"
+SKILL_VERSION = "2026.08.05"
 MANIFEST_NAME = ".daofy_skill_manifest.json"
 SOURCE_SKILLS_ROOT = Path(__file__).parent.parent / "resources" / "agent-skills"
 DISABLED_VALUES = {"0", "false", "off", "disabled", "disable", "no"}

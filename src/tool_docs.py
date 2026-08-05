@@ -811,11 +811,13 @@ TOOL_HELP_DOCS: dict = {
             "  人机协同 → section=\"human_collab\"  （异常诊断/人工介入）\n"
             "  重建 KB → section=\"kb_build\"       （知识库重建）\n\n"
             "💡 按需加载示例:\n"
-            "  examples=\"naming\"       — 命名规范示例\n"
-            "  examples=\"format\"       — 格式化示例\n"
-            "  examples=\"dirty-flag\"   — 脏标记保护示例\n"
-            "  examples=\"debug-log\"    — 调试日志示例\n"
-            "  examples=\"write-edits\"  — write(edits=[...]) 批量写入示例\n"
+            "  examples=\"naming\"           — 命名规范示例\n"
+            "  examples=\"formatting\"       — 格式化示例\n"
+            "  examples=\"documentation\"    — 文档注释示例\n"
+            "  examples=\"error-handling\"   — 错误处理示例\n"
+            "  examples=\"dirty-flag\"       — 脏标记保护示例\n"
+            "  examples=\"debug-log-template\" — 调试日志模板示例\n"
+            "  examples=\"write-edits\"      — write(edits=[...]) 批量写入示例\n"
             "  规则文件中有 📋 示例: examples/xxx 行，标明可用示例名称\n\n"
             "💡 不传 section= 返回工作流总览+章节索引（首次使用时推荐）"
         ),
@@ -839,10 +841,12 @@ TOOL_HELP_DOCS: dict = {
             "agent_rules": "Agent 操作硬规则（执行脚本/格式化时加载）",
         },
         "examples_guide": {
-            "naming": "命名规范代码示例（PascalCase类名、snake_case变量、UPPER_SNAKE常量）",
-            "format": "格式化代码示例（pasfmt 对齐、缩进）",
+            "naming": "命名规范代码示例（T/I/E/P/F/A 前缀、PascalCase、UPPER_SNAKE 常量）",
+            "formatting": "格式化代码示例（2 空格缩进、begin 独占行、uses 分组字母序）",
+            "documentation": "文档注释示例（单元头注释、XML Doc 风格方法注释）",
+            "error-handling": "错误处理示例（try/finally 资源释放、具体异常捕获、禁止空 except）",
             "dirty-flag": "脏标记保护示例（写入前后 read/preview 流程）",
-            "debug-log": "调试日志示例（异常分类、日志格式）",
+            "debug-log-template": "调试日志模板示例（问题描述/已尝试方案/当前范围/下一步）",
             "write-edits": "write(edits=[...]) 批量写入示例（行号偏移计算）",
         },
         "default_section": "不传 section=返回工作流总览+章节索引（推荐首次调用）。language=delphi(默认)或lazarus。",

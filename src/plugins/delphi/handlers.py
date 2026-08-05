@@ -657,7 +657,7 @@ DELPHI_TOOL_SCHEMAS: dict[str, dict] = {
                 "default": "delphi",
                 "description": "编程语言：delphi（默认）或 lazarus",
             },
-            "examples": {"type": "string", "description": "示例名称，如 naming/format/debug-log。按名称加载 coding-rules/{language}/examples/ 下的示例文件"},
+            "examples": {"type": "string", "description": "示例名称，如 naming/formatting/error-handling/dirty-flag/debug-log-template。按名称加载 coding-rules/{language}/examples/ 下的示例文件"},
         }
     },
     "automate_delphi": {

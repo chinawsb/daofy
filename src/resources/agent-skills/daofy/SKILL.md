@@ -7,7 +7,7 @@ description: >-
 ---
 
 <!-- daofy-managed-skill: true -->
-<!-- daofy-managed-skill-version: 2026.07.17 -->
+<!-- daofy-managed-skill-version: 2026.08.05 -->
 
 # Daofy for Delphi — 用法 Skill（按需加载）
 

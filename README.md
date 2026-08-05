@@ -460,7 +460,11 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.07.18 (最新)
+### v2026.08.05 (最新)
+
+- **编码规则示例补齐**: `get_coding_rules(examples=...)` 新增 `naming`/`formatting`/`documentation`/`error-handling` 四个示例文件，修复 skill 广告示例在服务端不存在的问题
+
+### v2026.07.18
 
 - **版本发布**: 全量同步 Lazarus 插件支持、多语言编码规则、插件可用性检测
 
