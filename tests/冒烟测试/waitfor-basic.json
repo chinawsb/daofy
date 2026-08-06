@@ -1,0 +1,20 @@
+{
+  "test_name": "waitfor-basic",
+  "test_level": "gray-box",
+  "app_path": "C:/user/daofy-agent/daofy/docs/tutorial/automate-test/Win32/Debug/AutoTest.exe",
+  "target_form": "TForm1",
+  "version": 1,
+  "created": "2026-08-06T00:00:00",
+  "updated": "2026-08-06T00:00:00",
+  "run_count": 1,
+  "source_hash": "",
+  "source_files": ["DaofyAutomation.Base.pas"],
+  "goal": "验证 waitfor 版本号协议正常路径：type → waitfor 匹配 → 异步 click → waitfor 读新值",
+  "steps": [
+    {"cmd": "type", "target": "EditName", "text": "daofy-test", "expected": "设置 EditName 为 daofy-test"},
+    {"cmd": "rget", "target": "EditName.Text", "assert_expr": "actual=='daofy-test'", "expected": "type 生效"},
+    {"cmd": "waitfor", "target": "EditName", "prop": "Text", "value": "daofy-test", "timeout": 5000, "assert_expr": "actual=='ok'", "expected": "waitfor 正常路径：值匹配返回 ok"},
+    {"cmd": "click", "target": "BtnHello", "expected": "异步点击 Hello 按钮"},
+    {"cmd": "waitfor", "target": "BtnHello", "prop": "Caption", "value": "Hello, daofy-test!", "timeout": 5000, "assert_expr": "actual=='ok'", "expected": "waitfor 读到异步 click 产生的新值"}
+  ]
+}

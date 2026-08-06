@@ -1,0 +1,21 @@
+{
+  "test_name": "waitfor-timeout-modal",
+  "test_level": "gray-box",
+  "app_path": "C:/user/daofy-agent/daofy/docs/tutorial/automate-test/Win32/Debug/AutoTest.exe",
+  "target_form": "TForm1",
+  "version": 1,
+  "created": "2026-08-06T00:00:00",
+  "updated": "2026-08-06T00:00:00",
+  "run_count": 1,
+  "source_hash": "",
+  "source_files": ["DaofyAutomation.Base.pas"],
+  "goal": "验证 waitfor 故障路径：永不匹配值 2s 内返回 TIMEOUT（不卡死）、模态循环期间查询不卡死、模态关闭后恢复。注意：waitfor 步骤预期失败（signal=timeout），不代表被测程序缺陷",
+  "steps": [
+    {"cmd": "waitfor", "target": "EditName", "prop": "Text", "value": "NEVER-VALUE", "timeout": 2000, "expected": "永不匹配值：2 秒后返回 TIMEOUT（预期失败信号=timeout，验证短超时重试）"},
+    {"cmd": "click", "target": "BtnMsgBox", "expected": "触发模态 MessageBox"},
+    {"cmd": "waitfor", "target": "EditName", "prop": "Text", "value": "NEVER-VALUE", "timeout": 1500, "expected": "模态循环期间 waitfor 不卡死，正常 TIMEOUT 返回（预期失败信号=timeout）"},
+    {"cmd": "msgscan", "expected": "检测模态框（response.state 含对话框详情，actual 绑定 state 而非 'OK'）"},
+    {"cmd": "msgclick", "expected": "关闭 MessageBox"},
+    {"cmd": "rget", "target": "BtnHello.Caption", "assert_expr": "actual=='Hello, daofy-test!'", "expected": "模态关闭后程序恢复，RTTI 可读"}
+  ]
+}
