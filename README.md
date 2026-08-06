@@ -460,7 +460,12 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.08.05 (最新)
+### v2026.08.06 (最新)
+
+- **waitfor 主线程查询超时防护**: `SendMessageTimeout` + 版本号三事件无锁协议（提交/完成/放弃各 +1，僵尸消息 LParam 过滤），主线程死锁/忙时管道线程最多阻塞 200ms 即让出，异步结果回传不被长阻塞
+- **waitfor 冒烟测试**: `Tests/冒烟测试/` 新增正常路径（`waitfor-basic.json`）与超时/模态故障路径（`waitfor-timeout-modal.json`），AutoTest.exe 实测三轮全过
+
+### v2026.08.05
 
 - **编码规则示例补齐**: `get_coding_rules(examples=...)` 新增 `naming`/`formatting`/`documentation`/`error-handling` 四个示例文件，修复 skill 广告示例在服务端不存在的问题
 

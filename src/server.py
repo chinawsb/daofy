@@ -967,7 +967,7 @@ async def run_server():
     @server.read_resource()
     async def read_resource(uri: str):
         """读取资源内容"""
-        return _read_mcp_resource(uri, project_root)
+        return _read_mcp_resource_contents(uri, project_root)
 
     # ============================================================
     # MCP 提示词注册

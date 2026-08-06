@@ -27,11 +27,13 @@ uses
   Winapi.Windows;
 
 const
-  WM_DAOFY_CMD = WM_USER + $200;
-  MAX_PIPE     = 4096;
-  BM_CLICK     = $00F5;
-  JPG_Q        = 80;
-  ASYNC_TTL    = 60000; // 异步结果 60 秒未取自动清理
+  WM_DAOFY_CMD        = WM_USER + $200;
+  WM_DAOFY_WAIT_QUERY = WM_USER + $201;
+  MAX_PIPE            = 4096;
+  BM_CLICK            = $00F5;
+  JPG_Q               = 80;
+  ASYNC_TTL           = 60000; // 异步结果 60 秒未取自动清理
+  WAIT_QUERY_TIMEOUT_MS = 200; // waitfor 主线程查询超时：忙/死锁时快速让出管道线程，waitfor 重试而非失败，异步结果回传不被长阻塞
 type
   /// <summary>传输层等待结果。由平台相关传输单元返回。</summary>
   TTransportWaitResult = (twRequest, twWake, twTimeout, twError);
@@ -65,6 +67,15 @@ type
     Resp: string;
     Tick: UInt64;
   end;
+
+  TWaitForQuery = record
+    Target: string;
+    Prop: string;
+    Value: string;
+    Error: string;
+  end;
+  PWaitForQuery = ^TWaitForQuery;
+
   /// <summary>子元素信息，描述一个路径段。</summary>
   TChildElementInfo = record
     Segment: string;  // 路径段名，如 "Nodes"、"[0]"、"btnOK"
@@ -101,16 +112,15 @@ type
       FExtraCommandHandlers: TDictionary<string, TAutomationCommandHandler>;
       FFixtures: TDictionary<string, TTestFixture>;
       FTestClasses: TDictionary<string, TClass>;
+      FWaitForVersion: Integer;  // WM_DAOFY_WAIT_QUERY 版本号协议计数器（提交/完成/放弃各 +1）
   strict private
     FMsgWnd: HWND;
     FPipeName: string;
-    FLastResp: string;
     FAsyncResults: TDictionary<string, TAsyncResultRec>;
     FTransport: IAutomationTransport;
-    FAsyncQueue: TList<string>;
-    FAsyncQueueCS: TRTLCriticalSection;
     FAsyncResultsCS: TRTLCriticalSection; // 保护 FAsyncResults 跨线程访问
     FRegFilePath: string;  // 进程注册文件路径 (%TEMP%\daofy-rtti-{PID}.json)
+    FWaitDepth: Integer;
     class function TryHandleExtraCommand(const Cmd, ReqId, Target: string;
       const J: TJSONObject; out AResponse: string): Boolean; static;
   protected
@@ -122,7 +132,15 @@ type
     /// Windows → TNamedPipeTransport；POSIX → TUnixSocketTransport。
     /// 子类可重写以提供自定义传输层。</summary>
     function CreateTransport: IAutomationTransport; virtual;
-
+    procedure CleanupExpiredAsyncResults;
+    function DispatchTransportRequest(const ARequest: string): Boolean;
+    function ServiceTransportOnce(ATimeoutMs: Cardinal): TTransportWaitResult;
+    function HandleCmdWait(const ReqId: string; AWaitMs: Integer): string;
+    function ReadWaitForValue(const Target, Prop: string;
+      out AValue: string): string;
+    function ReadWaitForValueOnMainThread(const Target, Prop: string;
+      out AValue: string): string; virtual;
+    procedure SetTransportForTest(const ATransport: IAutomationTransport);
     // ── 子类必须实现的抽象方法 ──
 
     /// <summary>截图：窗口内容 → JPEG 文件</summary>
@@ -410,12 +428,12 @@ begin
     FMsgWnd := AllocateHWnd(WndProc);
   end);
   FAsyncResults := TDictionary<string, TAsyncResultRec>.Create;
-  FAsyncQueue := TList<string>.Create;
   FTransport := CreateTransport;
   FPipeName := APipeName;
+  FWaitDepth := 0;
+  FWaitForVersion := 0; // 版本号协议计数器（类变量，全局共享）
   if FTransport <> nil then
     FTransport.Open(FPipeName);
-  InitializeCriticalSection(FAsyncQueueCS);
   InitializeCriticalSection(FAsyncResultsCS);
   FreeOnTerminate := False;
 end;
@@ -436,10 +454,8 @@ begin
     DeallocateHWnd(FMsgWnd);
     FMsgWnd := 0;
   end;
-  FAsyncQueue.Free;
   FAsyncResults.Free;
   FTransport := nil;
-  DeleteCriticalSection(FAsyncQueueCS);
   DeleteCriticalSection(FAsyncResultsCS);
   if FCurrent = Self then
     FCurrent := nil;
@@ -515,37 +531,20 @@ end;
 { ── 传输层线程 ── }
 
 procedure TAutomationProcessorBase.Execute;
-
-  procedure FlushAsyncResults;
-  var
-    List: TArray<string>;
-    S: string;
-  begin
-    EnterCriticalSection(FAsyncQueueCS);
-    try
-      List := FAsyncQueue.ToArray;
-      FAsyncQueue.Clear;
-    finally
-      LeaveCriticalSection(FAsyncQueueCS);
-    end;
-    for S in List do
-      if FTransport <> nil then
-        FTransport.SendResponse(S);
-  end;
-
-var
-  Req, Resp, ReqId, Cmd: string;
 begin
   try
-    while not Terminated do begin
+    while not Terminated do
+    begin
       // 已由构造函数 Open(address)，此处直接监听连接
-      if FTransport = nil then begin
+      if FTransport = nil then
+      begin
         Sleep(500);
         Continue;
       end;
 
       // ── 等待客户端连接 ──
-      if not FTransport.Accept(INFINITE) then begin
+      if not FTransport.Accept(INFINITE) then
+      begin
         WriteRegFile('accept_failed', 0);
         Sleep(500);
         Continue;
@@ -553,70 +552,9 @@ begin
       WriteRegFile('connected', 0);
 
       // ── 请求处理循环 ──
-      while not Terminated do begin
-        case FTransport.WaitForRequest(ASYNC_TTL) of
-          twRequest: begin
-            if not FTransport.ReadRequest(Req) then
-              Break; // 连接断开
-
-            if Req <> '' then begin
-              ReqId := GetReqId(Req);
-              Cmd := GetCmd(Req);
-              if Cmd = '' then
-                Resp := WriteResp(ReqId, 'err', 'no cmd')
-              else if IsAsyncCmd(Cmd) then begin
-                var P := PWideChar(GlobalAlloc(GMEM_FIXED,
-                  (Length(Req) + 1) * SizeOf(WideChar)));
-                if P <> nil then begin
-                  Move(PWideChar(Req)^, P^, (Length(Req) + 1) * SizeOf(WideChar));
-                  PostMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-                  Resp := WriteResp(ReqId, 'ack', '');
-                end else
-                  Resp := WriteResp(ReqId, 'err', 'alloc_failed');
-              end else begin
-                var P := PWideChar(GlobalAlloc(GMEM_FIXED,
-                  (Length(Req) + 1) * SizeOf(WideChar)));
-                if P <> nil then begin
-                  Move(PWideChar(Req)^, P^, (Length(Req) + 1) * SizeOf(WideChar));
-                  SendMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0);
-                  Resp := FLastResp;
-                end else
-                  Resp := WriteResp(ReqId, 'err', 'alloc_failed');
-              end;
-              FTransport.SendResponse(Resp);
-            end;
-          end;
-
-          twWake: begin
-            // ── 异步结果就绪（等待 peekresult 取回）──
-          end;
-
-          twTimeout: begin
-            // ── 超时，清理过期异步结果 ──
-            var NowTick := GetTickCount;
-            var ExpiredList: TList<string>;
-            ExpiredList := TList<string>.Create;
-            try
-              EnterCriticalSection(FAsyncResultsCS);
-              try
-                for var K in FAsyncResults.Keys do
-                  if NowTick - FAsyncResults[K].Tick > ASYNC_TTL then
-                    ExpiredList.Add(K);
-                for var K in ExpiredList do
-                  FAsyncResults.Remove(K);
-              finally
-                LeaveCriticalSection(FAsyncResultsCS);
-              end;
-            finally
-              ExpiredList.Free;
-            end;
-          end;
-
-          twError: begin
-            Break;
-          end;
-        end;
-      end;
+      while not Terminated do
+        if ServiceTransportOnce(ASYNC_TTL) = twError then
+          Break;
 
       // 断开连接，等待下次连接
       FTransport.Disconnect;
@@ -624,6 +562,184 @@ begin
   finally
     DeleteRegFile;
   end;
+end;
+
+procedure TAutomationProcessorBase.CleanupExpiredAsyncResults;
+var
+  ExpiredList: TList<string>;
+  Key: string;
+  NowTick: UInt64;
+begin
+  if FAsyncResults = nil then
+    Exit;
+  NowTick := GetTickCount64;
+  ExpiredList := TList<string>.Create;
+  try
+    EnterCriticalSection(FAsyncResultsCS);
+    try
+      for Key in FAsyncResults.Keys do
+        if NowTick - FAsyncResults[Key].Tick > ASYNC_TTL then
+          ExpiredList.Add(Key);
+      for Key in ExpiredList do
+        FAsyncResults.Remove(Key);
+    finally
+      LeaveCriticalSection(FAsyncResultsCS);
+    end;
+  finally
+    ExpiredList.Free;
+  end;
+end;
+
+function TAutomationProcessorBase.DispatchTransportRequest(
+  const ARequest: string): Boolean;
+type
+  PResponseString = ^string;
+var
+  Cmd: string;
+  J: TJSONObject;
+  P: PWideChar;
+  ReqId: string;
+  Resp: string;
+  V: TJSONValue;
+  WaitMs: Integer;
+begin
+  Result := False;
+  ReqId := GetReqId(ARequest);
+  Cmd := GetCmd(ARequest);
+  try
+    if Cmd = '' then
+      Resp := WriteResp(ReqId, 'err', 'no cmd')
+    else if (Cmd = 'wait') or (Cmd = 'waitfor') then
+    begin
+      if FWaitDepth > 0 then
+        Resp := WriteResp(ReqId, 'err', 'nested wait is not supported')
+      else
+      begin
+        Inc(FWaitDepth);
+        V := nil;
+        try
+          V := TJSONObject.ParseJSONValue(ARequest);
+          if not (V is TJSONObject) then
+            Resp := WriteResp(ReqId, 'err', 'invalid JSON')
+          else
+          begin
+            J := V as TJSONObject;
+            if Cmd = 'wait' then
+            begin
+              WaitMs := StrToIntDef(GetJSONStr(J, 'ms', '500'), 500);
+              Resp := HandleCmdWait(ReqId, WaitMs);
+            end
+            else
+              Resp := HandleCmdWaitFor(ReqId,
+                GetJSONStr(J, 'target', ''),
+                GetJSONStr(J, 'prop', ''),
+                GetJSONStr(J, 'value', ''),
+                StrToIntDef(GetJSONStr(J, 'timeout', '5000'), 5000),
+                StrToIntDef(GetJSONStr(J, 'interval', '100'), 100));
+          end;
+        finally
+          V.Free;
+          Dec(FWaitDepth);
+        end;
+      end;
+    end
+    else if IsAsyncCmd(Cmd) then
+    begin
+      P := PWideChar(GlobalAlloc(GMEM_FIXED,
+        (Length(ARequest) + 1) * SizeOf(WideChar)));
+      if P = nil then
+        Resp := WriteResp(ReqId, 'err', 'alloc_failed')
+      else
+      begin
+        Move(PWideChar(ARequest)^, P^,
+          (Length(ARequest) + 1) * SizeOf(WideChar));
+        if PostMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P), 0) then
+          Resp := WriteResp(ReqId, 'ack', '')
+        else
+        begin
+          GlobalFree(Winapi.Windows.HGLOBAL(P));
+          Resp := WriteResp(ReqId, 'err', 'post_failed');
+        end;
+      end;
+    end
+    else
+    begin
+      P := PWideChar(GlobalAlloc(GMEM_FIXED,
+        (Length(ARequest) + 1) * SizeOf(WideChar)));
+      if P = nil then
+        Resp := WriteResp(ReqId, 'err', 'alloc_failed')
+      else
+      begin
+        Move(PWideChar(ARequest)^, P^,
+          (Length(ARequest) + 1) * SizeOf(WideChar));
+        Resp := '';
+        SendMessage(FMsgWnd, WM_DAOFY_CMD, WPARAM(P),
+          LPARAM(PResponseString(@Resp)));
+      end;
+    end;
+  except
+    on E: Exception do
+      Resp := WriteResp(ReqId, 'err', E.Message);
+  end;
+
+  if FTransport <> nil then
+    Result := FTransport.SendResponse(Resp);
+end;
+
+function TAutomationProcessorBase.ServiceTransportOnce(
+  ATimeoutMs: Cardinal): TTransportWaitResult;
+var
+  Request: string;
+begin
+  if FTransport = nil then
+    Exit(twError);
+
+  Result := FTransport.WaitForRequest(ATimeoutMs);
+  case Result of
+    twRequest:
+      begin
+        if not FTransport.ReadRequest(Request) then
+          Exit(twError);
+        if (Request <> '') and not DispatchTransportRequest(Request) then
+          Exit(twError);
+      end;
+    twTimeout:
+      CleanupExpiredAsyncResults;
+  end;
+end;
+
+function TAutomationProcessorBase.HandleCmdWait(const ReqId: string;
+  AWaitMs: Integer): string;
+var
+  Deadline: UInt64;
+  NowTick: UInt64;
+  RemainingMs: Cardinal;
+  WaitResult: TTransportWaitResult;
+begin
+  if AWaitMs < 0 then
+    AWaitMs := 0
+  else if AWaitMs > 10000 then
+    AWaitMs := 10000;
+
+  Deadline := GetTickCount64 + UInt64(AWaitMs);
+  while not Terminated do
+  begin
+    NowTick := GetTickCount64;
+    if NowTick >= Deadline then
+      Break;
+    RemainingMs := Cardinal(Deadline - NowTick);
+    if RemainingMs > ASYNC_TTL then
+      RemainingMs := ASYNC_TTL;
+
+    WaitResult := ServiceTransportOnce(RemainingMs);
+    if WaitResult = twError then
+      Exit(WriteResp(ReqId, 'err', 'transport error during wait'));
+  end;
+
+  if Terminated then
+    Result := WriteResp(ReqId, 'err', 'automation terminated during wait')
+  else
+    Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
 {$IFDEF MSWINDOWS}
@@ -638,69 +754,100 @@ begin
 end;
 {$ENDIF}
 
+procedure TAutomationProcessorBase.SetTransportForTest(
+  const ATransport: IAutomationTransport);
+begin
+  FTransport := ATransport;
+end;
+
 { ── WndProc（AllocateHWnd 回调，运行在主线程）── }
 
 procedure TAutomationProcessorBase.WndProc(var Msg: TMessage);
+type
+  PResponseString = ^string;
 var
-  CmdStr: string;
+  AR: TAsyncResultRec;
   Cmd: string;
+  CmdResp: string;
+  CmdStr: string;
+  P: PWideChar;
   RId: string;
+  WaitQuery: PWaitForQuery;
 begin
-  if Msg.Msg = WM_DAOFY_CMD then begin
-    var P := PWideChar(Msg.WParam);
-    if P <> nil then begin
+  if Msg.Msg = WM_DAOFY_WAIT_QUERY then
+  begin
+    WaitQuery := PWaitForQuery(Msg.WParam);
+    // 版本过滤：LParam 必须等于处理前的当前版本。不匹配 = 发送端已放弃
+    // （超时递增）的僵尸消息，跳过处理避免写入已失效的栈内存。
+    if (WaitQuery <> nil) and (Msg.LParam = FWaitForVersion) then
+    begin
+      try
+        WaitQuery.Error := ReadWaitForValueOnMainThread(
+          WaitQuery.Target, WaitQuery.Prop, WaitQuery.Value);
+      except
+        on E: Exception do
+          WaitQuery.Error := E.Message;
+      end;
+      // 完成事件：处理完递增版本号，等待端据此确认处理结束
+      InterlockedIncrement(FWaitForVersion);
+    end;
+    Msg.Result := 0;
+  end
+  else if Msg.Msg = WM_DAOFY_CMD then
+  begin
+    P := PWideChar(Msg.WParam);
+    if P <> nil then
+    begin
       try
         CmdStr := string(P);
         Cmd := GetCmd(CmdStr);
         try
-          FLastResp := ExecCmd(CmdStr);
+          CmdResp := ExecCmd(CmdStr);
         except
           on E: Exception do
-            FLastResp := WriteResp(GetReqId(CmdStr), 'err', E.Message);
+            CmdResp := WriteResp(GetReqId(CmdStr), 'err', E.Message);
         end;
-        // 异步命令完成后存结果，供 getresult 取回
-        if IsAsyncCmd(Cmd) then begin
+        // 异步命令完成后存结果，供 peekresult 取回。
+        if IsAsyncCmd(Cmd) then
+        begin
           RId := GetReqId(CmdStr);
-          if RId <> '' then begin
-            var AR: TAsyncResultRec;
-            AR.Resp := FLastResp;
-            AR.Tick := GetTickCount;
+          if RId <> '' then
+          begin
+            AR.Resp := CmdResp;
+            AR.Tick := GetTickCount64;
             EnterCriticalSection(FAsyncResultsCS);
             try
               FAsyncResults.AddOrSetValue(RId, AR);
             finally
               LeaveCriticalSection(FAsyncResultsCS);
             end;
-            EnterCriticalSection(FAsyncQueueCS);
-            try
-              FAsyncQueue.Add(FLastResp);
-            finally
-              LeaveCriticalSection(FAsyncQueueCS);
-            end;
             if FTransport <> nil then
               FTransport.Wake;
           end;
-        end;
+        end
+        else if Msg.LParam <> 0 then
+          PResponseString(Msg.LParam)^ := CmdResp;
       finally
         GlobalFree(Winapi.Windows.HGLOBAL(Msg.WParam));
       end;
     end;
     Msg.Result := 0;
-  end else
+  end
+  else
     Msg.Result := DefWindowProc(FMsgWnd, Msg.Msg, Msg.WParam, Msg.LParam);
 end;
 
-{ ── ExecCmd：所有命令的统一入口（运行在主线程）── }
+{ ── ExecCmd：主线程命令入口 ── }
 
 function TAutomationProcessorBase.ExecCmd(const AReq: string): string;
 var
   J: TJSONObject;
   Cmd, ReqId, Target, ExtraResp: string;
-  WaitMs: Integer;
   Buf: array[0..255] of Char;
   V, AsyncResp: TJSONValue;
   AsyncObj: TJSONObject;
 begin
+  ReqId := '';
   try
     V := TJSONObject.ParseJSONValue(AReq);
     if V = nil then Exit(WriteResp('', 'err', 'invalid JSON'));
@@ -719,12 +866,9 @@ begin
 
       // ── 框架无关命令（纯 Win32 / RTL）──
 
-      else if Cmd = 'wait' then begin
-        WaitMs := StrToIntDef(GetJSONStr(J, 'ms', '500'), 500);
-        if WaitMs > 10000 then WaitMs := 10000;
-        Sleep(WaitMs);
-        Result := WriteResp(ReqId, 'ok', 'OK');
-      end
+      else if (Cmd = 'wait') or (Cmd = 'waitfor') then
+        Result := WriteResp(ReqId, 'err',
+          'wait command must run on transport thread')
 
       else if Cmd = 'capture' then begin
         DoCap(Target);
@@ -732,8 +876,11 @@ begin
       end
 
       else if Cmd = 'snapdir' then begin
+        if Target = '' then
+          raise EInOutError.Create('snapshot directory is required');
         FSSDir := Target;
-        ForceDirectories(FSSDir);
+        if not DirectoryExists(FSSDir) then
+          ForceDirectories(FSSDir);
         Result := WriteResp(ReqId, 'ok', 'OK');
       end
 
@@ -854,12 +1001,6 @@ begin
       else if Cmd = 'rtti_discover' then
         Result := HandleRttiDiscover(ReqId, Target)
 
-      else if Cmd = 'waitfor' then
-        Result := HandleCmdWaitFor(ReqId, Target, GetJSONStr(J, 'prop', ''),
-          GetJSONStr(J, 'value', ''),
-          StrToIntDef(GetJSONStr(J, 'timeout', '5000'), 5000),
-          StrToIntDef(GetJSONStr(J, 'interval', '100'), 100))
-
       else if Cmd = 'key' then
         Result := HandleCmdKey(ReqId, Target, GetJSONStr(J, 'key', ''))
 
@@ -907,7 +1048,7 @@ begin
     end;
   except
     on E: Exception do
-      Result := WriteResp('', 'err', E.Message);
+      Result := WriteResp(ReqId, 'err', E.Message);
   end;
 end;
 
@@ -1115,15 +1256,22 @@ end;
 
 class function TAutomationProcessorBase.FindProcessDialog(AStartAfter: HWND): HWND;
 var
+  ClassName: array[0..255] of Char;
   WindowPID: DWORD;
 begin
-  Result := FindWindowExW(0, AStartAfter, '#32770', nil);
+  Result := FindWindowExW(0, AStartAfter, nil, nil);
   while Result <> 0 do begin
-    WindowPID := 0;
-    GetWindowThreadProcessId(Result, @WindowPID);
-    if WindowPID = GetCurrentProcessId then
-      Exit;
-    Result := FindWindowExW(0, Result, '#32770', nil);
+    FillChar(ClassName, SizeOf(ClassName), 0);
+    GetClassNameW(Result, ClassName, 255);
+    if IsWindowVisible(Result) and
+       (SameText(string(ClassName), '#32770') or
+        SameText(string(ClassName), 'TMessageForm')) then begin
+      WindowPID := 0;
+      GetWindowThreadProcessId(Result, @WindowPID);
+      if WindowPID = GetCurrentProcessId then
+        Exit;
+    end;
+    Result := FindWindowExW(0, Result, nil, nil);
   end;
 end;
 
@@ -1155,7 +1303,8 @@ var
         if TextValue <> '' then
           TextValue := TextValue + sLineBreak;
         TextValue := TextValue + Txt;
-      end else if SameText(string(ClassBuf), 'Button') and (Txt <> '') then
+      end else if (SameText(string(ClassBuf), 'Button') or
+        SameText(string(ClassBuf), 'TButton')) and (Txt <> '') then
         Buttons.AddElement(TJSONString.Create(Txt));
       ScanChildren(hChild);
       hChild := FindWindowExW(AParent, hChild, nil, nil);
@@ -1206,7 +1355,8 @@ var
     while hChild <> 0 do begin
       FillChar(ClassBuf, SizeOf(ClassBuf), 0);
       GetClassNameW(hChild, ClassBuf, 255);
-      if SameText(string(ClassBuf), 'Button') then begin
+      if SameText(string(ClassBuf), 'Button') or
+         SameText(string(ClassBuf), 'TButton') then begin
         FillChar(Buf, SizeOf(Buf), 0);
         GetWindowTextW(hChild, Buf, 255);
         Txt := StringReplace(LowerCase(Trim(string(Buf))), '&', '', [rfReplaceAll]);
@@ -1224,16 +1374,16 @@ begin
   hDlg := FindProcessDialog(0);
   if hDlg = 0 then Exit('NOD');
 
-  ID := BtnID(Param);
-  if ID > 0 then begin
-    SendMessage(hDlg, WM_COMMAND, ID, 0);
-    Exit('OK');
-  end;
-
   TargetText := StringReplace(LowerCase(Trim(Param)), '&', '', [rfReplaceAll]);
   hBtn := FindButton(hDlg);
   if hBtn <> 0 then begin
     SendMessage(hBtn, BM_CLICK, 0, 0);
+    Exit('OK');
+  end;
+
+  ID := BtnID(Param);
+  if ID > 0 then begin
+    SendMessage(hDlg, WM_COMMAND, ID, 0);
     Exit('OK');
   end;
   Result := 'NF';
@@ -1241,100 +1391,162 @@ end;
 
 { ── waitfor ── }
 
-function TAutomationProcessorBase.HandleCmdWaitFor(const ReqId, Target,
-  Prop, Value: string; TimeoutMs, IntervalMs: Integer): string;
+function TAutomationProcessorBase.ReadWaitForValueOnMainThread(
+  const Target, Prop: string; out AValue: string): string;
 var
   Ctrl: TObject;
   Ctx: TRttiContext;
-  Pr: TRttiProperty;
-  IP: TRttiIndexedProperty;
-  V: TValue;
-  StartTime: UInt64;
-  Parts: TArray<string>;
-  i: Integer;
-  Obj: TObject;
-  CurrentValue: string;
-  PropName: string;
   Idx: Integer;
-  WaitResult: DWORD;
-  Msg: TMsg;
-  EmptyHandles: THandle;
+  Index: Integer;
+  IndexedProp: TRttiIndexedProperty;
+  Obj: TObject;
+  Parts: TArray<string>;
+  PropName: string;
+  RttiProp: TRttiProperty;
+  RttiType: TRttiType;
+  V: TValue;
 begin
-  Result := WriteResp(ReqId, 'err', 'NF:' + Target);
+  AValue := '';
+  Ctrl := FindNamedControl(Target);
+  if Ctrl = nil then
+    Exit('NF:' + Target);
+  if Prop = '' then
+    Exit('no property');
 
-  // MsgWaitForMultipleObjects 轮询，同时处理消息避免阻塞消息泵。
-  // TRttiContext 提到循环外，避免每轮重复创建。
-  EmptyHandles := 0;
-  StartTime := GetTickCount;
+  Parts := Prop.Split(['.']);
+  if Length(Parts) = 0 then
+    Exit('no property');
+
   Ctx := TRttiContext.Create;
   try
-    while GetTickCount - StartTime < UInt64(TimeoutMs) do begin
-      Ctrl := FindNamedControl(Target);
-      if Ctrl = nil then begin
-        WaitResult := MsgWaitForMultipleObjects(0, EmptyHandles, False, IntervalMs, QS_ALLINPUT);
-        if WaitResult = WAIT_OBJECT_0 then begin
-          while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
-            TranslateMessage(Msg);
-            DispatchMessage(Msg);
-          end;
-        end;
-        Continue;
+    Obj := Ctrl;
+    for Index := 0 to High(Parts) do
+    begin
+      if Obj = nil then
+        Exit('NF:' + Target + '.' + Prop);
+      RttiType := Ctx.GetType(Obj.ClassType);
+      ParseIndexedProp(Parts[Index], PropName, Idx);
+      if Idx >= 0 then
+      begin
+        IndexedProp := RttiType.GetIndexedProperty(PropName);
+        if IndexedProp = nil then
+          Exit('NP:' + PropName);
+        V := IndexedProp.GetValue(Obj, [TValue.From<Integer>(Idx)]);
+      end
+      else
+      begin
+        RttiProp := RttiType.GetProperty(PropName);
+        if RttiProp = nil then
+          Exit('NP:' + PropName);
+        V := RttiProp.GetValue(Obj);
       end;
 
-      Parts := Prop.Split(['.']);
-      if Length(Parts) = 0 then
-        Exit(WriteResp(ReqId, 'err', 'no property'));
-
-      ParseIndexedProp(Parts[0], PropName, Idx);
-      if Idx >= 0 then begin
-        IP := Ctx.GetType(Ctrl.ClassType).GetIndexedProperty(PropName);
-        if IP = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
-        V := IP.GetValue(Ctrl, [TValue.From<Integer>(Idx)]);
-      end else begin
-        Pr := Ctx.GetType(Ctrl.ClassType).GetProperty(PropName);
-        if Pr = nil then Exit(WriteResp(ReqId, 'err', 'NP:' + PropName));
-        V := Pr.GetValue(Ctrl);
-      end;
-
-      for i := 1 to High(Parts) do begin
-        if V.Kind <> tkClass then Break;
+      if Index < High(Parts) then
+      begin
+        if V.Kind <> tkClass then
+          Exit('NP:' + Parts[Index + 1]);
         Obj := V.AsObject;
-        if Obj = nil then Break;
-
-        ParseIndexedProp(Parts[i], PropName, Idx);
-        if Idx >= 0 then begin
-          IP := Ctx.GetType(Obj.ClassType).GetIndexedProperty(PropName);
-          if IP = nil then Break;
-          V := IP.GetValue(Obj, [TValue.From<Integer>(Idx)]);
-        end else begin
-          Pr := Ctx.GetType(Obj.ClassType).GetProperty(PropName);
-          if Pr = nil then Break;
-          V := Pr.GetValue(Obj);
-        end;
-      end;
-
-      CurrentValue := V.ToString;
-      if CurrentValue = Value then begin
-        Result := WriteResp(ReqId, 'ok', CurrentValue);
-        Exit;
-      end;
-
-      // 两轮 RTTI 检查之间同样用 MsgWaitForMultipleObjects 等待
-      WaitResult := MsgWaitForMultipleObjects(0, EmptyHandles, False, IntervalMs, QS_ALLINPUT);
-      if WaitResult = WAIT_OBJECT_0 then begin
-        while PeekMessage(Msg, 0, 0, 0, PM_REMOVE) do begin
-          TranslateMessage(Msg);
-          DispatchMessage(Msg);
-        end;
       end;
     end;
+    AValue := V.ToString;
+    Result := '';
   finally
     Ctx.Free;
   end;
-
-  Result := WriteResp(ReqId, 'err', 'TIMEOUT:' + CurrentValue);
 end;
 
+function TAutomationProcessorBase.ReadWaitForValue(const Target, Prop: string;
+  out AValue: string): string;
+var
+  Query: TWaitForQuery;
+  SavedVersion: Integer;
+begin
+  if GetCurrentThreadId = MainThreadID then
+    Exit(ReadWaitForValueOnMainThread(Target, Prop, AValue));
+  if FMsgWnd = 0 then
+    Exit('waitfor main-thread dispatcher unavailable');
+
+  Query := Default(TWaitForQuery);
+  Query.Target := Target;
+  Query.Prop := Prop;
+
+  // 版本号协议：提交事件 = 递增版本号并作为 LParam 携带。
+  // 主线程 WndProc 处理完后递增完成事件（版本 +2），等待端据此确认结束；
+  // 僵尸消息因 LParam 落后于当前版本而被 WndProc 跳过。
+  SavedVersion := FWaitForVersion;
+  if SendMessageTimeout(FMsgWnd, WM_DAOFY_WAIT_QUERY,
+      WPARAM(@Query), LPARAM(InterlockedIncrement(FWaitForVersion)),
+      SMTO_ABORTIFHUNG, WAIT_QUERY_TIMEOUT_MS, nil) = 0 then
+  begin
+    // 放弃事件：再次递增，使已投递的僵尸消息 LParam 落后于当前版本
+    InterlockedIncrement(FWaitForVersion);
+    Exit('MAIN_THREAD_STALLED');
+  end;
+
+  // SendMessageTimeout 成功返回即主线程已处理完并递增完成事件；
+  // 防御性确认协议成立（防未来改造为 PostMessage 轮询时引入竞态）
+  if FWaitForVersion < SavedVersion + 2 then
+    Exit('MAIN_THREAD_STALLED');
+
+  AValue := Query.Value;
+  Result := Query.Error;
+end;
+
+function TAutomationProcessorBase.HandleCmdWaitFor(const ReqId, Target,
+  Prop, Value: string; TimeoutMs, IntervalMs: Integer): string;
+var
+  CurrentValue: string;
+  Deadline: UInt64;
+  NowTick: UInt64;
+  ReadError: string;
+  RemainingMs: Cardinal;
+  WaitResult: TTransportWaitResult;
+begin
+  if TimeoutMs < 0 then
+    TimeoutMs := 0;
+  if IntervalMs < 1 then
+    IntervalMs := 1;
+
+  CurrentValue := '';
+  Deadline := GetTickCount64 + UInt64(TimeoutMs);
+  repeat
+    ReadError := ReadWaitForValue(Target, Prop, CurrentValue);
+    if ReadError = '' then
+    begin
+      if CurrentValue = Value then
+        Exit(WriteResp(ReqId, 'ok', CurrentValue));
+    end
+    else if Copy(ReadError, 1, 3) = 'NF:' then
+      CurrentValue := ReadError
+    else if ReadError = 'MAIN_THREAD_STALLED' then
+    begin
+      // 主线程暂时无响应（模态循环/长任务/死锁）：不放弃 waitfor，
+      // 本轮让出管道线程服务插队请求（异步结果回传），下一轮再试；
+      // 总超时仍由 TimeoutMs 控制
+    end
+    else
+      Exit(WriteResp(ReqId, 'err', ReadError));
+
+    NowTick := GetTickCount64;
+    if NowTick >= Deadline then
+      Break;
+    RemainingMs := Cardinal(Deadline - NowTick);
+    if RemainingMs > Cardinal(IntervalMs) then
+      RemainingMs := Cardinal(IntervalMs);
+    if RemainingMs > ASYNC_TTL then
+      RemainingMs := ASYNC_TTL;
+
+    WaitResult := ServiceTransportOnce(RemainingMs);
+    if WaitResult = twError then
+      Exit(WriteResp(ReqId, 'err', 'transport error during waitfor'));
+  until Terminated;
+
+  if Terminated then
+    Result := WriteResp(ReqId, 'err',
+      'automation terminated during waitfor')
+  else
+    Result := WriteResp(ReqId, 'err', 'TIMEOUT:' + CurrentValue);
+end;
 { ── RTTI 发现 ── }
 
 function TAutomationProcessorBase.GetRttiClasses: TArray<TClass>;

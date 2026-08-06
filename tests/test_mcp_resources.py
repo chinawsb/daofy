@@ -146,6 +146,13 @@ async def test_server_read_resource_handler_accepts_lowlevel_contents() -> None:
     assert "# 自动化脚本格式规范" in content.text
 
 
+def test_server_read_resource_handler_uses_lowlevel_contents() -> None:
+    server_source = (PROJECT_ROOT / "src" / "server.py").read_text(encoding="utf-8")
+
+    assert "return _read_mcp_resource_contents(uri, project_root)" in server_source
+    assert "return _read_mcp_resource(uri, project_root)" not in server_source
+
+
 def test_server_reads_health_resource_with_non_negative_uptime() -> None:
     import src.server as server_module
 

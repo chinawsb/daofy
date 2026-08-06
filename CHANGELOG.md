@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.08.06] - 2026-08-06
+
+### Fixed
+
+- **waitfor 主线程查询超时防护**: `ReadWaitForValue` 由裸 `SendMessage` 改为
+  `SendMessageTimeout(SMTO_ABORTIFHUNG)` + 类变量版本号三事件无锁协议
+  （提交/完成/放弃各 +1，WndProc 以 `LParam == 当前版本` 过滤僵尸消息，
+  等待端以 `版本 >= SavedVersion+2` 确认完成），主线程死锁/忙时管道线程
+  最多阻塞 `WAIT_QUERY_TIMEOUT_MS`（5000→200ms）即让出，
+  waitfor 对 `MAIN_THREAD_STALLED` 重试下一轮而非失败退出，
+  前面异步命令（click/capture）结果回传不再被长阻塞
+
+### Added
+
+- **waitfor 冒烟测试**: `Tests/冒烟测试/` 新增 `waitfor-basic.json`（正常路径：
+  type→waitfor 匹配→异步 click→waitfor 读新值）与 `waitfor-timeout-modal.json`
+  （超时路径 + 模态循环路径），AutoTest.exe 实测三轮全过
+
 ## [2026.08.05] - 2026-08-05
 
 ### Added
