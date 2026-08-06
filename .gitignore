@@ -107,9 +107,6 @@ snapshots/
 # Temp scripts
 tmp_*.py
 tmp_*.ps1
-install.bat
-uninstall.bat
-install_mcp.py
 
 # npm artifacts (accidental)
 node_modules/
