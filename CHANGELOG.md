@@ -51,6 +51,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`waitfor`/`wait` 管道超时**: 传输层 deadline 覆盖命令自身超时 + 1s 响应宽限，
   长轮询命令不再被默认管道超时截断；读取剩余时间改为向上取整避免边界测试误超时
 
+## [2026.08.03] - 2026-08-03
+
+### Fixed
+
+- **条件编译符号语法错误**: `args_generator` 与 `compiler_service` 用 `-$D+{defines}` 拼接 defines（`-$D+` 实为调试信息开关），改为 `-D{defines}`；并在 `compile_dpr_direct` 中激活 `_extract_config_from_dproj`，使直接 DCC 编译也能读取 `.dproj` 的 `DCC_Define`，默认配置不再编出 plain exe
+- **rsvars 版本定位**: `_get_rsvars_path` 现在先按 `compiler_version` 从 config_manager 取 `registry_version`，回退用 `.dproj` ProjectVersion 推断，避免总是加载注册表最新 Delphi
+- **dry_run 目标平台解析**: `get_args` 与 `compile_project` 仅当未指定平台时才解析 `.dproj`，显式 win32 不再被 Active Platform 覆盖；win64 切换 dcc32→dcc64 改为大小写不敏感匹配（兼容 `DCC32.EXE` 手动配置）
+
+## [2026.07.30] - 2026-07-30
+
+### Added
+
+- **`structured_content` 工具**: 统一 DFM/LFM/FMX/XML/JSON/MessagePack/ProtoBuf 七种结构化文档的读写/搜索/修改 — read（按 JSONPath 读取为 JSON/Schema）、get_schema（生成 JSON Schema）、set（按路径修改）、search（JSONPath 搜索），含 mcp_compat 适配层
+
+### Fixed
+
+- **`tool_help` action_params 修复**: 按 action 返回参数说明
+- **`Vcl.DaofyAutomation.pas`**: 7 行修正（与 Base/VCL 三层架构对齐）
+
 ## [2026.07.27.1] - 2026-07-27
 
 ### Fixed
