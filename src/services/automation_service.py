@@ -730,6 +730,23 @@ def _find_uia_ctrl(target: str, resp: dict) -> object | None:
     return ctrl
 
 
+def _get_uia_pattern(control: object, method_name: str,
+                     pattern_name: str) -> object | None:
+    """Return a UIA pattern across uiautomation API variants."""
+    convenience_getter = getattr(control, method_name, None)
+    if callable(convenience_getter):
+        pattern = convenience_getter()
+        if pattern is not None:
+            return pattern
+
+    generic_getter = getattr(control, 'GetPattern', None)
+    pattern_ids = getattr(_UIA_MODULE, 'PatternId', None)
+    pattern_id = getattr(pattern_ids, pattern_name, None)
+    if callable(generic_getter) and pattern_id is not None:
+        return generic_getter(pattern_id)
+    return None
+
+
 _SNAPSHOTS_DIR = str(DEFAULT_SNAPSHOTS_DIR)
 
 
@@ -901,7 +918,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
                     resp['status'] = 'err'
                     resp['data'] = f'INVALID_DIRECTION: {direction}. Valid: {", ".join(sorted(valid_directions))}'
                 else:
-                    scroll_pattern = ctrl.GetScrollPattern()
+                    scroll_pattern = _get_uia_pattern(
+                        ctrl, 'GetScrollPattern', 'ScrollPattern')
                     if scroll_pattern is not None:
                         # ScrollAmount: NoAmount=0, SmallIncrement=1, LargeIncrement=2, SmallDecrement=3, LargeDecrement=4
                         amount_map = {
@@ -966,7 +984,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.toggle', 'toggle'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                toggle_pattern = ctrl.GetTogglePattern()
+                toggle_pattern = _get_uia_pattern(
+                    ctrl, 'GetTogglePattern', 'TogglePattern')
                 if toggle_pattern is not None:
                     toggle_pattern.Toggle()
                     resp['data'] = f'toggled: {target}'
@@ -985,10 +1004,18 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
                 if item_name:
                     item_ctrl = ctrl.Control(Name=item_name, searchDepth=8)
                     if item_ctrl.Exists():
-                        selection_pattern = item_ctrl.GetSelectionItemPattern()
+                        selection_pattern = _get_uia_pattern(
+                            item_ctrl, 'GetSelectionItemPattern',
+                            'SelectionItemPattern')
                         if selection_pattern is not None:
-                            selection_pattern.Select()
-                            resp['data'] = f'selected: {item_name} in {target}'
+                            try:
+                                selection_pattern.Select()
+                                resp['data'] = (
+                                    f'selected: {item_name} in {target}')
+                            except Exception:
+                                item_ctrl.Click()
+                                resp['data'] = (
+                                    f'clicked to select: {item_name}')
                         else:
                             item_ctrl.Click()
                             resp['data'] = f'clicked to select: {item_name}'
@@ -996,7 +1023,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
                         resp['status'] = 'err'
                         resp['data'] = f'NF_ITEM: {item_name}'
                 else:
-                    selection_pattern = ctrl.GetSelectionPattern()
+                    selection_pattern = _get_uia_pattern(
+                        ctrl, 'GetSelectionPattern', 'SelectionPattern')
                     if selection_pattern is not None:
                         resp['data'] = f'selection available: {target}'
                     else:
@@ -1008,7 +1036,9 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.expand', 'expand'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                expand_pattern = ctrl.GetExpandCollapsePattern()
+                expand_pattern = _get_uia_pattern(
+                    ctrl, 'GetExpandCollapsePattern',
+                    'ExpandCollapsePattern')
                 if expand_pattern is not None:
                     expand_pattern.Expand()
                     resp['data'] = f'expanded: {target}'
@@ -1021,7 +1051,9 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.collapse', 'collapse'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                expand_pattern = ctrl.GetExpandCollapsePattern()
+                expand_pattern = _get_uia_pattern(
+                    ctrl, 'GetExpandCollapsePattern',
+                    'ExpandCollapsePattern')
                 if expand_pattern is not None:
                     expand_pattern.Collapse()
                     resp['data'] = f'collapsed: {target}'
@@ -1034,7 +1066,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.invoke', 'invoke'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                invoke_pattern = ctrl.GetInvokePattern()
+                invoke_pattern = _get_uia_pattern(
+                    ctrl, 'GetInvokePattern', 'InvokePattern')
                 if invoke_pattern is not None:
                     invoke_pattern.Invoke()
                     resp['data'] = f'invoked: {target}'
@@ -1109,7 +1142,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.close', 'close'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                window_pattern = ctrl.GetWindowPattern()
+                window_pattern = _get_uia_pattern(
+                    ctrl, 'GetWindowPattern', 'WindowPattern')
                 if window_pattern is not None:
                     window_pattern.Close()
                     resp['data'] = f'closed: {target}'
@@ -1122,7 +1156,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.minimize', 'minimize'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                window_pattern = ctrl.GetWindowPattern()
+                window_pattern = _get_uia_pattern(
+                    ctrl, 'GetWindowPattern', 'WindowPattern')
                 if window_pattern is not None:
                     window_pattern.SetWindowVisualState(1)  # Minimized
                     resp['data'] = f'minimized: {target}'
@@ -1135,7 +1170,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.maximize', 'maximize'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                window_pattern = ctrl.GetWindowPattern()
+                window_pattern = _get_uia_pattern(
+                    ctrl, 'GetWindowPattern', 'WindowPattern')
                 if window_pattern is not None:
                     window_pattern.SetWindowVisualState(2)  # Maximized
                     resp['data'] = f'maximized: {target}'
@@ -1148,7 +1184,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.restore', 'restore'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                window_pattern = ctrl.GetWindowPattern()
+                window_pattern = _get_uia_pattern(
+                    ctrl, 'GetWindowPattern', 'WindowPattern')
                 if window_pattern is not None:
                     window_pattern.SetWindowVisualState(0)  # Normal
                     resp['data'] = f'restored: {target}'
@@ -1167,7 +1204,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
                 hwnd = ctrl.NativeWindowHandle
                 if hwnd:
                     # 先恢复正常状态
-                    window_pattern = ctrl.GetWindowPattern()
+                    window_pattern = _get_uia_pattern(
+                        ctrl, 'GetWindowPattern', 'WindowPattern')
                     if window_pattern is not None:
                         window_pattern.SetWindowVisualState(0)
                     # 移动窗口
@@ -1184,7 +1222,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
                 hwnd = ctrl.NativeWindowHandle
                 if hwnd:
                     # 先恢复正常状态
-                    window_pattern = ctrl.GetWindowPattern()
+                    window_pattern = _get_uia_pattern(
+                        ctrl, 'GetWindowPattern', 'WindowPattern')
                     if window_pattern is not None:
                         window_pattern.SetWindowVisualState(0)
                     # 调整窗口大小
@@ -1196,7 +1235,8 @@ def _execute_uia_step(step: dict, req: dict, req_id: str) -> tuple:
         elif cmd in ('uia.state', 'state'):
             ctrl = _UIA_MODULE.Control(Name=target, searchDepth=8)
             if ctrl.Exists():
-                window_pattern = ctrl.GetWindowPattern()
+                window_pattern = _get_uia_pattern(
+                    ctrl, 'GetWindowPattern', 'WindowPattern')
                 if window_pattern is not None:
                     state_map = {0: 'normal', 1: 'minimized', 2: 'maximized'}
                     state_val = window_pattern.WindowVisualState
