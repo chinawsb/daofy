@@ -6,7 +6,8 @@ project 统一工具 — 合并 compile_project + dproj_tool + run_audit + deplo
 
 import json
 import logging
-from typing import Any
+import re
+from typing import Any, List, Optional
 
 from ..utils.logger import get_logger
 
@@ -64,6 +65,54 @@ _ACTIONS = {
 }
 
 _DISABLED_WARNINGS = {"W1000"}  # 默认禁用的警告
+
+# ── MSBuild 属性提取（从 extra_args 同步 /p:Platform 和 /p:Config）──
+
+_MS_BUILD_PROPERTY_RE = re.compile(r'^/p:(\w+)=(.+)$', re.IGNORECASE)
+
+
+def _extract_msbuild_property(extra_args: Optional[List[str]], prop_name: str) -> Optional[str]:
+    """从 extra_args 中提取最后一个 /p:{prop_name}=... 的值（MSBuild last-wins 语义）。
+
+    Args:
+        extra_args: 附加编译参数列表
+        prop_name: MSBuild 属性名（如 "Platform"、"Config"）
+
+    Returns:
+        属性值字符串，未找到时返回 None
+    """
+    if not extra_args:
+        return None
+    result = None
+    for arg in extra_args:
+        m = _MS_BUILD_PROPERTY_RE.match(arg)
+        if m and m.group(1).lower() == prop_name.lower():
+            result = m.group(2)
+    return result
+
+
+def _warn_extra_args_conflict(
+    extra_args: Optional[List[str]],
+    prop_name: str,
+    explicit_value: str,
+) -> Optional[str]:
+    """检测 extra_args 中的 /p:{prop_name} 是否与显式传入的值冲突。
+
+    冲突时以 extra_args 值为准（MSBuild last-wins），并记录警告。
+
+    Returns:
+        冲突时返回 extra_args 中的值；无冲突返回 None
+    """
+    extra_value = _extract_msbuild_property(extra_args, prop_name)
+    if extra_value is None:
+        return None
+    if extra_value.lower() != explicit_value.lower():
+        logger.warning(
+            "extra_args 中 /p:%s=%s 与显式参数 %s=%s 冲突，以 extra_args 值为准",
+            prop_name, extra_value, prop_name, explicit_value,
+        )
+        return extra_value
+    return None
 
 
 async def handle_project(**kwargs) -> Any:
@@ -125,11 +174,42 @@ async def _handle_compile(kwargs: dict) -> Any:
         _record_compile_to_tracker(project_path, result, "compile_file")
         return result
 
+    # ── 从 extra_args 同步平台/配置（修复 /p:Platform 和 /p:Config 被忽略的问题）──
+    # 优先级：显式参数 > extra_args /p: > .dproj 解析 > "win32"/"Debug" 兜底
+    extra_args = kwargs.get("extra_args")
+    target_platform = kwargs.get("target_platform")
+    build_configuration = kwargs.get("build_configuration")
+
+    # 用户未传 target_platform 时，从 extra_args 提取 /p:Platform
+    if not target_platform:
+        extra_platform = _extract_msbuild_property(extra_args, "Platform")
+        if extra_platform:
+            target_platform = extra_platform.lower()
+            logger.info("从 extra_args 提取目标平台: %s", target_platform)
+
+    # 用户未传 build_configuration 时，从 extra_args 提取 /p:Config
+    if not build_configuration:
+        extra_config = _extract_msbuild_property(extra_args, "Config")
+        if extra_config:
+            build_configuration = extra_config
+            logger.info("从 extra_args 提取构建配置: %s", build_configuration)
+
+    # ── 冲突检测：显式参数与 extra_args 中的同名属性不一致时，以 extra_args 为准 ──
+    if target_platform and extra_args:
+        conflict = _warn_extra_args_conflict(extra_args, "Platform", target_platform)
+        if conflict:
+            target_platform = conflict.lower()
+
+    if build_configuration and extra_args:
+        conflict = _warn_extra_args_conflict(extra_args, "Config", build_configuration)
+        if conflict:
+            build_configuration = conflict
+
     result = await _compile_project(
         project_path=project_path,
-        target_platform=kwargs.get("target_platform", "win32"),
-        build_configuration=kwargs.get("build_configuration", "Debug"),
-        extra_args=kwargs.get("extra_args"),
+        target_platform=target_platform,  # None 时由 compile_project 从 .dproj 解析
+        build_configuration=build_configuration or "Debug",
+        extra_args=extra_args,
         output_path=kwargs.get("output_path"),
         compiler_version=kwargs.get("compiler_version"),
         conditional_defines=kwargs.get("conditional_defines"),

@@ -978,6 +978,40 @@ class CompilerService:
             platform = _PLATFORM_MSBUILD_MAP.get(request.options.target_platform, "Win32")
             config = request.options.build_configuration or "Debug"
             
+            # ── 防御：extra_args 中 /p:Platform 或 /p:Config 与 options 不一致时，以 extra_args 为准 ──
+            # （正常路径由 project.py 包装层同步，此处为直接调用 compiler_service 的兜底）
+            _extra_args = request.options.extra_args or []
+            _found_platform = _found_config = False
+            for _ea in reversed(_extra_args):
+                _ea_lower = _ea.lower()
+                if not _found_platform and _ea_lower.startswith('/p:platform='):
+                    _extra_plat = _ea.split('=', 1)[1]
+                    if _extra_plat.lower() != platform.lower():
+                        logger.warning(
+                            "extra_args /p:Platform=%s 与 options.target_platform=%s冲突，"
+                            "以 extra_args 值为准（MSBuild last-wins）",
+                            _extra_plat, platform,
+                        )
+                        platform = _extra_plat
+                        try:
+                            request.options.target_platform = TargetPlatform(_extra_plat.lower())
+                        except ValueError:
+                            pass
+                    _found_platform = True
+                elif not _found_config and _ea_lower.startswith('/p:config='):
+                    _extra_cfg = _ea.split('=', 1)[1]
+                    if _extra_cfg != config:
+                        logger.warning(
+                            "extra_args /p:Config=%s 与 build_configuration=%s冲突，"
+                            "以 extra_args 值为准",
+                            _extra_cfg, config,
+                        )
+                        config = _extra_cfg
+                        request.options.build_configuration = _extra_cfg
+                    _found_config = True
+                if _found_platform and _found_config:
+                    break
+            
             project_dir = str(Path(dproj_path).parent)
             project_path = str(Path(dproj_path).parent)
             project_filename = Path(dproj_path).name
