@@ -2286,6 +2286,26 @@ def _parse_units_from_uses(units_text: str) -> List[str]:
     return parts
 
 
+def _build_uses_text(unit_names: List[str], original_text: str) -> str:
+    """从单元名列表重建 uses 子句文本，保持原始换行风格。
+    如果原始是单行，保持单行；如果跨多行，每行一个单元。"""
+    line_ending = '\r\n' if '\r\n' in original_text else '\n'
+    has_multiline = '\n' in original_text.strip()
+
+    if has_multiline and len(unit_names) > 1:
+        # 多行格式：每行一个单元，缩进 2 空格，逗号在行尾
+        lines = []
+        for i, name in enumerate(unit_names):
+            if i < len(unit_names) - 1:
+                lines.append(f"  {name},{line_ending}")
+            else:
+                lines.append(f"  {name}")
+        return ''.join(lines)
+    else:
+        # 单行格式
+        return ', '.join(unit_names)
+
+
 _NAMESPACE_PRIORITY: dict[str, int] = {
     # Group 0 — implicit always-first
     # Group 1 — System.* (fundamental RTL)
