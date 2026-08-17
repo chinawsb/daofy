@@ -1100,18 +1100,29 @@ class CompilerService:
             # 项目文件
             args.append(dproj_path)
             
+            # ── 从 extra_args 提取属性名，跳过工具生成的同名属性 ──
+            # extra_args 中的 /p:Name=Value 为唯一来源，避免命令行重复且语义明确。
+            _extra_prop_names = set()
+            for _ea in (request.options.extra_args or []):
+                if _ea.lower().startswith('/p:'):
+                    _eq = _ea.find('=', 3)
+                    if _eq > 0:
+                        _extra_prop_names.add(_ea[3:_eq].lower())
+            
             # 目标平台
-            args.append(f"/p:Platform={platform}")
+            if 'platform' not in _extra_prop_names:
+                args.append(f"/p:Platform={platform}")
             
             # 配置(Debug/Release)
-            args.append(f"/p:Config={config}")
+            if 'config' not in _extra_prop_names:
+                args.append(f"/p:Config={config}")
             
             # 输出路径
-            if request.options.output_path:
+            if request.options.output_path and 'dcc_exeoutput' not in _extra_prop_names:
                 args.append(f"/p:DCC_ExeOutput={request.options.output_path}")
             
             # 条件编译符号
-            if request.options.conditional_defines:
+            if request.options.conditional_defines and 'dcc_define' not in _extra_prop_names:
                 defines = ";".join(request.options.conditional_defines)
                 # MSBuild 命令行上分号是属性分隔符，必须转义为 %3B
                 # 经批处理文件传递时 % 需写为 %% 才能被 cmd.exe 正确展开
@@ -1119,27 +1130,29 @@ class CompilerService:
                 args.append(f"/p:DCC_Define={defines}")
             
             # 单元搜索路径
-            if request.options.unit_search_paths:
+            if request.options.unit_search_paths and 'dcc_unitsearchpath' not in _extra_prop_names:
                 paths = ";".join(request.options.unit_search_paths)
                 args.append(f"/p:DCC_UnitSearchPath={paths}")
             
             # 生成 Detailed 级别 .map 文件（供 StackTrace callgraph 解析）
-            args.append("/p:DCC_MapFile=3")
+            if 'dcc_mapfile' not in _extra_prop_names:
+                args.append("/p:DCC_MapFile=3")
             
             # Delphi >= XE5 (registry version >= 12.0) 时自动启用响应文件编译
             # 解决 MSBuild 命令行过长 (>32K) 导致编译失败的问题
-            try:
-                delphi_ver = _get_delphi_version_env()
-                if delphi_ver and float(delphi_ver) >= 12.0:
-                    args.append("/p:DCC_UseMSBuildExternally=true")
-                    logger.info("检测到 Delphi %s (>=XE5)，已启用 DCC_UseMSBuildExternally", delphi_ver)
-            except Exception as e:
-                logger.warning("检测 Delphi 版本失败，不启用 DCC_UseMSBuildExternally: %s", e)
+            if 'dcc_usemsbuildexternally' not in _extra_prop_names:
+                try:
+                    delphi_ver = _get_delphi_version_env()
+                    if delphi_ver and float(delphi_ver) >= 12.0:
+                        args.append("/p:DCC_UseMSBuildExternally=true")
+                        logger.info("检测到 Delphi %s (>=XE5)，已启用 DCC_UseMSBuildExternally", delphi_ver)
+                except Exception as e:
+                    logger.warning("检测 Delphi 版本失败，不启用 DCC_UseMSBuildExternally: %s", e)
 
             # 其他参数
             args.append("/v:minimal")  # 最小输出级别
 
-            # 用户参数最后追加，允许覆盖前面的同名 MSBuild 属性或开关。
+            # 用户参数追加（extra_args 中已覆盖的属性在此提供唯一来源）
             if not self.args_generator.validate_batch_extra_args(request.options.extra_args):
                 error_msg = "额外编译参数包含不允许的批处理元字符"
                 logger.error(error_msg)
