@@ -15,6 +15,7 @@ Action 模式:
   encode      文件编码转换（自动检测源编码，支持 BOM 处理，自动备份）
   uses        增删 uses 子句中的单元（命名空间冲突检测 + 自动排序）
   fix_garbled 修复中文乱码（自动检测 U+FFFD、缺失 BOM、编码误检测等模式并修复）
+  count_lines 统计代码行数（支持排除空白行和注释行）
 
 返回值统一为 dict，遵循项目规范:
   success: {"status": "success", "message": "...", ...}
@@ -2306,6 +2307,133 @@ def _build_uses_text(unit_names: List[str], original_text: str) -> str:
         return ', '.join(unit_names)
 
 
+def _is_comment_line(line: str, in_block_comment: bool) -> tuple[bool, bool]:
+    """检测一行是否是注释行，返回 (is_comment, still_in_block)。
+    
+    支持 Delphi 注释格式：
+    - // 行注释
+    - { } 块注释
+    - (* *) 块注释
+    
+    判断规则：
+    - 行完全在块注释中 → 注释行
+    - 行以 // 开头 → 注释行
+    - 行以 { 或 (* 开头（且非编译指令），且剩余部分也是注释或空 → 注释行
+    - 代码行中包含注释 → 代码行
+    """
+    stripped = line.strip()
+    
+    # 如果当前在块注释中
+    if in_block_comment:
+        # 检查是否结束块注释
+        if '*)' in stripped:
+            idx = stripped.find('*)')
+            before = stripped[:idx].strip()
+            after = stripped[idx + 2:].strip()
+            if before:
+                return False, False
+            # 检查剩余部分是否也是注释或空
+            if after and not after.startswith('//'):
+                return False, False
+            return True, False
+        if '}' in stripped:
+            idx = stripped.find('}')
+            before = stripped[:idx].strip()
+            after = stripped[idx + 1:].strip()
+            if before:
+                return False, False
+            # 检查剩余部分是否也是注释或空
+            if after and not after.startswith('//'):
+                return False, False
+            return True, False
+        return True, True
+    
+    # 检查行注释
+    if stripped.startswith('//'):
+        return True, False
+    
+    # 检查块注释开始
+    in_block = False
+    if stripped.startswith('{'):
+        # 检查是否是编译指令（如 {$IFDEF}）
+        if len(stripped) > 1 and stripped[1] == '$':
+            return False, False
+        in_block = True
+        # 检查是否在同一行结束
+        if '}' in stripped[1:]:
+            in_block = False
+            idx = stripped.find('}', 1)
+            after = stripped[idx + 1:].strip()
+            # 检查剩余部分是否也是注释或空
+            if after and not after.startswith('//'):
+                return False, False
+            return True, False
+        return True, True
+    
+    if stripped.startswith('(*'):
+        in_block = True
+        # 检查是否在同一行结束
+        if '*)' in stripped[2:]:
+            in_block = False
+            idx = stripped.find('*)', 2)
+            after = stripped[idx + 2:].strip()
+            # 检查剩余部分是否也是注释或空
+            if after and not after.startswith('//'):
+                return False, False
+            return True, False
+        return True, True
+    
+    if in_block:
+        return True, True
+    
+    return False, False
+
+
+def _count_lines(content: str, exclude_blank: bool = False, exclude_comments: bool = False) -> Dict[str, int]:
+    """统计代码行数。
+    
+    Args:
+        content: 文件内容
+        exclude_blank: 是否排除空白行
+        exclude_comments: 是否排除注释行
+    
+    Returns:
+        包含统计结果的字典
+    """
+    lines = content.splitlines()
+    total = len(lines)
+    blank = 0
+    comment = 0
+    code = 0
+    in_block_comment = False
+    
+    for line in lines:
+        is_blank = not line.strip()
+        is_comment, in_block_comment = _is_comment_line(line, in_block_comment)
+        
+        if is_blank:
+            blank += 1
+        elif is_comment:
+            comment += 1
+        else:
+            code += 1
+    
+    # 计算实际行数
+    actual = total
+    if exclude_blank:
+        actual -= blank
+    if exclude_comments:
+        actual -= comment
+    
+    return {
+        "total": total,
+        "blank": blank,
+        "comment": comment,
+        "code": code,
+        "actual": actual
+    }
+
+
 _NAMESPACE_PRIORITY: dict[str, int] = {
     # Group 0 — implicit always-first
     # Group 1 — System.* (fundamental RTL)
@@ -2625,6 +2753,73 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "success", "message": ", ".join(parts)}
     finally:
         _release_write_lock(file_path)
+
+
+async def handle_count_lines(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    统计 Delphi 文件的行数。
+
+    参数:
+      file_path: 文件路径(.pas/.dpr/.dpk/.inc)
+      exclude_blank: 是否排除空白行 (默认 false)
+      exclude_comments: 是否排除注释行 (默认 false)
+
+    返回:
+      包含统计结果的字典:
+      - total: 总行数
+      - blank: 空白行数
+      - comment: 注释行数
+      - code: 代码行数（排除空白和注释）
+      - actual: 实际行数（根据排除选项计算）
+    """
+    file_path = arguments.get("file_path")
+    exclude_blank = arguments.get("exclude_blank", False)
+    exclude_comments = arguments.get("exclude_comments", False)
+
+    if not file_path:
+        return _wrap_error("请提供 file_path 参数")
+
+    path_err = _validate_path(file_path, arguments.get("project_path"))
+    if path_err:
+        return _wrap_error("路径安全校验失败: %s" % path_err)
+
+    if not os.path.isfile(file_path):
+        return _wrap_error(f"文件不存在: {file_path}")
+
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext not in ('.pas', '.dpr', '.dpk', '.inc'):
+        return _wrap_error(f"count_lines 仅支持 .pas/.dpr/.dpk/.inc 文件，不支持 {ext}")
+
+    try:
+        # 读取文件
+        detected_enc = detect_encoding(file_path)
+        with open(file_path, 'r', encoding=detected_enc, newline='',
+                  buffering=BUFFER_SIZE_1MB) as f:
+            content = f.read()
+
+        # 统计行数
+        stats = _count_lines(content, exclude_blank, exclude_comments)
+
+        # 构建消息
+        basename = os.path.basename(file_path)
+        parts = [
+            f"file: {basename}",
+            f"total: {stats['total']}",
+            f"blank: {stats['blank']}",
+            f"comment: {stats['comment']}",
+            f"code: {stats['code']}",
+        ]
+
+        if exclude_blank or exclude_comments:
+            parts.append(f"actual: {stats['actual']}")
+            if exclude_blank:
+                parts.append("(excluding blank lines)")
+            if exclude_comments:
+                parts.append("(excluding comment lines)")
+
+        return {"status": "success", "message": ", ".join(parts), "stats": stats}
+    except Exception as ex:
+        return _wrap_error(f"统计行数失败: {ex}")
 
 
 # ============================================================
@@ -3842,7 +4037,9 @@ async def handle_file_tool(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return await handle_fix_garbled(arguments)
         elif action == "grep":
             return await handle_grep(arguments)
+        elif action == "count_lines":
+            return await handle_count_lines(arguments)
         else:
-            return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled, grep")
+            return _wrap_error(f"未知 action: {action}。支持的 action: read, write, replace, insert, delete, format, backup, encode, uses, fix_garbled, grep, count_lines")
     finally:
         pass  # ensure clean exit even if recording raises
