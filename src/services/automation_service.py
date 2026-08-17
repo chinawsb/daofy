@@ -153,6 +153,40 @@ _ENV_METADATA_KEYS = ('environment', 'env')
 _pool_cleanup_interval = 60  # 定时清理间隔（秒）
 _pool_cleanup_thread: threading.Thread | None = None
 
+# ── 异常过滤器 ──
+# exception_filter 支持的异常类型
+EXCEPTION_TYPES = frozenset({
+    'dialog',      # 对话框（错误/警告/信息）
+    'notification', # 通知弹窗
+    'focus_lost',  # 焦点被切走
+    'session_expired', # 会话过期/登录失效
+})
+
+# exception_filter 支持的处理动作
+EXCEPTION_ACTIONS = frozenset({
+    'close',       # 关闭弹窗
+    'refocus',     # 切换回原窗口
+    'restart_app', # 重启应用
+    'log',         # 仅记录
+    'ignore',      # 忽略
+    'abort',       # 中止测试
+})
+
+# 默认异常过滤器配置
+DEFAULT_EXCEPTION_FILTER = {
+    'enabled': False,
+    'poll_interval_ms': 500,
+    'max_exceptions': 10,
+    'on_exception': {
+        'dialog': 'close',
+        'notification': 'close',
+        'focus_lost': 'refocus',
+        'session_expired': 'restart_app',
+    },
+    'patterns': [],
+    'ignore_patterns': [],
+}
+
 
 def _pool_cleanup_worker():
     """后台守护线程：定时清理过期进程"""
@@ -304,6 +338,271 @@ def _redact_script_metadata(script_metadata: dict) -> dict:
         if key in redacted:
             redacted[key] = _env_report(_normalize_env_overrides(redacted[key]))
     return redacted
+
+
+# ── 异常过滤器 ──
+
+class ExceptionFilter:
+    """异常过滤器 - 检测和处理自动化测试中的异常情况。
+    
+    支持的异常类型：
+    - dialog: 对话框（错误/警告/信息）
+    - notification: 通知弹窗
+    - focus_lost: 焦点被切走
+    - session_expired: 会话过期/登录失效
+    
+    支持的处理动作：
+    - close: 关闭弹窗
+    - refocus: 切换回原窗口
+    - restart_app: 重启应用
+    - log: 仅记录
+    - ignore: 忽略
+    - abort: 中止测试
+    """
+    
+    def __init__(self, config: dict, app_path: str, pipe_cmd_func):
+        """初始化异常过滤器。
+        
+        Args:
+            config: exception_filter 配置字典
+            app_path: 应用程序路径
+            pipe_cmd_func: 发送管道命令的函数
+        """
+        self.enabled = config.get('enabled', False)
+        self.poll_interval_ms = config.get('poll_interval_ms', 500)
+        self.max_exceptions = config.get('max_exceptions', 10)
+        self.on_exception = config.get('on_exception', DEFAULT_EXCEPTION_FILTER['on_exception'])
+        self.patterns = config.get('patterns', [])
+        self.ignore_patterns = config.get('ignore_patterns', [])
+        self.app_path = app_path
+        self.pipe_cmd_func = pipe_cmd_func
+        
+        # 统计信息
+        self.exception_count = 0
+        self.exceptions_handled = []
+        self.last_exception_time = 0
+        
+    def _matches_pattern(self, text: str, pattern: dict) -> bool:
+        """检查文本是否匹配模式。"""
+        if not text or not pattern:
+            return False
+            
+        title_pattern = pattern.get('title_pattern', '')
+        class_pattern = pattern.get('class_pattern', '')
+        text_pattern = pattern.get('text_pattern', '')
+        
+        import re
+        if title_pattern and not re.search(title_pattern, text, re.IGNORECASE):
+            return False
+        if class_pattern and not re.search(class_pattern, text, re.IGNORECASE):
+            return False
+        if text_pattern and not re.search(text_pattern, text, re.IGNORECASE):
+            return False
+            
+        return True
+    
+    def _detect_exception(self) -> tuple[str, dict] | None:
+        """检测异常情况。
+        
+        Returns:
+            (exception_type, exception_info) 或 None
+        """
+        try:
+            # 使用 dumpstate 获取当前窗口状态
+            req = {"reqId": "ex_filter", "cmd": "dumpstate", "target": ""}
+            resp_json = self.pipe_cmd_func(json.dumps(req, ensure_ascii=False))
+            
+            if not resp_json:
+                return None
+                
+            resp = json.loads(resp_json) if isinstance(resp_json, str) else resp_json
+            state = resp.get('state') or resp.get('data', '')
+            
+            if isinstance(state, str):
+                try:
+                    state = json.loads(state)
+                except json.JSONDecodeError:
+                    return None
+            
+            if not isinstance(state, dict):
+                return None
+            
+            # 检查是否有对话框/弹窗
+            forms = state.get('forms', [])
+            for form in forms:
+                form_title = form.get('caption', '') or form.get('title', '')
+                form_class = form.get('class_name', '')
+                
+                # 检查是否是对话框
+                if form.get('is_dialog') or form.get('form_style') == 'fsModal':
+                    # 检查忽略模式
+                    ignore = False
+                    for pattern in self.ignore_patterns:
+                        if self._matches_pattern(form_title, pattern):
+                            ignore = True
+                            break
+                    if ignore:
+                        continue
+                    
+                    # 检查异常模式
+                    for pattern in self.patterns:
+                        if self._matches_pattern(form_title, pattern):
+                            return ('dialog', {
+                                'title': form_title,
+                                'class': form_class,
+                                'pattern': pattern,
+                            })
+                    
+                    # 默认检测为对话框异常
+                    return ('dialog', {
+                        'title': form_title,
+                        'class': form_class,
+                    })
+            
+            # 检查焦点状态
+            focus_info = state.get('focus', {})
+            active_window = focus_info.get('active_window', '')
+            if active_window and active_window != self.app_path:
+                return ('focus_lost', {
+                    'active_window': active_window,
+                })
+            
+        except Exception as e:
+            # 异常检测本身不应影响测试
+            pass
+        
+        return None
+    
+    def _handle_exception(self, exception_type: str, exception_info: dict) -> str:
+        """处理异常情况。
+        
+        Args:
+            exception_type: 异常类型
+            exception_info: 异常信息
+            
+        Returns:
+            处理动作
+        """
+        # 获取处理动作
+        action = self.on_exception.get(exception_type, 'log')
+        
+        # 记录异常
+        self.exception_count += 1
+        self.exceptions_handled.append({
+            'type': exception_type,
+            'info': exception_info,
+            'action': action,
+            'time': time.time(),
+        })
+        
+        # 执行处理动作
+        try:
+            if action == 'close':
+                # 发送关闭命令
+                req = {
+                    "reqId": f"ex_close_{self.exception_count}",
+                    "cmd": "key",
+                    "target": "",
+                    "key": "{ESCAPE}"
+                }
+                self.pipe_cmd_func(json.dumps(req, ensure_ascii=False))
+                time.sleep(0.1)
+                
+            elif action == 'refocus':
+                # 切换回原窗口
+                req = {
+                    "reqId": f"ex_refocus_{self.exception_count}",
+                    "cmd": "goto",
+                    "target": self.app_path,
+                }
+                self.pipe_cmd_func(json.dumps(req, ensure_ascii=False))
+                time.sleep(0.1)
+                
+            elif action == 'restart_app':
+                # 重启应用（需要特殊处理）
+                # 这里只记录，实际重启需要在调用方处理
+                pass
+                
+            elif action == 'abort':
+                # 中止测试
+                return 'abort'
+                
+        except Exception as e:
+            # 处理动作失败不应影响测试
+            pass
+        
+        return action
+    
+    def check_and_handle(self) -> tuple[bool, str]:
+        """检查并处理异常。
+        
+        Returns:
+            (should_abort, action_taken)
+        """
+        if not self.enabled:
+            return False, ''
+        
+        # 检查异常次数限制
+        if self.exception_count >= self.max_exceptions:
+            return True, 'max_exceptions_reached'
+        
+        # 检测异常
+        exception = self._detect_exception()
+        if not exception:
+            return False, ''
+        
+        exception_type, exception_info = exception
+        
+        # 处理异常
+        action = self._handle_exception(exception_type, exception_info)
+        
+        # 检查是否需要中止
+        if action == 'abort':
+            return True, 'abort'
+        
+        return False, action
+    
+    def get_stats(self) -> dict:
+        """获取异常统计信息。"""
+        return {
+            'enabled': self.enabled,
+            'exception_count': self.exception_count,
+            'max_exceptions': self.max_exceptions,
+            'exceptions_handled': self.exceptions_handled,
+        }
+
+
+def _parse_exception_filter(filter_config: dict | None) -> dict:
+    """解析和验证 exception_filter 配置。"""
+    if not filter_config:
+        return dict(DEFAULT_EXCEPTION_FILTER)
+    
+    config = dict(DEFAULT_EXCEPTION_FILTER)
+    config.update(filter_config)
+    
+    # 验证 on_exception 配置
+    on_exception = config.get('on_exception', {})
+    validated_on_exception = {}
+    for exc_type, action in on_exception.items():
+        if exc_type in EXCEPTION_TYPES and action in EXCEPTION_ACTIONS:
+            validated_on_exception[exc_type] = action
+    config['on_exception'] = validated_on_exception
+    
+    # 验证 patterns
+    validated_patterns = []
+    for pattern in config.get('patterns', []):
+        if isinstance(pattern, dict):
+            validated_patterns.append(pattern)
+    config['patterns'] = validated_patterns
+    
+    # 验证 ignore_patterns
+    validated_ignore_patterns = []
+    for pattern in config.get('ignore_patterns', []):
+        if isinstance(pattern, dict):
+            validated_ignore_patterns.append(pattern)
+    config['ignore_patterns'] = validated_ignore_patterns
+    
+    return config
 
 
 # ── 共享管道原语 ──
@@ -3754,6 +4053,11 @@ def _execute_script_unlocked(app_path: str, script,
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as e:
         return {'status': 'error', 'message': f'脚本解析失败: {e}'}
 
+    # 解析异常过滤器配置
+    exception_filter_config = _parse_exception_filter(
+        script_metadata.get('exception_filter')
+    )
+
     # 获取或创建进程
     try:
         env_overrides = _merge_env_overrides(
@@ -3781,7 +4085,30 @@ def _execute_script_unlocked(app_path: str, script,
     success = True
     req_index = 0
 
+    # 创建异常过滤器实例
+    exception_filter = None
+    if exception_filter_config.get('enabled'):
+        exception_filter = ExceptionFilter(
+            exception_filter_config,
+            app_path,
+            _send_command
+        )
+
     for step in steps:
+        # 异常过滤器检查
+        if exception_filter and exception_filter.enabled:
+            should_abort, action_taken = exception_filter.check_and_handle()
+            if should_abort:
+                results.append({
+                    'step': step,
+                    'command': '',
+                    'response': {'status': 'abort', 'data': f'exception_filter_abort: {action_taken}'},
+                    'status': 'aborted',
+                    'abort_reason': 'exception_filter',
+                })
+                success = False
+                break
+
         if not success and stop_on_failure:
             results.append({
                 'step': step,
@@ -4470,7 +4797,8 @@ def _execute_script_unlocked(app_path: str, script,
 
     _end_pipe_session()
 
-    return {
+    # 构建返回结果
+    result = {
         'status': 'ok' if success else 'partial',
         'app_path': app_path,
         'snapshots_dir': snapshots_dir,
@@ -4483,3 +4811,9 @@ def _execute_script_unlocked(app_path: str, script,
         'resolved_action': 'gui',
         'report': _make_report(results, len(steps), time.monotonic() - run_started),
     }
+    
+    # 添加异常过滤器统计
+    if exception_filter and exception_filter.enabled:
+        result['exception_filter'] = exception_filter.get_stats()
+    
+    return result
