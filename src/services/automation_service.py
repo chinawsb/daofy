@@ -519,9 +519,8 @@ class ExceptionFilter:
                 time.sleep(0.1)
                 
             elif action == 'restart_app':
-                # 重启应用（需要特殊处理）
-                # 这里只记录，实际重启需要在调用方处理
-                pass
+                # 重启应用：通知调用方处理
+                return 'restart_app'
                 
             elif action == 'abort':
                 # 中止测试
@@ -4099,15 +4098,48 @@ def _execute_script_unlocked(app_path: str, script,
         if exception_filter and exception_filter.enabled:
             should_abort, action_taken = exception_filter.check_and_handle()
             if should_abort:
-                results.append({
-                    'step': step,
-                    'command': '',
-                    'response': {'status': 'abort', 'data': f'exception_filter_abort: {action_taken}'},
-                    'status': 'aborted',
-                    'abort_reason': 'exception_filter',
-                })
-                success = False
-                break
+                # restart_app：终止进程并重新启动，不中断测试
+                if action_taken == 'restart_app':
+                    try:
+                        # 终止当前进程
+                        entry = _process_pool.pop(app_path, None)
+                        if entry:
+                            proc = entry.get('proc')
+                            if proc and proc.poll() is None:
+                                proc.terminate()
+                                proc.wait(timeout=3)
+                        # 重新启动
+                        is_new, err = _ensure_process(app_path, wait_for_pipe, env_overrides)
+                        if err:
+                            results.append({
+                                'step': step,
+                                'command': '',
+                                'response': {'status': 'error', 'data': f'restart_app failed: {err}'},
+                                'status': 'error',
+                            })
+                            success = False
+                            break
+                        _begin_pipe_session()
+                        _pipe_session.pipe_name = _process_pipe_name(app_path)
+                    except Exception as e:
+                        results.append({
+                            'step': step,
+                            'command': '',
+                            'response': {'status': 'error', 'data': f'restart_app exception: {e}'},
+                            'status': 'error',
+                        })
+                        success = False
+                        break
+                else:
+                    results.append({
+                        'step': step,
+                        'command': '',
+                        'response': {'status': 'abort', 'data': f'exception_filter_abort: {action_taken}'},
+                        'status': 'aborted',
+                        'abort_reason': 'exception_filter',
+                    })
+                    success = False
+                    break
 
         if not success and stop_on_failure:
             results.append({
