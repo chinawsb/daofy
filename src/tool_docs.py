@@ -1473,6 +1473,13 @@ TOOL_HELP_DOCS: dict = {
                     "script 可为文件路径、JSON 字符串、步骤数组，或推荐的完整脚本对象 "
                     '{"test_name":"smoke","steps":[...]}；对象内除 steps 外的字段会作为 script_metadata 返回。'
                 ),
+                "exception_filter": (
+                    "脚本 metadata 可设 exception_filter 在步骤间自动检测异常弹窗/焦点丢失/会话过期，"
+                    "处理后继续执行不中断测试。支持的异常类型: dialog/notification/focus_lost/session_expired。"
+                    "支持的动作: close(ESC)/refocus(goto)/restart_app/log/ignore/abort。"
+                    "配置示例: {'exception_filter': {'enabled': true, 'on_exception': {'dialog': 'close', 'focus_lost': 'refocus'}}}。"
+                    "返回值中附带 exception_filter 统计: {enabled, exception_count, max_exceptions, exceptions_handled}。"
+                ),
                 "environment": (
                     "Optional `env` / `environment` top-level script fields inject temporary child-process "
                     "environment variables. Values are applied only at tested-process startup, are not persisted, "
@@ -1663,6 +1670,7 @@ TOOL_HELP_DOCS: dict = {
             'automate_delphi(action="console", app_path="Deploy.exe", input="\\n", expect="success", args=["--silent"])',
             'automate_delphi(action="test", app_path="App.exe", test_timeout=30, tests=[{"id":"add","className":"Tests.TCalculator","method":"Add","params":[1,2],"expected":"3"}])',
             'automate_delphi(action="test", app_path="App.exe", tests=[{"id":"exception","className":"Tests.TCalculator","method":"Parse","params":["bad"],"expected_exception":"EConvertError","expected_message":"invalid"}])',
+            'automate_delphi(action="gui", app_path="App.exe", script={"test_name":"resilient","exception_filter":{"enabled":true,"on_exception":{"dialog":"close","focus_lost":"refocus"}},"steps":[{"cmd":"goto","target":"TMainForm"},{"cmd":"click","target":"btnRun"}]})',
             '# 感知-规划-执行-反馈 完整循环示例见 get_coding_rules(section="automation")',
         ],
         "action_params": {
