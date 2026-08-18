@@ -1,0 +1,33 @@
+{
+  "test_name": "exception-filter-basic",
+  "test_level": "gray-box",
+  "app_path": "C:/user/daofy-agent/daofy/docs/tutorial/automate-test/Win32/Debug/AutoTest.exe",
+  "target_form": "TForm1",
+  "version": 1,
+  "exception_filter": {
+    "enabled": true,
+    "poll_interval_ms": 500,
+    "max_exceptions": 5,
+    "on_exception": {
+      "dialog": "close",
+      "notification": "close",
+      "focus_lost": "refocus",
+      "session_expired": "restart_app"
+    },
+    "patterns": [
+      {"title_pattern": "Error|错误", "action": "close"},
+      {"title_pattern": "Warning|警告", "action": "log"}
+    ],
+    "ignore_patterns": [
+      {"title_pattern": "About|关于"}
+    ]
+  },
+  "goal": "验证 exception_filter 基本功能：启用过滤器后正常执行测试步骤",
+  "steps": [
+    {"cmd": "goto", "target": "TForm1", "expected": "导航到主窗体"},
+    {"cmd": "type", "target": "EditName", "text": "exception-test", "expected": "输入测试文本"},
+    {"cmd": "rget", "target": "EditName.Text", "assert_expr": "actual=='exception-test'", "expected": "验证输入值"},
+    {"cmd": "click", "target": "BtnHello", "expected": "点击 Hello 按钮"},
+    {"cmd": "waitfor", "target": "BtnHello", "prop": "Caption", "value": "Hello, exception-test!", "timeout": 5000, "assert_expr": "actual=='ok'", "expected": "验证按钮标题更新"}
+  ]
+}
