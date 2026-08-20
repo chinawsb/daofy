@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.08.20] - 2026-08-20
+
+### Added
+
+- **exception_filter**: `automate_delphi` 新增 `exception_filter` 参数，自动检测并处理意外弹窗/焦点变化
+  （如 MessageBox、异常对话框），无需手动编写 waitfor 脚本
+- **count_lines**: `delphi_file` 新增 `action=count_lines` 行统计功能，支持按文件/目录统计代码行数
+- **安装脚本恢复**: `install.bat`/`uninstall.bat`/`install_mcp.py` 恢复到版本控制，方便 Windows 用户一键安装
+
+### Fixed
+
+- **compile extra_args /p: 属性覆盖**: `extra_args` 中所有 `/p:Platform`、`/p:Config` 等 `/p:` 属性
+  现在正确覆盖工具自动生成的值，而非被忽略
+- **file_tool _build_uses_text 恢复**: 修复 `6f0ce6c` 中误删的 `_build_uses_text` 函数，
+  uses 管理功能恢复正常
+- **UIA pattern 兼容**: 兼容 UIA pattern 获取与选择的回退路径，提高自动化测试稳定性
+
+### Changed
+
+- **tool_help 文档**: `automate_delphi` 帮助文档新增 `exception_filter` 参数说明与使用示例
+
 ## [2026.08.06] - 2026-08-06
 
 ### Fixed
