@@ -4,6 +4,9 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![Delphi 2005-13](https://img.shields.io/badge/Delphi-2005%20to%2013-red.svg)
 ![Lazarus/FPC](https://img.shields.io/badge/Lazarus-FPC-brightgreen)
+[![Powered by OrcaRouter](https://img.shields.io/badge/Powered_by-OrcaRouter-2563eb)](https://www.orcarouter.ai/ref/ref_18b07a7c594033c5f754)
+
+> 💡 **推广**：本工具由 [OrcaRouter](https://www.orcarouter.ai/ref/ref_18b07a7c594033c5f754) 赞助支持。OrcaRouter 是一个强大的 AI 路由引擎，能智能调度最合适的 AI 模型处理您的任务。点击上方链接了解详情。
 
 一个为 AI 助手提供 **Delphi** 和 **Lazarus/Free Pascal** 工程编译能力和知识库查询功能的 MCP Server。如果您觉得有用，请不要吝啬您的 Star! ⭐
 
