@@ -5,6 +5,19 @@
 
 MCP resource URI: `delphi://automation/architecture`。
 
+## 客户端边界
+
+本架构说明描述 Daofy MCP Server 为外部 MCP 客户端提供的 Delphi 自动化
+能力。DaofyCoding 拥有独立的宿主执行链，不读取 `delphi://` 资源，也不依赖
+Daofy MCP Server。DaofyCoding 的语言处理顺序是：先识别项目和工具链，再做
+范围内实现，随后运行语言对应的编译/测试，最后仅在目标表面需要时调用原生
+`automation_run`；非 Delphi 项目通过显式 steps 和 `external-driver` 验证。
+
+外部客户端使用本 Server 的 `automate_delphi`、`delphi_rtti` 和资源 URI。
+若 Server 从 `initialize.clientInfo.name` 检测到 DaofyCoding，则隐藏这三个已
+有宿主替代的工具，保留 `delphi_file`/`delphi_project` 等没有同名宿主替代的
+Delphi 专用工具。
+
 ```
 大模型（脑）:  感知 → 规划 → 执行指令 → 分析反馈 → 调整策略
                    ↕          ↕
@@ -27,7 +40,7 @@ MCP 服务器（手脚）:  提供工具感知 UI 状态 + 执行 UI 操作
 
 | 文档 | URI |
 |------|-----|
-| 自动化测试完整工作流 | `delphi://automation/reference/workflow` |
+| 自动化测试完整工作流 | `delphi://automation/workflow` |
 | 脚本生成工作流 | `delphi://automation/script-generation-workflow` |
 | 能力选型矩阵 | `delphi://automation/capability-matrix` |
 | 脚本格式规范 + 断言 + 缓存 | `delphi://automation/script-schema` |

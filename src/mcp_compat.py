@@ -21,8 +21,13 @@ MCP v2 breaking changes handled here:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Optional, Union
+
+import anyio
+
+logger = logging.getLogger(__name__)
 
 # ── Version detection ──────────────────────────────────────────────
 
@@ -66,6 +71,46 @@ McpError = _McpErrorOrigin
 # ── Transport (unchanged) ──────────────────────────────────────────
 
 from mcp.server.stdio import stdio_server
+
+
+class _StdinEofLoggingReceiveStream:
+    """Log once when the MCP stdio input stream reaches EOF."""
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+        self._eof_logged = False
+
+    def _log_eof(self) -> None:
+        if self._eof_logged:
+            return
+        self._eof_logged = True
+        logger.info("mcp_lifecycle event=stdin_eof transport=stdio")
+
+    async def receive(self) -> Any:
+        try:
+            return await self._stream.receive()
+        except anyio.EndOfStream:
+            self._log_eof()
+            raise
+
+    def __aiter__(self) -> "_StdinEofLoggingReceiveStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return await self.receive()
+        except anyio.EndOfStream as exc:
+            raise StopAsyncIteration from exc
+
+    async def __aenter__(self) -> "_StdinEofLoggingReceiveStream":
+        await self._stream.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> Any:
+        return await self._stream.__aexit__(exc_type, exc, tb)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
 
 # ── Server base (from mcp.server import Server is unchanged) ──────
 
@@ -278,6 +323,7 @@ async def run_mcp_server(
     install_client_rules :
         Optional async callable(session) for client rules installation.
     """
+    logged_read_stream = _StdinEofLoggingReceiveStream(read_stream)
     if MCP2:
         # v2: Server.run() handles session creation internally
         import anyio
@@ -289,10 +335,11 @@ async def run_mcp_server(
                 server.lifespan(server)
             )
             await server.run(
-                read_stream,
+                logged_read_stream,
                 write_stream,
                 initialization_options,
             )
+        logger.info("mcp_lifecycle event=server_run_returned sdk_mode=v2")
     else:
         # v1: manual session creation with DaofyServerSession
         from contextlib import AsyncExitStack
@@ -306,7 +353,7 @@ async def run_mcp_server(
             )
             session = await stack.enter_async_context(
                 _V1DaofyServerSession(
-                    read_stream,
+                    logged_read_stream,
                     write_stream,
                     initialization_options,
                 )
@@ -334,6 +381,7 @@ async def run_mcp_server(
                         )
                 finally:
                     tg.cancel_scope.cancel()
+        logger.info("mcp_lifecycle event=server_run_returned sdk_mode=v1_compat")
 
 
 # ── v1-only helpers ────────────────────────────────────────────────
@@ -387,18 +435,17 @@ else:
     _V1DaofyServerSession = None  # type: ignore
 
 
-# ── Session accessor helper (for request_context.session removal) ──
+# ── Session accessor helper ────────────────────────────────────────
 
 def get_server_session(server_obj: Any) -> Optional[Any]:
-    """Get the current server session, None if unavailable.
+    """Get the current request's server session, None if unavailable.
 
-    In v1: server.request_context.session
-    In v2: request_context property removed; returns None (callers must handle).
+    Recent MCP SDK releases continue to expose ``request_context``.  Keep the
+    lookup duck-typed so both SDK generations and test doubles are supported.
     """
-    if MCP2:
-        return None
     try:
-        return getattr(server_obj, "request_context", None).session
+        context = getattr(server_obj, "request_context", None)
+        return getattr(context, "session", None)
     except Exception:
         return None
 

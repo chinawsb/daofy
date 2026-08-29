@@ -8,12 +8,13 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 核心业务逻辑,协调参数生成、进程执行、结果解析等组件
 """
 
-import time
 import os
+import tempfile
+import time
 import winreg
-from typing import Optional
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from ..constants import (
     REG_KEY_EMBARCADERO_BDS,
     TIMEOUT_DELPHI_COMPILE,
@@ -29,8 +30,15 @@ from .process_manager import ProcessManager
 from .config_manager import ConfigManager
 from ..utils import get_console_encoding
 from ..utils.delphi_env import (
+    EnvOptionsLibraryStatus,
+    build_env_options_overlay,
     get_delphi_public_studio_root,
     get_delphi_version as _get_delphi_version_env,
+    inspect_env_options_library_paths,
+)
+from ..utils.delphi_versions import (
+    detect_registry_version_from_compiler,
+    project_version_to_registry_version,
 )
 from ..utils.parser import OutputParser
 from ..utils.validator import Validator
@@ -901,6 +909,105 @@ class CompilerService:
         """从注册表查找 dcc32.exe 路径（向后兼容）"""
         return self._find_compiler_from_registry(TargetPlatform.WIN32)
 
+    @staticmethod
+    def _parse_msbuild_property(argument: str) -> Optional[tuple[str, str]]:
+        """Parse one MSBuild property argument using any supported prefix."""
+        lowered = argument.lower()
+        for prefix in ("/p:", "-p:", "/property:", "-property:"):
+            if not lowered.startswith(prefix):
+                continue
+            assignment = argument[len(prefix):]
+            if "=" not in assignment:
+                return None
+            name, value = assignment.split("=", 1)
+            if not name:
+                return None
+            return name.lower(), value
+        return None
+
+    def _resolve_msbuild_registry_version(
+        self,
+        request: ProjectCompileRequest,
+        parser: DprojParser,
+        project_parsed: bool,
+    ) -> Optional[str]:
+        """Resolve the one Delphi registry version used by an MSBuild run."""
+        compiler_version = request.options.compiler_version
+        if compiler_version:
+            compiler = self.config_manager.get_compiler(compiler_version)
+            if compiler and compiler.registry_version:
+                return compiler.registry_version
+            if compiler and compiler.path:
+                for parent in Path(compiler.path).parents:
+                    registry_version = project_version_to_registry_version(parent.name)
+                    if registry_version:
+                        logger.info(
+                            "从编译器路径推断 registry_version: %s -> %s",
+                            compiler.path,
+                            registry_version,
+                        )
+                        return registry_version
+                registry_version = detect_registry_version_from_compiler(compiler.path)
+                if registry_version:
+                    logger.info(
+                        "从编译器输出推断 registry_version: %s -> %s",
+                        compiler.path,
+                        registry_version,
+                    )
+                    return registry_version
+            logger.error(
+                "无法确定显式编译器 %s 的 registry_version，拒绝回退到其他 Delphi 版本",
+                compiler_version,
+            )
+            return None
+
+        if project_parsed:
+            project_version = parser.get_project_version()
+            if project_version:
+                registry_version = project_version_to_registry_version(project_version)
+                if registry_version:
+                    return registry_version
+
+        logger.warning(
+            "无法确定工程对应的 Delphi registry_version；"
+            "将沿用 rsvars 默认选择并跳过 EnvOptions 兼容处理"
+        )
+        return None
+
+    @staticmethod
+    def _write_env_options_overlay(
+        status: EnvOptionsLibraryStatus,
+        platform: str,
+    ) -> str:
+        """Write a short-lived EnvOptions overlay for an MSBuild invocation."""
+        content = build_env_options_overlay(
+            status.env_options_path,
+            status.registry_paths,
+            platform,
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".proj",
+            prefix="daofy-envoptions-",
+            delete=False,
+            encoding="utf-8",
+            newline="\n",
+        ) as overlay:
+            overlay.write(content)
+            return overlay.name
+
+    @staticmethod
+    def _remove_temp_file(file_path: Optional[str]) -> None:
+        """Remove a compiler temporary file without hiding cleanup failures."""
+        if not file_path:
+            return
+        try:
+            os.unlink(file_path)
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            logger.warning("删除临时文件失败 %s: %s", file_path, exc)
+
     async def compile_project_with_msbuild(self, request: ProjectCompileRequest) -> CompileResult:
         """
         使用 MSBuild 编译 Delphi 工程
@@ -913,6 +1020,8 @@ class CompilerService:
         """
         logger.info(f"使用 MSBuild 编译工程: {request.project_path}")
         start_time = time.time()
+        batch_file: Optional[str] = None
+        env_options_overlay: Optional[str] = None
         
         try:
             # 1. 检查 MSBuild 是否可用
@@ -983,9 +1092,12 @@ class CompilerService:
             _extra_args = request.options.extra_args or []
             _found_platform = _found_config = False
             for _ea in reversed(_extra_args):
-                _ea_lower = _ea.lower()
-                if not _found_platform and _ea_lower.startswith('/p:platform='):
-                    _extra_plat = _ea.split('=', 1)[1]
+                _property = self._parse_msbuild_property(_ea)
+                if not _property:
+                    continue
+                _property_name, _property_value = _property
+                if not _found_platform and _property_name == 'platform':
+                    _extra_plat = _property_value
                     if _extra_plat.lower() != platform.lower():
                         logger.warning(
                             "extra_args /p:Platform=%s 与 options.target_platform=%s冲突，"
@@ -998,8 +1110,8 @@ class CompilerService:
                         except ValueError:
                             pass
                     _found_platform = True
-                elif not _found_config and _ea_lower.startswith('/p:config='):
-                    _extra_cfg = _ea.split('=', 1)[1]
+                elif not _found_config and _property_name == 'config':
+                    _extra_cfg = _property_value
                     if _extra_cfg != config:
                         logger.warning(
                             "extra_args /p:Config=%s 与 build_configuration=%s冲突，"
@@ -1011,6 +1123,37 @@ class CompilerService:
                     _found_config = True
                 if _found_platform and _found_config:
                     break
+
+            parser = DprojParser(dproj_path)
+            project_parsed = parser.parse()
+            registry_version = self._resolve_msbuild_registry_version(
+                request,
+                parser,
+                project_parsed,
+            )
+            if request.options.compiler_version and not registry_version:
+                error_msg = (
+                    "无法确定指定编译器的 Delphi 注册表版本，"
+                    "为避免混用其他 Delphi 版本，已停止编译"
+                )
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="COMPILER_VERSION_UNRESOLVED",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000),
+                )
+            selected_bds = (
+                self._get_delphi_root_from_registry(registry_version)
+                if registry_version
+                else None
+            )
+            if registry_version:
+                logger.info(
+                    "MSBuild 使用 Delphi %s，平台 %s，配置 %s",
+                    registry_version,
+                    platform,
+                    config,
+                )
             
             project_dir = str(Path(dproj_path).parent)
             project_path = str(Path(dproj_path).parent)
@@ -1060,7 +1203,7 @@ class CompilerService:
                 'path': os.environ.get('PATH', ''),
                 
                 # Delphi 环境变量
-                'bds': os.environ.get('BDS') or self._get_delphi_root_from_registry() or '',
+                'bds': selected_bds or os.environ.get('BDS') or '',
                 'local_command': '',
                 
                 # 系统变量
@@ -1069,9 +1212,8 @@ class CompilerService:
             }
             
             # 解析 .dproj 文件获取编译事件
-            parser = DprojParser(dproj_path)
             build_events = {}
-            if parser.parse():
+            if project_parsed:
                 build_events = parser.get_build_events(config, platform)
                 
                 # 执行 PreBuildEvent
@@ -1101,13 +1243,12 @@ class CompilerService:
             args.append(dproj_path)
             
             # ── 从 extra_args 提取属性名，跳过工具生成的同名属性 ──
-            # extra_args 中的 /p:Name=Value 为唯一来源，避免命令行重复且语义明确。
+            # extra_args 中的 MSBuild 属性为唯一来源，避免命令行重复且语义明确。
             _extra_prop_names = set()
             for _ea in (request.options.extra_args or []):
-                if _ea.lower().startswith('/p:'):
-                    _eq = _ea.find('=', 3)
-                    if _eq > 0:
-                        _extra_prop_names.add(_ea[3:_eq].lower())
+                _property = self._parse_msbuild_property(_ea)
+                if _property:
+                    _extra_prop_names.add(_property[0])
             
             # 目标平台
             if 'platform' not in _extra_prop_names:
@@ -1142,7 +1283,7 @@ class CompilerService:
             # 解决 MSBuild 命令行过长 (>32K) 导致编译失败的问题
             if 'dcc_usemsbuildexternally' not in _extra_prop_names:
                 try:
-                    delphi_ver = _get_delphi_version_env()
+                    delphi_ver = registry_version or _get_delphi_version_env()
                     if delphi_ver and float(delphi_ver) >= 12.0:
                         args.append("/p:DCC_UseMSBuildExternally=true")
                         logger.info("检测到 Delphi %s (>=XE5)，已启用 DCC_UseMSBuildExternally", delphi_ver)
@@ -1162,27 +1303,9 @@ class CompilerService:
                     error_message=error_msg,
                     duration=int((time.time() - start_time) * 1000)
                 )
-            args.extend(request.options.extra_args)
-            
-            # 记录完整编译参数到日志
-            msbuild_cmd = f'msbuild {" ".join(args)}'
-            logger.info(f"MSBuild 参数: {msbuild_cmd}")
-            
             # 5. 获取 rsvars.bat 路径
             # 必须按 compiler_version（或 .dproj ProjectVersion 回退）定位对应版本的 rsvars.bat，
             # 否则总是加载注册表中最新的 Delphi，指定的 compiler_version 不生效
-            registry_version = None
-            if request.options.compiler_version:
-                compiler_cfg = self.config_manager.get_compiler(request.options.compiler_version)
-                if compiler_cfg:
-                    registry_version = compiler_cfg.registry_version
-            if not registry_version:
-                try:
-                    from ..utils.delphi_versions import project_version_to_registry_version
-                    project_version = parser.get_project_version()
-                    registry_version = project_version_to_registry_version(project_version)
-                except Exception as e:
-                    logger.debug("从 .dproj 推断 registry_version 失败，使用最新版本: %s", e)
             if registry_version:
                 logger.info("定位 Delphi %s 的 rsvars.bat", registry_version)
             rsvars_path = self._get_rsvars_path(registry_version)
@@ -1195,9 +1318,57 @@ class CompilerService:
                     error_message=error_msg,
                     duration=int((time.time() - start_time) * 1000)
                 )
+
+            explicit_env_properties = {
+                "bds",
+                "bdsappdatabasedir",
+                "envoptions",
+                "importenvoptions",
+                "delphilibrarypath",
+                "productversion",
+            }
+            if registry_version and not (_extra_prop_names & explicit_env_properties):
+                env_status = inspect_env_options_library_paths(
+                    registry_version,
+                    platform,
+                )
+                if env_status.state in ("missing", "stale"):
+                    env_options_overlay = self._write_env_options_overlay(
+                        env_status,
+                        platform,
+                    )
+                    args.append(f"/p:EnvOptions={env_options_overlay}")
+                    logger.warning(
+                        "Delphi %s %s 的 EnvOptions 状态为 %s；"
+                        "本次编译使用临时 overlay（注册表 %d 项，EnvOptions %d 项）",
+                        registry_version,
+                        platform,
+                        env_status.state,
+                        len(env_status.registry_paths),
+                        len(env_status.env_options_paths),
+                    )
+                elif env_status.state == "unknown":
+                    logger.warning(
+                        "无法可靠检查 Delphi %s %s 的 EnvOptions，跳过自动覆盖",
+                        registry_version,
+                        platform,
+                    )
+                elif env_status.state == "registry_missing":
+                    logger.debug(
+                        "Delphi %s %s 未配置注册表 Library Search Path，沿用 EnvOptions",
+                        registry_version,
+                        platform,
+                    )
+            elif _extra_prop_names & explicit_env_properties:
+                logger.info("检测到显式 EnvOptions/DelphiLibraryPath 参数，跳过自动兼容处理")
+
+            args.extend(request.options.extra_args)
+
+            # 记录完整编译参数到日志
+            msbuild_cmd = f'msbuild {" ".join(args)}'
+            logger.info(f"MSBuild 参数: {msbuild_cmd}")
             
             # 6. 创建临时批处理文件来设置环境并执行 MSBuild
-            import tempfile
             # 将参数中的路径用引号包裹（处理空格）
             quoted_args = []
             for arg in args:
@@ -1225,12 +1396,6 @@ class CompilerService:
                     ['/c', batch_file],
                     request.options.timeout
                 )
-                
-                # 删除临时文件
-                try:
-                    os.unlink(batch_file)
-                except OSError:
-                    pass
                 
                 # 记录 MSBuild 输出中的编译器版本/行数信息
                 for line in (stdout or '').split('\n'):
@@ -1334,6 +1499,9 @@ class CompilerService:
             )
             self._save_history(request.project_path, result.status.value, duration, error_msg)
             return result
+        finally:
+            self._remove_temp_file(batch_file)
+            self._remove_temp_file(env_options_overlay)
 
     async def compile_with_lazbuild(self, request: ProjectCompileRequest) -> CompileResult:
         """

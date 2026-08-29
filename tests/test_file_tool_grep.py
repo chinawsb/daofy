@@ -8,8 +8,11 @@ import sys
 import os
 import tempfile
 import shutil
+import threading
 from pathlib import Path
 import pytest
+
+import src.tools.file_tool as file_tool
 
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
@@ -203,6 +206,42 @@ class TestResolveGrepTargets:
             })
             assert err is None
             assert targets == [os.path.abspath(a_path), os.path.abspath(b_path)]
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_directory_exclude_supports_multiple_patterns_and_prunes(self):
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            keep = _make_file(os.path.join(tmp_dir, "src", "keep.pas"), "unit keep;")
+            _make_file(os.path.join(tmp_dir, "Win32", "Debug", "skip.pas"), "unit skip;")
+            _make_file(os.path.join(tmp_dir, "Win64", "Release", "skip.pas"), "unit skip;")
+            _make_file(os.path.join(tmp_dir, "src", "__history", "skip.pas"), "unit skip;")
+
+            targets, err = _resolve_grep_targets({
+                "file_path": tmp_dir,
+                "include": "**/*.pas",
+                "exclude": "**/Win32/**;**/Win64/**,**/__history/**",
+            })
+
+            assert err is None
+            assert targets == [os.path.abspath(keep)]
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def test_directory_target_limit_returns_actionable_error(self, monkeypatch):
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            for index in range(3):
+                _make_file(os.path.join(tmp_dir, f"Unit{index}.pas"), "unit Test;")
+            monkeypatch.setattr(file_tool, "MAX_GREP_TARGETS", 2)
+
+            targets, err = _resolve_grep_targets({
+                "file_path": tmp_dir,
+                "include": "**/*.pas",
+            })
+
+            assert targets is None
+            assert "target limit exceeded (2 files)" in err
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -409,6 +448,49 @@ class TestGrepBatch:
             assert result.get("total_matches", 0) >= 2
             files = result.get("files", {})
             assert len(files) >= 2
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    async def test_target_resolution_and_batch_search_run_in_worker_threads(
+        self, monkeypatch
+    ):
+        tmp_dir = tempfile.mkdtemp()
+        main_thread_id = threading.get_ident()
+        resolve_thread_ids = []
+        batch_thread_ids = []
+        original_resolve = file_tool._resolve_grep_targets
+
+        def tracked_resolve(arguments):
+            resolve_thread_ids.append(threading.get_ident())
+            return original_resolve(arguments)
+
+        def tracked_batch(*args, **kwargs):
+            batch_thread_ids.append(threading.get_ident())
+            return {
+                "status": "success",
+                "message": "ok",
+                "total_matches": 0,
+                "file_count": 0,
+                "files": {},
+                "errors": None,
+                "output": "",
+            }
+
+        try:
+            _make_pas_file(os.path.join(tmp_dir, "A.pas"))
+            _make_pas_file(os.path.join(tmp_dir, "B.pas"))
+            monkeypatch.setattr(file_tool, "_resolve_grep_targets", tracked_resolve)
+            monkeypatch.setattr(file_tool, "_grep_batch", tracked_batch)
+
+            result = await handle_grep({
+                "file_path": tmp_dir,
+                "include": "**/*.pas",
+                "pattern": "TMyClass",
+            })
+
+            assert result["status"] == "success"
+            assert resolve_thread_ids and resolve_thread_ids[0] != main_thread_id
+            assert batch_thread_ids and batch_thread_ids[0] != main_thread_id
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

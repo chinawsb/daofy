@@ -15,6 +15,20 @@ description: >-
 
 MCP resource URI: `delphi://automation/workflow`。
 
+## 客户端边界
+
+本资源由 Daofy MCP Server 提供给外部 MCP 客户端。DaofyCoding 内置
+Guidance 不读取 `delphi://` 资源，也不依赖 Daofy MCP Server；在 DaofyCoding
+中应使用宿主原生 `structured_content`、`process` 和 `automation_run`，并遵循
+当前语言 profile 的处理顺序。Delphi 使用 `daofy-gui`、`windows-uia` 或
+`delphi-rtti` provider，Lazarus 使用 `daofy-gui`/`windows-uia`，其他语言使用
+显式 steps 和 `external-driver`。
+
+普通外部 MCP 客户端仍可使用 `automate_delphi`。当 Server 检测到
+`initialize.clientInfo.name` 为 DaofyCoding 时，会隐藏已由宿主原生能力替代的
+`structured_content`、`automate_delphi` 和 `delphi_rtti`，避免重复注册；
+`delphi_file` 与 `delphi_project` 仍保留给没有同名宿主工具的客户端。
+
 ## 核心循环
 
 1. 加载 `delphi://automation/workflow`。

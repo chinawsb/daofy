@@ -161,6 +161,16 @@ PUBLIC_RESOURCE_SPECS: tuple[PublicResourceSpec, ...] = (
         ),
     ),
     PublicResourceSpec(
+        uri="delphi://automation/controls-reference",
+        name="automation-controls-reference",
+        title="Automation controls operation reference",
+        description="Control-specific operation guidance for Delphi automation scripts.",
+        mime_type="text/markdown",
+        relative_paths=(
+            "src/resources/coding-rules/testing/automation/reference/controls-operation-reference.md",
+        ),
+    ),
+    PublicResourceSpec(
         uri="delphi://automation/rtti-ocr-matrix",
         name="automation-rtti-ocr-matrix",
         title="RTTI vs OCR decision matrix",

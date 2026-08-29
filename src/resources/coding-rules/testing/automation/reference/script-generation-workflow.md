@@ -12,6 +12,19 @@ description: >-
 
 MCP resource URI: `delphi://automation/script-generation-workflow`。
 
+## 客户端边界
+
+这是 Daofy MCP Server 面向外部 MCP 客户端的 Delphi 脚本生成资源。
+DaofyCoding 不读取 `delphi://` 资源，也不把 Daofy MCP Server 作为运行时依赖。
+在 DaofyCoding 中，Delphi/Lazarus/其他语言分别使用语言 profile 指定的
+`automation_run` provider；只有需要结构化查询时才使用宿主的
+`structured_content`，脚本执行和进程检查走宿主原生能力；其他语言通过显式
+steps 和 `external-driver`，不套用 Delphi 专属脚本字段。
+
+外部 MCP 客户端按本文生成 `automate_delphi` 脚本。当连接客户端是 DaofyCoding
+时，Server 会从工具目录隐藏 `automate_delphi`、`delphi_rtti` 和
+`structured_content`；不要尝试绕过隐藏策略，直接使用 DaofyCoding 的原生工具。
+
 ## 核心原则
 
 1. **源码驱动**：所有 target（控件名、属性路径）必须从 `.pas/.dfm` 源码提取，不得猜测或凭记忆。

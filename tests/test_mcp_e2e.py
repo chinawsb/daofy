@@ -13,8 +13,10 @@ MCP 端到端协议测试 — 工具注册 / 分发 / 错误处理一致性
 import re
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -36,7 +38,7 @@ class TestToolRegistrationConsistency:
         "delphi_project", "delphi_kb", "delphi_file", "manage_component",
         "check_environment", "async_task", "package", "get_coding_rules",
         "code_hosting", "tool_help", "experience", "daofy_update",
-        "automate_delphi", "generate_copyright", "delphi_rtti",
+        "automate_delphi", "generate_copyright", "delphi_rtti", "structured_content",
         "ocr",
         "lazarus_compile", "lazarus_project", "lazarus_kb", "lazarus_file",
     }
@@ -48,7 +50,7 @@ class TestToolRegistrationConsistency:
         "manage_component", "check_environment", "async_task",
         "package", "get_coding_rules", "code_hosting",
         "tool_help", "experience", "daofy_update",
-        "automate_delphi", "generate_copyright", "delphi_rtti",
+        "automate_delphi", "generate_copyright", "delphi_rtti", "structured_content",
         "ocr",
         "lazarus_compile", "lazarus_project", "lazarus_kb", "lazarus_file",
     }
@@ -111,6 +113,119 @@ class TestServerDispatch:
 
     SERVER_PATH = Path(__file__).parent.parent / "src" / "server.py"
 
+    @classmethod
+    def _raw_tools_list(
+        cls,
+        client_name: str,
+        *,
+        request_method: str = "tools/list",
+        request_params: dict | None = None,
+    ) -> set[str] | dict:
+        """Run the real stdio server through initialize and tools/list."""
+        env = os.environ.copy()
+        env.update({
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "DAOFY_AGENT_SKILL_INSTALL": "off",
+        })
+        proc = subprocess.Popen(
+            [sys.executable, str(cls.SERVER_PATH)],
+            cwd=str(cls.SERVER_PATH.parent.parent),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+        )
+        assert proc.stdin is not None
+        assert proc.stdout is not None
+        assert proc.stderr is not None
+
+        stdout_lines: queue.Queue[str] = queue.Queue()
+        stderr_chunks: list[str] = []
+
+        def read_stdout() -> None:
+            for line in proc.stdout:
+                stdout_lines.put(line)
+
+        def drain_stderr() -> None:
+            stderr_chunks.append(proc.stderr.read())
+
+        stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        def send(message: dict) -> None:
+            proc.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+            proc.stdin.flush()
+
+        def receive(expected_id: int) -> dict:
+            deadline = time.time() + 30
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise AssertionError(
+                        f"Timed out waiting for JSON-RPC response {expected_id}; "
+                        f"stderr={''.join(stderr_chunks)[-2000:]}"
+                    )
+                try:
+                    payload = json.loads(stdout_lines.get(timeout=remaining))
+                except queue.Empty as exc:
+                    raise AssertionError(
+                        f"Timed out waiting for JSON-RPC response {expected_id}; "
+                        f"stderr={''.join(stderr_chunks)[-2000:]}"
+                    ) from exc
+                if payload.get("id") == expected_id:
+                    return payload
+
+        try:
+            send({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": client_name, "version": "0.1"},
+                },
+            })
+            initialize = receive(1)
+            assert "result" in initialize, initialize
+
+            send({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            })
+            send({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": request_method,
+                "params": request_params or {},
+            })
+            tools_response = receive(2)
+            if request_method != "tools/list":
+                return tools_response
+            assert "result" in tools_response, tools_response
+            return {
+                item["name"]
+                for item in tools_response["result"].get("tools", [])
+            }
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+
     def test_initialize_instructions_are_registered(self):
         """MCP initialize 响应必须携带 instructions，供客户端注入系统上下文。"""
         source = self.SERVER_PATH.read_text(encoding="utf-8")
@@ -128,6 +243,9 @@ class TestServerDispatch:
         assert "delphi_file" in instructions_block
         assert "get_coding_rules" in instructions_block
         assert "tool_help" in instructions_block
+        assert "DaofyCoding" in instructions_block
+        assert "automation_run" in instructions_block
+        assert "不依赖本 Server" in instructions_block
 
     def test_raw_initialize_response_includes_description_and_instructions(self):
         """Raw JSON-RPC initialize must expose serverInfo.description and instructions."""
@@ -162,6 +280,19 @@ class TestServerDispatch:
         try:
             assert proc.stdin is not None
             assert proc.stdout is not None
+            assert proc.stderr is not None
+
+            # Startup logs are intentionally kept on stderr so MCP stdout
+            # remains JSONL-only. Drain stderr while waiting for initialize;
+            # an unread PIPE can otherwise fill and stall the server before
+            # it writes the handshake response.
+            stderr_chunks: list[str] = []
+
+            def drain_stderr() -> None:
+                stderr_chunks.append(proc.stderr.read())
+
+            stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+            stderr_thread.start()
             proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
             proc.stdin.flush()
             line = ""
@@ -183,12 +314,57 @@ class TestServerDispatch:
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait(timeout=5)
+            if 'stderr_thread' in locals():
+                stderr_thread.join(timeout=1)
 
         result = payload["result"]
         assert result["instructions"]
         assert "delphi_file" in result["instructions"]
+        assert "DaofyCoding" in result["instructions"]
+        assert "automation_run" in result["instructions"]
         assert result["serverInfo"]["description"]
         assert "Delphi 项目编译" in result["serverInfo"]["description"]
+
+    @pytest.mark.parametrize(
+        "client_name,hidden_expected",
+        [
+            ("DaofyCoding", True),
+            ("Daofy Coding", True),
+            ("daofy_coding", True),
+            ("DAOFY-CODING", True),
+            ("NotDaofyCoding", False),
+        ],
+    )
+    def test_raw_tools_list_hides_daofycoding_native_duplicates(
+        self, client_name: str, hidden_expected: bool
+    ):
+        """Client identity must affect the actual MCP tools/list response."""
+        tools = self._raw_tools_list(client_name)
+        hidden = {"structured_content", "automate_delphi", "delphi_rtti"}
+
+        if hidden_expected:
+            assert not (hidden & tools)
+        else:
+            assert hidden <= tools
+        assert "delphi_file" in tools
+        assert "delphi_project" in tools
+
+    def test_raw_tool_call_rejects_hidden_daofycoding_duplicate(self):
+        response = self._raw_tools_list(
+            "Daofy Coding",
+            request_method="tools/call",
+            request_params={
+                "name": "automate_delphi",
+                "arguments": {},
+            },
+        )
+
+        assert isinstance(response, dict)
+        assert "result" in response, response
+        result = response["result"]
+        assert result.get("isError") is True
+        text = result["content"][0]["text"]
+        assert "hidden for DaofyCoding" in text
 
     @classmethod
     def _extract_list_tool_names(cls) -> set:

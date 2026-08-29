@@ -94,6 +94,31 @@ from src.constants import (
     TIMEOUT_EXPERIENCE_TOOL,
     TIMEOUT_GENERATE_COPYRIGHT,
 )
+from src.client_tool_policy import ensure_tool_visible, filter_tools
+
+
+def _get_mcp_client_name(server_obj: Any) -> str | None:
+    """Return ``initialize.clientInfo.name`` for the active MCP request."""
+    try:
+        session = get_server_session(server_obj)
+        if session is None:
+            return None
+        def read_member(value: Any, name: str, default: Any = None) -> Any:
+            if isinstance(value, dict):
+                return value.get(name, default)
+            return getattr(value, name, default)
+
+        params = read_member(session, "client_params")
+        if params is None:
+            params = read_member(session, "_client_params")
+        if params is None:
+            return None
+        client_info = read_member(params, "clientInfo")
+        if client_info is None:
+            client_info = read_member(params, "client_info")
+        return read_member(client_info, "name")
+    except Exception:
+        return None
 
 def _filter_surrogates(text: str) -> str:
     """过滤字符串中的无效 UTF-8 代理对字符（surrogate characters）。
@@ -132,7 +157,7 @@ def _filter_surrogates(text: str) -> str:
 
 
 MCP_SERVER_INSTRUCTIONS = (
-    "Daofy:Delphi 文件必用 delphi_file 处理，编码前 get_coding_rules；复杂工具调用前先用 tool_help(tool_name, action) 获取当前 action 的参数"
+    "DaofyCoding 不依赖本 Server，使用宿主原生 automation_run 和 structured_content；本 Server 会隐藏对应重复工具。Daofy:Delphi 文件必用 delphi_file 处理，编码前 get_coding_rules；复杂工具调用前先用 tool_help(tool_name, action) 获取当前 action 的参数"
 )
 
 MCP_SERVER_DESCRIPTION = (
@@ -317,6 +342,7 @@ else:
 
     async def _run_mcp_server(server, read_stream, write_stream) -> None:
         """Run the MCP server (version-adaptive, delegates to mcp_compat)."""
+        logger.info("mcp_lifecycle event=server_run_started")
         await run_mcp_server(
             server,
             read_stream,
@@ -324,6 +350,7 @@ else:
             fetch_workspace_roots=_fetch_workspace_roots,
             install_client_rules=_install_client_rules,
         )
+        logger.info("mcp_lifecycle event=run_mcp_server_returned")
 
 
 def _auto_detect_delphi_help_dir() -> Optional[str]:
@@ -756,13 +783,14 @@ async def run_server():
     @server.list_tools()
     async def list_tools():
         """列出所有可用工具（schema 由插件 handler 模块注册，registry 统一收集）"""
+        client_name = _get_mcp_client_name(server)
         return [
             make_tool(
                 name=td.name,
                 description=td.description,
                 input_schema=td.input_schema,
             )
-            for td in _plugin_registry.collect_tools()
+            for td in filter_tools(_plugin_registry.collect_tools(), client_name)
         ]
 
     # 注册核心 + Delphi + Lazarus handler 模块（handler + description + schema 一次注册）
@@ -796,6 +824,7 @@ async def run_server():
         result = None
 
         try:
+            ensure_tool_visible(name, _get_mcp_client_name(server))
             handler = _plugin_registry.get_handler(name)
             if handler:
                 # ── MCP 推送通知注入 ──
@@ -1613,47 +1642,95 @@ async def run_server():
     # 启动服务器
     logger.info("MCP Server 启动完成,准备接收请求...")
     async with stdio_server() as (read_stream, write_stream):
+        logger.info("mcp_lifecycle event=stdio_transport_opened")
         await _run_mcp_server(
             server,
             read_stream,
             write_stream,
         )
+    logger.info("mcp_lifecycle event=stdio_transport_closed")
+    logger.info("mcp_lifecycle event=run_server_returned")
 
 
-def _cleanup_resources():
+def _cleanup_resources(shutdown_reason: str = "unknown") -> None:
     """清理资源：关闭后台任务、DB连接、临时文件等"""
-    logger.info("清理资源中...")
+    cleanup_started = time.monotonic()
+    cleanup_failures = 0
+    logger.info("mcp_cleanup event=started reason=%s", shutdown_reason)
+
+    def run_cleanup_step(step_name: str, action: Any) -> None:
+        nonlocal cleanup_failures
+        logger.info("mcp_cleanup event=step_started step=%s", step_name)
+        try:
+            action()
+        except Exception:
+            cleanup_failures += 1
+            logger.warning(
+                "mcp_cleanup event=step_failed step=%s", step_name,
+                exc_info=True,
+            )
+        else:
+            logger.info("mcp_cleanup event=step_completed step=%s", step_name)
+
     try:
         from src.tools.knowledge_base import _cleanup_pkb_cache  # 延迟导入避免循环import
-        _cleanup_pkb_cache()
     except Exception:
-        logger.warning("清理 pkb_cache 时发生异常", exc_info=True)
+        cleanup_failures += 1
+        logger.warning(
+            "mcp_cleanup event=step_failed step=pkb_cache_import",
+            exc_info=True,
+        )
+    else:
+        run_cleanup_step("pkb_cache", _cleanup_pkb_cache)
     try:
         from src.tools.dfm_utils import _cleanup_dfm_temp_dirs
-        _cleanup_dfm_temp_dirs()
     except Exception:
-        logger.warning("清理 DFM 临时文件时发生异常", exc_info=True)
+        cleanup_failures += 1
+        logger.warning(
+            "mcp_cleanup event=step_failed step=dfm_temp_dirs_import",
+            exc_info=True,
+        )
+    else:
+        run_cleanup_step("dfm_temp_dirs", _cleanup_dfm_temp_dirs)
     try:
         from src.services.experience_service import cleanup as _cleanup_exp
-        _cleanup_exp()
     except Exception:
-        logger.warning("清理经验库时发生异常", exc_info=True)
+        cleanup_failures += 1
+        logger.warning(
+            "mcp_cleanup event=step_failed step=experience_service_import",
+            exc_info=True,
+        )
+    else:
+        run_cleanup_step("experience_service", _cleanup_exp)
     # 注意：knowledge_base 模块没有公开的 getter 函数来获取服务实例，
     # 全局变量 _delphi_kb_service 和 _thirdparty_kb_service 在进程退出时会自动清理。
     # 这里不再尝试导入不存在的 get_knowledge_base_service / get_thirdparty_knowledge_base_service。
     try:
         from src.tools.project_knowledge_base import _cleanup_project_kb_cache
-        _cleanup_project_kb_cache()
     except Exception:
-        logger.warning("清理项目知识库缓存时发生异常", exc_info=True)
+        cleanup_failures += 1
+        logger.warning(
+            "mcp_cleanup event=step_failed step=project_kb_cache_import",
+            exc_info=True,
+        )
+    else:
+        run_cleanup_step("project_kb_cache", _cleanup_project_kb_cache)
     global _project_file_watcher
     if _project_file_watcher is not None:
-        try:
-            _project_file_watcher.stop()
-        except Exception:
-            logger.warning("停止文件监听时发生异常", exc_info=True)
+        watcher = _project_file_watcher
         _project_file_watcher = None
-    logger.info("资源清理完成")
+        run_cleanup_step("project_file_watcher", watcher.stop)
+    else:
+        logger.info(
+            "mcp_cleanup event=step_skipped step=project_file_watcher reason=not_started"
+        )
+    elapsed_ms = round((time.monotonic() - cleanup_started) * 1000)
+    logger.info(
+        "mcp_cleanup event=finished reason=%s failures=%d elapsed_ms=%d",
+        shutdown_reason,
+        cleanup_failures,
+        elapsed_ms,
+    )
 
 
 def _build_arg_parser() -> "argparse.ArgumentParser":
@@ -1688,16 +1765,28 @@ def main():
         print(f"{__copyright__}")
         return
 
+    exit_code = 0
+    shutdown_reason = "server_run_returned"
     try:
         asyncio.run(run_server())
+        logger.info("mcp_lifecycle event=asyncio_run_returned")
     except KeyboardInterrupt:
-        logger.info("服务器已停止")
+        shutdown_reason = "keyboard_interrupt"
+        logger.info("mcp_lifecycle event=keyboard_interrupt")
     except Exception as e:
-        logger.error(f"服务器运行失败: {str(e)}", exc_info=True)
-        _logging.shutdown()
-        sys.exit(1)
+        shutdown_reason = "exception"
+        exit_code = 1
+        logger.error(
+            "mcp_lifecycle event=server_exception error_type=%s message=%s",
+            type(e).__name__,
+            str(e),
+            exc_info=True,
+        )
     finally:
-        _cleanup_resources()
+        _cleanup_resources(shutdown_reason)
+        _logging.shutdown()
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":

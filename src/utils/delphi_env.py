@@ -4,16 +4,32 @@ Delphi 环境工具函数
 提供 Delphi 相关的路径和环境变量处理功能
 """
 
+import logging
 import os
 import re
-import logging
 import winreg
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, List, Literal, Optional, Sequence
 
 from ..constants import REG_KEY_EMBARCADERO_BDS, REG_KEY_EMBARCADERO_STUDIO
 
 logger = logging.getLogger(__name__)
+
+_MSBUILD_XML_NAMESPACE = "http://schemas.microsoft.com/developer/msbuild/2003"
+
+
+@dataclass(frozen=True)
+class EnvOptionsLibraryStatus:
+    """Comparison result for registry and EnvOptions Delphi library paths."""
+
+    state: Literal[
+        "current", "missing", "stale", "unknown", "registry_missing",
+    ]
+    env_options_path: Optional[Path]
+    registry_paths: tuple[str, ...]
+    env_options_paths: tuple[str, ...]
 
 
 def get_public_documents_dir() -> Optional[Path]:
@@ -362,3 +378,196 @@ def resolve_delphi_search_paths(
             seen.add(path)
     
     return all_paths
+
+
+def get_env_options_path(
+    version: str,
+    appdata_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    """Return the EnvOptions.proj path for one Delphi version.
+
+    Args:
+        version: Delphi registry version, such as ``37.0``.
+        appdata_dir: Optional APPDATA override used by tests and hosted processes.
+
+    Returns:
+        The version-specific EnvOptions path, or ``None`` when APPDATA is unavailable.
+    """
+    base_dir = appdata_dir
+    if base_dir is None:
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return None
+        base_dir = Path(appdata)
+    return base_dir / "Embarcadero" / "BDS" / version / "EnvOptions.proj"
+
+
+def _platform_condition_matches(condition: str, platform: str) -> Optional[bool]:
+    """Evaluate the simple Platform conditions generated in EnvOptions.proj."""
+    if not condition:
+        return True
+
+    lowered = condition.lower()
+    if "$(platform)" not in lowered:
+        return None
+    if re.search(r"\band\b", lowered):
+        return None
+
+    values = re.findall(
+        r"['\"]?\$\(\s*platform\s*\)['\"]?\s*==\s*['\"]([^'\"]+)['\"]",
+        condition,
+        flags=re.IGNORECASE,
+    )
+    if not values:
+        return None
+    return any(value.casefold() == platform.casefold() for value in values)
+
+
+def _read_env_options_library_paths(
+    env_options_path: Path,
+    platform: str,
+) -> tuple[Optional[list[str]], bool]:
+    """Read the effective DelphiLibraryPath for a generated EnvOptions file."""
+    try:
+        root = ET.parse(env_options_path).getroot()
+    except (ET.ParseError, OSError) as exc:
+        logger.warning("无法解析 EnvOptions 文件 %s: %s", env_options_path, exc)
+        return None, False
+
+    library_path: Optional[str] = None
+    for group in root.iter():
+        if group.tag.rsplit("}", 1)[-1] != "PropertyGroup":
+            continue
+        group_match = _platform_condition_matches(group.attrib.get("Condition", ""), platform)
+        for child in group:
+            if child.tag.rsplit("}", 1)[-1] != "DelphiLibraryPath":
+                continue
+            if group_match is None:
+                return None, False
+            child_match = _platform_condition_matches(child.attrib.get("Condition", ""), platform)
+            if child_match is None:
+                return None, False
+            if group_match and child_match:
+                library_path = child.text or ""
+
+    if library_path is None:
+        return [], True
+    return [path.strip() for path in library_path.split(";") if path.strip()], True
+
+
+def _normalize_library_paths(
+    paths: Sequence[str],
+    version: str,
+    platform: str,
+) -> tuple[str, ...]:
+    """Normalize an ordered Delphi library path list for semantic comparison."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        expanded = expand_delphi_path_macros(path.strip().strip('"'), version, platform)
+        if not expanded:
+            continue
+        key = os.path.normcase(os.path.normpath(expanded))
+        if key not in seen:
+            normalized.append(key)
+            seen.add(key)
+    return tuple(normalized)
+
+
+def inspect_env_options_library_paths(
+    version: str,
+    platform: str,
+    *,
+    appdata_dir: Optional[Path] = None,
+    registry_paths: Optional[Sequence[str]] = None,
+) -> EnvOptionsLibraryStatus:
+    """Compare one Delphi version's registry and EnvOptions library paths.
+
+    Args:
+        version: Delphi registry version selected for the build.
+        platform: Effective MSBuild platform.
+        appdata_dir: Optional APPDATA override.
+        registry_paths: Optional registry path override for deterministic tests.
+
+    Returns:
+        A classified comparison result. The function never falls back to another
+        Delphi version when the selected version cannot be inspected.
+    """
+    resolved_registry_paths = tuple(
+        registry_paths
+        if registry_paths is not None
+        else get_delphi_library_paths(version, platform)
+    )
+    env_options_path = get_env_options_path(version, appdata_dir)
+    if not resolved_registry_paths:
+        return EnvOptionsLibraryStatus(
+            "registry_missing", env_options_path, (), (),
+        )
+    if env_options_path is None:
+        return EnvOptionsLibraryStatus(
+            "unknown", None, resolved_registry_paths, (),
+        )
+    if not env_options_path.is_file():
+        return EnvOptionsLibraryStatus(
+            "missing", env_options_path, resolved_registry_paths, (),
+        )
+
+    env_paths, parsed = _read_env_options_library_paths(env_options_path, platform)
+    if not parsed or env_paths is None:
+        return EnvOptionsLibraryStatus(
+            "unknown", env_options_path, resolved_registry_paths, (),
+        )
+    if not env_paths:
+        return EnvOptionsLibraryStatus(
+            "missing", env_options_path, resolved_registry_paths, (),
+        )
+
+    registry_normalized = _normalize_library_paths(
+        resolved_registry_paths, version, platform,
+    )
+    env_normalized = _normalize_library_paths(env_paths, version, platform)
+    state: Literal["current", "stale"] = (
+        "current" if registry_normalized == env_normalized else "stale"
+    )
+    return EnvOptionsLibraryStatus(
+        state,
+        env_options_path,
+        resolved_registry_paths,
+        tuple(env_paths),
+    )
+
+
+def build_env_options_overlay(
+    original_path: Optional[Path],
+    registry_paths: Sequence[str],
+    platform: str,
+) -> str:
+    """Build an EnvOptions overlay that preserves project unit search paths.
+
+    Args:
+        original_path: Existing EnvOptions file to import, when available.
+        registry_paths: Current IDE Library Search Path entries.
+        platform: Effective MSBuild platform.
+
+    Returns:
+        UTF-8 MSBuild XML that overrides only ``DelphiLibraryPath``.
+    """
+    ET.register_namespace("", _MSBUILD_XML_NAMESPACE)
+    root = ET.Element(f"{{{_MSBUILD_XML_NAMESPACE}}}Project")
+    if original_path is not None and original_path.is_file():
+        ET.SubElement(
+            root,
+            f"{{{_MSBUILD_XML_NAMESPACE}}}Import",
+            {"Project": str(original_path)},
+        )
+    group = ET.SubElement(
+        root,
+        f"{{{_MSBUILD_XML_NAMESPACE}}}PropertyGroup",
+        {"Condition": f"'$(Platform)'=='{platform}'"},
+    )
+    library_path = ET.SubElement(
+        group,
+        f"{{{_MSBUILD_XML_NAMESPACE}}}DelphiLibraryPath",
+    )
+    library_path.text = ";".join(registry_paths)
+    return ET.tostring(root, encoding="unicode", xml_declaration=True)

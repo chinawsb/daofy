@@ -27,6 +27,7 @@ def test_public_resource_index_lists_stable_automation_uris() -> None:
     assert "delphi://automation/workflow" in index
     assert "delphi://automation/script-generation-workflow" in index
     assert "delphi://automation/rtti-test-runner" in index
+    assert "delphi://automation/controls-reference" in index
     assert "`src/resources/coding-rules/delphi/index.md`" in index
     assert "`src/resources/coding-rules/testing/automation/reference/script-generation-workflow.md`" in index
     assert "SHA-256" in index
@@ -44,6 +45,33 @@ def test_reads_packaged_automation_resource() -> None:
     assert "# 脚本生成工作流" in text
     assert "MCP resource URI: `delphi://automation/script-generation-workflow`" in text
     assert "automate_delphi" in text
+
+
+@pytest.mark.parametrize(
+    "uri,required_markers",
+    [
+        (
+            "delphi://automation/workflow",
+            ("DaofyCoding", "automation_run", "automate_delphi", "不依赖"),
+        ),
+        (
+            "delphi://automation/script-generation-workflow",
+            ("DaofyCoding", "structured_content", "external-driver", "automate_delphi"),
+        ),
+        (
+            "delphi://automation/architecture",
+            ("DaofyCoding", "delphi://", "automation_run", "delphi_file"),
+        ),
+    ],
+)
+def test_automation_resources_declare_daofycoding_boundary(
+    uri: str, required_markers: tuple[str, ...]
+) -> None:
+    """Keep MCP resource guidance separate from DaofyCoding's native path."""
+    _mime_type, text = get_public_resource_text(uri)
+
+    for marker in required_markers:
+        assert marker in text, f"{uri} missing boundary marker {marker!r}"
 
 
 def test_reads_packaged_rtti_test_runner_resource() -> None:
@@ -71,6 +99,7 @@ def test_server_resource_list_exposes_registry_resources() -> None:
     assert "delphi://automation/workflow" in uris
     assert "delphi://automation/script-generation-workflow" in uris
     assert "delphi://automation/rtti-test-runner" in uris
+    assert "delphi://automation/controls-reference" in uris
     assert "delphi://health" in uris
 
 
@@ -106,6 +135,19 @@ def test_server_reads_anyurl_resource_uri() -> None:
     assert str(content.uri) == "delphi://automation/workflow"
     assert content.mimeType == "text/markdown"
     assert "# Delphi 自动化测试工作流" in content.text
+
+
+def test_server_reads_controls_reference_resource() -> None:
+    from src.server import _read_mcp_resource
+
+    result = _read_mcp_resource(
+        "delphi://automation/controls-reference", PROJECT_ROOT
+    )
+    content = result.contents[0]
+
+    assert str(content.uri) == "delphi://automation/controls-reference"
+    assert content.mimeType == "text/markdown"
+    assert "控件" in content.text
 
 
 def test_server_read_resource_contents_matches_mcp_lowlevel_shape() -> None:

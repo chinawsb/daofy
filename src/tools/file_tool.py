@@ -23,7 +23,8 @@ Action 模式:
 """
 
 import codecs
-import glob
+import asyncio
+import fnmatch
 import locale
 import os
 import re
@@ -44,6 +45,11 @@ from . import dfm_utils
 logger = get_logger(__name__)
 
 _DELPHI_EXTENSIONS = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc', '.dproj', '.groupproj'}
+
+# A recursive grep must not be allowed to materialize an entire workspace in
+# one request.  The limit is deliberately high enough for a source tree, but
+# turns accidental patterns such as **/*.* into a fast, actionable error.
+MAX_GREP_TARGETS = 5000
 
 _SYSTEM_SENSITIVE_DIRS: List[str] = []
 
@@ -3040,6 +3046,27 @@ def _parse_inline_flags(pattern_str: str) -> tuple[str, int]:
     return inner, flags
 
 
+def _split_glob_patterns(value: Optional[str]) -> List[str]:
+    """Split a user supplied glob list while preserving ordinary patterns."""
+    if not value:
+        return []
+    return [part.strip().replace('\\', '/') for part in re.split(r'[;,]', value)
+            if part.strip()]
+
+
+def _glob_matches(relative_path: str, pattern: str) -> bool:
+    """Match slash-normalized relative paths with useful ``**/`` semantics."""
+    relative_path = relative_path.replace('\\', '/')
+    pattern = pattern.replace('\\', '/')
+    if fnmatch.fnmatchcase(relative_path, pattern):
+        return True
+    if pattern.startswith('**/') and fnmatch.fnmatchcase(relative_path, pattern[3:]):
+        return True
+    if '/' not in pattern and fnmatch.fnmatchcase(os.path.basename(relative_path), pattern):
+        return True
+    return False
+
+
 def _glob_files(
     path: str,
     include: Optional[str] = None,
@@ -3061,33 +3088,48 @@ def _glob_files(
         return []
 
     if include:
-        patterns = [include]
+        patterns = _split_glob_patterns(include)
     else:
         patterns = [
             "**/*.pas", "**/*.dpr", "**/*.dpk",
             "**/*.dfm", "**/*.fmx", "**/*.inc", "**/*.dproj", "**/*.groupproj",
         ]
-
-    matched = set()
-    for pat in patterns:
-        matched.update(glob.glob(pat, root_dir=path, recursive=True))
-
-    if exclude:
-        excluded = set(glob.glob(exclude, root_dir=path, recursive=True))
-        matched = matched - excluded
-
-    # skip common non-source directories
+    exclude_patterns = _split_glob_patterns(exclude)
     _skip_dirs = {'.git', '__pycache__', '__history', 'node_modules',
                   '.venv', '.mypy_cache', '.pytest_cache'}
     result: List[str] = []
-    for f in sorted(matched):
-        parts = f.replace('\\', '/').split('/')
-        if any(part in _skip_dirs for part in parts[:-1]):
-            continue
-        full = os.path.join(path, f)
-        if os.path.isfile(full):
-            result.append(full)
-    return result
+
+    # Walk with directory pruning.  glob.glob(root_dir=..., recursive=True)
+    # enumerates every entry before filtering, which made a broad pattern
+    # freeze the MCP event loop and consumed hundreds of thousands of entries.
+    for root, dirs, files in os.walk(path):
+        rel_root = os.path.relpath(root, path).replace('\\', '/')
+        if rel_root == '.':
+            rel_root = ''
+        kept_dirs = []
+        for directory in dirs:
+            if directory in _skip_dirs:
+                continue
+            rel_dir = '/'.join(part for part in (rel_root, directory) if part)
+            if any(_glob_matches(rel_dir + '/sentinel', pattern)
+                   or _glob_matches(rel_dir, pattern)
+                   for pattern in exclude_patterns):
+                continue
+            kept_dirs.append(directory)
+        dirs[:] = kept_dirs
+
+        for filename in files:
+            relative_path = '/'.join(part for part in (rel_root, filename) if part)
+            if exclude_patterns and any(_glob_matches(relative_path, pattern)
+                                        for pattern in exclude_patterns):
+                continue
+            if patterns and not any(_glob_matches(relative_path, pattern)
+                                    for pattern in patterns):
+                continue
+            result.append(os.path.join(root, filename))
+            if len(result) > MAX_GREP_TARGETS:
+                return result
+    return sorted(result)
 
 
 def _resolve_grep_targets(arguments: Dict[str, Any]) -> tuple[Optional[List[str]], Optional[str]]:
@@ -3154,8 +3196,18 @@ def _resolve_grep_targets(arguments: Dict[str, Any]) -> tuple[Optional[List[str]
             resolved.append(abs_path)
         elif os.path.isdir(abs_path):
             file_list = _glob_files(abs_path, include, exclude)
+            if len(file_list) > MAX_GREP_TARGETS:
+                return None, (
+                    f"grep target limit exceeded ({MAX_GREP_TARGETS} files); "
+                    "use a narrower file_path/include pattern or exclude build directories"
+                )
             if file_list:
                 resolved.extend(file_list)
+                if len(resolved) > MAX_GREP_TARGETS:
+                    return None, (
+                        f"grep target limit exceeded ({MAX_GREP_TARGETS} files); "
+                        "use fewer paths or narrower include/exclude patterns"
+                    )
             else:
                 errors.append(f"目录 '{item}' 下没有匹配的文件")
         else:
@@ -3331,7 +3383,7 @@ def _grep_search(
     }
 
 
-async def _grep_replace(
+def _grep_replace(
     file_path: str,
     compiled: re.Pattern,
     replace: str,
@@ -3573,7 +3625,7 @@ def _format_batch_output(
     return "\n".join(parts)
 
 
-async def _grep_single_file(
+def _grep_single_file(
     file_path: str,
     compiled_patterns: List[re.Pattern],
     filter_compiled: Optional[re.Pattern],
@@ -3616,8 +3668,8 @@ async def _grep_single_file(
     if len(compiled_patterns) == 1:
         compiled = compiled_patterns[0]
         if replace is not None:
-            return await _grep_replace(file_path, compiled, replace, content, enc, dry_run,
-                                       use_fulltext=use_fulltext)
+            return _grep_replace(file_path, compiled, replace, content, enc, dry_run,
+                                 use_fulltext=use_fulltext)
         elif use_fulltext:
             return _grep_search_fulltext(file_path, compiled, content,
                                          filter_compiled, exclude_compiled, context, count, enc)
@@ -3634,8 +3686,8 @@ async def _grep_single_file(
             total_replaced = 0
             all_changes = []
             for compiled in compiled_patterns:
-                result = await _grep_replace(file_path, compiled, replace, preview_content, enc,
-                                             dry_run=True, use_fulltext=use_fulltext)
+                result = _grep_replace(file_path, compiled, replace, preview_content, enc,
+                                       dry_run=True, use_fulltext=use_fulltext)
                 n = result.get("replaced", 0)
                 total_replaced += n
                 if result.get("changes"):
@@ -3666,8 +3718,8 @@ async def _grep_single_file(
                         current_content = f.read()
                 except Exception:
                     current_content = ""
-                result = await _grep_replace(file_path, compiled, replace, current_content, enc,
-                                             dry_run=False, use_fulltext=use_fulltext)
+                result = _grep_replace(file_path, compiled, replace, current_content, enc,
+                                       dry_run=False, use_fulltext=use_fulltext)
                 n = result.get("replaced", 0)
                 total_replaced += n
                 if result.get("changes"):
@@ -3731,7 +3783,7 @@ async def _grep_single_file(
     }
 
 
-async def _grep_batch(
+def _grep_batch(
     targets: List[str],
     compiled_patterns: List[re.Pattern],
     filter_compiled: Optional[re.Pattern],
@@ -3750,7 +3802,7 @@ async def _grep_batch(
     errors: List[str] = []
 
     for file_path in targets:
-        result = await _grep_single_file(
+        result = _grep_single_file(
             file_path, compiled_patterns, filter_compiled, exclude_compiled,
             replace, dry_run, context, count_per_file, use_fulltext, project_path,
         )
@@ -3935,7 +3987,7 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     project_path = arguments.get("project_path")
 
     # ── 解析目标文件列表 ──
-    targets, err = _resolve_grep_targets(arguments)
+    targets, err = await asyncio.to_thread(_resolve_grep_targets, arguments)
     if err:
         return _wrap_error(err)
 
@@ -3964,13 +4016,15 @@ async def handle_grep(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if is_single_file and len(compiled_patterns) == 1 and pattern_str:
         if _is_dfm_file(targets[0]):
             return _wrap_error("grep 不支持 DFM/FMX 文件（可能为二进制格式），请使用 read action 读取")
-        return await _grep_single_file(
+        return await asyncio.to_thread(
+            _grep_single_file,
             targets[0], compiled_patterns, filter_compiled, exclude_compiled,
             replace, dry_run, context, count, use_fulltext, project_path,
         )
 
     # ── 批量模式（多文件、目录递归 或 多 pattern） ──
-    return await _grep_batch(
+    return await asyncio.to_thread(
+        _grep_batch,
         targets, compiled_patterns, filter_compiled, exclude_compiled,
         replace, dry_run, context, count, use_fulltext, project_path,
     )
