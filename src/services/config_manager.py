@@ -73,9 +73,11 @@ class ConfigManager:
         self.config: ConfigFile = self._load_config()
         self.history: HistoryFile = self._load_history()
 
-        # 如果没有配置编译器,自动检测
-        if not self.config.compilers:
-            logger.info("未检测到编译器配置,开始自动检测...")
+        # 仅在配置文件不存在（全新安装首次启动）时自动检测。
+        # 用户手动编辑过 compilers.json 时不再自动覆盖，避免用户指定的
+        # 自定义路径（如非默认位置的 Lazarus d:\win\lazarus）被自动检测清空。
+        if not self.config_path.exists():
+            logger.info("配置文件不存在,开始自动检测编译器...")
             self._auto_detect_compilers()
 
         logger.info(f"配置管理器初始化完成")
@@ -357,13 +359,34 @@ class ConfigManager:
         logger.info("清空编译历史")
 
     def _auto_detect_compilers(self):
-        """自动检测 Delphi 和 Lazarus 编译器"""
-        detected_compilers = []
+        # ruff: noqa: D205
+        """自动检测 Delphi 和 Lazarus 编译器（合并式，不覆盖既有配置）。
 
-        # 首先清空旧的编译器配置，避免旧配置干扰
-        logger.info("清空旧编译器配置，准备重新检测...")
-        self.config.compilers = []
-        self.config.default_compiler = None
+        与旧版仅清空后重建不同，此版本：
+        - 保留已配置且路径仍然存在的编译器（含用户手动指定的自定义路径，
+          如非默认安装位置的 Lazarus ``d:\\win\\lazarus\\bin\\lazbuild.exe``）。
+        - 仅丢弃路径已失效的旧配置（指向磁盘上已不存在的文件）。
+        - 追加新检测到、且尚未配置的编译器（按规范化路径去重）。
+        - 默认编译器在既有默认仍有效时保持不变，否则回退到最新/首个。
+
+        这样避免“自动检测把用户手写的路径整个清掉”的回归。
+        """
+        # 快照既有编译器：保留路径仍有效者，清理已失效条目
+        existing_valid: List[CompilerConfig] = []
+        for compiler in list(self.config.compilers):
+            if compiler.path and os.path.exists(compiler.path):
+                existing_valid.append(compiler)
+            else:
+                logger.info(
+                    "丢弃路径已失效的编译器配置: %s (%s)",
+                    compiler.name, compiler.path,
+                )
+        self.config.compilers = existing_valid
+
+        # 记录既有默认编译器名称（用于检测后保持默认）
+        existing_default = self.config.default_compiler
+        if existing_default and not self.config.get_compiler(existing_default):
+            existing_default = None
 
         # 通过注册表检测 Delphi 安装路径
         delphi_installations = self._detect_delphi_from_registry()
@@ -371,28 +394,56 @@ class ConfigManager:
         for version, install_path in delphi_installations.items():
             logger.info(f"检测到 Delphi {version}: {install_path}")
             compilers = self._detect_compilers_from_path(install_path, version)
-            detected_compilers.extend(compilers)
+            self._merge_detected(compilers)
 
         # 检测 Lazarus/FPC 安装
         lazarus_compilers = self._detect_lazarus()
-        detected_compilers.extend(lazarus_compilers)
+        self._merge_detected(lazarus_compilers)
 
-        if detected_compilers:
-            # 添加所有检测到的编译器
-            for compiler in detected_compilers:
-                self.config.add_compiler(compiler)
-                logger.info(f"自动配置编译器: {compiler.name}")
-
-            # 设置第一个为默认编译器
-            if detected_compilers:
-                self.config.set_default_compiler(detected_compilers[0].name)
-                logger.info(f"设置默认编译器: {detected_compilers[0].name}")
+        if self.config.compilers:
+            # 默认编译器：保持既有有效默认；否则回退到最新/首个
+            if existing_default:
+                self.config.set_default_compiler(existing_default)
+            else:
+                default = self.get_newest_compiler() or self.config.compilers[0]
+                self.config.set_default_compiler(default.name)
+                logger.info(f"设置默认编译器: {default.name}")
 
             # 保存配置
             self.save_config()
-            logger.info(f"自动检测完成,共检测到 {len(detected_compilers)} 个编译器")
+            logger.info(
+                "自动检测完成,共 %d 个编译器（保留既有 %d 个，新增 %d 个）",
+                len(self.config.compilers),
+                len(existing_valid),
+                len(self.config.compilers) - len(existing_valid),
+            )
         else:
             logger.warning("未检测到任何编译器,请手动配置")
+
+    def _merge_detected(self, detected: List[CompilerConfig]) -> None:
+        """将新检测到的编译器合并进配置，按规范化路径去重。"""
+        existing_paths = {
+            self._normalize_compiler_path(c.path).casefold()
+            for c in self.config.compilers if c.path
+        }
+        for compiler in detected:
+            if not compiler.path:
+                continue
+            key = self._normalize_compiler_path(compiler.path).casefold()
+            if key in existing_paths:
+                logger.debug("跳过已配置的编译器: %s", compiler.path)
+                continue
+            self.config.add_compiler(compiler)
+            existing_paths.add(key)
+            logger.info(f"自动配置编译器: {compiler.name}")
+
+    @staticmethod
+    def _normalize_compiler_path(path: str) -> str:
+        """规范化编译器路径用于去重比较。"""
+        try:
+            return str(Path(path).resolve())
+        except Exception:
+            return os.path.normcase(os.path.normpath(path))
 
     def _detect_delphi_from_registry(self) -> dict:
         """

@@ -218,6 +218,136 @@ def test_project_version_unknown_prefix_falls_back():
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# ════════════════════════════════════════════════════════════════
+#  _auto_detect_compilers 合并式检测测试
+#  ════════════════════════════════════════════════════════════════
+# 覆盖：
+#   - 用户手动指定的自定义 Lazarus 路径在自动检测后仍被保留
+#   - 路径已失效的旧配置被清理
+#   - 重复检测不产生重复条目（按路径去重）
+#   - 全新（无配置文件）启动时自动检测创建配置
+
+import types
+
+
+def _new_cm(tmpdir):
+    """在临时目录构造 ConfigManager，避免污染真实 compilers.json。
+
+    预先写入空的 compilers.json，使 __init__ 不触发自动检测
+    （避免在真实机器上自动检测到已安装的 Delphi/Lazarus，干扰断言）。
+    """
+    config_path = os.path.join(str(tmpdir), "compilers.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump({"compilers": []}, f)
+    return ConfigManager(
+        config_path,
+        os.path.join(str(tmpdir), "history.json"),
+    )
+
+
+def _lazarus_compiler(path, name="Lazarus FPC 4.8"):
+    return CompilerConfig(
+        name=name,
+        path=path,
+        version="4.8",
+        compiler_type="lazarus",
+    )
+
+
+def test_auto_detect_preserves_manual_lazarus_path(tmp_path):
+    """手动指定的自定义 Lazarus 路径在自动检测后仍被保留（核心回归）。"""
+    # 创建一个真实存在的 lazbuild.exe 模拟自定义安装
+    custom_dir = tmp_path / "custom" / "lazarus" / "bin"
+    custom_dir.mkdir(parents=True)
+    lazbuild = custom_dir / "lazbuild.exe"
+    lazbuild.write_text("fake")
+
+    cm = _new_cm(str(tmp_path))
+    # 用户手动加入自定义路径
+    manual = _lazarus_compiler(str(lazbuild), name="Lazarus FPC 4.8")
+    cm.config.add_compiler(manual)
+
+    detected = [_lazarus_compiler(str(lazbuild), name="Lazarus FPC 4.8")]
+
+    with mock.patch.object(cm, "_detect_delphi_from_registry", return_value={}), \
+         mock.patch.object(cm, "_detect_lazarus", return_value=detected), \
+         mock.patch.object(cm, "save_config"):
+        cm._auto_detect_compilers()
+
+    paths = [c.path for c in cm.get_all_compilers()]
+    assert str(lazbuild) in paths, f"自定义 Lazarus 路径被自动检测清掉: {paths}"
+    assert len(paths) == 1, f"不应产生重复条目: {paths}"
+
+
+def test_auto_detect_removes_stale_paths_keeps_valid(tmp_path):
+    """路径已失效的旧配置被清理，路径有效的保留。"""
+    valid_laz = tmp_path / "win" / "lazarus" / "bin"
+    valid_laz.mkdir(parents=True)
+    valid_exe = valid_laz / "lazbuild.exe"
+    valid_exe.write_text("fake")
+
+    cm = _new_cm(str(tmp_path))
+    cm.config.add_compiler(_lazarus_compiler(str(valid_exe), name="Valid"))
+    cm.config.add_compiler(_lazarus_compiler(
+        r"C:\nonexistent\gone\lazbuild.exe", name="Stale"
+    ))
+
+    with mock.patch.object(cm, "_detect_delphi_from_registry", return_value={}), \
+         mock.patch.object(cm, "_detect_lazarus", return_value=[]), \
+         mock.patch.object(cm, "save_config"):
+        cm._auto_detect_compilers()
+
+    names = {c.name for c in cm.get_all_compilers()}
+    assert "Valid" in names, f"有效路径应保留: {names}"
+    assert "Stale" not in names, f"失效路径应被清理: {names}"
+
+
+def test_auto_detect_dedupes_by_path(tmp_path):
+    """重复检测相同路径不产生重复条目。"""
+    custom = tmp_path / "lazarus" / "bin"
+    custom.mkdir(parents=True)
+    exe = custom / "lazbuild.exe"
+    exe.write_text("fake")
+
+    cm = _new_cm(str(tmp_path))
+    # 手动已有该路径，检测又发现同路径
+    cm.config.add_compiler(_lazarus_compiler(str(exe), name="Lazarus FPC 4.8"))
+    detected = [_lazarus_compiler(str(exe), name="Lazarus FPC 4.8")]
+
+    with mock.patch.object(cm, "_detect_delphi_from_registry", return_value={}), \
+         mock.patch.object(cm, "_detect_lazarus", return_value=detected), \
+         mock.patch.object(cm, "save_config"):
+        cm._auto_detect_compilers()
+
+    assert len(cm.get_all_compilers()) == 1, "同路径不应重复添加"
+
+
+def test_init_skips_auto_detect_when_config_file_exists(tmp_path):
+    """配置文件已存在时，启动不再自动覆盖（用户配置受保护）。"""
+    # 预写一个含自定义 Lazarus 路径的配置
+    compilers_json = tmp_path / "compilers.json"
+    compilers_json.write_text(
+        json.dumps({
+            "compilers": [
+                {
+                    "name": "Lazarus FPC 4.8",
+                    "path": r"d:\win\lazarus\bin\lazbuild.exe",
+                    "version": "4.8",
+                    "compiler_type": "lazarus",
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    cm = ConfigManager(str(compilers_json), str(tmp_path / "history.json"))
+    # 路径虽不存在，但因配置文件已存在，__init__ 不触发自动检测，条目保留
+    paths = [c.path for c in cm.get_all_compilers()]
+    assert r"d:\win\lazarus\bin\lazbuild.exe" in paths
+    # 配置未被重写为只含自动检测结果
+    assert not any("nonexistent" in p.lower() for p in paths)
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__])
