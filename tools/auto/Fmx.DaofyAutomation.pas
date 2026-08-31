@@ -1246,7 +1246,7 @@ var
   Root: TJSONObject;
   Methods: TJSONArray;
   Props: TJSONArray;
-  VisSet: TMethodVisibilities;
+  VisSet: set of TMemberVisibility;
   VisParts: TArray<string>;
   VisItem: string;
 begin
