@@ -88,6 +88,7 @@ type
     procedure DoTerminateApp; override;
     function FindNamedControl(const AName: string): TObject; override;
     function GetActiveForm: TObject; override;
+    function GetRttiClasses: TArray<TClass>; override;
 
   public
     constructor Create(const APipeName: string);
@@ -382,6 +383,24 @@ begin
   end;
   Result.AddPair('props', Props);
 
+  // INamedElementHost 路径段：枚举可用子路径名
+  var NEHost: INamedElementHost;
+  if Supports(Ctrl, INamedElementHost, NEHost) then begin
+    var Paths := TJSONArray.Create;
+    var Elements := NEHost.EnumElements;
+    for var EI in Elements do begin
+      var EObj := TJSONObject.Create;
+      EObj.AddPair('segment', EI.Segment);
+      EObj.AddPair('kind', EI.Kind);
+      EObj.AddPair('type', EI.TypeName);
+      Paths.AddElement(EObj);
+    end;
+    if Paths.Count > 0 then
+      Result.AddPair('named_paths', Paths)
+    else
+      Paths.Free;
+  end;
+
   if Ctrl.ChildrenCount > 0 then begin
     Children := TJSONArray.Create;
     for I := 0 to Ctrl.ChildrenCount - 1 do
@@ -615,7 +634,7 @@ begin
       CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos - 1)), 0);
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if CtrlName <> '' then begin
-        Ctrl := Screen.ActiveForm.FindComponent(CtrlName);
+        Ctrl := TComponent(FindNamedControl(CtrlName));
         if Ctrl = nil then
           Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
         if not IsCtrlVisible(Ctrl) then
@@ -636,7 +655,7 @@ begin
   end;
 
   // 常规 RTTI 点击
-  Ctrl := Screen.ActiveForm.FindComponent(Target);
+  Ctrl := TComponent(FindNamedControl(Target));
   if Ctrl = nil then
     Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
   if not IsCtrlVisible(Ctrl) then
@@ -662,6 +681,28 @@ begin
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
 
+// 通过 SendInput 发送按键：Unicode=True 时用 KEYEVENTF_UNICODE（支持任意字符/中文），
+// 否则按虚拟键码发送（支持 TAB/ENTER 等命名键与 F1-F12）。
+function SendKeyInput(const VK: UInt16; const Unicode: Boolean): Boolean;
+var
+  Inputs: array[0..1] of TInput;
+begin
+  ZeroMemory(@Inputs, SizeOf(Inputs));
+  Inputs[0].Itype := INPUT_KEYBOARD;
+  Inputs[1].Itype := INPUT_KEYBOARD;
+  Inputs[1].ki.dwFlags := KEYEVENTF_KEYUP;
+  if Unicode then begin
+    Inputs[0].ki.wScan := VK;
+    Inputs[0].ki.dwFlags := KEYEVENTF_UNICODE;
+    Inputs[1].ki.wScan := VK;
+    Inputs[1].ki.dwFlags := KEYEVENTF_UNICODE or KEYEVENTF_KEYUP;
+  end else begin
+    Inputs[0].ki.wVk := VK;
+    Inputs[1].ki.wVk := VK;
+  end;
+  Result := SendInput(2, Inputs[0], SizeOf(TInput)) = 2;
+end;
+
 { --- key --- }
 
 function TAutomationProcessor.HandleCmdKey(const ReqId, Target, Key: string): string;
@@ -683,7 +724,7 @@ var
 begin
   // 焦点移到目标控件
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if (Ctrl <> nil) then begin
       Ctx := TRttiContext.Create;
       try
@@ -711,15 +752,11 @@ begin
       VK := VK_F1 + FN - 1;
   end;
 
-  // 通过 Windows API 发送按键
-  if VK <> 0 then begin
-    keybd_event(VK, 0, 0, 0);
-    keybd_event(VK, 0, KEYEVENTF_KEYUP, 0);
-  end
-  else if Length(Key) = 1 then begin
-    keybd_event(Ord(UpCase(Key[1])), 0, 0, 0);
-    keybd_event(Ord(UpCase(Key[1])), 0, KEYEVENTF_KEYUP, 0);
-  end;
+  // 通过 SendInput 发送按键（Unicode 支持任意字符/中文，避免 keybd_event 的大写/非 ASCII 限制）
+  if VK <> 0 then
+    SendKeyInput(VK, False)
+  else if Length(Key) = 1 then
+    SendKeyInput(Ord(Key[1]), True);
 
   Result := WriteResp(ReqId, 'ok', 'OK');
 end;
@@ -842,7 +879,7 @@ var
 begin
   if Screen.ActiveForm = nil then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
-  Ctrl := Screen.ActiveForm.FindComponent(Target);
+  Ctrl := TComponent(FindNamedControl(Target));
   if Ctrl = nil then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
@@ -868,7 +905,7 @@ begin
   if Screen.ActiveForm = nil then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
   F := Screen.ActiveForm;
-  Ctrl := F.FindComponent(Target);
+  Ctrl := TComponent(FindNamedControl(Target));
 
   // 扫描组件列表找第一个 TPopupMenu
   PM := nil;
@@ -895,7 +932,7 @@ begin
   if Screen.ActiveForm = nil then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
   F := Screen.ActiveForm;
-  Ctrl := F.FindComponent(Target);
+  Ctrl := TComponent(FindNamedControl(Target));
   if Ctrl = nil then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
   if Ctrl is TControl then begin
@@ -921,7 +958,7 @@ begin
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'ok', 'OK'));
     F := Screen.ActiveForm;
-    Ctrl := F.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if (Ctrl <> nil) and (Ctrl is TControl) then begin
       CtrlCtl := TControl(Ctrl);
       Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(CtrlCtl.Width / 2, CtrlCtl.Height / 2));
@@ -954,7 +991,7 @@ begin
   if (Screen.ActiveForm = nil) or (Source = '') then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
-  SrcCtrl := Screen.ActiveForm.FindComponent(Source);
+  SrcCtrl := TComponent(FindNamedControl(Source));
   if (SrcCtrl = nil) or not (SrcCtrl is TControl) then
     Exit(WriteResp(ReqId, 'ok', 'OK'));
 
@@ -964,7 +1001,7 @@ begin
   SY := Round(Pt.Y);
 
   if Target <> '' then begin
-    DstCtrl := Screen.ActiveForm.FindComponent(Target);
+    DstCtrl := TComponent(FindNamedControl(Target));
     if (DstCtrl <> nil) and (DstCtrl is TControl) then begin
       Pt :=
           TControl(DstCtrl).LocalToAbsolute(TPointF.Create(TControl(DstCtrl).Width / 2, TControl(DstCtrl).Height / 2));
@@ -1002,7 +1039,7 @@ var
   Prop: TRttiProperty;
 begin
   if (Target <> '') and (Screen.ActiveForm <> nil) then begin
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if Ctrl <> nil then begin
       Ctx := TRttiContext.Create;
       try
@@ -1039,7 +1076,7 @@ begin
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -1108,7 +1145,7 @@ begin
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -1160,12 +1197,14 @@ var
   Idx: Integer;
   ParamValues: TArray<TValue>;
   ParamArr: TJSONArray;
+  ParamValue: TJSONValue;
+  ParamText: string;
   ParamType: TRttiType;
 begin
   try
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -1199,30 +1238,43 @@ begin
       if M = nil then
         Exit(WriteResp(ReqId, 'err', 'NM:' + Parts[High(Parts)]));
 
-      if ParamsJSON <> '' then begin
-        ParamArr := TJSONObject.ParseJSONValue(ParamsJSON) as TJSONArray;
-        if ParamArr <> nil then
+      if Trim(ParamsJSON) <> '' then begin
+        ParamText := Trim(ParamsJSON);
+        if (Length(ParamText) >= 2) and (ParamText[1] = '"') then begin
+          ParamValue := TJSONObject.ParseJSONValue(ParamText);
           try
-            SetLength(ParamValues, ParamArr.Count);
-            for p := 0 to ParamArr.Count - 1 do begin
-              if p < Length(M.GetParameters) then begin
-                ParamType := M.GetParameters[p].ParamType;
-                case ParamType.TypeKind of
-                  tkInteger, tkInt64: ParamValues[p] := TValue.From(StrToIntDef(ParamArr.Items[p].Value, 0));
-                  tkFloat: ParamValues[p] := TValue.From(StrToFloatDef(ParamArr.Items[p].Value, 0.0));
-                  tkEnumeration:
-                    if SameText(ParamType.Name, 'Boolean') then
-                      ParamValues[p] := TValue.From(SameText(ParamArr.Items[p].Value, 'true'))
-                    else
-                      ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
-                else
-                  ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
-                end;
+            if ParamValue is TJSONString then
+              ParamText := TJSONString(ParamValue).Value;
+          finally
+            ParamValue.Free;
+          end;
+        end;
+
+        ParamValue := TJSONObject.ParseJSONValue(ParamText);
+        try
+          if not (ParamValue is TJSONArray) then
+            Exit(WriteResp(ReqId, 'err', 'invalid params'));
+          ParamArr := ParamValue as TJSONArray;
+          SetLength(ParamValues, ParamArr.Count);
+          for p := 0 to ParamArr.Count - 1 do begin
+            if p < Length(M.GetParameters) then begin
+              ParamType := M.GetParameters[p].ParamType;
+              case ParamType.TypeKind of
+                tkInteger, tkInt64: ParamValues[p] := TValue.From(StrToIntDef(ParamArr.Items[p].Value, 0));
+                tkFloat: ParamValues[p] := TValue.From(StrToFloatDef(ParamArr.Items[p].Value, 0.0));
+                tkEnumeration:
+                  if SameText(ParamType.Name, 'Boolean') then
+                    ParamValues[p] := TValue.From(SameText(ParamArr.Items[p].Value, 'true'))
+                  else
+                    ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
+              else
+                ParamValues[p] := TValue.From<string>(ParamArr.Items[p].Value);
               end;
             end;
-          finally
-            ParamArr.Free;
           end;
+        finally
+          ParamValue.Free;
+        end;
       end;
 
       M.Invoke(Obj, ParamValues);
@@ -1268,7 +1320,7 @@ begin
     if Screen.ActiveForm = nil then
       Exit(WriteResp(ReqId, 'err', 'no active form'));
 
-    Ctrl := Screen.ActiveForm.FindComponent(Target);
+    Ctrl := TComponent(FindNamedControl(Target));
     if Ctrl = nil then
       Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
 
@@ -1295,6 +1347,24 @@ begin
             Props.AddElement(PObj);
           end;
         Root.AddPair('props', Props);
+
+        // INamedElementHost 路径段
+        var NEHost: INamedElementHost;
+        if Supports(Ctrl, INamedElementHost, NEHost) then begin
+          var Paths := TJSONArray.Create;
+          var Elements := NEHost.EnumElements;
+          for var EI in Elements do begin
+            var EObj := TJSONObject.Create;
+            EObj.AddPair('segment', EI.Segment);
+            EObj.AddPair('kind', EI.Kind);
+            EObj.AddPair('type', EI.TypeName);
+            Paths.AddElement(EObj);
+          end;
+          if Paths.Count > 0 then
+            Root.AddPair('named_paths', Paths)
+          else
+            Paths.Free;
+        end;
 
         Result := WriteResp(ReqId, 'ok', Root.ToJSON);
       finally
@@ -1365,6 +1435,17 @@ end;
 function TAutomationProcessor.GetActiveForm: TObject;
 begin
   Result := Screen.ActiveForm;
+end;
+
+function TAutomationProcessor.GetRttiClasses: TArray<TClass>;
+var
+  I, RegisteredCount: Integer;
+begin
+  Result := inherited GetRttiClasses;
+  RegisteredCount := Length(Result);
+  SetLength(Result, RegisteredCount + Screen.FormCount);
+  for I := 0 to Screen.FormCount - 1 do
+    Result[RegisteredCount + I] := Screen.Forms[I].ClassType;
 end;
 
 end.
