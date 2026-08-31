@@ -137,6 +137,61 @@ class CompilerService:
                 logger.info(f"找到 MSBuild: {path}")
                 return path
 
+        # 方法3: Delphi/RAD Studio 自带 MSBuild 回退
+        # 无 VS 的机器上 vswhere / VS 路径列表都为空时，检查 Delphi 安装目录
+        # 是否随附 MSBuild，避免 .dproj 因找不到 MSBuild 而无法编译。
+        try:
+            bds_key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                REG_KEY_EMBARCADERO_BDS,
+                0,
+                winreg.KEY_READ | winreg.KEY_WOW64_32KEY
+            )
+            idx = 0
+            delphi_roots = []
+            while True:
+                try:
+                    version_key = winreg.EnumKey(bds_key, idx)
+                    idx += 1
+                    ver_key = winreg.OpenKey(bds_key, version_key)
+                    try:
+                        root_dir, _ = winreg.QueryValueEx(ver_key, "RootDir")
+                        if root_dir and Path(root_dir).exists():
+                            delphi_roots.append(Path(root_dir))
+                    except OSError:
+                        pass
+                    finally:
+                        winreg.CloseKey(ver_key)
+                except OSError:
+                    break
+            winreg.CloseKey(bds_key)
+
+            for root_dir in delphi_roots:
+                candidates = [
+                    root_dir / "bin" / "MSBuild.exe",
+                    root_dir / "bin" / "MSBuild" / "Current" / "Bin" / "MSBuild.exe",
+                    root_dir / "MSBuild.exe",
+                    root_dir / "msbuild" / "Current" / "Bin" / "MSBuild.exe",
+                ]
+                for cand in candidates:
+                    if cand.exists():
+                        logger.info(f"通过 Delphi 安装目录找到 MSBuild: {cand}")
+                        return str(cand)
+        except OSError:
+            pass
+        except Exception as e:
+            logger.debug(f"Delphi 自带 MSBuild 搜索失败: {e}")
+
+        # 方法4: PATH 中的 msbuild.exe（兜底，通常不生效，仅做最后尝试）
+        try:
+            import shutil
+            on_path = shutil.which("msbuild.exe") or shutil.which("msbuild")
+            if on_path:
+                logger.info(f"通过 PATH 找到 MSBuild: {on_path}")
+                return on_path
+        except Exception as e:
+            logger.debug(f"PATH 搜索 msbuild 失败: {e}")
+
         logger.warning("未找到 MSBuild，将回退到直接编译")
         return None
 
@@ -1420,7 +1475,9 @@ class CompilerService:
             args.extend(request.options.extra_args)
 
             # 记录完整编译参数到日志
-            msbuild_cmd = f'msbuild {" ".join(args)}'
+            # 使用 self.msbuild_path 绝对路径，而非裸 msbuild（依赖 PATH），
+            # 避免 rsvars.bat 未将 VS MSBuild 加入 PATH 时找不到 msbuild.exe。
+            msbuild_cmd = f'"{self.msbuild_path}" {" ".join(args)}'
             logger.info(f"MSBuild 参数: {msbuild_cmd}")
             
             # 6. 创建临时批处理文件来设置环境并执行 MSBuild
@@ -1437,7 +1494,7 @@ class CompilerService:
                                              encoding=batch_encoding) as f:
                 f.write('@echo off\n')
                 f.write('call "%s"\n' % rsvars_path)
-                f.write('msbuild %s\n' % ' '.join(quoted_args))
+                f.write('"%s" %s\n' % (self.msbuild_path, ' '.join(quoted_args)))
                 batch_file = f.name
             
             logger.info("创建批处理文件: %s", batch_file)
