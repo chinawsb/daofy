@@ -509,6 +509,135 @@ end.
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def _make_dpr_service(tmp_path):
+    """构造一个只用于 _generate_dpr_args 测试的 CompilerService 实例。
+
+    ArgsGenerator 的 -NS / -U 逻辑只依赖 config_manager.get_compiler 与
+    delphi_env 的库路径函数，这里全部打桩，避免触碰真实机器注册表/安装。
+    """
+    from src.services.compiler_service import CompilerService
+
+    svc = CompilerService.__new__(CompilerService)
+
+    class _FakeCM:
+        def get_compiler(self, version):
+            return None
+
+    svc.config_manager = _FakeCM()
+    return svc
+
+
+def test_generate_dpr_args_emits_u_from_compiler_dir_when_lib_resolution_fails(tmp_path, monkeypatch):
+    """无 .dproj 且注册表/版本解析失败时，_generate_dpr_args 必须
+    从编译器自身目录推导 RTL 搜索路径，保证 -U 总能发出（否则
+    uses SysUtils/Classes 等 RTL 单元找不到导致编译失败）。"""
+    import src.utils.delphi_env as de
+
+    dpr = tmp_path / "TestProj.dpr"
+    dpr.write_text("program TestProj;\nuses SysUtils, Classes;\nbegin\nend.\n", encoding="utf-8")
+
+    # 构造伪 Delphi 根：<root>/bin/dcc32.exe + <root>/lib/Win32/release
+    root = tmp_path / "FakeDelphi"
+    (root / "lib" / "Win32" / "release").mkdir(parents=True, exist_ok=True)
+    dcc32 = root / "bin" / "dcc32.exe"
+
+    # 模拟注册表/版本解析失败：库路径为空
+    monkeypatch.setattr(de, "get_delphi_library_paths", lambda version=None, platform="Win32": [])
+    monkeypatch.setattr(de, "get_delphi_root_dir", lambda version=None: None)
+    monkeypatch.setattr(
+        de, "expand_delphi_path_macros",
+        lambda p, version=None, platform=None, env_vars=None: p,
+    )
+
+    svc = _make_dpr_service(tmp_path)
+    from src.models.compile_request import CompileOptions
+
+    args = svc._generate_dpr_args(
+        str(dpr), CompileOptions(), str(tmp_path / "Win32" / "Debug"),
+        compiler_path=str(dcc32),
+    )
+
+    u_args = [a for a in args if a.startswith("-U")]
+    assert u_args, "即使库路径解析失败，也必须发出 -U"
+    assert str(root / "lib" / "Win32" / "release") in u_args[0]
+    # 大小写不敏感去重：Win32 与 win32 不重复出现
+    assert u_args[0].count("release") == 1
+
+
+def test_generate_dpr_args_merges_dproj_namespace_into_ns(tmp_path, monkeypatch):
+    """同目录 .dproj 存在时，其 DCC_Namespace 必须合并进 -NS（与 compile_file 一致）。"""
+    import src.utils.delphi_env as de
+
+    dpr = tmp_path / "TestProj.dpr"
+    dpr.write_text("program TestProj;\nbegin\nend.\n", encoding="utf-8")
+
+    # 伪 .dproj，声明一个自定义命名空间 MyLib
+    dproj = tmp_path / "TestProj.dproj"
+    dproj.write_text(
+        """<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectVersion>18.2</ProjectVersion>
+    <DCC_Namespace>MyLib;System</DCC_Namespace>
+  </PropertyGroup>
+</Project>
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(de, "get_delphi_library_paths", lambda version=None, platform="Win32": [])
+    monkeypatch.setattr(de, "get_delphi_root_dir", lambda version=None: None)
+    monkeypatch.setattr(
+        de, "expand_delphi_path_macros",
+        lambda p, version=None, platform=None, env_vars=None: p,
+    )
+
+    svc = _make_dpr_service(tmp_path)
+    from src.models.compile_request import CompileOptions
+
+    args = svc._generate_dpr_args(
+        str(dpr), CompileOptions(), str(tmp_path / "Win32" / "Debug"),
+        compiler_path=None,
+    )
+
+    ns_args = [a for a in args if a.startswith("-NS")]
+    assert ns_args, "应发出 -NS 命名空间参数"
+    ns_value = ns_args[0]
+    ns_tokens = ns_value[len("-NS"):].split(";")
+    # 自定义命名空间被合并进去，且放在最前（项目命名空间优先）
+    assert "MyLib" in ns_tokens
+    # 默认 System 仍保留；项目已含 System，去重后 System 作为独立 token 只出现一次
+    assert ns_tokens.count("System") == 1
+
+
+def test_generate_dpr_args_no_dproj_keeps_default_ns_and_no_u_crash(tmp_path, monkeypatch):
+    """无 .dproj 且无真实 RTL 目录时，不抛出异常，-NS 保持默认列表。"""
+    import src.utils.delphi_env as de
+
+    dpr = tmp_path / "TestProj.dpr"
+    dpr.write_text("program TestProj;\nbegin\nend.\n", encoding="utf-8")
+
+    monkeypatch.setattr(de, "get_delphi_library_paths", lambda version=None, platform="Win32": [])
+    monkeypatch.setattr(de, "get_delphi_root_dir", lambda version=None: None)
+    monkeypatch.setattr(
+        de, "expand_delphi_path_macros",
+        lambda p, version=None, platform=None, env_vars=None: p,
+    )
+
+    svc = _make_dpr_service(tmp_path)
+    from src.models.compile_request import CompileOptions
+
+    # compiler_path 指向不存在的编译器，且根目录也没有 RTL 目录 → 不崩溃
+    args = svc._generate_dpr_args(
+        str(dpr), CompileOptions(), str(tmp_path / "Win32" / "Debug"),
+        compiler_path=str(tmp_path / "nope" / "bin" / "dcc32.exe"),
+    )
+
+    ns_args = [a for a in args if a.startswith("-NS")]
+    assert ns_args
+    assert "System" in ns_args[0]
+
+
 def run_tests():
     """运行所有测试"""
     tests = [

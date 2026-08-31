@@ -666,7 +666,7 @@ class CompilerService:
                 )
 
             # 7. 生成命令行参数
-            args = self._generate_dpr_args(request.project_path, request.options, output_base)
+            args = self._generate_dpr_args(request.project_path, request.options, output_base, compiler_path)
 
             # 8. 验证参数
             if not self.args_generator.validate_args(args):
@@ -755,10 +755,23 @@ class CompilerService:
             self._save_history(request.project_path, result.status.value, duration, error_msg)
             return result
 
-    def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str) -> list[str]:
-        """生成 .dpr 文件的直接编译参数"""
-        from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
-        
+    def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str,
+                           compiler_path: Optional[str] = None) -> list[str]:
+        """生成 .dpr 文件的直接编译参数
+
+        Args:
+            project_path: .dpr 文件路径
+            options: 编译选项
+            output_base: 输出目录（存放 .exe 文件）
+            compiler_path: 实际选定的 dcc32/dcc64 编译器路径（用于注册表不可用时
+                从编译器自身目录推导 RTL 库搜索路径，保证 -U 总能发出）
+        """
+        from ..utils.delphi_env import (
+            expand_delphi_path_macros,
+            get_delphi_library_paths,
+            get_delphi_root_dir,
+        )
+
         args = []
 
         # 项目文件
@@ -792,13 +805,28 @@ class CompilerService:
             defines = ";".join(options.conditional_defines)
             args.append(f'-D{defines}')
 
-        # 命名空间搜索路径 - 默认添加 System 命名空间
+        # 命名空间搜索路径 - 默认添加 System 等 RTL/VCL 命名空间，
+        # 并合并同目录 .dproj 的 DCC_Namespace（与 compile_file 单文件路径一致），
+        # 使 uses SysUtils、uses Classes 等短单元名能解析到 System.SysUtils 等
         default_namespaces = ["System", "Winapi", "System.Win", "Vcl", "Vcl.Imaging",
                               "Vcl.Touch", "Vcl.Samples", "Vcl.Shell", "Data", "Datasnap",
                               "Web", "Soap", "Xml",
                               "Common", "Protocol", "Engine", "Security", "Transport",
                               "Integration", "Platforms"]
-        args.append('-NS' + ";".join(default_namespaces))
+        project_namespaces: list[str] = []
+        if dproj_path_dcu and dproj_path_dcu.exists():
+            try:
+                from ..utils.dproj_parser import DprojParser
+                ns_parser = DprojParser(str(dproj_path_dcu))
+                if ns_parser.parse():
+                    project_namespaces = ns_parser.get_namespace() or []
+            except Exception:
+                logger.debug("读取 .dproj DCC_Namespace 失败，仅使用默认命名空间")
+        if project_namespaces:
+            namespaces = list(dict.fromkeys(project_namespaces + default_namespaces))
+        else:
+            namespaces = default_namespaces
+        args.append('-NS' + ";".join(namespaces))
 
         # 单元搜索路径 - 如果未提供，则自动获取 Delphi 默认库搜索路径
         unit_paths = options.unit_search_paths if options.unit_search_paths else []
@@ -828,6 +856,33 @@ class CompilerService:
                 expanded = expand_delphi_path_macros(p, version=registry_version, platform=platform)
                 if expanded and expanded not in unit_paths:
                     unit_paths.append(expanded)
+
+            # 兜底：注册表/版本解析失败（如无 .dproj 且编译器为手动配置、不在注册表）时，
+            # delphi_lib_paths 可能为空。dcc32 不像 IDE 那样有内置默认库搜索路径，
+            # 若完全不发 -U，则 uses SysUtils/Classes 等 RTL 单元无法解析导致编译失败。
+            # 因此从编译器自身目录推导 RTL 路径：<root>/lib/<platform>/release。
+            if not unit_paths:
+                rtl_candidates: list[str] = []
+                # 1. 从 dcc32/dcc64 所在目录推导（bin/ 的上一级是 Delphi 根目录）
+                if compiler_path:
+                    compiler_root = Path(compiler_path).resolve().parent.parent
+                    rtl_candidates.append(str(compiler_root / "lib" / platform / "release"))
+                    rtl_candidates.append(str(compiler_root / "lib" / "win32" / "release"))
+                # 2. 尝试从注册表根目录推导
+                try:
+                    root_dir = get_delphi_root_dir(registry_version) if registry_version else None
+                    if not root_dir:
+                        root_dir = get_delphi_root_dir()
+                    if root_dir:
+                        rtl_candidates.append(str(Path(root_dir) / "lib" / platform / "release"))
+                except Exception:
+                    logger.debug("从注册表根目录推导 RTL 路径失败")
+                for cand in rtl_candidates:
+                    cand_path = Path(cand)
+                    if cand_path.is_dir() and str(cand_path).lower() not in {
+                            p.lower() for p in unit_paths}:
+                        unit_paths.append(str(cand_path))
+                        logger.info("从编译器/注册表目录推导 RTL 单元搜索路径: %s", cand_path)
         
         if unit_paths:
             paths = ";".join(unit_paths)
