@@ -554,12 +554,22 @@ class CompilerService:
             logger.info("开始解析第三方库路径...")
             resolver = SmartLibraryPathResolver()
             
+            # 解析 registry_version（与 RTL 库搜索路径共用同一策略），
+            # 使第三方库路径按同一 Delphi 版本过滤注册表，避免跨版本混入。
+            from ..utils.delphi_versions import resolve_registry_version
+            resolver_version = resolve_registry_version(
+                options.compiler_version,
+                parser.get_project_version(),
+                self.config_manager,
+            )
+            
             # 传入用户显式指定的路径，resolver 会判断是否跳过智能分析
             user_provided_paths = list(options.unit_search_paths) if options.unit_search_paths else None
             resolved_paths, info = resolver.resolve_library_paths(
                 project_path, 
                 platform,
-                user_search_paths=user_provided_paths
+                user_search_paths=user_provided_paths,
+                version=resolver_version,
             )
             
             if info.get("mode") == "user_provided":
@@ -891,20 +901,13 @@ class CompilerService:
             from ..services.args_generator import ArgsGenerator
             platform = ArgsGenerator._PLATFORM_LIB_DIR.get(options.target_platform, 'Win32')
             # 获取编译器对应的 Delphi 版本号（registry_version），用于读取该版本的搜索路径
-            registry_version = None
-            if options.compiler_version:
-                compiler_cfg = self.config_manager.get_compiler(options.compiler_version)
-                if compiler_cfg:
-                    registry_version = compiler_cfg.registry_version
-            # Fallback: compiler_version 未指定时，从 .dproj ProjectVersion 推断
-            if not registry_version and project_version:
-                from ..utils.delphi_versions import project_version_to_registry_version
-                registry_version = project_version_to_registry_version(project_version)
-                if registry_version:
-                    logger.debug(
-                        "从 .dproj ProjectVersion=%s 推断 registry_version=%s",
-                        project_version, registry_version,
-                    )
+            # 与第三方库路径解析共用 resolve_registry_version，保证两处版本过滤策略一致
+            from ..utils.delphi_versions import resolve_registry_version
+            registry_version = resolve_registry_version(
+                options.compiler_version,
+                project_version,
+                self.config_manager,
+            )
             delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
             # 展开路径中的宏变量
             for p in delphi_lib_paths:

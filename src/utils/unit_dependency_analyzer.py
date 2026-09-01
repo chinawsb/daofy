@@ -299,7 +299,8 @@ class SmartLibraryPathResolver:
         
     def resolve_library_paths(self, project_path: str, 
                              platform: str = "Win32",
-                             user_search_paths: Optional[List[str]] = None) -> Tuple[List[str], Dict]:
+                             user_search_paths: Optional[List[str]] = None,
+                             version: Optional[str] = None) -> Tuple[List[str], Dict]:
         """
         智能解析项目需要的库路径
         
@@ -307,6 +308,8 @@ class SmartLibraryPathResolver:
             project_path: 项目文件路径
             platform: 目标平台
             user_search_paths: 用户显式传入的搜索路径（如果提供，直接返回）
+            version: Delphi 注册表版本号（如 "23.0"），用于按编译器版本过滤第三方库路径；
+                为 None 时使用最新安装版本（与未指定编译器的默认行为一致）
             
         Returns:
             (需要的库路径列表, 详细信息字典)
@@ -331,14 +334,14 @@ class SmartLibraryPathResolver:
             "missing_unit_names": list(deps.missing_units),
         }
         
-        # 2. 获取所有第三方库路径
+        # 2. 获取所有第三方库路径（按版本过滤，与 RTL 库路径策略一致）
         if self.thirdparty_kb_service:
-            all_thirdparty_paths = self.thirdparty_kb_service.get_library_paths()
+            all_thirdparty_paths = self.thirdparty_kb_service.get_library_paths(version)
         else:
             # 如果没有服务，使用全局函数
             from ..services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
             kb = ThirdPartyKnowledgeBase()
-            all_thirdparty_paths = kb.get_library_paths()
+            all_thirdparty_paths = kb.get_library_paths(version)
         
         logger.info(f"全局第三方库路径数量: {len(all_thirdparty_paths)}")
         
@@ -487,7 +490,8 @@ def analyze_project_units(project_path: str) -> Dict:
 
 def smart_resolve_library_paths(project_path: str, 
                                 platform: str = "Win32",
-                                user_search_paths: Optional[List[str]] = None) -> Tuple[List[str], Dict]:
+                                user_search_paths: Optional[List[str]] = None,
+                                version: Optional[str] = None) -> Tuple[List[str], Dict]:
     """
     智能解析库路径的便捷函数
     
@@ -495,9 +499,10 @@ def smart_resolve_library_paths(project_path: str,
         project_path: 项目文件路径
         platform: 目标平台
         user_search_paths: 用户显式传入的搜索路径（如果提供，直接返回）
+        version: Delphi 注册表版本号（如 "23.0"），用于按编译器版本过滤第三方库路径
         
     Returns:
         (需要的库路径列表, 详细信息)
     """
     resolver = SmartLibraryPathResolver()
-    return resolver.resolve_library_paths(project_path, platform, user_search_paths)
+    return resolver.resolve_library_paths(project_path, platform, user_search_paths, version)

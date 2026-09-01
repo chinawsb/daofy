@@ -185,6 +185,43 @@ PROJECT_VERSION_TO_REGISTRY: dict[str, str] = {
 }
 
 
+def resolve_registry_version(
+    compiler_version: Optional[str],
+    project_version: Optional[str] = None,
+    config_manager: Optional[object] = None,
+) -> Optional[str]:
+    """
+    从 compiler_version（或 .dproj ProjectVersion 回退）解析注册表版本号。
+
+    RTL 库搜索路径与第三方库路径共用此策略，保证两者按同一 Delphi 版本
+    过滤注册表，避免出现“默认编译器为 Delphi 12 而库路径取 Delphi 13”的错配。
+
+    Args:
+        compiler_version: 用户/配置指定的编译器版本名称
+        project_version: .dproj ProjectVersion（可选，compiler_version 未指定时回退）
+        config_manager: 配置管理器实例（可选，未提供时仅能依靠 project_version 回退）
+
+    Returns:
+        注册表版本号如 "23.0"，无法解析返回 None
+    """
+    registry_version: Optional[str] = None
+
+    if compiler_version:
+        try:
+            if config_manager is not None:
+                compiler_cfg = config_manager.get_compiler(compiler_version)
+                if compiler_cfg is not None:
+                    registry_version = compiler_cfg.registry_version
+        except Exception:
+            registry_version = None
+
+    # Fallback: compiler_version 未指定/无法解析时，从 .dproj ProjectVersion 推断
+    if not registry_version and project_version:
+        registry_version = project_version_to_registry_version(project_version)
+
+    return registry_version
+
+
 def project_version_to_registry_version(project_ver: str) -> Optional[str]:
     """
     将 .dproj ProjectVersion 映射为注册表版本号（registry_version）。
