@@ -49,16 +49,37 @@ class ZVecKnowledgeBaseAdapter:
         构建知识库（兼容旧接口）。
 
         从 source_dirs 收集 .pas 文件，chunk 后导入 ZVec。
+        传入 version 时，与 RTL/第三方库路径共用同一版本过滤策略：
+        只索引该 Delphi 版本的官方源码；否则回退到构造时注入的 source_dirs。
         """
         from .zvec_knowledge_base import ZVecKnowledgeBase
 
-        if not self.source_dirs:
+        # 版本过滤：仅当显式传 version 时按版本解析源码目录
+        if version:
+            try:
+                from ...utils.delphi_env import resolve_delphi_source_dirs
+                scoped = resolve_delphi_source_dirs(version)
+                if scoped:
+                    source_dirs = scoped
+                else:
+                    logger.warning(
+                        "未找到 Delphi 版本 %s 的官方源码，回退到默认全部版本目录",
+                        version,
+                    )
+                    source_dirs = self.source_dirs
+            except Exception:
+                logger.debug("按版本解析源码目录失败，回退默认目录", exc_info=True)
+                source_dirs = self.source_dirs
+        else:
+            source_dirs = self.source_dirs
+
+        if not source_dirs:
             logger.error("没有配置源码目录，无法构建")
             return False
 
         # 收集文件
         all_files: List[str] = []
-        for sd in self.source_dirs:
+        for sd in source_dirs:
             src = Path(sd)
             if src.exists():
                 all_files.extend(
@@ -66,7 +87,7 @@ class ZVecKnowledgeBaseAdapter:
                 )
 
         if not all_files:
-            logger.warning(f"未在 {self.source_dirs} 中找到 .pas 文件")
+            logger.warning(f"未在 {source_dirs} 中找到 .pas 文件")
             return False
 
         logger.info(f"构建 ZVec 知识库: {len(all_files)} 文件")

@@ -115,36 +115,47 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         import winreg
         from pathlib import Path
 
-        def _get_delphi_source_dirs():
-            dirs = []
+        def _get_delphi_source_dirs(version=None):
+            # 与 RTL/第三方库路径共用同一版本过滤策略：
+            # 传入 version 时只索引该 Delphi 版本的官方源码，否则取全部。
             try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
-                i = 0
-                while True:
-                    try:
-                        vkey = winreg.EnumKey(key, i)
-                        vpath = winreg.OpenKey(key, vkey)
-                        try:
-                            root = winreg.QueryValueEx(vpath, "RootDir")[0]
-                            src = Path(root) / "source"
-                            if src.exists():
-                                dirs.append(str(src))
-                        except OSError:
-                            pass
-                        finally:
-                            winreg.CloseKey(vpath)
-                        i += 1
-                    except WindowsError:
-                        break
-                winreg.CloseKey(key)
+                from ...utils.delphi_env import resolve_delphi_source_dirs
+                return resolve_delphi_source_dirs(version)
             except Exception:
-                pass
-            return dirs
+                import winreg
+                from pathlib import Path
+
+                dirs = []
+                try:
+                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
+                    i = 0
+                    while True:
+                        try:
+                            vkey = winreg.EnumKey(key, i)
+                            vpath = winreg.OpenKey(key, vkey)
+                            try:
+                                root = winreg.QueryValueEx(vpath, "RootDir")[0]
+                                src = Path(root) / "source"
+                                if src.exists():
+                                    dirs.append(str(src))
+                            except OSError:
+                                pass
+                            finally:
+                                winreg.CloseKey(vpath)
+                            i += 1
+                        except WindowsError:
+                            break
+                    winreg.CloseKey(key)
+                except Exception:
+                    pass
+                return dirs
 
         def build_kb_task(**kwargs):
             rebuild = kwargs.get("rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
-            source_dirs = _get_delphi_source_dirs()
+            # version 透传：按版本过滤系统库源码目录（默认 None → 全部版本）
+            version = kwargs.get("version")
+            source_dirs = _get_delphi_source_dirs(version)
             kb_dir = str(Path(__file__).parent.parent.parent / "data" / "delphi-knowledge-base")
             service = ZVecKnowledgeBaseAdapter(kb_dir, source_dirs=source_dirs)
             service.progress_callback = progress_callback

@@ -132,6 +132,99 @@ def get_delphi_root_dir(version: Optional[str] = None) -> Optional[str]:
         return None
 
 
+def _matched_version_key(version: str) -> Optional[str]:
+    """在注册表中查找与给定版本标识匹配的版本键。
+
+    与第三方库 / RTL 库路径策略一致：`version` 既可以是注册表版本键
+    （如 ``"23.0"``），也可以是产品名（如 ``"Delphi 12 Athens"``，
+    及 ``"delphi 12"`` 这类去掉 codename 的简短写法）。
+
+    Args:
+        version: 用户传入的版本标识
+
+    Returns:
+        匹配的注册表版本键（如 "23.0"），未匹配则返回 None
+    """
+    from .delphi_versions import get_version_name
+
+    target = version.strip().lower()
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
+    except OSError:
+        return None
+    try:
+        i = 0
+        while True:
+            try:
+                vkey = winreg.EnumKey(key, i)
+                i += 1
+                if target == vkey.lower():
+                    return vkey
+                name = get_version_name(vkey)
+                if target == name.lower():
+                    return vkey
+                # 简短写法："delphi 12 athens" → "delphi 12"
+                if name.lower().startswith(target) and target.startswith("delphi"):
+                    return vkey
+            except WindowsError:
+                break
+    finally:
+        winreg.CloseKey(key)
+    return None
+
+
+def resolve_delphi_source_dirs(version: Optional[str] = None) -> List[str]:
+    """解析 Delphi 官方源码（RTL/VCL/FMX，即"系统库"）知识库的源码目录。
+
+    与 RTL 库搜索路径 / 第三方库路径共用同一版本过滤策略：当传入 `version`
+    时，只返回该 Delphi 版本的 ``<RootDir>/source``；未传或多版本默认全取，
+    保持既有行为。
+
+    Args:
+        version: 版本标识（注册表版本键 "23.0" 或产品名 "Delphi 12 Athens"），
+                 为 None 时逐个返回所有已安装版本的源码目录
+
+    Returns:
+        source 目录路径列表（仅保留实际存在的目录）
+    """
+    if version:
+        vkey = _matched_version_key(version)
+        if vkey:
+            src = Path(get_delphi_root_dir(vkey) or "") / "source"
+            if src.exists():
+                return [str(src)]
+            logger.info(
+                "Delphi 版本 %s 的源码目录不存在: %s", version, src
+            )
+            return []
+
+    # 无版本 / 版本未匹配：返回所有已安装版本的源码目录（默认行为）
+    dirs: List[str] = []
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
+        i = 0
+        while True:
+            try:
+                vkey = winreg.EnumKey(key, i)
+                vpath = winreg.OpenKey(key, vkey)
+                try:
+                    root = winreg.QueryValueEx(vpath, "RootDir")[0]
+                    src = Path(root) / "source"
+                    if src.exists():
+                        dirs.append(str(src))
+                except OSError:
+                    pass
+                finally:
+                    winreg.CloseKey(vpath)
+                i += 1
+            except WindowsError:
+                break
+        winreg.CloseKey(key)
+    except Exception as e:
+        logger.debug("读取 Delphi 源码目录失败: %s", e)
+    return dirs
+
+
 def get_delphi_env_vars(version: Optional[str] = None) -> Dict[str, str]:
     """
     获取 Delphi 环境变量

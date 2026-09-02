@@ -705,29 +705,10 @@ async def run_server():
     logger.info("编译服务初始化完成")
 
     # 初始化知识库服务（ZVec 引擎）
-    delphi_source_dirs = []
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY_EMBARCADERO_BDS)
-        i = 0
-        while True:
-            try:
-                vkey = winreg.EnumKey(key, i)
-                vpath = winreg.OpenKey(key, vkey)
-                try:
-                    root = winreg.QueryValueEx(vpath, "RootDir")[0]
-                    src = Path(root) / "source"
-                    if src.exists():
-                        delphi_source_dirs.append(str(src))
-                except OSError:
-                    pass
-                finally:
-                    winreg.CloseKey(vpath)
-                i += 1
-            except WindowsError:
-                break
-        winreg.CloseKey(key)
-    except Exception as e:
-        logger.warning(f"检测 Delphi 版本失败: {e}")
+    # 与 RTL/第三方库路径共用同一版本过滤策略（resolve_delphi_source_dirs）；
+    # 启动默认取全部已安装版本的官方源码，构建时可通过 version 参数按版本过滤。
+    from src.utils.delphi_env import resolve_delphi_source_dirs
+    delphi_source_dirs = resolve_delphi_source_dirs()
 
     kb_dir = str(Path(__file__).parent.parent / "data" / "delphi-knowledge-base")
     kb_service = ZVecKnowledgeBaseAdapter(kb_dir, source_dirs=delphi_source_dirs)
