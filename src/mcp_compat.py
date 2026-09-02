@@ -25,8 +25,13 @@ import logging
 import re
 from typing import Any, Optional, Union
 
+try:  # jsonschema is a hard dependency of the mcp SDK (both v1/v2)
+    import jsonschema
+except Exception:  # pragma: no cover - degrade to no validation
+    jsonschema = None
+
 import anyio
-from pydantic import BaseModel
+from pydantic import AnyUrl, BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +214,14 @@ def make_resource(
 def make_text_resource_contents(
     uri: str, mime_type: str, text: str
 ) -> TextResourceContents:
-    """Create TextResourceContents with version-appropriate field names."""
+    """Create TextResourceContents with version-appropriate field names.
+
+    `uri` may be passed as a pydantic ``AnyUrl`` (some call sites do); v2's
+    ``TextResourceContents.uri`` is a strict ``str`` field, so coerce the
+    ``AnyUrl`` to its string form first to avoid a ValidationError.
+    """
+    if isinstance(uri, AnyUrl):
+        uri = str(uri)
     if MCP2:
         return TextResourceContents(uri=uri, mime_type=mime_type, text=text)
     return TextResourceContents(uri=uri, mimeType=mime_type, text=text)
@@ -218,6 +230,32 @@ def make_text_resource_contents(
 def make_read_resource_result(contents: list) -> ReadResourceResult:
     """Create ReadResourceResult (API unchanged between v1/v2)."""
     return ReadResourceResult(contents=contents)
+
+
+def call_tool_result_is_error(result: Any) -> bool:
+    """Read the error flag off a ``CallToolResult`` across SDK generations.
+
+    v1 uses camelCase ``isError``, v2 uses snake_case ``is_error``. Duck-type
+    so both work; non-``CallToolResult`` inputs (dict/str/etc.) return False.
+    """
+    if isinstance(result, CallToolResult):
+        return bool(
+            getattr(result, "isError", None)
+            or getattr(result, "is_error", None)
+        )
+    return False
+
+
+def _make_error_result(error_message: str) -> CallToolResult:
+    """Build an error ``CallToolResult`` across SDK generations.
+
+    v1 uses ``isError``, v2 uses ``is_error``; pick the field
+    the installed model accepts.
+    """
+    text = TextContent(type="text", text=error_message)
+    if hasattr(CallToolResult, "is_error"):
+        return CallToolResult(content=[text], is_error=True)
+    return CallToolResult(content=[text], isError=True)
 
 
 # ── CompatibleServer — wraps the decorator→on_* migration ─────────
@@ -245,6 +283,12 @@ class CompatibleServer:
         self._kwargs = kwargs
         self._handlers: dict[str, Any] = {}
         self._server: Any = None
+        # v1's lowlevel server populates this cache from the list_tools
+        # handler and then validates call_tool arguments against
+        # tool.inputSchema (validate_input=True). v2's runner has no such
+        # validation, so we mirror it: capture name → inputSchema here and
+        # validate in _raw_adapt_v2("call_tool").
+        self._tool_schemas: dict[str, dict[str, Any]] = {}
 
     def _reg(self, method: str, func: Any) -> Any:
         self._handlers[method] = func
@@ -335,6 +379,14 @@ class CompatibleServer:
                         )
                     else:
                         dumped.append(it)
+                # Capture tool inputSchemas so _call_tool can apply the same
+                # jsonschema validation v1 performs server-side (v2 skips it).
+                if _key == "tools":
+                    for it in dumped:
+                        if isinstance(it, dict):
+                            schema = it.get("input_schema") or it.get("inputSchema")
+                            if isinstance(schema, dict):
+                                self._tool_schemas[it.get("name", "")] = schema
                 return {
                     _key: dumped,
                     "resultType": "complete",
@@ -347,12 +399,50 @@ class CompatibleServer:
             async def _call_tool(ctx: Any, params: Any) -> Any:
                 # v2 may deliver arguments=None for a no-arg invocation; the
                 # v1 handlers expect a dict.
-                return await func(params.name, params.arguments or {})
+                arguments = params.arguments or {}
+                # Mirror v1's server-side input validation (validate_input=True
+                # in mcp v1 lowlevel server.call_tool). v2's runner performs no
+                # such check, so empty/malformed required params would reach the
+                # handler and execute side effects. Reject them exactly like v1.
+                if jsonschema is not None:
+                    schema = self._tool_schemas.get(params.name)
+                    if schema is not None:
+                        try:
+                            jsonschema.validate(instance=arguments, schema=schema)
+                        except jsonschema.ValidationError as e:
+                            return _make_error_result(
+                                f"Input validation error: {e.message}"
+                            )
+                return await func(params.name, arguments)
 
             return _call_tool
         if method == "read_resource":
             async def _read_resource(ctx: Any, params: Any) -> Any:
-                return await func(params.uri)
+                # v1 read_resource handlers return a bare list of
+                # ReadResourceContents (content/mime_type); v2's runner validates
+                # the result against the per-version ReadResourceResult model,
+                # which requires dict contents {uri, mimeType, text} plus the
+                # 2026-era resultType/ttlMs/cacheScope. Mirror the list_* fix.
+                items = await func(params.uri)
+                dumped = []
+                for it in items:
+                    content = getattr(it, "content", None)
+                    mime_type = getattr(it, "mime_type", None) or getattr(
+                        it, "mimeType", None
+                    )
+                    dumped.append(
+                        {
+                            "uri": str(params.uri),
+                            "mimeType": mime_type,
+                            "text": content,
+                        }
+                    )
+                return {
+                    "contents": dumped,
+                    "resultType": "complete",
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                }
 
             return _read_resource
         if method == "get_prompt":
@@ -381,6 +471,20 @@ class CompatibleServer:
                 if k in self._handlers:
                     kwargs[v] = self._raw_adapt_v2(k, self._handlers[k])
             kwargs.update(self._kwargs)
+            # v2's Server only advertises name/version in serverInfo unless
+            # title/description are passed explicitly. Under v1 the same
+            # `title`/`description` were hardcoded in `_V1DaofyServerSession`;
+            # mirror them here so the two SDK generations agree on the wire.
+            kwargs.setdefault(
+                "title",
+                "Daofy for Delphi"
+                if self._name == "daofy-for-delphi"
+                else self._name,
+            )
+            kwargs.setdefault(
+                "description",
+                "Daofy for Delphi MCP Server，提供 Delphi 项目编译、知识库搜索、安全文件读写、自动化测试和审计工具。",
+            )
             self._server = _V2Server(self._name, **kwargs)
         else:
             from mcp.server import Server as _V1Server

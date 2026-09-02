@@ -193,6 +193,7 @@ else:
         make_resource,
         make_text_resource_contents,
         make_read_resource_result,
+        call_tool_result_is_error,
         run_mcp_server,
         get_server_session,
     )
@@ -448,7 +449,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             # 判断编译是否成功
             is_success = False
             if isinstance(result, CallToolResult):
-                is_success = not result.isError
+                is_success = not call_tool_result_is_error(result)
             elif isinstance(result, dict):
                 is_success = (
                     result.get('status') != 'failed'
@@ -467,7 +468,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         action = arguments.get("action", "")
         if action == "install":
             if isinstance(result, CallToolResult):
-                is_error = result.isError
+                is_error = call_tool_result_is_error(result)
             elif isinstance(result, dict):
                 is_error = (
                     result.get('status') == 'failed'
@@ -675,7 +676,8 @@ def _read_mcp_resource_contents(uri: str, root: Path = project_root) -> list:
     return [
         ReadResourceContents(
             content=content.text,
-            mime_type=content.mimeType,
+            mime_type=getattr(content, "mime_type", None)
+            or getattr(content, "mimeType", None),
         )
         for content in result.contents
     ]
@@ -937,7 +939,7 @@ async def run_server():
                         data = extracted
                 else:
                     data = str(result)
-                is_error = getattr(result, 'isError', False)
+                is_error = call_tool_result_is_error(result)
             elif isinstance(result, (str, bytes)):
                 data = result
                 is_error = False
@@ -963,7 +965,14 @@ async def run_server():
                 text = str(response)
             # 过滤无效的 UTF-8 代理对字符，防止 Pydantic JSON 序列化失败
             text = _filter_surrogates(text)
-            result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
+            if hasattr(CallToolResult, "is_error"):
+                result = CallToolResult(
+                    content=[TextContent(type="text", text=text)], is_error=is_error
+                )
+            else:
+                result = CallToolResult(
+                    content=[TextContent(type="text", text=text)], isError=is_error
+                )
             return result
 
         except Exception as e:
@@ -1584,7 +1593,7 @@ async def run_server():
             })
 
             # start_async_task 返回 CallToolResult，isError=False 表示任务已成功提交到后台
-            if result.isError:
+            if call_tool_result_is_error(result):
                 logger.warning(
                     "自动构建项目知识库提交失败: %s", project_path
                 )
