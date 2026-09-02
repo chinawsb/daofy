@@ -30,15 +30,42 @@ import anyio
 logger = logging.getLogger(__name__)
 
 # ── Version detection ──────────────────────────────────────────────
+# Feature-detect the SDK generation first. v2 renamed McpError→MCPError
+# and removed mcp.server.lowlevel.server.ReadResourceContents, while
+# __version__ is unreliable (missing or still 1.x-style on some 2.x
+# builds), so the version number is only a fallback.
 
-try:
-    import mcp
+def _detect_mcp2() -> bool:
+    """Return True when the installed mcp SDK uses the v2 API surface.
 
-    _ver = getattr(mcp, "__version__", "") or ""
-    _m = re.match(r"(\d+)", str(_ver))
-    MCP2 = bool(_m and int(_m.group(1)) >= 2)
-except ImportError:
-    MCP2 = False
+    Detection order:
+      1. mcp.shared.exceptions.MCPError present  → v2
+      2. mcp.shared.exceptions.McpError present  → v1
+      3. mcp.__version__ major >= 2              → v2 (fallback)
+      Otherwise                                  → v1
+    """
+    try:
+        import mcp.shared.exceptions as _exc
+
+        if hasattr(_exc, "MCPError"):
+            return True
+        if hasattr(_exc, "McpError"):
+            return False
+    except (ImportError, AttributeError):
+        logger.debug(
+            "mcp shared.exceptions feature detection failed", exc_info=True
+        )
+    try:
+        import mcp
+
+        _ver = getattr(mcp, "__version__", "") or ""
+        _m = re.match(r"(\d+)", str(_ver))
+        return bool(_m and int(_m.group(1)) >= 2)
+    except ImportError:
+        return False
+
+
+MCP2 = _detect_mcp2()
 
 # ── Type re-exports (mcp.types remains as permanent alias in v2) ──
 
@@ -59,13 +86,15 @@ from mcp.types import (
 )
 
 # ── Error class (McpError → MCPError in v2) ───────────────────────
+# Feature-detect rather than rely on version number, because some mcp
+# releases expose 1.x __version__ while already using MCPError naming.
 
-if MCP2:
+try:
     from mcp.shared.exceptions import MCPError as _McpErrorOrigin
-else:
+except ImportError:
     from mcp.shared.exceptions import McpError as _McpErrorOrigin
 
-# In v2 it's named MCPError; we re-export as McpError for v1 callers
+# Re-export as McpError for callers that use the v1 name.
 McpError = _McpErrorOrigin
 
 # ── Transport (unchanged) ──────────────────────────────────────────
