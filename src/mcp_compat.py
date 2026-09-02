@@ -26,6 +26,7 @@ import re
 from typing import Any, Optional, Union
 
 import anyio
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +286,82 @@ class CompatibleServer:
             return self._reg("get_prompt", f)
         return deco
 
+    def _raw_adapt_v2(self, method: str, func: Any) -> Any:
+        """Wrap a v1-style handler into the v2 ``(ctx, params)`` signature.
+
+        v2's ServerRunner invokes every request handler as
+        ``handler(ctx, typed_params)``.  Our handlers are written against the
+        v1 decorator API (``list_tools()`` / ``call_tool(name, arguments)``
+        / ...), so each one is adapted here:
+
+        =================  ============================  ====================
+        v1 handler         v2 params type                adaptation
+        =================  ============================  ====================
+        list_tools()       PaginatedRequestParams        drop ctx/params
+        list_resources()   PaginatedRequestParams        drop ctx/params
+        list_prompts()     PaginatedRequestParams        drop ctx/params
+        call_tool(n, a)    CallToolRequestParams         params.name/arguments
+        read_resource(u)   ReadResourceRequestParams     params.uri
+        get_prompt(n, a)   GetPromptRequestParams        params.name/arguments
+        =================  ============================  ====================
+
+        Returns the original function unchanged (for v1 / tests).
+        """
+        if method in ("list_tools", "list_resources", "list_prompts"):
+            # v1 handlers returned a bare list of BaseModel instances (Tool /
+            # Resource / Prompt). v2's runner validates the result against the
+            # per-version protocol result model (ListToolsResult /
+            # ListResourcesResult / ListPromptsResult), which requires the
+            # items under the plural key AND plain-dict items — a BaseModel
+            # instance built from v1's mcp.types fails the v2 per-version
+            # model check (different class). The 2026-07-28 surface also
+            # requires resultType/ttlMs/cacheScope; supply neutral "no cache"
+            # defaults, older surfaces ignore them via extra="ignore".
+            _key = {
+                "list_tools": "tools",
+                "list_resources": "resources",
+                "list_prompts": "prompts",
+            }[method]
+
+            async def _no_params(ctx: Any, params: Any, _key: str = _key) -> Any:
+                items = await func()
+                dumped = []
+                for it in items:
+                    if isinstance(it, BaseModel):
+                        dumped.append(
+                            it.model_dump(
+                                by_alias=True, mode="json", exclude_none=True
+                            )
+                        )
+                    else:
+                        dumped.append(it)
+                return {
+                    _key: dumped,
+                    "resultType": "complete",
+                    "ttlMs": 0,
+                    "cacheScope": "private",
+                }
+
+            return _no_params
+        if method == "call_tool":
+            async def _call_tool(ctx: Any, params: Any) -> Any:
+                # v2 may deliver arguments=None for a no-arg invocation; the
+                # v1 handlers expect a dict.
+                return await func(params.name, params.arguments or {})
+
+            return _call_tool
+        if method == "read_resource":
+            async def _read_resource(ctx: Any, params: Any) -> Any:
+                return await func(params.uri)
+
+            return _read_resource
+        if method == "get_prompt":
+            async def _get_prompt(ctx: Any, params: Any) -> Any:
+                return await func(params.name, params.arguments)
+
+            return _get_prompt
+        return func
+
     def _ensure_server(self) -> None:
         if self._server is not None:
             return
@@ -302,7 +379,7 @@ class CompatibleServer:
             kwargs: dict[str, Any] = {}
             for k, v in handler_map.items():
                 if k in self._handlers:
-                    kwargs[v] = self._handlers[k]
+                    kwargs[v] = self._raw_adapt_v2(k, self._handlers[k])
             kwargs.update(self._kwargs)
             self._server = _V2Server(self._name, **kwargs)
         else:
