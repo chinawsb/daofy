@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.09.02] - 2026-09-02
+
+### Fixed
+
+- **多版本编译器错配（编译失败）**: `resolve_registry_version` 未指定 `compiler_version` 时不再
+  直接返回 `None`，而是回退到默认编译器 `config.get_compiler(None)` 的 `registry_version`。
+  修复多 Delphi 并存时「默认用 Delphi 12 的 dcc32 却让 `-U` 库路径取 Delphi 13 `.dcu`」的
+  编译失败——现在实际 dcc32 与 `-U`/RTL/三方库/系统库始终同版本
+- **系统库（Delphi 官方源码）按编译器版本过滤**: `delphi_kb(build, kb_type=delphi, version=...)`
+  现按指定版本只索引对应 RTL/VCL/FMX 源码，与 RTL/三方库策略一致，避免多版本共存时混合索引
+  同名 API 定义。新增 `resolve_delphi_source_dirs(version)` 统一入口，server/async_tasks/zvec_adapter
+  三处透传版本
+- **MCP v1/v2 全接口一致性**: `read_resource`/`title`/`description`/`isError`/jsonschema 校验对齐；
+  v2 列表型 handler 结果按协议模型校验，补 `resultType`/`ttlMs`/`cacheScope` 并 dump 元素为 dict
+- **mcp 2.x 版本检测崩溃**: 改用特性检测替代版本号，修复 `McpError`/`MCPError` 导入崩溃
+- **第三方库路径按编译器版本过滤注册表**: 与 RTL 库路径策略一致
+- **MSBuild 实际调用改用解析路径**: 避免 rsvars 后裸 `msbuild` 找不到
+- **`.dpr` 直编缺 `-U` 搜索路径**: 导致 `uses SysUtils/Classes` 编译失败
+- **自动检测不再覆盖用户手动指定的编译器路径**
+
+### Added
+
+- **Fmx.DaofyAutomation 同步 Vcl 功能**: RTTI `named_paths`/`GetRttiClasses`/路径解析/Unicode 按键
+
+### Changed
+
+- **DaofyCoding 客户端工具隐藏策略**: MSBuild EnvOptions 自动兼容 + grep 性能重写
+
 ## [2026.08.20] - 2026-08-20
 
 ### Added
