@@ -214,6 +214,18 @@ def resolve_registry_version(
                     registry_version = compiler_cfg.registry_version
         except Exception:
             registry_version = None
+    elif config_manager is not None:
+        # 未显式指定编译器时，回退到"默认编译器"——与 compile_dpr_direct 实际
+        # 调用的 config_manager.get_compiler(None) 保持一致。若此处直接返回 None,
+        # 调用方 get_delphi_library_paths(None) 会取"最新已安装版本"的库路径,
+        # 而实际 dcc32 用的是默认编译器,当默认编译器不是最新版本时两者错配,
+        # 导致用 Delphi 12 的 dcc32 却找 Delphi 13 的 .dcu 而编译失败。
+        try:
+            default_cfg = config_manager.get_compiler(None)
+            if default_cfg is not None:
+                registry_version = default_cfg.registry_version
+        except Exception:
+            registry_version = None
 
     # Fallback: compiler_version 未指定/无法解析时，从 .dproj ProjectVersion 推断
     if not registry_version and project_version:
