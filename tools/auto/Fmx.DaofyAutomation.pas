@@ -583,7 +583,7 @@ end;
 
 function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): string;
 
-  procedure DoClickAt(Ctrl: TComponent; X, Y: Integer);
+  procedure DoClickAt(Ctrl: TComponent; AForm: TCommonCustomForm; X, Y: Integer);
   var
     CtrlCtl: TControl;
     Pt: TPointF;
@@ -592,7 +592,7 @@ function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): strin
       CtrlCtl := TControl(Ctrl);
       Pt := CtrlCtl.LocalToAbsolute(TPointF.Create(X, Y));
       SetCursorPos(Round(Pt.X), Round(Pt.Y));
-      var H := FormToHWND(Screen.ActiveForm as TCommonCustomForm);
+      var H := FormToHWND(AForm);
       if H <> 0 then begin
         SendMessage(H, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(Round(Pt.X), Round(Pt.Y)));
         SendMessage(H, WM_LBUTTONUP, 0, MakeLParam(Round(Pt.X), Round(Pt.Y)));
@@ -614,15 +614,24 @@ function TAutomationProcessor.HandleCmdClick(const ReqId, Target: string): strin
 
 var
   Ctrl: TComponent;
+  F: TCommonCustomForm;
   Ctx: TRttiContext;
   M: TRttiMethod;
   Evt: TRttiProperty;
   AtPos, CommaPos: Integer;
   CX, CY: Integer;
   CtrlName: string;
+  I: Integer;
 begin
-  if Screen.ActiveForm = nil then
-    Exit(WriteResp(ReqId, 'err', 'no active form'));
+  F := Screen.ActiveForm;
+  if F = nil then
+    for I := 0 to Screen.FormCount - 1 do
+      if Screen.Forms[I].Visible then begin
+        F := Screen.Forms[I] as TCommonCustomForm;
+        Break;
+      end;
+  if F = nil then
+    Exit(WriteResp(ReqId, 'err', 'no visible form'));
 
   // 解析 @x,y 坐标点击
   AtPos := Pos('@', Target);
@@ -634,16 +643,16 @@ begin
       CX := StrToIntDef(Trim(Copy(CoordStr, 1, CommaPos - 1)), 0);
       CY := StrToIntDef(Trim(Copy(CoordStr, CommaPos + 1, MaxInt)), 0);
       if CtrlName <> '' then begin
-        Ctrl := TComponent(FindNamedControl(CtrlName));
+        Ctrl := F.FindComponent(CtrlName);
         if Ctrl = nil then
           Exit(WriteResp(ReqId, 'err', 'NF:' + CtrlName));
         if not IsCtrlVisible(Ctrl) then
           Exit(WriteResp(ReqId, 'err', 'invisible:' + CtrlName));
-        DoClickAt(Ctrl, CX, CY);
+        DoClickAt(Ctrl, F, CX, CY);
       end
       else begin
         // 没有控件名，相对活动窗体坐标
-        var FH := FormToHWND(Screen.ActiveForm as TCommonCustomForm);
+        var FH := FormToHWND(F);
         if FH <> 0 then begin
           SetCursorPos(CX, CY);
           SendMessage(FH, WM_LBUTTONDOWN, MK_LBUTTON, MakeLParam(CX, CY));
@@ -655,7 +664,7 @@ begin
   end;
 
   // 常规 RTTI 点击
-  Ctrl := TComponent(FindNamedControl(Target));
+  Ctrl := F.FindComponent(Target);
   if Ctrl = nil then
     Exit(WriteResp(ReqId, 'err', 'NF:' + Target));
   if not IsCtrlVisible(Ctrl) then
@@ -1298,7 +1307,7 @@ var
   Root: TJSONObject;
   Methods: TJSONArray;
   Props: TJSONArray;
-  VisSet: set of TMemberVisibility;
+  VisSet: TMemberVisibilities;
   VisParts: TArray<string>;
   VisItem: string;
 begin
