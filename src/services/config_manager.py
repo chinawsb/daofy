@@ -10,6 +10,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import winreg
@@ -181,38 +182,192 @@ class ConfigManager:
 
         Returns:
             最适配的编译器配置,如果未找到则返回默认编译器
+
+        匹配策略（按优先级）:
+          1. 精确匹配: registry_version 与项目版本前缀完全一致
+          2. 精确匹配(按产品名): version 字段含目标 Delphi 名称（如 "Delphi 11"）
+          3. 回退: 版本 >= 目标的编译器，选择最接近的，保证高版本可编译低版本项目
         """
         if not project_version:
             logger.warning("项目版本号为空,使用最新编译器")
             return self.get_newest_compiler() or self.get_compiler()
 
-        delphi_version = self._map_project_version_to_delphi(project_version)
-        if not delphi_version:
+        # 从项目版本号提取版本前缀 (如 "19.2" → "19")
+        version_prefix = project_version.split(".")[0]
+        if not version_prefix or not version_prefix.isdigit():
             logger.warning(f"无法识别的项目版本: {project_version},使用最新编译器")
             return self.get_newest_compiler() or self.get_compiler()
+
+        # 将版本前缀转换为 registry_version 格式 (如 "19" → "19.0")
+        target_registry_version = f"{version_prefix}.0"
+
+        # 目标 Delphi 产品名（如 "Delphi 11 Alexandria"），用于按 name/version 匹配
+        delphi_name = self._map_project_version_to_delphi(project_version)
+        # 产品名数字部分（如 "Delphi 11"）用于版本字段模糊匹配
+        delphi_num_name = None
+        if version_prefix.isdigit():
+            # 从分隔的版本名称中取 "Delphi N" 数字前缀
+            from ..utils.delphi_versions import DELPHI_VERSION_NAMES, PROJECT_VERSION_PREFIX_MAP
+            # registry_version → 产品名
+            product_name = DELPHI_VERSION_NAMES.get(target_registry_version)
+            if product_name:
+                # 取如 "Delphi 12"
+                m = re.match(r"^(Delphi \d+)", product_name)
+                if m:
+                    delphi_num_name = m.group(1).lower()
 
         compilers = self.config.compilers
         if not compilers:
             logger.warning("未配置任何编译器")
             return None
 
-        matching_compilers = [c for c in compilers if delphi_version.lower() in c.version.lower()]
-
-        if matching_compilers:
+        def _pick_by_platform(candidates: list) -> Optional[CompilerConfig]:
+            """从候选编译器中按平台优先选择。"""
             if platform == "win64":
-                for c in matching_compilers:
+                for c in candidates:
                     if "win64" in c.name.lower():
-                        logger.info(f"匹配到编译器(Win64): {c.name}")
                         return c
+                return candidates[0]
             else:
-                for c in matching_compilers:
+                for c in candidates:
                     if "win32" in c.name.lower():
-                        logger.info(f"匹配到编译器(Win32): {c.name}")
                         return c
-                return matching_compilers[0]
+                return candidates[0]
 
-        logger.warning(f"未找到匹配版本 {delphi_version} 的编译器,使用最新编译器")
+        # ── 1. 精确匹配 registry_version ──
+        exact_matches = [c for c in compilers if c.registry_version == target_registry_version]
+        if exact_matches:
+            pick = _pick_by_platform(exact_matches)
+            logger.info(f"精确匹配到编译器: {pick.name} (registry_version={pick.registry_version})")
+            return pick
+
+        # ── 2. 精确匹配产品名（version 或 name 字段）──
+        name_matches = []
+        if delphi_name:
+            dl = delphi_name.lower()
+            name_matches = [
+                c for c in compilers
+                if (c.version and dl in c.version.lower())
+                or (c.name and dl in c.name.lower())
+            ]
+        if name_matches:
+            pick = _pick_by_platform(name_matches)
+            logger.info(f"产品名精确匹配到编译器: {pick.name}")
+            return pick
+
+        # ── 3. 数字前缀模糊匹配（如 delphi_name 为 "Delphi 11..." 时匹配 "Delphi 11"）──
+        num_matches = []
+        if delphi_num_name:
+            num_matches = [
+                c for c in compilers
+                if (c.version and (
+                    delphi_num_name in c.version.lower()
+                    or f"{delphi_num_name} " in c.version.lower()
+                    or c.version.lower().startswith(delphi_num_name)
+                ))
+                or (c.name and delphi_num_name in c.name.lower())
+            ]
+        if num_matches:
+            pick = _pick_by_platform(num_matches)
+            logger.info(f"数字前缀匹配到编译器: {pick.name}")
+            return pick
+
+        # ── 4. 回退: 版本 >= 目标，选择最接近的 ──
+        # 解析目标版本号用于比较
+        try:
+            target_ver = float(target_registry_version)
+        except ValueError:
+            target_ver = 0
+
+        # 为每个编译器推导数值版本（registry_version 优先，其次从 version/name 推导）
+        compatible_compilers = []
+        for c in compilers:
+            ver = self._compiler_numeric_version(c, target_ver)
+            if ver is not None and ver >= target_ver:
+                compatible_compilers.append((ver, c))
+
+        if compatible_compilers:
+            # 按版本号升序，选最接近目标的
+            compatible_compilers.sort(key=lambda x: x[0])
+            best = _pick_by_platform([c for _, c in compatible_compilers])
+            logger.info(f"回退匹配到编译器: {best.name} (版本 >= {target_registry_version})")
+            return best
+
+        logger.warning(f"未找到匹配版本 {target_registry_version} 的编译器,使用最新编译器")
         return self.get_newest_compiler() or self.get_compiler()
+
+    def _compiler_numeric_version(self, compiler, target_ver: float) -> Optional[float]:
+        """
+        提取编译器的数值版本号用于比较。
+
+        优先级:
+          1. registry_version（如 "22.0"）
+          2. version 字段中的数字（如 "Delphi 11 Alexandria" → 22.0）
+          3. name 字段中的数字
+
+        Args:
+            compiler: CompilerConfig
+            target_ver: 目标版本号（用于数字前缀推导）
+
+        Returns:
+            数值版本号（registry_version 格式），无法推导返回 None
+        """
+        import re as _re
+
+        # 1. registry_version
+        if compiler.registry_version:
+            try:
+                return float(compiler.registry_version)
+            except (ValueError, TypeError):
+                pass
+
+        # 2/3. 从 version 或 name 解析 "Delphi N" → registry_version
+        #     Delphi N → registry.0，如 "Delphi 11" → 22.0
+        from ..utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
+        texts = [compiler.version or "", compiler.name or ""]
+        for text in texts:
+            m = _re.search(r"Delphi\s+(\d+)(?:\s|$)", text, _re.IGNORECASE)
+            if m:
+                prefix = m.group(1)
+                # PROJECT_VERSION_PREFIX_MAP 的键是 .dproj 版本前缀（registry 版本相同）
+                # 但 "Delphi 11" 的产品序号 → 其 registry 版本前缀不同
+                # 需通过反向映射: 产品序号 → registry_version
+                reg_ver = self._map_delphi_num_to_registry(prefix)
+                if reg_ver:
+                    try:
+                        return float(reg_ver)
+                    except ValueError:
+                        pass
+
+        return None
+
+    @staticmethod
+    def _map_delphi_num_to_registry(delphi_num: str) -> Optional[str]:
+        """
+        将 "Delphi N" 产品序号映射为 registry_version。
+
+        例如: "11" → "22.0", "12" → "23.0", "13" → "37.0"
+
+        Args:
+            delphi_num: Delphi 产品序号（如 "11", "12"）
+
+        Returns:
+            registry_version（如 "22.0"），映射失败返回 None
+        """
+        from ..utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
+        # 产品序号 → 注册表版本（registry_version）
+        # 映射表: 基于版本历史，产品序号 N 对应的注册表版本号
+        num_to_registry = {
+            "13": "37.0",   # Delphi 13 Florence
+            "12": "23.0",   # Delphi 12 Athens
+            "11": "22.0",   # Delphi 11 Alexandria
+            "10": "21.0",   # Delphi 10.4 Sydney（10 系列最新）
+            "10.4": "21.0",
+            "10.3": "20.0",
+            "10.2": "19.0",
+            "10.1": "18.0",
+        }
+        return num_to_registry.get(delphi_num)
 
     def _map_project_version_to_delphi(self, project_version: str) -> Optional[str]:
         """

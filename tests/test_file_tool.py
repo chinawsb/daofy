@@ -1480,6 +1480,43 @@ async def test_write_edits_preserves_project_path_validation():
 
 
 @pytest.mark.asyncio
+async def test_write_allows_project_output_dir_outside_project():
+    """写操作应允许项目配置的输出目录（即使位于项目目录之外）"""
+    root = tempfile.mkdtemp()
+    try:
+        project_dir = os.path.join(root, "project")
+        output_dir = os.path.join(root, "build_out")  # 输出目录在项目外
+        os.makedirs(project_dir)
+        os.makedirs(output_dir)
+
+        project_path = os.path.join(project_dir, "App.dproj")
+        file_path = os.path.join(output_dir, "Unit1.pas")
+        # 带 DCC_ExeOutput 的 .dproj，输出指向项目外的 build_out
+        dproj_content = (
+            '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+            '  <PropertyGroup Condition="\'$(Base)\'!=\'\'">\n'
+            '    <DCC_ExeOutput>' + output_dir + '</DCC_ExeOutput>\n'
+            '  </PropertyGroup>\n'
+            '</Project>\n'
+        )
+        _make_file(project_path, dproj_content)
+        _make_file(file_path, "line1\nline2\n")
+
+        result = await handle_write({
+            "file_path": file_path,
+            "project_path": project_path,
+            "edits": [{"start_line": 1, "content": "changed\n"}],
+            "backup": False,
+        })
+
+        _assert_success(result)
+        with open(file_path, "r", encoding="utf-8") as f:
+            assert "changed" in f.read()
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.mark.asyncio
 async def test_write_existing_dfm_text_preserved():
     """文本 DFM 写入后应保持文本格式（非二进制 DFM 不转换）"""
     tmp_dir = tempfile.mkdtemp()

@@ -25,6 +25,7 @@ Action 模式:
 import codecs
 import asyncio
 import fnmatch
+import glob
 import locale
 import os
 import re
@@ -137,21 +138,100 @@ def _validate_path(file_path: str, project_path: Optional[str] = None) -> Option
         except ValueError:
             pass
 
-    # 项目目录限制：确保文件在项目目录内
+    # 项目目录检查：允许项目目录及其子目录，也允许项目配置的输出目录
+    # （DCC_ExeOutput / DCC_DcuOutput），即使输出目录在项目目录之外
     effective_project = project_path or get_workspace_root()
     if effective_project:
         try:
             proj_resolved = os.path.abspath(os.path.realpath(effective_project))
             # project_path 可能是 .dproj 文件，取其目录作为项目根
             proj_dir = proj_resolved if os.path.isdir(proj_resolved) else os.path.dirname(proj_resolved)
+
+            # 1. 在项目目录内 → 安全
             rel = os.path.relpath(resolved, proj_dir)
-            if rel.startswith('..'):
-                return "路径不在项目目录内: %s (项目: %s)" % (file_path, effective_project)
+            if not rel.startswith('..'):
+                return None
+
+            # 2. 在项目配置的输出目录内 → 安全
+            #    从项目 .dproj 解析 DCC_ExeOutput / DCC_DcuOutput 等输出路径
+            allowed_dirs = _get_project_output_dirs(proj_resolved)
+            for allowed in allowed_dirs:
+                try:
+                    allowed_resolved = os.path.abspath(os.path.realpath(allowed))
+                    rel_allowed = os.path.relpath(resolved, allowed_resolved)
+                    if not rel_allowed.startswith('..'):
+                        return None  # 位于项目输出目录内，安全
+                except (OSError, ValueError):
+                    continue
+
+            return "路径不在项目目录内: %s (项目: %s)" % (file_path, effective_project)
         except (OSError, ValueError):
             # project_path 解析失败时不阻断，由调用方处理
             pass
 
     return None
+
+
+def _get_project_output_dirs(project_path: str) -> List[str]:
+    """
+    从项目文件 (.dproj/.dpr) 解析配置的输出目录（DCC_ExeOutput / DCC_DcuOutput）。
+
+    输出目录可能位于项目目录之外，_validate_path 需放行这些路径，
+    以支持"输出目录不在项目目录时也能读写"的场景。
+
+    Args:
+        project_path: 项目根目录或 .dproj/.dpr 文件路径
+
+    Returns:
+        输出目录绝对路径列表（可能为空）
+    """
+    result: List[str] = []
+    if not project_path:
+        return result
+
+    proj_path = project_path
+    if os.path.isdir(project_path):
+        # 项目根目录：查找 .dproj 文件
+        for ext in ('.dproj', '.dpr', '.dpk'):
+            candidates = list(glob.glob(os.path.join(project_path, '*' + ext)))
+            if candidates:
+                proj_path = candidates[0]
+                break
+        else:
+            return result
+
+    dproj_file = proj_path
+    # 如果是 .dpr/.dpk，优先找同名 .dproj（其中才有 DCC_ExeOutput）
+    base, ext = os.path.splitext(proj_path)
+    if ext.lower() in ('.dpr', '.dpk'):
+        dproj_candidate = base + '.dproj'
+        if os.path.isfile(dproj_candidate):
+            dproj_file = dproj_candidate
+
+    if not os.path.isfile(dproj_file) or not dproj_file.lower().endswith('.dproj'):
+        return result
+
+    try:
+        from ..utils.dproj_parser import DprojParser
+        parser = DprojParser(dproj_file)
+        if not parser.parse():
+            return result
+        # 遍历所有配置组合的 ExeOutput / DcuOutput
+        for output_tag in ('get_output_path', 'get_dcu_output_path'):
+            for config in (None, 'Debug', 'Release', 'Dev'):
+                for platform in (None, 'Win32', 'Win64'):
+                    try:
+                        out = getattr(parser, output_tag)(config, platform)
+                        if out:
+                            abs_out = os.path.abspath(os.path.realpath(out))
+                            if abs_out not in result:
+                                result.append(abs_out)
+                    except Exception:
+                        continue
+    except Exception:
+        logger.debug("解析项目输出目录失败: %s", proj_path, exc_info=True)
+
+    return result
 
 
 def _is_delphi_file(file_path: str) -> bool:
@@ -495,8 +575,8 @@ def _is_encoding_compatible(user_enc: str, detected_enc: str) -> bool:
     if u == d:
         return True
 
-    # utf-8 家族内部互兼
-    utf8_family = {"utf-8"}
+    # utf-8 家族内部互兼（utf-8 / utf-8-sig）
+    utf8_family = {"utf-8", "utf-8-sig"}
     if u in utf8_family and d in utf8_family:
         return True
 
