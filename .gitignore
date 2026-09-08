@@ -126,7 +126,9 @@ models/
 
 # Creative roadmap (not in version control)
 docs/roadmap-creative.md
-docs/copyright/roadmap-creative.md
+
+# 软著版权文档目录（本地生成，不入库）
+docs/copyright/
 
 # Personal notes / scratch
 docs/todos.md
