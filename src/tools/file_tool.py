@@ -102,6 +102,44 @@ def _resolve_project_path(arguments: Dict[str, Any]) -> Optional[str]:
     return fallback
 
 
+def _resolve_relative_path(file_path: str, project_path: Optional[str] = None) -> str:
+    """解析相对路径，优先基于 project_path 或 _workspace_root 解析。
+
+    当 file_path 是相对路径时，按以下优先级尝试解析：
+      1. 基于 project_path 解析（显式传入的项目根目录）
+      2. 基于 _workspace_root 解析（AI Agent 工作区根目录）
+      3. 基于当前工作目录解析（保持原有行为）
+
+    当 file_path 已经是绝对路径或解析后文件不存在时，返回原始路径。
+
+    Args:
+        file_path: 文件路径（可能是相对或绝对路径）
+        project_path: 项目根目录（可选）
+
+    Returns:
+        解析后的路径（优先返回存在文件的路径）
+    """
+    # 绝对路径直接返回
+    if os.path.isabs(file_path):
+        return file_path
+
+    # 相对路径，按优先级尝试解析
+    candidates = []
+    if project_path:
+        candidates.append(os.path.join(project_path, file_path))
+    workspace = get_workspace_root()
+    if workspace:
+        candidates.append(os.path.join(workspace, file_path))
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            logger.debug("相对路径已解析: %s -> %s", file_path, candidate)
+            return candidate
+
+    # 未找到，返回原始路径（由调用方决定后续行为）
+    return file_path
+
+
 def _coerce_positive_int(value: Any, default: int, name: str) -> tuple[Optional[int], Optional[str]]:
     """Return a 1-indexed positive integer value, or an error message."""
     if value is None:
@@ -611,6 +649,9 @@ async def _read_content(
     show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     1: unit Unit1;"），
                        行号为 1-indexed 绝对行号。
     """
+    # 解析相对路径：基于 project_path 或 _workspace_root
+    file_path = _resolve_relative_path(file_path, project_path)
+
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
         effective_start = max(1, start_line)

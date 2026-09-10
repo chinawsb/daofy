@@ -24,6 +24,60 @@ from .project_knowledge_base import get_project_kb
 
 logger = logging.getLogger(__name__)
 
+
+# ── 工作区根目录缓存（与 file_tool._workspace_root 同步） ──
+_workspace_root: Optional[str] = None
+
+
+def set_workspace_root(root: Optional[str]) -> None:
+    """设置 AI Agent 工作区根目录（由 server.py 初始化时调用）。"""
+    global _workspace_root
+    _workspace_root = root
+    if root:
+        logger.info("read_source_file: 工作区根目录已设置: %s", root)
+
+
+def get_workspace_root() -> Optional[str]:
+    """获取已缓存的工作区根目录，未设置时返回 None。"""
+    return _workspace_root
+
+
+def _resolve_relative_path(file_path: str, project_path: Optional[str] = None) -> str:
+    """解析相对路径，优先基于 project_path 或 _workspace_root 解析。
+
+    当 file_path 是相对路径时，按以下优先级尝试解析：
+      1. 基于 project_path 解析（显式传入的项目根目录）
+      2. 基于 _workspace_root 解析（AI Agent 工作区根目录）
+      3. 基于当前工作目录解析（保持原有行为）
+
+    当 file_path 已经是绝对路径或解析后文件不存在时，返回原始路径。
+
+    Args:
+        file_path: 文件路径（可能是相对或绝对路径）
+        project_path: 项目根目录（可选）
+
+    Returns:
+        解析后的路径（优先返回存在文件的路径）
+    """
+    # 绝对路径直接返回
+    if os.path.isabs(file_path):
+        return file_path
+
+    # 相对路径，按优先级尝试解析
+    candidates = []
+    if project_path:
+        candidates.append(os.path.join(project_path, file_path))
+    if _workspace_root:
+        candidates.append(os.path.join(_workspace_root, file_path))
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            logger.debug("相对路径已解析: %s -> %s", file_path, candidate)
+            return candidate
+
+    # 未找到，返回原始路径（由调用方决定后续行为）
+    return file_path
+
 # 知识库服务实例
 delphi_kb_service = None
 thirdparty_kb_service = None
@@ -95,12 +149,16 @@ def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = N
     
     Args:
         file_path: 文件路径（可以是相对路径或完整路径）
+        project_path: 项目根目录（可选，用于解析相对路径）
         
     Returns:
         文件的完整路径，如果未找到则返回 None
     """
+    # 0. 解析相对路径：基于 project_path 或 _workspace_root
+    resolved_path = _resolve_relative_path(file_path, project_path)
+
     # 1. 首先检查是否是完整路径且文件存在
-    full_path = Path(file_path)
+    full_path = Path(resolved_path)
     if full_path.exists() and full_path.is_file():
         return full_path
     

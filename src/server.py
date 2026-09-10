@@ -312,6 +312,8 @@ else:
                     if local_path and os.path.isdir(local_path):
                         from src.tools.file_tool import set_workspace_root
                         set_workspace_root(local_path)
+                        from src.tools.read_source_file import set_workspace_root as set_read_source_workspace_root
+                        set_read_source_workspace_root(local_path)
                         return
                     logger.info("工作区根 URI 不是有效目录: %s", uri)
                 else:
