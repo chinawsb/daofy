@@ -692,6 +692,12 @@ async def run_server():
     logger.info(f"启动 Daofy v{__version__}")
     logger.info(f"{__copyright__}")
 
+    # 版本横幅输出到 stderr（MCP stdout 保持 JSON-RPC 纯净）。
+    # 日志（含运行时日志）默认仅写文件，控制台只显示版本信息；
+    # 若需完整控制台日志，可在 config/logging_config.json 设 console_logging=true。
+    print(f"Daofy v{__version__}", file=sys.stderr, flush=True)
+    print(f"{__copyright__}", file=sys.stderr, flush=True)
+
     # 尽力同步 Daofy Agent Skill。失败不影响 MCP Server 启动。
     try:
         install_daofy_agent_skills()
@@ -1757,6 +1763,7 @@ def main():
         print(f"{__copyright__}")
         return
 
+    # ── dsh 子命令接口已移除（DSH 安装/卸载已并入 install_mcp.py，见 --agent DSH）──
     exit_code = 0
     shutdown_reason = "server_run_returned"
     try:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Daofy MCP Server 安装/卸载脚本 - 配置 AI Agent"""
 
-VERSION = "2026-06-07 10:30"  # 版本号随实际修改时间更新
+VERSION = "2026-09-14 10:30"  # 版本号随实际修改时间更新
 
 import argparse
 import ctypes
@@ -22,6 +22,16 @@ from pathlib import Path
 
 MCP_SERVER_NAME = "daofy"
 LEGACY_SERVER_NAME = "delphi-compiler"
+
+# DSH (DeepSeek Harness) 相关常量
+DSH_DEFAULT_PROFILE = "web"          # 默认 profile（可用 --dsh-profile 覆盖）
+DSH_TOOL_TIMEOUT_MS = 600_000        # MCP 工具调用超时（毫秒）
+DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client"
+DSH_BLOCK_COMMENT = (
+    "# ── Daofy for Delphi MCP Server (managed by install_mcp.py;"
+    " uninstall: 重新运行脚本选择 DSH)"
+)
+_DSH_PROFILE = DSH_DEFAULT_PROFILE   # 当前生效的 DSH profile（由 --dsh-profile 设置）
 
 # 退出码契约（install.bat 根据 errorlevel 区分提示）
 # 0 = 成功（MCP Server 已配置/卸载）
@@ -285,6 +295,16 @@ def _is_yaml_config(config_type: str) -> bool:
     return config_type == "YAML"
 
 
+def _is_dsh_config(config_type: str) -> bool:
+    """判断是否为 DSH (DeepSeek Harness) 配置文件。
+
+    DSH 使用 ``cordis.patch.yml``（顶层 YAML 列表 + ``- insert:`` 条目），
+    与 Standard/OpenCode 等的 JSON/TOML/YAML 字典格式完全不同，
+    读写走独立的文本级块手术路径。
+    """
+    return config_type == "DSH"
+
+
 def _mcp_node_key(config_type: str) -> str:
     """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键，Codex 使用 'mcp_servers'，Hermes 使用 'mcp_servers'"""
     if config_type == "OpenCode":
@@ -325,6 +345,8 @@ def _write_config(config_path: str, data: dict, config_type: str) -> None:
 
 def _file_has_mcp(config_path: str, config_type: str) -> bool:
     """检查配置文件是否含 daofy 或 legacy MCP Server（容错读取）。"""
+    if _is_dsh_config(config_type):
+        return _dsh_file_has_mcp(config_path)
     if not config_path or not os.path.exists(config_path):
         return False
     try:
@@ -336,6 +358,8 @@ def _file_has_mcp(config_path: str, config_type: str) -> bool:
 
 
 def is_mcp_configured(config_path: str, server_name: str, config_type: str) -> bool:
+    if _is_dsh_config(config_type):
+        return _dsh_has_entry(config_path, server_name)
     if not os.path.exists(config_path):
         return False
     try:
@@ -354,6 +378,9 @@ def is_mcp_configured_any(config_path: str, config_type: str) -> bool:
 
 
 def add_mcp_config(config_path: str, server_name: str, mcp_config: dict, config_type: str) -> None:
+    if _is_dsh_config(config_type):
+        _dsh_add_entry(config_path, server_name, mcp_config)
+        return
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     if os.path.exists(config_path):
         data = _read_config(config_path, config_type)
@@ -367,6 +394,8 @@ def add_mcp_config(config_path: str, server_name: str, mcp_config: dict, config_
 
 
 def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> bool:
+    if _is_dsh_config(config_type):
+        return _dsh_remove_entry(config_path, server_name)
     if not os.path.exists(config_path):
         return False
     data = _read_config(config_path, config_type)
@@ -378,6 +407,244 @@ def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> b
     if not node:
         del data[node_key]
     _write_config(config_path, data, config_type)
+    return True
+
+
+# ============================================================
+# DSH (DeepSeek Harness) 配置读写（文本级块手术）
+# ============================================================
+# DSH 的 MCP 配置是 <dsh-home>/profiles/<profile>/cordis.patch.yml，顶层是
+# YAML 列表，通过 "- insert:" 条目注册 @deepseek-ai/dsh-mcp-client 插件。
+# 与 Standard/OpenCode 等的 mcpServers 字典结构完全不同，且 patch 文件可能
+# 含 !!js 等自定义标签，完整 YAML round-trip 会破坏它们，因此采用行级块
+# 手术：只增删 Daofy 自己的条目，其它条目字节级原样保留。
+
+def _get_dsh_home() -> Path:
+    """DSH 配置目录: $DSH_HOME > ~/.dsh"""
+    value = os.environ.get("DSH_HOME")
+    if value:
+        return Path(value).expanduser()
+    return Path(_userprofile()) / ".dsh"
+
+
+def _get_dsh_config_path() -> str:
+    """当前生效 profile 的 cordis.patch.yml 路径"""
+    return str(_get_dsh_home() / "profiles" / _DSH_PROFILE / "cordis.patch.yml")
+
+
+def _dsh_yaml_scalar(value: object) -> str:
+    """把字符串渲染为合法 YAML 标量（单引号风格）。
+
+    不能直接用 ``yaml.safe_dump``——对单个标量它会在输出末尾追加 ``...``
+    文档结束标记，混入多行块会提前终止整个 YAML 文档（ParserError）。
+    单引号风格: 反斜杠原样保留，仅 ``'`` 需要翻倍转义。
+    """
+    text = str(value)
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _dsh_build_block(server_name: str, mcp_config: dict) -> str:
+    """生成 Daofy 的 patch insert 块（单注释行 + 条目）。
+
+    mcp_config 为 get_mcp_config 生成的 DSH 格式配置
+    （含 serverName/transport/command/args/env/cwd/toolCallTimeoutMs）。
+    """
+    esc = _dsh_yaml_scalar
+    cfg_server_name = mcp_config.get("serverName", server_name)
+    lines = [
+        DSH_BLOCK_COMMENT,
+        "- insert:",
+        f"    - id: mcp-{server_name}",
+        f"      name: '{DSH_CLIENT_PACKAGE}'",
+        "      config:",
+        f"        serverName: {esc(cfg_server_name)}",
+        "        transport: stdio",
+        f"        command: {esc(mcp_config.get('command', ''))}",
+    ]
+    args = mcp_config.get("args") or []
+    if args:
+        lines.append("        args:")
+        for a in args:
+            lines.append(f"          - {esc(a)}")
+    else:
+        lines.append("        args: []")
+    env = mcp_config.get("env") or {}
+    lines.append("        env:")
+    for key in ("PYTHONUNBUFFERED", "PYTHONIOENCODING", "PYTHONUTF8"):
+        lines.append(f"          {key}: {esc(env.get(key, ''))}")
+    lines.append(f"        cwd: {esc(mcp_config.get('cwd', ''))}")
+    lines.append(f"        toolCallTimeoutMs: {mcp_config.get('toolCallTimeoutMs', DSH_TOOL_TIMEOUT_MS)}")
+    return "\n".join(lines) + "\n"
+
+
+def _dsh_parse_entry(block: str) -> dict | None:
+    """把 insert 块解析为条目字典; 无法解析(含 !!js 等)返回 None"""
+    try:
+        import yaml
+        doc = yaml.safe_load(block)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(doc, list) or not doc or not isinstance(doc[0], dict):
+        return None
+    entry = doc[0].get("insert")
+    if not isinstance(entry, list) or not entry or not isinstance(entry[0], dict):
+        return None
+    return entry[0]
+
+
+def _dsh_path_eq(a: object, b: object) -> bool:
+    """路径相等比较: Windows 下大小写不敏感 (daofy.exe vs daofy.EXE)"""
+    sa, sb = str(a), str(b)
+    if os.name == "nt":
+        return sa.lower() == sb.lower()
+    return sa == sb
+
+
+def _dsh_config_matches(entry: dict, mcp_config: dict) -> bool:
+    """比较既有条目与期望配置（允许存在额外键）。"""
+    cfg = entry.get("config")
+    if not isinstance(cfg, dict):
+        return False
+    for key, want in mcp_config.items():
+        got = cfg.get(key)
+        if key in ("command", "cwd"):
+            if not _dsh_path_eq(got, want):
+                return False
+        elif key == "args":
+            if (list(got) if got else []) != (list(want) if want else []):
+                return False
+        elif key == "env":
+            for ek, ev in (want or {}).items():
+                if cfg.get("env", {}).get(ek) != ev:
+                    return False
+        elif got != want:
+            return False
+    return True
+
+
+def _dsh_find_block(lines: list[str], server_name: str) -> tuple[int, int] | None:
+    """定位 Daofy insert 块的 (start, end) 行区间, end 不包含。
+
+    仅按行级缩进扫描: 条目从 ``- insert:`` 开始, 到第一个列 0 行或
+    EOF 结束; 上方紧邻的注释块一并归入 (注释块以空行或文件头为界,
+    且至少一行含 "daofy" 才吸收, 覆盖旧版手工安装留下的多行注释头)。
+    """
+    marker = f"id: mcp-{server_name}"
+    for i, line in enumerate(lines):
+        if not line.startswith("- insert:"):
+            continue
+        k = i + 1
+        body: list[str] = []
+        while k < len(lines) and (lines[k].startswith(" ") or lines[k].startswith("\t")):
+            body.append(lines[k])
+            k += 1
+        if any(marker in b for b in body):
+            # 吸收整个紧邻的注释块: 无空行分隔、且非空行。
+            start = i
+            while start > 0 and lines[start - 1].startswith("#"):
+                start -= 1
+            # 整块注释不含 "daofy" 说明是文件头/用户注释, 退回 insert 行本身。
+            if not any("daofy" in ln.lower() for ln in lines[start:i]):
+                start = i
+            return start, k
+    return None
+
+
+def _dsh_ensure_valid_patch(text: str) -> str:
+    """删除后若文件不再含任何列表项, 补回 ``[]`` 保持合法 YAML"""
+    if "[" in text:
+        return text
+    has_item = any(line.startswith("- ") for line in text.splitlines())
+    if has_item:
+        return text
+    return (text.rstrip("\n") + "\n[]") if text.strip() else "[]"
+
+
+def _dsh_file_has_mcp(config_path: str) -> bool:
+    """DSH patch 文件是否含 daofy 或 legacy 条目"""
+    if not config_path or not os.path.exists(config_path):
+        return False
+    try:
+        lines = Path(config_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return (_dsh_find_block(lines, MCP_SERVER_NAME) is not None
+            or _dsh_find_block(lines, LEGACY_SERVER_NAME) is not None)
+
+
+def _dsh_has_entry(config_path: str, server_name: str) -> bool:
+    """DSH patch 文件是否含指定 server_name 的条目"""
+    if not config_path or not os.path.exists(config_path):
+        return False
+    try:
+        lines = Path(config_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    return _dsh_find_block(lines, server_name) is not None
+
+
+def _dsh_add_entry(config_path: str, server_name: str, mcp_config: dict) -> None:
+    """安装/更新 Daofy 条目到 DSH patch 文件（幂等）。
+
+    配置一致时 no-op；command/cwd 等变化时原地替换；文件不存在 / 无条目
+    时新建或追加。会保留其它条目的字节级原样。
+    """
+    path = Path(config_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    block = _dsh_build_block(server_name, mcp_config)
+    block_lines = block.rstrip("\n").split("\n")
+
+    if not path.is_file():
+        path.write_text(block, encoding="utf-8")
+        return
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    found = _dsh_find_block(lines, server_name)
+    if found is not None:
+        start, end = found
+        entry = _dsh_parse_entry("\n".join(lines[start:end]) + "\n")
+        if entry is not None and _dsh_config_matches(entry, mcp_config):
+            return  # 幂等: 配置一致
+        lines[start:end] = block_lines
+        text = "\n".join(lines).rstrip("\n") + "\n"
+        path.write_text(text, encoding="utf-8")
+        return
+
+    # 新条目: 替换空列表 [] / 内联列表 ] 前插入 / 追加到文件末尾
+    for i, ln in enumerate(lines):
+        if ln.strip() == "[]":
+            lines[i : i + 1] = block_lines
+            text = "\n".join(lines).rstrip("\n") + "\n"
+            path.write_text(text, encoding="utf-8")
+            return
+    for i, ln in enumerate(lines):
+        if ln.strip() == "]":
+            lines[i:i] = block_lines
+            text = "\n".join(lines).rstrip("\n") + "\n"
+            path.write_text(text, encoding="utf-8")
+            return
+    text = "\n".join(lines)
+    sep = "\n\n" if text.strip() else ""
+    out = text.rstrip("\n") + sep + block
+    path.write_text(out, encoding="utf-8")
+
+
+def _dsh_remove_entry(config_path: str, server_name: str) -> bool:
+    """从 DSH patch 文件移除 Daofy 条目，返回是否实际移除"""
+    if not config_path or not os.path.exists(config_path):
+        return False
+    path = Path(config_path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    found = _dsh_find_block(lines, server_name)
+    if found is None:
+        return False
+    start, end = found
+    del lines[start:end]
+    text = "\n".join(lines)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    text = _dsh_ensure_valid_patch(text.strip("\n"))
+    path.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
     return True
 
 
@@ -616,6 +883,21 @@ AGENT_DEFINITIONS = {
             os.path.join(_userprofile(), ".hermes"),
         ],
         "detect_command": lambda: shutil.which("hermes") is not None,
+    },
+    "DSH": {
+        # DeepSeek Harness (DSH) — AI 编码代理（cordis patch 配置格式）
+        # 安装方式: npm install -g @deepseek-ai/dsh
+        # MCP 配置: <dsh-home>/profiles/<profile>/cordis.patch.yml
+        #   （顶层 YAML 列表 + "- insert:" 条目，注册 @deepseek-ai/dsh-mcp-client）
+        # profile 默认 "web"，可通过 --dsh-profile 覆盖
+        "config_type": "DSH",
+        "doc_url": "https://github.com/deepseek-ai/dsh",
+        "config_path": _get_dsh_config_path,
+        "detect_paths": lambda: [],
+        "detect_command": lambda: (
+            (_get_dsh_home() / "profiles").is_dir()
+            or shutil.which("dsh") is not None
+        ),
     },
     "Windsurf": {
         "config_type": "Standard",
@@ -935,6 +1217,24 @@ def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
             base["cwd"] = cwd
         return base
 
+    if _is_dsh_config(config_type):
+        # DSH 格式：config 字典内嵌在 "- insert:" 条目中，
+        # 注册 @deepseek-ai/dsh-mcp-client 插件。
+        base = {
+            "serverName": MCP_SERVER_NAME,
+            "transport": "stdio",
+            "command": "daofy" if use_pip else python_exe,
+            "args": [] if use_pip else [server_script],
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+            "cwd": cwd,
+            "toolCallTimeoutMs": DSH_TOOL_TIMEOUT_MS,
+        }
+        return base
+
     # Standard 格式（Claude / Cursor / Windsurf 等）
     base = {
         "command": "daofy" if use_pip else python_exe,
@@ -1150,7 +1450,7 @@ def _prompt_restart(agents: list[dict], auto_restart: bool | None = None) -> Non
 
 def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All",
                force: bool = False, restart: bool | None = None,
-               use_pip: bool = False) -> None:
+               use_pip: bool = False, dsh_profile: str = DSH_DEFAULT_PROFILE) -> None:
     """安装/配置 MCP Server 到指定 AI Agent。
 
     Args:
@@ -1160,7 +1460,10 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
         force: 是否强制重新配置已存在的 MCP Server。
         restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
         use_pip: 是否使用 pip 安装模式（直接使用 daofy CLI 命令）。
+        dsh_profile: DSH Agent 使用的 profile 名。
     """
+    global _DSH_PROFILE
+    _DSH_PROFILE = dsh_profile
     separator("Daofy for Delphi 安装脚本")
     info(f"版本: {VERSION}")
 
@@ -1185,6 +1488,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
             "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy", "Hermes": "Hermes",
+            "DSH": "DSH",
         }
         target = filter_map.get(agent_filter, agent_filter)
         agents = [a for a in agents if a["name"] == target]
@@ -1427,14 +1731,18 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
 # ============================================================
 
 def do_uninstall(agent_filter: str = "All", project_dir: str = "",
-                 restart: bool | None = None) -> None:
+                 restart: bool | None = None,
+                 dsh_profile: str = DSH_DEFAULT_PROFILE) -> None:
     """从指定 AI Agent 卸载 MCP Server 配置。
 
     Args:
         agent_filter: Agent 名称过滤器（"All" 或特定名称）。
         project_dir: 项目目录（项目级 MCP 配置使用）。
         restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
+        dsh_profile: DSH Agent 使用的 profile 名。
     """
+    global _DSH_PROFILE
+    _DSH_PROFILE = dsh_profile
     separator("Daofy for Delphi 卸载脚本")
 
     agents = detect_agents()
@@ -1529,6 +1837,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
             "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
             "Codex": "Codex CLI", "CodeBuddy": "CodeBuddy", "Hermes": "Hermes",
+            "DSH": "DSH",
         }
         target = filter_map.get(agent_filter, agent_filter)
         selected = []
@@ -1996,7 +2305,8 @@ def main() -> None:
     parser.add_argument("--agent", default="All",
                         choices=["Claude", "ClaudeCode", "Trae", "CodeArts", "Cursor", "OpenCode",
                                  "Windsurf", "Cline", "Roo", "Tongyi", "Doubao",
-                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "CodeBuddy", "Hermes", "All"],
+                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "CodeBuddy", "Hermes",
+                                 "DSH", "All"],
                         help="指定 AI Agent")
     parser.add_argument("--force", action="store_true", help="强制重新配置")
     parser.add_argument("--restart", action="store_true", help="操作后自动重启 AI Agent（不交互询问）")
@@ -2006,6 +2316,8 @@ def main() -> None:
                         help="项目目录路径（项目级 MCP 配置的 Agent 使用，不传则交互式输入）")
     parser.add_argument("--pip", action="store_true",
                         help="使用 pip 安装模式（从 PyPI 安装 daofy-for-delphi）")
+    parser.add_argument("--dsh-profile", default=DSH_DEFAULT_PROFILE,
+                        help=f"DSH Agent 使用的 profile 名（默认: {DSH_DEFAULT_PROFILE}）")
     args = parser.parse_args()
 
     # 确定重启策略
@@ -2017,7 +2329,8 @@ def main() -> None:
         restart = None  # 交互询问
 
     if args.uninstall:
-        do_uninstall(agent_filter=args.agent, project_dir=args.project_dir, restart=restart)
+        do_uninstall(agent_filter=args.agent, project_dir=args.project_dir, restart=restart,
+                     dsh_profile=args.dsh_profile)
     else:
         # 检查 MCP Server 文件是否存在，不存在则自动下载解压
         if not ensure_server_files():
@@ -2030,7 +2343,7 @@ def main() -> None:
             sys.exit(EXIT_FAILURE)
         do_install(python_exe, project_dir=args.project_dir,
                    agent_filter=args.agent, force=args.force, restart=restart,
-                   use_pip=args.pip)
+                   use_pip=args.pip, dsh_profile=args.dsh_profile)
 
 
 if __name__ == "__main__":

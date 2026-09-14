@@ -403,6 +403,48 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 }
 ```
 
+#### DSH (DeepSeek Harness)
+
+DSH 通过 profile 的 `cordis.patch.yml` 注册 MCP Server。使用安装脚本 `install_mcp.py` 一键安装/卸载（与其它 Agent 同一入口）：
+
+```bash
+python install_mcp.py --agent DSH                        # 安装 Daofy 到默认 profile (web)
+python install_mcp.py --agent DSH --dsh-profile cli      # 指定 profile
+python install_mcp.py --agent DSH --python "D:\Python311\python.exe"   # 指定 Python 解释器
+python install_mcp.py --agent DSH --pip                  # pip 安装模式（command=daofy）
+python install_mcp.py --agent DSH --uninstall            # 卸载 Daofy
+```
+
+也可以不加 `--agent`，在交互菜单中选择 DSH。安装脚本会自动检测 DSH（`~/.dsh/profiles/` 目录或 `dsh` 命令）。
+
+生成的 `cordis.patch.yml` 条目（示意）：
+
+```yaml
+# ── Daofy for Delphi MCP Server (managed by install_mcp.py; uninstall: 重新运行脚本选择 DSH)
+- insert:
+    - id: mcp-daofy
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: 'daofy'
+        transport: stdio
+        command: 'C:\path\to\python.exe'
+        args:
+          - 'C:\path\to\daofy\src\server.py'
+        env:
+          PYTHONUNBUFFERED: '1'
+          PYTHONIOENCODING: 'utf-8'
+          PYTHONUTF8: '1'
+        cwd: 'C:\path\to\daofy'
+        toolCallTimeoutMs: 600000
+```
+
+特性：
+
+- **幂等**: 配置相同则直接跳过，不重复修改文件
+- **保留其他条目**: 卸载只移除 Daofy 块，不影响第三方 MCP / `!!js` 表达式
+- **自动识别环境**: 默认使用脚本检测到的 Python 解释器；`--pip` 时直接使用 `daofy` 命令
+- **卸载安全**: 移除后自动补回 `[]` 保证 patch 文件仍是合法 YAML
+
 ## 使用方法
 
 ### 知识库统计

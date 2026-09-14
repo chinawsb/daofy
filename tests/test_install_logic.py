@@ -490,6 +490,226 @@ class TestUninstallScript(unittest.TestCase):
         self.assertGreater(size, 100, "uninstall.bat is too small or empty")
 
 
+# ============================================================
+# DSH (DeepSeek Harness) 块手术逻辑测试
+# （从 tests/test_dsh_installer.py 移植，改为 install_mcp.py 的
+#   add_mcp_config/remove_mcp_config/is_mcp_configured DSH 分支 + _dsh_* 内部函数）
+# ============================================================
+
+class TestDSHInstallLogic(unittest.TestCase):
+    """DSH cordis.patch.yml 块手术逻辑（原 test_dsh_installer.py 核心用例）"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.patch_file = self.tmp / "profiles" / "web" / "cordis.patch.yml"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _mcp_config(self, command=r"C:\daofy.exe", args=None, cwd=r"C:\work"):
+        """构造 get_mcp_config(config_type="DSH") 同款配置"""
+        return {
+            "serverName": "daofy",
+            "transport": "stdio",
+            "command": command,
+            "args": args or [],
+            "env": {
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            },
+            "cwd": cwd,
+            "toolCallTimeoutMs": 600000,
+        }
+
+    def test_dsh_install_creates_patch_file(self):
+        """add_mcp_config(DSH) 创建 patch 文件，含 insert 块与插件名"""
+        from install_mcp import add_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        self.assertTrue(self.patch_file.is_file())
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertIn("- insert:", text)
+        self.assertIn("id: mcp-daofy", text)
+        self.assertIn("name: '@deepseek-ai/dsh-mcp-client'", text)
+        self.assertIn("serverName: 'daofy'", text)
+        self.assertIn("command: 'C:\\daofy.exe'", text)
+        self.assertIn("cwd: 'C:\\work'", text)
+        self.assertIn("PYTHONIOENCODING: 'utf-8'", text)
+
+    def test_dsh_installed_parses_as_valid_yaml(self):
+        """安装结果可被 yaml.safe_load 解析为合法顶层列表"""
+        import yaml
+        from install_mcp import add_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        doc = yaml.safe_load(self.patch_file.read_text(encoding="utf-8"))
+        self.assertIsInstance(doc, list)
+        self.assertEqual(len(doc), 1)
+        entry = doc[0]["insert"][0]
+        self.assertEqual(entry["id"], "mcp-daofy")
+        self.assertEqual(entry["config"]["serverName"], "daofy")
+        self.assertEqual(entry["config"]["command"], r"C:\daofy.exe")
+
+    def test_dsh_idempotent_on_second_run(self):
+        """配置一致时二次安装不重复插入（幂等）"""
+        from install_mcp import add_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("- insert:"), 1)
+
+    def test_dsh_update_when_command_changed(self):
+        """command 变化时原地替换，不产生重复条目"""
+        from install_mcp import add_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy",
+                       self._mcp_config(command=r"C:\old\daofy.exe"), "DSH")
+        add_mcp_config(str(self.patch_file), "daofy",
+                       self._mcp_config(command=r"C:\new\daofy.exe"), "DSH")
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertIn("C:\\new\\daofy.exe", text)
+        self.assertNotIn("C:\\old\\daofy.exe", text)
+        self.assertEqual(text.count("- insert:"), 1)
+
+    def test_dsh_uninstall_removes_block(self):
+        """remove_mcp_config(DSH) 移除块，卸载后保留合法空列表"""
+        from install_mcp import add_mcp_config, remove_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        removed = remove_mcp_config(str(self.patch_file), "daofy", "DSH")
+        self.assertTrue(removed)
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertNotIn("daofy", text.lower())
+        self.assertIn("[]", text)
+
+    def test_dsh_uninstall_when_not_installed(self):
+        """未安装时卸载返回 False"""
+        from install_mcp import remove_mcp_config
+        removed = remove_mcp_config(str(self.patch_file), "daofy", "DSH")
+        self.assertFalse(removed)
+
+    def test_dsh_uninstall_preserves_other_entries(self):
+        """卸载只移除 Daofy 块，保留第三方条目（含 !!js 表达式）"""
+        from install_mcp import add_mcp_config, remove_mcp_config
+        self.patch_file.parent.mkdir(parents=True, exist_ok=True)
+        self.patch_file.write_text(
+            "# user patch\n"
+            "- insert:\n"
+            "    - id: other-server\n"
+            "      name: '@some/plugin'\n"
+            "      config:\n"
+            "        serverName: other\n"
+            "        command: !!js process.cwd()\n"
+            "        transport: stdio\n",
+            encoding="utf-8",
+        )
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        remove_mcp_config(str(self.patch_file), "daofy", "DSH")
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertIn("id: other-server", text)
+        self.assertIn("!!js process.cwd()", text)
+        self.assertNotIn("mcp-daofy", text)
+
+    def test_dsh_empty_existing_list_is_replaced(self):
+        """既有空列表 [] 被条目替换，文件头注释保留"""
+        from install_mcp import add_mcp_config
+        self.patch_file.parent.mkdir(parents=True, exist_ok=True)
+        self.patch_file.write_text("# header comment\n[]\n", encoding="utf-8")
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertIn("# header comment", text)
+        self.assertIn("- insert:", text)
+        self.assertNotIn("\n[]\n", text)
+
+    def test_dsh_idempotent_case_insensitive_command_windows(self):
+        """Windows 路径大小写不敏感：daofy.exe vs daofy.EXE 视为一致"""
+        from install_mcp import add_mcp_config
+        add_mcp_config(str(self.patch_file), "daofy",
+                       self._mcp_config(command=r"C:\daofy.exe"), "DSH")
+        add_mcp_config(str(self.patch_file), "daofy",
+                       self._mcp_config(command=r"C:\daofy.EXE"), "DSH")
+        text = self.patch_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("- insert:"), 1)
+        if os.name == "nt":
+            self.assertIn("C:\\daofy.exe", text)  # 大小写不敏感 → 未更新
+        else:
+            self.assertIn("C:\\daofy.EXE", text)  # 大小写敏感 → 已更新
+
+    def test_dsh_find_block_absorbs_multiline_comment_block(self):
+        """_dsh_find_block 吸收 insert 上方整块连续注释（旧版手工安装头）"""
+        from install_mcp import _dsh_find_block
+        lines = [
+            "# Your patch layer header",  # 文件头, 与块间有空行 → 不吸收
+            "",
+            "# ── Daofy for Delphi MCP Server ────────────────",
+            "# 工具以 mcp__daofy__<tool> 形式注册",
+            "#   command 使用 daofy.exe 绝对路径",
+            "# ── Daofy for Delphi MCP Server (managed by install_mcp.py)",
+            "- insert:",
+            "    - id: mcp-daofy",
+            "      config:",
+            "        serverName: daofy",
+        ]
+        span = _dsh_find_block(lines, "daofy")
+        # 吸收 insert 行上方 5 行注释 (行索引 2..6), 文件头行 0 因空行分隔被保留
+        self.assertEqual(span, (2, 10))
+
+    def test_dsh_find_block_does_not_absorb_unrelated_comment(self):
+        """insert 上方无 daofy 关键字的注释块不被吸收（退回 insert 行本身）"""
+        from install_mcp import _dsh_find_block
+        lines = [
+            "# unrelated note",
+            "# another note",
+            "- insert:",
+            "    - id: mcp-daofy",
+            "      config:",
+            "        serverName: daofy",
+        ]
+        span = _dsh_find_block(lines, "daofy")
+        self.assertEqual(span, (2, 6))
+
+    def test_dsh_find_block_multiple_entries(self):
+        """多个 insert 条目时定位到目标条目，_dsh_parse_entry 可解析"""
+        from install_mcp import _dsh_find_block, _dsh_parse_entry
+        lines = [
+            "- insert:",
+            "    - id: other",
+            "      config:",
+            "        serverName: other",
+            "- insert:",
+            "    - id: mcp-daofy",
+            "      config:",
+            "        serverName: daofy",
+            "- id: override",
+        ]
+        span = _dsh_find_block(lines, "daofy")
+        self.assertEqual(span, (4, 8))
+        entry = _dsh_parse_entry("\n".join(lines[span[0]:span[1]]) + "\n")
+        self.assertEqual(entry["id"], "mcp-daofy")
+        self.assertEqual(entry["config"]["serverName"], "daofy")
+
+    def test_dsh_file_has_mcp_detection(self):
+        """_file_has_mcp(DSH) 检测已安装条目"""
+        from install_mcp import _dsh_file_has_mcp, add_mcp_config
+        self.assertFalse(_dsh_file_has_mcp(str(self.patch_file)))
+        add_mcp_config(str(self.patch_file), "daofy", self._mcp_config(), "DSH")
+        self.assertTrue(_dsh_file_has_mcp(str(self.patch_file)))
+
+    def test_dsh_get_mcp_config(self):
+        """get_mcp_config(DSH) 返回 serverName/transport/command/args/env/cwd/timeout"""
+        from install_mcp import get_mcp_config
+        cfg = get_mcp_config(r"C:\python.exe", "DSH", use_pip=False)
+        self.assertEqual(cfg["serverName"], "daofy")
+        self.assertEqual(cfg["transport"], "stdio")
+        self.assertEqual(cfg["command"], r"C:\python.exe")
+        self.assertTrue(cfg["args"][0].endswith("server.py"))
+        self.assertEqual(cfg["env"]["PYTHONIOENCODING"], "utf-8")
+        self.assertEqual(cfg["toolCallTimeoutMs"], 600000)
+        self.assertIn("cwd", cfg)
+        # pip 模式 → command=daofy, args=[]
+        cfg_pip = get_mcp_config(r"C:\python.exe", "DSH", use_pip=True)
+        self.assertEqual(cfg_pip["command"], "daofy")
+        self.assertEqual(cfg_pip["args"], [])
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("Daofy 安装脚本逻辑验证测试")
@@ -503,6 +723,7 @@ if __name__ == "__main__":
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestInstallMCPCore))
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestInstallBatVersionURLs))
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestUninstallScript))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(TestDSHInstallLogic))
 
     result = runner.run(suite)
 
