@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.09.15] - 2026-09-15
+
+### Added
+
+- **console_logging 配置开关**: `config/logging_config.json` 新增 `console_logging`（默认 `false`）——
+  日志不再输出到 stderr 控制台（避免干扰 MCP stdio 协议通道），全部日志仅写文件。需要控制台输出时显式置为 `true`
+- **file_backup 编码检测重写**: 超大文件（>32MB）退化到多点采样（开头/1/3/2/3/末尾，总上限 256KB），
+  避免一次性读入数 MB 造成内存峰值；chardet 低置信度时仅接受多字节 CJK 编码（big5/shift_jis/euc-kr 等），
+  单字节编码（cp1252 等）接受任意字节永不报错故不接受；UTF-16 按前 1MB 空字节分布做 BOM 启发式分析
+- **DSH 安装集成**: `install_mcp.py` 新增 DSH Agent 类型（`--agent DSH` / 交互选择），
+  `--dsh-profile` 指定 profile（默认 web）；幂等读写 `~/.dsh/profiles/<profile>/cordis.patch.yml`，
+  卸载保留第三方 MCP 条目并自动补 `[]`
+- **编译输出目录读写放行**: `file_tool` 路径校验放行项目 `.dproj` 输出目录
+  （`DCC_ExeOutput`/`DCC_DcuOutput`），编译产物可直接读取/写入
+
+### Fixed
+
+- **相对路径自动解析**: `delphi_file` read 相对路径（如 `src/ui/Foo.pas`）不再报「未找到文件」——
+  按 `project_path` → `workspace_root` → CWD 优先级解析，存在即返回绝对路径
+- **多版本编译器精确匹配**: `get_compiler_for_project` 四级匹配（registry / 产品名 / 前缀 /
+  回退 >= 目标最近版本），项目版本不再错配到其它 Delphi 版本编译器
+- **write 编码转换**: `_is_encoding_compatible` 修复 `utf-8-sig` 兼容性判断，写入时编码转换不再误判
+- **StackTrace VEH 日志统一**: VEH 访问违规日志文件名从 `veh-exception.log` 改为 `exception.log`，
+  与 GUI 暴露的日志一致——VEH 先于 Delphi RTL 处理运行，被处理的 AV 仍可观测
+
+### Changed
+
+- **移除 daofy dsh CLI 子命令**: DSH 安装统一入口收敛到 `install_mcp.py`，
+  `src/server.py` 不再接 dsh install/uninstall/status 子命令
+- **清理**: `docs/copyright/` 软著文档目录移出版本控制并加入 `.gitignore`
+
 ## [2026.09.02] - 2026-09-02
 
 ### Fixed

@@ -505,7 +505,24 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.08.06 (最新)
+### v2026.09.15 (最新)
+
+- **console_logging 配置开关**: 日志默认不再输出到 stderr 控制台（避免干扰 MCP stdio），仅写文件
+- **file_backup 编码检测重写**: 超大文件多点采样 + chardet 低置信度仅接受多字节 CJK 编码 + UTF-16 BOM 启发式分析
+- **DSH 安装集成**: `install_mcp.py` 一键安装/卸载 DeepSeek Harness（`--agent DSH`），读写 `cordis.patch.yml`
+- **相对路径自动解析**: `delphi_file` 相对路径按 `project_path` → `workspace_root` → CWD 解析
+- **多版本编译器精确匹配**: 项目版本四级匹配，不再错配到其它 Delphi 版本编译器
+- **编译输出目录读写放行**: `.dproj` 的 `DCC_ExeOutput`/`DCC_DcuOutput` 目录允许直接读写
+- **StackTrace VEH 日志统一**为 `exception.log`
+
+### v2026.09.02
+
+- **多版本编译器错配修复**: 库路径/RTL/三方库/系统库与 dcc32 版本一致
+- **系统库按编译器版本过滤**: `delphi_kb(build, kb_type=delphi, version=...)` 只索引对应 RTL/VCL/FMX 源码
+- **MCP v1/v2 全接口一致性**: read_resource/title/description/isError/jsonschema 校验对齐
+- **Fmx.DaofyAutomation 同步 Vcl 功能**: RTTI named_paths/GetRttiClasses/路径解析/Unicode 按键
+
+### v2026.08.06
 
 - **waitfor 主线程查询超时防护**: `SendMessageTimeout` + 版本号三事件无锁协议（提交/完成/放弃各 +1，僵尸消息 LParam 过滤），主线程死锁/忙时管道线程最多阻塞 200ms 即让出，异步结果回传不被长阻塞
 - **waitfor 冒烟测试**: `Tests/冒烟测试/` 新增正常路径（`waitfor-basic.json`）与超时/模态故障路径（`waitfor-timeout-modal.json`），AutoTest.exe 实测三轮全过
