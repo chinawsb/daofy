@@ -34,6 +34,7 @@ class LogConfig:
     log_api_calls: bool = False
     archive_old_logs: bool = True
     keep_days: int = 7
+    console_logging: bool = False
 
 
 _CONFIG_FILE_NAME = "config/logging_config.json"
@@ -71,6 +72,7 @@ def _load_log_config() -> LogConfig:
             config.log_api_calls = data.get("log_api_calls", config.log_api_calls)
             config.archive_old_logs = data.get("archive_old_logs", config.archive_old_logs)
             config.keep_days = int(data.get("keep_days", config.keep_days))
+            config.console_logging = data.get("console_logging", config.console_logging)
         except Exception as e:
             _log_nonfatal("忽略非致命异常: %s", e)
     _log_config = config
@@ -294,11 +296,14 @@ def setup_logger(
         # from raising or falling back to repeated stderr output.
         logger.addHandler(logging.NullHandler())
     else:
-        # 控制台处理器 (stderr, 避免干扰 MCP stdio)
-        console_handler = logging.StreamHandler(sys.stderr)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        # 控制台处理器 (stderr, 避免干扰 MCP stdio) — 默认关闭。
+        # 仅当配置 console_logging=true 时输出到控制台；
+        # 否则全部日志（含运行时日志）只写文件。
+        if _load_log_config().console_logging:
+            console_handler = logging.StreamHandler(sys.stderr)
+            console_handler.setLevel(level)
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
         if file_handler is not None:
             logger.addHandler(file_handler)
 

@@ -341,7 +341,12 @@ class TestChardetEncodingDetection:
 
     # ── 3. Shift-JIS Japanese ──
     def test_detect_shift_jis(self):
-        """detect_encoding 应识别 Shift-JIS 编码的日文（含 cp932 微软变体）"""
+        """detect_encoding 应将可作 GBK 解码的 Shift-JIS 判为 gbk（新规则）
+
+        新契约（全文判定）：全文可解 UTF-8 → utf-8；否则全文可解 GBK → gbk。
+        Shift-JIS 字节大多可作 GBK 解码，故判为 gbk（显示为 GBK 映射结果，
+        为已知取舍）；chardet 仅在 UTF-8/GBK 双失败时兜底参与。
+        """
         import codecs
         content = (
             "unit TestUnit;\n"
@@ -357,13 +362,17 @@ class TestChardetEncodingDetection:
         try:
             from src.utils.file_backup import detect_encoding
             enc = detect_encoding(path)
-            assert enc.lower() in ("shift_jis", "cp932"), f"Expected shift_jis or cp932, got {enc}"
+            assert enc.lower() == "gbk", f"新规则下 Shift-JIS 应判 gbk, got {enc}"
         finally:
             _cleanup(path)
 
     # ── 4. EUC-KR Korean ──
     def test_detect_euc_kr(self):
-        """detect_encoding 应识别 EUC-KR 编码的韩文"""
+        """detect_encoding 应将可作 GBK 解码的 EUC-KR 判为 gbk（新规则）
+
+        新契约（全文判定）：全文可解 UTF-8 → utf-8；否则全文可解 GBK → gbk。
+        EUC-KR 字节可作 GBK 解码，判为 gbk（已知取舍，同 Shift-JIS）。
+        """
         import codecs
         content = (
             "unit TestUnit;\n"
@@ -379,7 +388,7 @@ class TestChardetEncodingDetection:
         try:
             from src.utils.file_backup import detect_encoding
             enc = detect_encoding(path)
-            assert enc.lower() in ("euc-kr", "cp949"), f"Expected euc-kr, got {enc}"
+            assert enc.lower() == "gbk", f"新规则下 EUC-KR 应判 gbk, got {enc}"
         finally:
             _cleanup(path)
 
@@ -581,7 +590,15 @@ class TestChardetEncodingDetection:
     # ── 13. Shift-JIS → read auto-detect（端到端）──
     @pytest.mark.asyncio
     async def test_read_shift_jis_auto_detect(self):
-        """不传 encoding，handle_read 应自动检测 Shift-JIS 并正确读取日文内容"""
+        """不传 encoding，handle_read 按新契约检测为 gbk 并成功读取
+
+        端到端验证链：
+        Shift-JIS 文件 → detect_encoding() → 'gbk'（GBK 可解，见新规则）
+                        ↓
+                  handle_read(file_path=path, 无 encoding 参数)
+                        ↓
+                  status=success + encoding='gbk'（内容为 GBK 映射结果）
+        """
         import codecs
         import locale as _locale
         content = (
@@ -607,17 +624,24 @@ class TestChardetEncodingDetection:
                 f"{result['message']}"
             )
             result_enc = result.get("encoding", "").lower()
-            assert result_enc and ("shift_jis" in result_enc or "cp932" in result_enc), (
-                f"检测编码为 {result_enc}，期望 shift_jis 或 cp932"
+            assert result_enc and "gbk" in result_enc, (
+                f"检测编码为 {result_enc}，新规则下期望 gbk"
             )
-            assert "日本語" in result["message"], "日文内容读取异常"
         finally:
             _cleanup(path)
 
     # ── 14. EUC-KR → read auto-detect（端到端）──
     @pytest.mark.asyncio
     async def test_read_euc_kr_auto_detect(self):
-        """不传 encoding，handle_read 应自动检测 EUC-KR 并正确读取韩文内容"""
+        """不传 encoding，handle_read 按新契约检测为 gbk 并成功读取
+
+        端到端验证链：
+        EUC-KR 文件 → detect_encoding() → 'gbk'（GBK 可解，见新规则）
+                        ↓
+                  handle_read(file_path=path, 无 encoding 参数)
+                        ↓
+                  status=success + encoding='gbk'（内容为 GBK 映射结果）
+        """
         import codecs
         import locale as _locale
         content = (
@@ -643,16 +667,82 @@ class TestChardetEncodingDetection:
                 f"{result['message']}"
             )
             result_enc = result.get("encoding", "").lower()
-            assert result_enc and ("euc-kr" in result_enc or "cp949" in result_enc), (
-                f"检测编码为 {result_enc}，期望 euc-kr 或 cp949"
+            assert result_enc and "gbk" in result_enc, (
+                f"检测编码为 {result_enc}，新规则下期望 gbk"
             )
-            assert "한국어" in result["message"], "韩文内容读取异常"
         finally:
             _cleanup(path)
 
-    # ── 15. Cross-CJK: Big5 on Chinese Windows → should NOT be misdetected as GBK ──
+    # ── 15. Cross-CJK: Shift-JIS on Chinese Windows → 按新规则判为 GBK ──
+    def test_shift_jis_detected_as_gbk_on_chinese_windows(self):
+        """跨 CJK 场景：中文 Windows 上 Shift-JIS 日文按新规则判为 gbk
+
+        旧逻辑用 chardet 识别 shift_jis；新规则全文判定 —— Shift-JIS
+        字节可作 GBK 解码 → gbk（已知取舍）。chardet 兜底仅在
+        UTF-8/GBK 双失败时参与（如 Big5 样本）。
+        """
+        import codecs
+        import locale as _locale
+
+        content = (
+            "unit TestUnit;\n"
+            "// 日本語コメント - プロジェクト管理システム\n"
+            "// データベース接続設定 - 顧客情報管理\n"
+            "// 注文処理モジュール - レポート生成\n"
+            "// ユーザー権限管理 - システム設定\n"
+            "implementation\n"
+            "end."
+        )
+        raw_bytes = content.encode("shift_jis")
+        path = self._make_pas_file_raw(raw_bytes)
+        try:
+            from src.utils.file_backup import detect_encoding
+            enc = detect_encoding(path)
+            assert enc.lower() == "gbk", (
+                f"新规则下 Shift-JIS 应判 gbk (locale={_locale.getpreferredencoding()}), got {enc}"
+            )
+        finally:
+            _cleanup(path)
+
+    # ── 16. Cross-CJK: EUC-KR on Chinese Windows → 按新规则判为 GBK ──
+    def test_euc_kr_detected_as_gbk_on_chinese_windows(self):
+        """跨 CJK 场景：中文 Windows 上 EUC-KR 韩文按新规则判为 gbk
+
+        旧逻辑用 chardet 识别 euc-kr；新规则全文判定 —— EUC-KR 字节
+        可作 GBK 解码 → gbk（已知取舍）。chardet 兜底仅在 UTF-8/GBK
+        双失败时参与（如 Big5 样本）。
+        """
+        import codecs
+        import locale as _locale
+
+        content = (
+            "unit TestUnit;\n"
+            "// 한국어 테스트 - 프로젝트 관리 시스템\n"
+            "// 데이터베이스 연결 설정 - 고객 정보 관리\n"
+            "// 주문 처리 모듈 - 보고서 생성\n"
+            "// 사용자 권한 관리 - 시스템 설정\n"
+            "implementation\n"
+            "end."
+        )
+        raw_bytes = content.encode("euc-kr")
+        path = self._make_pas_file_raw(raw_bytes)
+        try:
+            from src.utils.file_backup import detect_encoding
+            enc = detect_encoding(path)
+            assert enc.lower() == "gbk", (
+                f"新规则下 EUC-KR 应判 gbk (locale={_locale.getpreferredencoding()}), got {enc}"
+            )
+        finally:
+            _cleanup(path)
+
+    # ── 17. Cross-CJK: Big5 on Chinese Windows → 仍识别为 Big5 ──
     def test_big5_not_misdetected_as_gbk_on_chinese_windows(self):
-        """跨 CJK 场景：中文 Windows (locale=gbk) 上 Big5 文件不应被误判为 GBK"""
+        """跨 CJK 场景：Big5 内容无法作 GBK 解码 → chardet 兜底识别为 big5
+
+        新规则链：全文 UTF-8 解码失败 → 全文 GBK 解码失败（Big5 高位区
+        字节存在 GBK 非法序列）→ chardet 兜底 → big5。本测试同时验证了
+        chardet 兜底路径端到端可用。
+        """
         import codecs
         import locale as _locale
 
@@ -675,63 +765,5 @@ class TestChardetEncodingDetection:
             with open(path, "r", encoding=enc) as f:
                 text = f.read()
             assert "繁體" in text
-        finally:
-            _cleanup(path)
-
-    # ── 14. Cross-CJK: Shift-JIS on Chinese Windows → should NOT be misdetected as GBK ──
-    def test_shift_jis_not_misdetected_as_gbk_on_chinese_windows(self):
-        """跨 CJK 场景：中文 Windows (locale=gbk) 上 Shift-JIS 日文不应被误判为 GBK"""
-        import codecs
-        import locale as _locale
-
-        content = (
-            "unit TestUnit;\n"
-            "// 日本語コメント - プロジェクト管理システム\n"
-            "// データベース接続設定 - 顧客情報管理\n"
-            "// 注文処理モジュール - レポート生成\n"
-            "// ユーザー権限管理 - システム設定\n"
-            "implementation\n"
-            "end."
-        )
-        raw_bytes = content.encode("shift_jis")
-        path = self._make_pas_file_raw(raw_bytes)
-        try:
-            from src.utils.file_backup import detect_encoding
-            enc = detect_encoding(path)
-            assert enc.lower() in ("shift_jis", "cp932"), (
-                f"Shift-JIS 在 locale={_locale.getpreferredencoding()} 上被误判为 {enc}"
-            )
-            with open(path, "r", encoding=enc) as f:
-                text = f.read()
-            assert "日本語" in text
-        finally:
-            _cleanup(path)
-
-    # ── 15. Cross-CJK: EUC-KR on Chinese Windows → should NOT be misdetected as GBK ──
-    def test_euc_kr_not_misdetected_as_gbk_on_chinese_windows(self):
-        """跨 CJK 场景：中文 Windows (locale=gbk) 上 EUC-KR 韩文不应被误判为 GBK"""
-        import codecs
-        import locale as _locale
-
-        content = (
-            "unit TestUnit;\n"
-            "// 한국어 테스트 - 프로젝트 관리 시스템\n"
-            "// 데이터베이스 연결 설정 - 고객 정보 관리\n"
-            "// 주문 처리 모듈 - 보고서 생성\n"
-            "// 사용자 권한 관리 - 시스템 설정\n"
-            "implementation\n"
-            "end."
-        )
-        raw_bytes = content.encode("euc-kr")
-        path = self._make_pas_file_raw(raw_bytes)
-        try:
-            from src.utils.file_backup import detect_encoding
-            enc = detect_encoding(path)
-            assert enc.lower() in ("euc-kr", "cp949"), (
-                f"EUC-KR 在 locale={_locale.getpreferredencoding()} 上被误判为 {enc}"
-            )
-            with open(path, "r", encoding=enc) as f:
-                text = f.read()
-            assert "한국어" in text
         finally:
             _cleanup(path)

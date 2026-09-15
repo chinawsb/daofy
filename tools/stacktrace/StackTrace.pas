@@ -455,7 +455,9 @@ begin
       Break;
     end;
   end;
-  LName := 'veh-exception.log';
+  // Keep low-level access violations in the same log the GUI exposes.
+  // VEH runs before Delphi RTL handling, so handled AVs remain observable.
+  LName := 'exception.log';
   I := 0;
   while LName[I] <> #0 do begin
     if LPos >= Length(APath) - 1 then

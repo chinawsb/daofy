@@ -368,15 +368,17 @@ def test_detect_encoding_empty_file():
 
 
 def test_detect_encoding_binary_data():
-    """二进制（非文本）文件应回退到 utf-8（不会报错）"""
+    """二进制（非文本）文件按新规则回退到 gbk（不会报错）"""
     fd, path = tempfile.mkstemp(suffix=".bin")
     os.close(fd)
     try:
         with open(path, "wb") as f:
             f.write(b'\x00\x01\x02\xff\xfe\xfd\xfc\xfb')
         enc = detect_encoding(path)
-        # 二进制数据通常解码失败，回退到 utf-8
-        assert enc == "utf-8", f"expected utf-8 fallback, got {enc}"
+        # 新契约：无 BOM 时全文 UTF-8 解码成功 → utf-8；否则全文 GBK
+        # 解码成功 → gbk；UTF-8/GBK 双失败才 chardet 兜底 → 默认 gbk。
+        # 该样本 x00 开头非 UTF-8，GBK 可解 → gbk。
+        assert enc == "gbk", f"expected gbk fallback, got {enc}"
     finally:
         os.unlink(path)
 

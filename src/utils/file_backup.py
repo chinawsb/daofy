@@ -6,7 +6,6 @@
 超过 RETENTION_DAYS 天的旧备份自动清理。
 """
 
-import locale
 import os
 import shutil
 import statistics
@@ -24,29 +23,20 @@ RETENTION_DAYS = 7
 # 64x 缓冲区 = 同等 I/O 下 64 倍更少的系统调用
 _COPY_BUF_SIZE = 1024 * 1024
 
-# 多字节 CJK locale 编码集合 — 这些编码的 decode 在遇到非法字节时会报错，
-# 可以可靠地用"试解码"方式检测。单字节编码（cp1252, iso-8859-*等）
-# 接受任意字节永不报错，不适合此方法。
-_MULTIBYTE_LOCALE_ENCODINGS = {
-    # 简体中文
-    'gbk', 'gb2312', 'gb18030', 'cp936', 'hz',
-    # 繁体中文
-    'big5', 'big5hkscs', 'cp950',
-    # 日文
-    'shift_jis', 'cp932', 'ms932', 'euc-jp', 'iso-2022-jp',
-    # 韩文
-    'euc-kr', 'cp949', 'ks_c_5601_1987', 'iso-2022-kr',
-}
+# 全文编码检测上限：超过此大小（不可能是源码文本）时退化到多点采样，
+# 避免一次性读入数百 MB 造成内存峰值
+_MAX_FULL_DETECT_BYTES = 32 * 1024 * 1024
 
-# 通用回退链 — 按使用频率排列
-_UNIVERSAL_FALLBACK = [
-    'utf-8',
-    'gbk', 'gb18030',
-    'big5',
-    'shift_jis', 'cp932',
-    'euc-kr', 'cp949',
-    'euc-jp',
-]
+# UTF-16 无 BOM 启发式分析窗口：空字节分布是结构特征（与内容无关），
+# 取前 1MB 足够判定，避免超大文件构建百万级空字节位置列表
+_UTF16_ANALYSIS_WINDOW = 1024 * 1024
+
+# chardet 低置信度时仅接受的多字节 CJK 编码；单字节编码（cp1252 等）
+# 接受任意字节永不报错，会误判，故不接受
+_CHARDET_MULTIBYTE = {
+    'big5', 'shift_jis', 'cp932', 'euc-kr', 'cp949',
+    'euc-jp', 'iso-2022-jp', 'iso-2022-kr',
+}
 
 
 def _fast_copy(src: str, dst: str) -> None:
@@ -106,63 +96,113 @@ def _normalize_charset_name(enc: str) -> str:
     return key
 
 
+def _read_sample_for_detection(f, file_size: int) -> bytes:
+    """
+    超大文件（>32MB）多点采样：开头 + 1/3 + 2/3 + 末尾，总上限 256KB。
+
+    Args:
+        f: 已打开的二进制文件句柄（位于文件头）
+        file_size: 文件总字节数
+
+    Returns:
+        采样字节串
+    """
+    chunk = 16384
+    max_total = 262144
+    parts = []
+    total_read = 0
+
+    # 开头
+    parts.append(f.read(chunk))
+    total_read += chunk
+
+    # 1/3 处
+    f.seek(max(0, file_size // 3 - chunk // 2))
+    d = f.read(chunk)
+    parts.append(d)
+    total_read += len(d)
+
+    if total_read < max_total:
+        # 2/3 处
+        f.seek(max(0, file_size * 2 // 3 - chunk // 2))
+        d = f.read(chunk)
+        parts.append(d)
+        total_read += len(d)
+
+    if total_read < max_total:
+        # 末尾
+        f.seek(max(0, file_size - chunk))
+        d = f.read(chunk)
+        parts.append(d)
+        total_read += len(d)
+
+    return b''.join(parts)[:max_total]
+
+
+def _chardet_fallback(raw_data: bytes) -> Optional[str]:
+    """
+    chardet 兜底检测：仅当全文 UTF-8 与 GBK 均解码失败时调用。
+
+    高置信度(>0.7)直接采纳（归一化后）；低置信度仅接受多字节 CJK 编码
+    （big5/shift_jis/euc-kr 等），避免单字节编码误判。
+
+    Args:
+        raw_data: 文件原始字节
+
+    Returns:
+        归一化编码名；无法识别返回 None
+    """
+    try:
+        import chardet
+        result = chardet.detect(raw_data)
+        enc = result.get('encoding')
+        conf = result.get('confidence', 0)
+        if not enc or conf <= 0:
+            return None
+        norm = _normalize_charset_name(enc)
+        if conf > 0.7:
+            return norm
+        if norm in _CHARDET_MULTIBYTE:
+            return norm
+    except Exception:
+        logger.debug("chardet 检测失败，降级到默认编码 gbk")
+    return None
+
+
 def detect_encoding(file_path: str) -> str:
     """
     检测文件编码。
 
-    检测顺序: BOM → UTF-16 启发式 → 系统 locale 编码 → chardet → 通用回退链
+    检测顺序: BOM → 无 BOM UTF-16 启发式 → 全文 UTF-8 → 全文 GBK → chardet 兜底
 
-    系统 locale 编码优先尝试（如中文 Windows 的 gbk、日文 Windows 的 cp932），
-    可覆盖 90%+ 场景而无需启动 chardet。
-    仅当 locale 编码无效或为单字节编码（cp1252 等）时才继续到 chardet。
+    - BOM 检测: UTF-8 BOM → utf-8-sig; UTF-16 BOM → utf-16
+    - 无 BOM UTF-16 启发式: 空字节分布（前 1MB 窗口）+ 全文 decode 验证
+    - 无 BOM 文本判定（全文检测，不再用 4K/多点采样）:
+      全文存在合法 UTF-8 序列 → utf-8（无 BOM）；否则全文可解 GBK → gbk
+    - chardet 兜底: UTF-8 与 GBK 均解码失败（编码异常/二进制/罕见多字节编码）
+      时识别 big5/shift_jis/euc-kr 等；仍失败默认 gbk
+
+    注: 全文判定后，多数 Big5/Shift-JIS/EUC-KR 文件因可作 GBK 解码而判为
+    gbk（大陆场景预期行为）；chardet 仅在 UTF-8/GBK 双失败时兜底参与。
 
     Args:
         file_path: 文件路径
 
     Returns:
-        编码名称（utf-8 / utf-8-sig / utf-16 / gbk / big5 / shift_jis
-        / euc-kr / euc-jp 等）
+        编码名称（utf-8 / utf-8-sig / utf-16 / utf-16-le / utf-16-be
+        / gbk / big5 / shift_jis / euc-kr / euc-jp 等）
     """
     try:
         file_size = os.path.getsize(file_path)
 
-        # ── 多点采样 ──
-        # 避免 Delphi 文件前部纯 ASCII、后部 CJK 的漏检
-        # 采样位置：开头 + 1/3 + 2/3 + 末尾，总上限 256KB
+        # ── 全文读取 ──
+        # 前部采样（4K/多点）对"前部纯 ASCII、后部 CJK"的文件不安全，
+        # 一律读全文件判定；仅超 32MB 的非源码文件退化到多点采样。
         with open(file_path, 'rb') as f:
-            if file_size <= 65536:
-                raw_data = f.read(min(file_size, 262144))
+            if file_size <= _MAX_FULL_DETECT_BYTES:
+                raw_data = f.read()
             else:
-                chunk = 16384
-                max_total = 262144
-                parts = []
-                total_read = 0
-
-                # 开头
-                parts.append(f.read(chunk))
-                total_read += chunk
-
-                # 1/3 处
-                f.seek(max(0, file_size // 3 - chunk // 2))
-                d = f.read(chunk)
-                parts.append(d)
-                total_read += len(d)
-
-                if total_read < max_total:
-                    # 2/3 处
-                    f.seek(max(0, file_size * 2 // 3 - chunk // 2))
-                    d = f.read(chunk)
-                    parts.append(d)
-                    total_read += len(d)
-
-                if total_read < max_total:
-                    # 末尾
-                    f.seek(max(0, file_size - chunk))
-                    d = f.read(chunk)
-                    parts.append(d)
-                    total_read += len(d)
-
-                raw_data = b''.join(parts)[:max_total]
+                raw_data = _read_sample_for_detection(f, file_size)
 
         if not raw_data:
             return 'utf-8'
@@ -174,10 +214,11 @@ def detect_encoding(file_path: str) -> str:
             return 'utf-8-sig'
 
         # ── 2. 无 BOM UTF-16 启发式检测 ──
-        # 三层过滤：长度奇偶性 → 空字节间距分析 → decode 验证
+        # 前置原因: ASCII 型 UTF-16 无 BOM 文件（"u\0n\0i\0t\0..."）可作
+        # UTF-8 解出（含 NUL），必须先于 UTF-8 判定，否则会被误判为 utf-8。
+        # 空字节分布是结构特征，前 1MB 窗口足够；decode 用全文验证。
         if len(raw_data) >= 8 and len(raw_data) % 2 == 0:
-            # 采样前 4096 字节做空字节分布分析
-            sample = raw_data[:min(len(raw_data), 4096)]
+            sample = raw_data[:min(len(raw_data), _UTF16_ANALYSIS_WINDOW)]
 
             # 找出所有 null 字节的位置
             null_positions = [i for i, b in enumerate(sample) if b == 0]
@@ -192,6 +233,13 @@ def detect_encoding(file_path: str) -> str:
                 mean_gap = statistics.mean(gaps)
                 # 间距一致性：越小越整齐。UTF-16 的 null 间距集中在 2 附近
                 gap_consistency = gap_range / mean_gap if mean_gap > 0 else 0
+                # 小间隙占比：容忍被 CJK 段打断的间隙（如 "unit Test;\n// 中文..."）
+                # 文本类编码（utf-8/gbk/big5 等）几乎不含 NUL，null 密集且
+                # 集中在单一奇偶位的数据几乎必是 UTF-16，故放宽一致性条件安全。
+                small_gap_ratio = (
+                    sum(1 for g in gaps if g <= 3) / len(gaps)
+                    if gaps else 0.0
+                )
 
                 # 计算奇偶位 null 分布
                 odd_nulls = sum(1 for p in null_positions if p % 2 == 1)
@@ -200,7 +248,7 @@ def detect_encoding(file_path: str) -> str:
                 # UTF-16-LE: null 集中在奇数位，间距 ≈ 2，分布整齐
                 if (odd_nulls > even_nulls * 3
                         and median_gap <= 2.5
-                        and gap_consistency < 3.0):
+                        and (gap_consistency < 3.0 or small_gap_ratio >= 0.75)):
                     try:
                         raw_data.decode('utf-16-le')
                         return 'utf-16-le'
@@ -210,79 +258,35 @@ def detect_encoding(file_path: str) -> str:
                 # UTF-16-BE: null 集中在偶数位
                 if (even_nulls > odd_nulls * 3
                         and median_gap <= 2.5
-                        and gap_consistency < 3.0):
+                        and (gap_consistency < 3.0 or small_gap_ratio >= 0.75)):
                     try:
                         raw_data.decode('utf-16-be')
                         return 'utf-16-be'
                     except (UnicodeDecodeError, ValueError):
                         pass
 
-        # ── 3. 系统 locale 编码检测（不立即返回）──
-        # 在 CJK Windows 上，locale 编码就是开发者常用的编码，优先尝试。
-        # 但仅对含非 ASCII 字节的文件生效：纯 ASCII 文件在 utf-8 和 locale
-        # 编码下表现完全相同，一律视作 utf-8 更合理。
-        locale_guess = None
-        has_non_ascii = any(b > 127 for b in raw_data)
-        if has_non_ascii:
-            locale_enc = locale.getpreferredencoding().lower()
-            locale_enc_norm = _normalize_charset_name(locale_enc)
-            if locale_enc_norm in _MULTIBYTE_LOCALE_ENCODINGS:
-                try:
-                    raw_data.decode(locale_enc_norm)
-                    # 解码成功，记录 locale 候选，但不立即返回
-                    # 因为跨 CJK 场景（中文 Windows + Big5 文件）可能误判
-                    locale_guess = locale_enc_norm
-                except UnicodeDecodeError:
-                    pass
-
-        # ── 4. chardet 概率检测 ──
-        chardet_guess = None
+        # ── 3. 全文 UTF-8 判定：存在合法 UTF-8 序列 → UTF-8 无 BOM ──
         try:
-            import chardet
-            result = chardet.detect(raw_data)
-            enc = result.get('encoding')
-            conf = result.get('confidence', 0)
-            if enc and conf > 0.7:
-                enc = _normalize_charset_name(enc)
-                return enc
-            if enc and conf > 0:
-                # 低置信度也记录为候选（用于跨 CJK 场景）
-                chardet_guess = _normalize_charset_name(enc)
-                # 仅接受多字节 CJK 编码的建议；单字节编码（cp125*, iso-8859-* 等）
-                # 接受所有字节永不报错，会导致误判
-                _cjk_multibyte = {'big5', 'shift_jis', 'cp932', 'euc-kr', 'cp949',
-                                  'euc-jp', 'iso-2022-jp', 'iso-2022-kr'}
-                if chardet_guess not in _cjk_multibyte and chardet_guess != 'gbk':
-                    chardet_guess = None
-        except Exception:
-            logger.debug("chardet 检测失败，降级到通用回退链")
+            raw_data.decode('utf-8')
+            return 'utf-8'
+        except UnicodeDecodeError:
+            pass
 
-        # ── 5. 候选裁决 ──
-        # 如有 locale_guess 和 chardet_guess 且不一致，优先 chardet（概率分析更可靠）
-        # 先验证 chardet_guess 确实能解码
-        if chardet_guess:
-            try:
-                raw_data.decode(chardet_guess)
-                if locale_guess and chardet_guess != locale_guess:
-                    # chardet 于 locale 不一致 → 偏好 chardet
-                    return chardet_guess
-                # chardet 与 locale 一致，或仅 chardet 存在
-                return chardet_guess
-            except UnicodeDecodeError:
-                pass  # chardet 建议无法解码，忽略
+        # ── 4. 全文 GBK 判定：非 UTF-8 → GBK ──
+        try:
+            raw_data.decode('gbk')
+            return 'gbk'
+        except UnicodeDecodeError:
+            pass
 
-        if locale_guess:
-            return locale_guess
+        # ── 5. chardet 兜底 ──
+        # UTF-8 与 GBK 均解码失败（编码异常/二进制/罕见多字节编码）时才触发；
+        # 仍失败默认 gbk。
+        guess = _chardet_fallback(raw_data)
+        if guess:
+            return guess
 
-        # ── 6. 通用回退链 ──
-        for enc in _UNIVERSAL_FALLBACK:
-            try:
-                raw_data.decode(enc)
-                return enc
-            except UnicodeDecodeError:
-                continue
-
-        return 'utf-8'
+        return 'gbk'
 
     except Exception as e:
         logger.warning(f"检测文件编码失败: {e}，使用默认编码 utf-8")

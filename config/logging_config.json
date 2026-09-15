@@ -3,5 +3,6 @@
   "log_dir": "logs",
   "log_api_calls": true,
   "archive_old_logs": true,
-  "keep_days": 7
+  "keep_days": 7,
+  "console_logging": false
 }
