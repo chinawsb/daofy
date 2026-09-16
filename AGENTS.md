@@ -350,36 +350,56 @@ pytest                                      → 审计后运行测试验证
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'
+# 必须：让 PowerShell 正确解码原生命令输出，否则中文路径乱码/丢失（见下方「中文路径陷阱」）
+[Console]::OutputEncoding=[System.Text.Encoding]::UTF8
+$OutputEncoding=[System.Text.Encoding]::UTF8
+
+$src="C:\User\delphi-complier-mcp-server"   # 仓库根目录（注意：必须先于 $7z 定义）
 $7z="$src\tools\7z\7z.exe"
-$src="C:\User\delphi-complier-mcp-server"
-$ver="v2026.05.14"  # 替换为当前版本
+$ver="v2026.09.16"  # 替换为当前版本
 $out="$src\releases\daofy-for-delphi-$ver"
 
+# 清理旧产物（7z a 对已存在的归档是「追加/更新」，不清理会残留上一版文件）
+Remove-Item "$src\releases\daofy-for-delphi-$ver.tar","$src\releases\daofy-for-delphi-$ver.7z","$src\releases\daofy-for-delphi-$ver.zip" -Force -ErrorAction SilentlyContinue
+if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+
 # 从 git 索引取文件（自动排除 .gitignore 内容）
-git ls-files | Where-Object {
+# core.quotePath=false 是关键：否则非 ASCII（中文）路径被输出为八进制转义而复制失败
+$sel = @(git -c core.quotePath=false ls-files | Where-Object {
     $_ -notmatch '^\.arts/' -and
     $_ -notmatch '^\.coverage$' -and
     $_ -notmatch '^config/history\.json$' -and
     $_ -notmatch '^src/config/compilers\.json$' -and
     $_ -notmatch '^\.gitignore$' -and
     $_ -notmatch '^tools/daudit/'
-} | ForEach-Object {
-    $target = Join-Path "$out" "$_"
+})
+$copied = 0; $failed = @()
+$sel | ForEach-Object {
+    $target = Join-Path $out $_
     $dir = Split-Path $target -Parent
-    if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Copy-Item (Join-Path $src $_) $target -Force
+    if (!(Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    try { Copy-Item -LiteralPath (Join-Path $src $_) -Destination $target -Force -ErrorAction Stop; $copied++ }
+    catch { $failed += $_ }
 }
+Write-Host "copied=$copied failed=$($failed.Count) expected=$($sel.Count)"
+if ($failed.Count -gt 0) { $failed | ForEach-Object { Write-Host "  FAIL: $_" }; throw "打包文件复制失败" }
 
 # 打包三种格式
 & $7z a -ttar "$src\releases\daofy-for-delphi-$ver.tar" "$out\*" -bb0 -bsp0
 & $7z a -t7z "$src\releases\daofy-for-delphi-$ver.7z" "$src\releases\daofy-for-delphi-$ver.tar" -mx=9 -m0=LZMA2 -bb0 -bsp0
 & $7z a -tzip "$src\releases\daofy-for-delphi-$ver.zip" "$out\*" -mx=9 -bb0 -bsp0
-Remove-Item "$out" -Recurse -Force
+Remove-Item $out -Recurse -Force
+
+# 校验：包内文件数必须等于 $sel.Count，否则说明有文件被静默跳过
+$cnt = (& $7z l -slt "$src\releases\daofy-for-delphi-$ver.zip" | Select-String '^Attributes = ' | Where-Object { $_ -notmatch 'D' }).Count
+Write-Host "zip files=$cnt expected=$($sel.Count)"
 ```
+
+**中文路径陷阱**：`git ls-files` 默认 `core.quotePath=true`，会把非 ASCII（中文）路径输出为八进制转义（如 `tests/\345\206\222...`），PowerShell 按字面处理 → `Test-Path`/`Copy-Item` 报「路径中含非法字符」并**静默跳过**该文件（脚本不报错，包内却缺文件）。v2026.09.16 打包时 435 个文件只进了 429 个，漏掉 `tests/冒烟测试/*.json`、`tests/scripts/新建客户-*.json` 等 6 个中文名文件。因此脚本必须：① 设 `[Console]::OutputEncoding`/`$OutputEncoding` 为 UTF-8；② 用 `git -c core.quotePath=false`；③ 用 `Copy-Item -LiteralPath`；④ 统计 `copied`/`failed` 且失败时 `throw`；⑤ 打包后用 `zip files=N expected=N` 复核。
 
 **自动包含**：`tools/pasfmt/cli/pasfmt.exe` 等工具文件由 `git ls-files` 自动纳入（已在版本控制中），无需手动处理。
 
-**排除项**：`tools/daudit/` 下的文件（含 `StackTrace.pas`）属于商业付费部分，不包含在 Release 包中。
+**排除项**：`tools/daudit/` 下的文件属于商业付费部分，不包含在 Release 包中（注意 `tools/stacktrace/` **不在**排除范围，需随包发布）。
 
 ### 发布步骤
 
