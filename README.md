@@ -505,7 +505,13 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.09.15 (最新)
+### v2026.09.16 (最新)
+
+- **_SafeStderrHandler 安全 stderr 处理器**: 客户端不排空 stderr 导致管道写满时，日志 `emit` 不再阻塞（可写空间足够才直写，否则入队、满则丢弃），后台消化线程可取消（`CancelSynchronousIo` 看门狗 + 30s 冷却重试）；`setup_logger` 文件处理器先挂且与 `console_logging` 解耦——修复客户现场 stderr 管道写满卡死服务（连 MCP `initialize` 都无法响应）的故障
+- **示例知识库进度日志格式串修复**: `example_knowledge_base._scan_directory` 日志 4 个占位符仅传 3 个参数，全量测试下被 pytest 日志捕获器冒泡为 `TypeError`（24 个用例失败）
+- **StackTrace 剥离重构遗留编译错误修复**: `TLocalVarInfo.GetTypeSize` 改为 `MapDataSerializer.GetLocalVarTypeSize`，并在 `MapDataSerializer` 接口导出 `MakeLocalVarInfo`/`GetLocalVarTypeSize`
+
+### v2026.09.15
 
 - **console_logging 配置开关**: 日志默认不再输出到 stderr 控制台（避免干扰 MCP stdio），仅写文件
 - **file_backup 编码检测重写**: 超大文件多点采样 + chardet 低置信度仅接受多字节 CJK 编码 + UTF-16 BOM 启发式分析
