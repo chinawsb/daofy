@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **_SafeStderrHandler 安全 stderr 处理器**: MCP stdio 场景下客户端不排空 stderr 时，
+  管道写满不再卡死服务——`emit` 永不阻塞（可写空间足够才直写，否则入队、满则丢弃），
+  后台消化线程可取消（Windows `CancelSynchronousIo` 看门狗 + 30s 冷却重试）；
+  `setup_logger` 文件处理器先于控制台处理器挂载（stderr 卡住不再连带停摆文件日志），
+  `console_logging` 与文件日志可用性解耦（日志目录不可写时控制台输出仍保留）
+
+### Fixed
+
+- **stderr 管道写满死锁**: 客户端不读 stderr → 管道写满 → 同步 `emit` 永久阻塞 →
+  卡死 asyncio 事件循环（连 MCP `initialize` 都回应不了，客户端超时反复重启）——真实客户现场故障
+- **_warn_file_logging_unavailable 健壮性**: stderr 已关闭时警告打印不再导致启动失败
+- **示例知识库进度日志格式串**: `example_knowledge_base._scan_directory` 的日志 4 个占位符只传 3 个参数，
+  全量测试下被 pytest 日志捕获器冒泡为 `TypeError`（24 个测试失败）——补上累计行数统计
+- **StackTrace 剥离重构遗留编译错误**: `StackTrace.pas` 仍调用已重构掉的 `TLocalVarInfo.GetTypeSize`，
+  改为 `MapDataSerializer` 的 `GetLocalVarTypeSize`；并在 `MapDataSerializer` 接口导出
+  `MakeLocalVarInfo`（两个重载）/`GetLocalVarTypeSize`，供外部单元与冒烟工程使用
+
 ## [2026.09.15] - 2026-09-15
 
 ### Added

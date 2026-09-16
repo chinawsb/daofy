@@ -137,6 +137,9 @@ type
 
 function KindToTypeName(ATypeKind: Byte): string;
 function TypeNameToKind(const ATypeName: string): Byte;
+function MakeLocalVarInfo(const AName, ATypeName: string; ATypeKind: Byte): TLocalVarInfo; overload;
+function MakeLocalVarInfo(const AName, ATypeName: string; ATypeKind: Byte; AMaxLen: Word): TLocalVarInfo; overload;
+function GetLocalVarTypeSize(const AVar: TLocalVarInfo): Integer;
 
 implementation
 

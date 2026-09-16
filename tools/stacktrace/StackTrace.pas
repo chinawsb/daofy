@@ -3580,7 +3580,7 @@ begin
         Result.Params[I].Value := '<register>';
         Result.Params[I].TypeKind := LLocals[I].TypeKind;
         Result.Params[I].TypeInfo := LLocals[I].TypeInfo;
-        Result.Params[I].Size := LLocals[I].GetTypeSize;
+        Result.Params[I].Size := GetLocalVarTypeSize(LLocals[I]);
         Result.Params[I].Addr := nil;
         Result.Params[I].IsRegister := True;
       end
@@ -3589,7 +3589,7 @@ begin
         Result.Params[I].Value := ReadStackVarValue(LVarAddr, LLocals[I].TypeKind);
         Result.Params[I].TypeKind := LLocals[I].TypeKind;
         Result.Params[I].TypeInfo := LLocals[I].TypeInfo;
-        Result.Params[I].Size := LLocals[I].GetTypeSize;
+        Result.Params[I].Size := GetLocalVarTypeSize(LLocals[I]);
         Result.Params[I].Addr := LVarAddr;
         Result.Params[I].IsRegister := False;
       end;
@@ -3611,7 +3611,7 @@ begin
       Result.Locals[I - LParamCount].Name := LLocals[I].Name;
       Result.Locals[I - LParamCount].TypeKind := LLocals[I].TypeKind;
       Result.Locals[I - LParamCount].TypeInfo := LLocals[I].TypeInfo;
-      Result.Locals[I - LParamCount].Size := LLocals[I].GetTypeSize;
+      Result.Locals[I - LParamCount].Size := GetLocalVarTypeSize(LLocals[I]);
     end;
   end;
 end;

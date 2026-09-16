@@ -1,7 +1,12 @@
 """Tests for logger startup degradation."""
 
+import io
 import logging
+import os
+import time
 from importlib import import_module
+
+import pytest
 
 logger_module = import_module("src.utils.logger")
 
@@ -168,3 +173,58 @@ def test_setup_logger_ignores_unwritable_file(monkeypatch, tmp_path, capfd):
             test_logger.addHandler(handler)
         logger_module._root_handlers_initialized = original_root_initialized
         logger_module._file_logging_warning_emitted = original_warning_emitted
+
+
+def test_safe_stderr_handler_nonblocking_when_pipe_full():
+    """核心回归：管道写满（客户端不排空 stderr）时 emit 必须快速返回。
+
+    MCP stdio 场景：客户端不读 stderr → 管道满 → 同步 emit 若阻塞会卡死
+    整个 asyncio 事件循环（连 initialize 都回应不了）。_SafeStderrHandler
+    必须保证调用方永不阻塞。
+    """
+    r, w = os.pipe()
+    handler = None
+    stream = None
+    try:
+        try:
+            os.set_blocking(w, False)
+        except OSError:
+            pytest.skip("os.set_blocking 不可用")
+        # 灌满管道缓冲
+        try:
+            os.write(w, b"x" * 100000)
+        except (BlockingIOError, OSError):
+            pass
+
+        stream = io.TextIOWrapper(
+            io.FileIO(w, "wb", closefd=False),
+            encoding="utf-8", write_through=True, line_buffering=True,
+        )
+        handler = logger_module._SafeStderrHandler(stream, logging.INFO)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        record = logging.LogRecord("t", logging.INFO, "f", 1, "fill-click", None, None)
+
+        t0 = time.monotonic()
+        handler.emit(record)
+        handler.emit(record)
+        dt = time.monotonic() - t0
+        assert dt < 0.5, f"管道满时 emit 阻塞了 {dt:.3f}s"
+    finally:
+        if handler is not None:
+            handler.close()
+        if stream is not None:
+            stream.close()
+        os.close(r)
+        os.close(w)
+
+
+def test_safe_stderr_handler_close_keeps_stream_open():
+    """_SafeStderrHandler.close() 不得关闭底层流（sys.stderr 全局共享）。"""
+    stream = io.StringIO()
+    handler = logger_module._SafeStderrHandler(stream, logging.INFO)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    record = logging.LogRecord("t", logging.INFO, "f", 1, "console msg", None, None)
+    handler.emit(record)  # StringIO 无 fd → 直写路径
+    handler.close()
+    assert not stream.closed, "close() 不应关闭底层的 sys.stderr"
+    assert "console msg" in stream.getvalue()

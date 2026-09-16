@@ -225,6 +225,7 @@ class ExampleKnowledgeBase:
         new_files = updated_files = skipped_files = 0
         chunked_docs: List[zvec.Doc] = []
         total_in_dir = 0
+        total_lines = 0
         CHUNK_LINES = CHUNK_SIZE_DOCUMENT_LINES
 
         for root, dirs, files in os.walk(demo_path):
@@ -249,6 +250,7 @@ class ExampleKnowledgeBase:
 
                     # 按行切块
                     lines = content.split('\n')
+                    total_lines += len(lines)
                     for ci in range(0, len(lines), CHUNK_LINES):
                         chunk = "\n".join(lines[ci:ci + CHUNK_LINES])
                         chunk_id = hashlib.md5(f"{full_path}#chunk{ci//CHUNK_LINES}".encode()).hexdigest()[:16]
@@ -270,7 +272,7 @@ class ExampleKnowledgeBase:
 
         logger.info(
             "  %s: %d 文件, %d 个段落 (共 %d 行)",
-            label, total_in_dir, len(chunked_docs),
+            label, total_in_dir, len(chunked_docs), total_lines,
         )
         return {"files_scanned": total_in_dir, "docs": chunked_docs}
 

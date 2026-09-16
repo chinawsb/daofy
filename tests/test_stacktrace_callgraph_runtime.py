@@ -195,6 +195,7 @@ end.
 def _write_local_var_snapshot_project(tmp_path: Path) -> Path:
     """Create a console project that injects local-var metadata at runtime."""
     stacktrace_path = PROJECT_ROOT / "tools" / "stacktrace" / "StackTrace.pas"
+    mapdata_path = PROJECT_ROOT / "tools" / "stacktrace" / "MapDataSerializer.pas"
     source = f"""program LocalVarSnapshotSmoke;
 
 {{$APPTYPE CONSOLE}}
@@ -207,7 +208,8 @@ uses
   System.StrUtils,
   System.TypInfo,
   Winapi.Windows,
-  StackTrace in '{stacktrace_path}';
+  StackTrace in '{stacktrace_path}',
+  MapDataSerializer in '{mapdata_path}';
 
 var
   GRoot: TJSONObject;
@@ -358,42 +360,42 @@ begin
   LData[0].CallConv := CallConv_Register;
   LData[0].IsMethod := False;
   SetLength(LData[0].Vars, 1);
-  LData[0].Vars[0] := TLocalVarInfo.Create('LInt', 'Integer', Ord(tkInteger));
+  LData[0].Vars[0] := MakeLocalVarInfo('LInt', 'Integer', Ord(tkInteger));
 
   LData[1].SymIdx := FindSymbolIndex(LEntries, 'ProbeBoolSnapshot');
   LData[1].ParamCount := 0;
   LData[1].CallConv := CallConv_Register;
   LData[1].IsMethod := False;
   SetLength(LData[1].Vars, 1);
-  LData[1].Vars[0] := TLocalVarInfo.Create('LBool', 'LongBool', Ord(tkEnumeration));
+  LData[1].Vars[0] := MakeLocalVarInfo('LBool', 'LongBool', Ord(tkEnumeration));
 
   LData[2].SymIdx := FindSymbolIndex(LEntries, 'ProbeStringSnapshot');
   LData[2].ParamCount := 0;
   LData[2].CallConv := CallConv_Register;
   LData[2].IsMethod := False;
   SetLength(LData[2].Vars, 1);
-  LData[2].Vars[0] := TLocalVarInfo.Create('LText', 'UnicodeString', Ord(tkUString));
+  LData[2].Vars[0] := MakeLocalVarInfo('LText', 'UnicodeString', Ord(tkUString));
 
   LData[3].SymIdx := FindSymbolIndex(LEntries, 'ProbeInvalidObjectSnapshot');
   LData[3].ParamCount := 0;
   LData[3].CallConv := CallConv_Register;
   LData[3].IsMethod := False;
   SetLength(LData[3].Vars, 1);
-  LData[3].Vars[0] := TLocalVarInfo.Create('LObj', 'TObject', Ord(tkClass));
+  LData[3].Vars[0] := MakeLocalVarInfo('LObj', 'TObject', Ord(tkClass));
 
   LData[4].SymIdx := FindSymbolIndex(LEntries, 'ProbeInvalidPointerSnapshot');
   LData[4].ParamCount := 0;
   LData[4].CallConv := CallConv_Register;
   LData[4].IsMethod := False;
   SetLength(LData[4].Vars, 1);
-  LData[4].Vars[0] := TLocalVarInfo.Create('LPtr', 'Pointer', Ord(tkPointer));
+  LData[4].Vars[0] := MakeLocalVarInfo('LPtr', 'Pointer', Ord(tkPointer));
 
   LData[5].SymIdx := FindSymbolIndex(LEntries, 'ProbeUnsupportedSnapshot');
   LData[5].ParamCount := 0;
   LData[5].CallConv := CallConv_Register;
   LData[5].IsMethod := False;
   SetLength(LData[5].Vars, 1);
-  LData[5].Vars[0] := TLocalVarInfo.Create('LBlob', 'UnsupportedBlob', 250);
+  LData[5].Vars[0] := MakeLocalVarInfo('LBlob', 'UnsupportedBlob', 250);
 
   if (LData[0].SymIdx < 0) or (LData[1].SymIdx < 0) or (LData[2].SymIdx < 0)
       or (LData[3].SymIdx < 0) or (LData[4].SymIdx < 0) or (LData[5].SymIdx < 0) then
@@ -560,6 +562,7 @@ def _compile_delphi_console(
         "--inline:off",
         "-E" + str(tmp_path),
         "-NU" + str(dcu_dir),
+        "-U" + str(PROJECT_ROOT / "tools" / "stacktrace"),
     ]
     if extra_args:
         command.extend(extra_args)
@@ -658,6 +661,7 @@ def test_win64_callgraph_survives_dynamic_base_aslr(tmp_path: Path) -> None:
             "--peoptflags:0x40",
             "-E" + str(tmp_path),
             "-NU" + str(dcu_dir),
+            "-U" + str(PROJECT_ROOT / "tools" / "stacktrace"),
             str(dpr_path),
         ],
         capture_output=True,
