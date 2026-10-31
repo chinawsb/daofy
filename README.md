@@ -364,6 +364,8 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 可用 `check_environment(action="check")` 确认按版本映射的 MSBuild 路径及文件是否存在。
 
+完整参数、优先级和典型场景（多版本、旧版 Delphi、包安装、部署、CI）见 **[docs/configuration.md](docs/configuration.md)**。
+
 > **pip 安装场景**：`compilers.json` 位于 `<Python 环境>/Lib/site-packages/src/config/compilers.json`，升级会覆盖。项目级 `.daofy/project.json` 不受升级影响，推荐用它固定单个工程的工具链。
 
 ### 通用配置（pip 安装）

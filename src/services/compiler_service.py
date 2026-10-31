@@ -1137,6 +1137,14 @@ class CompilerService:
             # 项目级配置（.daofy/project.json）优先，保证同一台机器上不同工程
             # 使用各自声明的 Delphi 版本，且项目指定版本缺失时直接失败不静默回退。
             project_settings = load_project_settings(request.project_path)
+            if project_settings and project_settings.error:
+                logger.error(project_settings.error)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="PROJECT_CONFIG_INVALID",
+                    error_message=project_settings.error,
+                    duration=int((time.time() - start_time) * 1000),
+                )
             compiler_config, compiler_path, compiler_error = self._resolve_project_compiler(
                 request.project_path,
                 request.options.compiler_version,
@@ -1743,6 +1751,14 @@ class CompilerService:
             # 3. 加载项目级配置（.daofy/project.json / daofy.project.json）
             # 每个工程可独立指定 Delphi 版本与 MSBuild，避免多版本机器上互相串用。
             project_settings = load_project_settings(dproj_path)
+            if project_settings and project_settings.error:
+                logger.error(project_settings.error)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="PROJECT_CONFIG_INVALID",
+                    error_message=project_settings.error,
+                    duration=int((time.time() - start_time) * 1000),
+                )
 
             # 4. 提取并执行编译事件
             _PLATFORM_MSBUILD_MAP = {

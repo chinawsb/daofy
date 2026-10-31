@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **配置说明文档**: 新增 `docs/configuration.md`，说明项目级/全局参数、优先级、多版本/旧版 Delphi/包安装/部署/CI 场景与错误码
+
+### Fixed
+
+- **项目配置错误码统一**: 项目配置 JSON/`delphi_version` 非法时，MSBuild 与直接编译统一返回 `PROJECT_CONFIG_INVALID`，与单文件编译一致
+
 ## [2026.10.31] - 2026-10-31
 
 ### Added
