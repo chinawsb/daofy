@@ -4,6 +4,7 @@
 提供编译器环境检查功能
 """
 
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 from mcp.types import CallToolResult
 from ..services.config_manager import ConfigManager
@@ -75,15 +76,15 @@ async def check_environment(arguments: dict = None) -> CallToolResult:
 
         logger.info(f"环境检查完成: {available_count}/{len(compilers)} 个编译器可用")
 
-        # 获取第三方库路径（按默认编译器的版本过滤，与 RTL 库路径策略一致）
+        # 获取第三方库路径（按默认编译器的 registry_version 过滤，与 RTL 库路径策略一致）
         thirdparty_paths = []
         try:
             if _thirdparty_kb_service:
-                # 默认编译器的 registry_version（如 "23.0"）用于读取对应版本的 Library 路径
+                effective_compiler = _config_manager.get_effective_compiler(platform="win32")
                 version = (
-                    getattr(default_compiler, "registry_version", None)
-                    if default_compiler
-                    else None
+                    getattr(effective_compiler, "registry_version", None)
+                    if effective_compiler
+                    else getattr(default_compiler, "registry_version", None)
                 )
                 thirdparty_paths = _thirdparty_kb_service.get_library_paths(version)
         except Exception as e:
@@ -94,6 +95,32 @@ async def check_environment(arguments: dict = None) -> CallToolResult:
         output += f"编译器数量: {len(compilers)} ({available_count} 个可用)\n"
         if default_compiler:
             output += f"默认编译器: {default_compiler.name} ({default_compiler.version})\n"
+
+        output += (
+            "MSBuild: 项目配置 .daofy/project.json 优先，"
+            "其次按版本映射，最后自动探测（vswhere → VS → Delphi → PATH）\n"
+        )
+
+        version_msbuild = getattr(
+            _config_manager.config,
+            "msbuild_by_delphi_version",
+            None,
+        )
+        if version_msbuild:
+            output += "按 Delphi 版本配置的 MSBuild:\n"
+            for version_key, msbuild_value in version_msbuild.items():
+                resolved_value = (
+                    _config_manager.get_msbuild_for_version(version_key)
+                    or msbuild_value
+                )
+                exists_mark = "存在" if Path(resolved_value).is_file() else "不存在"
+                output += f"  {version_key} → {resolved_value} [{exists_mark}]\n"
+
+        output += (
+            "项目级覆盖: 工程目录或父目录下的 "
+            ".daofy/project.json / daofy.project.json\n"
+        )
+
         output += f"\n第三方库路径: {len(thirdparty_paths)} 个\n"
         for i, path in enumerate(thirdparty_paths[:10], 1):
             output += f"  {i}. {path}\n"

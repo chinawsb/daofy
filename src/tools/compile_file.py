@@ -11,6 +11,8 @@ from mcp.types import CallToolResult
 from pathlib import Path
 from ..models.compile_request import FileCompileRequest
 from ..services.compiler_service import CompilerService
+from ..services.project_settings import load_project_settings
+from ..utils.delphi_versions import normalize_version_key
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import DprojParser
 from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
@@ -75,6 +77,7 @@ def _get_delphi_default_library_paths(
     platform: str = "Win32",
     compiler_version: Optional[str] = None,
     project_version: Optional[str] = None,
+    override_version: Optional[str] = None,
 ) -> List[str]:
     """
     获取 Delphi 默认的库搜索路径
@@ -83,12 +86,13 @@ def _get_delphi_default_library_paths(
         platform: 目标平台
         compiler_version: 编译器版本名称（可选）
         project_version: .dproj ProjectVersion（可选，用于 compiler_version 未指定时的 fallback）
+        override_version: 项目配置指定的 Delphi 版本（可选，优先于 ProjectVersion 推断）
 
     Returns:
         库搜索路径列表
     """
     try:
-        # 获取编译器对应的 Delphi 版本号
+        # 获取编译器对应的 Delphi 版本号（与编译服务一致：compiler_version 优先）
         registry_version = None
         if compiler_version:
             from ..services.config_manager import get_config_manager
@@ -97,7 +101,12 @@ def _get_delphi_default_library_paths(
                 compiler_cfg = cfg_mgr.get_compiler(compiler_version)
                 if compiler_cfg:
                     registry_version = compiler_cfg.registry_version
-        # Fallback: compiler_version 未指定时，从 .dproj ProjectVersion 推断
+        if not registry_version and compiler_version:
+            # compiler_version 也可能是版本号/产品名（"11.0"/"XE4"）
+            registry_version = normalize_version_key(compiler_version)
+        if not registry_version and override_version:
+            registry_version = normalize_version_key(override_version)
+        # Fallback: 未指定/无法确定时，从 .dproj ProjectVersion 推断
         if not registry_version and project_version:
             from ..utils.delphi_versions import project_version_to_registry_version
             registry_version = project_version_to_registry_version(project_version)
@@ -178,7 +187,16 @@ async def compile_file(
             logger.info(f"从 .dproj 获取搜索路径: {len(project_paths)} 个")
         else:
             logger.info("未找到 .dproj 文件，使用 Delphi 默认库路径")
-            default_paths = _get_delphi_default_library_paths(compiler_version=compiler_version)
+            settings = load_project_settings(file_path)
+            default_paths = _get_delphi_default_library_paths(
+                compiler_version=(
+                    compiler_version
+                    or (settings.compiler_version if settings else None)
+                ),
+                override_version=(
+                    settings.delphi_version if settings else None
+                ),
+            )
             search_paths.extend(default_paths)
             logger.info(f"从 Delphi 默认配置获取搜索路径: {len(default_paths)} 个")
 

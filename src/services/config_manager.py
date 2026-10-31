@@ -20,7 +20,13 @@ from datetime import datetime
 from ..constants import REG_KEY_EMBARCADERO_BDS
 from ..models.compiler_config import CompilerConfig, ConfigFile
 from ..models.compile_history import CompileHistoryEntry, HistoryFile
-from ..utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
+from ..utils.delphi_versions import (
+    PROJECT_VERSION_PREFIX_MAP,
+    get_version_name,
+    normalize_registry_version,
+    normalize_version_key,
+    project_version_to_registry_version,
+)
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -74,6 +80,13 @@ class ConfigManager:
         self.config: ConfigFile = self._load_config()
         self.history: HistoryFile = self._load_history()
 
+        for removed_env in ("DAOFY_MSBUILD", "DAOFY_DELPHI_VERSION"):
+            if os.environ.get(removed_env, "").strip():
+                logger.warning(
+                    "环境变量 %s 已移除并被忽略；请改用项目级 .daofy/project.json",
+                    removed_env,
+                )
+
         # 仅在配置文件不存在（全新安装首次启动）时自动检测。
         # 用户手动编辑过 compilers.json 时不再自动覆盖，避免用户指定的
         # 自定义路径（如非默认位置的 Lazarus d:\win\lazarus）被自动检测清空。
@@ -94,6 +107,13 @@ class ConfigManager:
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+                for removed_key in ("msbuild_path", "default_registry_version"):
+                    if removed_key in data:
+                        logger.warning(
+                            "compilers.json 的 %s 已移除并被忽略；"
+                            "请改用项目级 .daofy/project.json",
+                            removed_key,
+                        )
                 config = ConfigFile.from_dict(data)
                 logger.info(f"加载配置成功,共 {len(config.compilers)} 个编译器配置")
                 return config
@@ -172,6 +192,154 @@ class ConfigManager:
 
     PROJECT_VERSION_MAP = PROJECT_VERSION_PREFIX_MAP.copy()
 
+    def _resolve_config_path(self, value: str) -> str:
+        """把 compilers.json 中的相对路径按配置文件所在目录展开。"""
+        path = Path(str(value).strip()).expanduser()
+        if not path.is_absolute():
+            path = self.config_path.parent / path
+        return str(path)
+
+    def get_msbuild_for_version(self, version: Optional[str]) -> Optional[str]:
+        """按 Delphi 注册表版本查找对应的 MSBuild 路径。
+
+        用于同一台机器上多个 Delphi 版本各配一套 MSBuild 的场景，例如
+        ``{"11.0": "C:\\Windows\\Microsoft.NET\\Framework\\v3.5\\MSBuild.exe"}``。
+        键既可以是注册表版本号（``"11.0"``），也可以是产品名（``"XE4"``）
+        或 ``.dproj ProjectVersion``（``"14.6"`` → 注册表 14.0）。
+
+        Args:
+            version: Delphi 注册表版本号（如 ``"11.0"``），None 表示未知
+
+        Returns:
+            该版本对应的 MSBuild 路径，未配置返回 None
+        """
+        if not version:
+            return None
+        target = normalize_version_key(version)
+        if not target:
+            return None
+
+        mapping = self.config.msbuild_by_delphi_version or {}
+        for key, value in mapping.items():
+            if not value:
+                continue
+            key_text = str(key).strip()
+            candidates = {
+                normalize_version_key(key_text),
+                project_version_to_registry_version(key_text),
+            }
+            if target in candidates:
+                value_text = str(value).strip()
+                return self._resolve_config_path(value_text) if value_text else None
+
+        if mapping:
+            # 显式配置了版本映射但没有命中：必须让用户看见，
+            # 否则会静默退回自动探测，等于配置被忽略。
+            logger.warning(
+                "msbuild_by_delphi_version 中没有 Delphi %s 的条目（已配置: %s）；"
+                "本次将按自动探测处理",
+                target,
+                ", ".join(str(k) for k in mapping),
+            )
+        return None
+
+    @staticmethod
+    def _matches_product_name(text: Optional[str], product_name: Optional[str]) -> bool:
+        """按单词边界匹配产品名，避免 "Delphi XE" 命中 "Delphi XE8"。
+
+        允许产品名后带平台/后缀（``"Delphi XE4 Win32"``），但要求边界处不是
+        字母或数字，防止 XE/XE2/…/XE8、Delphi 1/Delphi 12 之间的前缀误匹配。
+        """
+        if not text or not product_name:
+            return False
+        pattern = (
+            r"(?<![0-9a-z])"
+            + re.escape(product_name.lower())
+            + r"(?![0-9a-z])"
+        )
+        return re.search(pattern, text.lower()) is not None
+
+    def get_compiler_by_registry_version(
+        self,
+        registry_version: str,
+        platform: Optional[str] = None,
+    ) -> Optional[CompilerConfig]:
+        """按注册表版本号查找编译器配置。
+
+        Args:
+            registry_version: 注册表版本号，如 ``"11.0"``
+            platform: 目标平台（win32/win64），提供时优先选择对应平台
+
+        Returns:
+            匹配的编译器配置，未找到返回 None
+        """
+        target = normalize_registry_version(registry_version)
+        if not target:
+            return None
+        candidates = [
+            c for c in self.config.compilers
+            if c.registry_version
+            and normalize_registry_version(c.registry_version) == target
+        ]
+        if not candidates:
+            # 手工配置的编译器可能没有 registry_version，退化为按产品名匹配
+            # （如 "11.0" -> "Delphi XE4"），避免项目指定版本因缺字段而失效。
+            # 必须按单词边界匹配，否则 "Delphi XE"(8.0) 会误命中
+            # "Delphi XE8"(16.0)、"Delphi 12" 会误命中 "Delphi 12 Athens"。
+            version_name = get_version_name(target).lower()
+            candidates = [
+                c for c in self.config.compilers
+                if self._matches_product_name(c.version, version_name)
+                or self._matches_product_name(c.name, version_name)
+            ]
+            if not candidates:
+                modern_prefix = re.match(r"^(delphi \d+(?:\.\d+)?)", version_name)
+                if modern_prefix:
+                    prefix_name = modern_prefix.group(1)
+                    candidates = [
+                        c for c in self.config.compilers
+                        if self._matches_product_name(c.version, prefix_name)
+                        or self._matches_product_name(c.name, prefix_name)
+                    ]
+        if not candidates:
+            return None
+        if platform:
+            return self._select_by_platform(candidates, platform)
+        return candidates[0]
+
+    @staticmethod
+    def _select_by_platform(candidates: List[CompilerConfig], platform: str) -> CompilerConfig:
+        """从候选编译器中按平台优先选择。"""
+        if platform == "win64":
+            for c in candidates:
+                if "win64" in c.name.lower():
+                    return c
+            return candidates[0]
+        for c in candidates:
+            if "win32" in c.name.lower():
+                return c
+        return candidates[0]
+
+    def get_effective_compiler(
+        self,
+        name: Optional[str] = None,
+        platform: str = "win32",
+    ) -> Optional[CompilerConfig]:
+        """获取实际用于编译的编译器。
+
+        优先级：显式编译器名称 > 默认编译器。
+
+        Args:
+            name: 显式指定的编译器名称，None 表示未指定
+            platform: 目标平台（win32/win64）
+
+        Returns:
+            编译器配置，无法确定时返回 None
+        """
+        if name:
+            return self.get_compiler(name)
+        return self.get_compiler(None)
+
     def get_compiler_for_project(self, project_version: str, platform: str = "win32") -> Optional[CompilerConfig]:
         """
         根据项目版本自动匹配最适配的编译器
@@ -187,6 +355,9 @@ class ConfigManager:
           1. 精确匹配: registry_version 与项目版本前缀完全一致
           2. 精确匹配(按产品名): version 字段含目标 Delphi 名称（如 "Delphi 11"）
           3. 回退: 版本 >= 目标的编译器，选择最接近的，保证高版本可编译低版本项目
+
+        注意：需要严格指定某个版本时，请使用项目级
+        ``.daofy/project.json`` 的 ``delphi_version``。
         """
         if not project_version:
             logger.warning("项目版本号为空,使用最新编译器")
@@ -211,8 +382,8 @@ class ConfigManager:
             # registry_version → 产品名
             product_name = DELPHI_VERSION_NAMES.get(target_registry_version)
             if product_name:
-                # 取如 "Delphi 12"
-                m = re.match(r"^(Delphi \d+)", product_name)
+                # 取如 "Delphi 12" / "Delphi 10.4"
+                m = re.match(r"^(Delphi \d+(?:\.\d+)?)", product_name)
                 if m:
                     delphi_num_name = m.group(1).lower()
 
@@ -221,37 +392,23 @@ class ConfigManager:
             logger.warning("未配置任何编译器")
             return None
 
-        def _pick_by_platform(candidates: list) -> Optional[CompilerConfig]:
-            """从候选编译器中按平台优先选择。"""
-            if platform == "win64":
-                for c in candidates:
-                    if "win64" in c.name.lower():
-                        return c
-                return candidates[0]
-            else:
-                for c in candidates:
-                    if "win32" in c.name.lower():
-                        return c
-                return candidates[0]
-
         # ── 1. 精确匹配 registry_version ──
         exact_matches = [c for c in compilers if c.registry_version == target_registry_version]
         if exact_matches:
-            pick = _pick_by_platform(exact_matches)
+            pick = self._select_by_platform(exact_matches, platform)
             logger.info(f"精确匹配到编译器: {pick.name} (registry_version={pick.registry_version})")
             return pick
 
         # ── 2. 精确匹配产品名（version 或 name 字段）──
         name_matches = []
         if delphi_name:
-            dl = delphi_name.lower()
             name_matches = [
                 c for c in compilers
-                if (c.version and dl in c.version.lower())
-                or (c.name and dl in c.name.lower())
+                if self._matches_product_name(c.version, delphi_name)
+                or self._matches_product_name(c.name, delphi_name)
             ]
         if name_matches:
-            pick = _pick_by_platform(name_matches)
+            pick = self._select_by_platform(name_matches, platform)
             logger.info(f"产品名精确匹配到编译器: {pick.name}")
             return pick
 
@@ -260,15 +417,11 @@ class ConfigManager:
         if delphi_num_name:
             num_matches = [
                 c for c in compilers
-                if (c.version and (
-                    delphi_num_name in c.version.lower()
-                    or f"{delphi_num_name} " in c.version.lower()
-                    or c.version.lower().startswith(delphi_num_name)
-                ))
-                or (c.name and delphi_num_name in c.name.lower())
+                if self._matches_product_name(c.version, delphi_num_name)
+                or self._matches_product_name(c.name, delphi_num_name)
             ]
         if num_matches:
-            pick = _pick_by_platform(num_matches)
+            pick = self._select_by_platform(num_matches, platform)
             logger.info(f"数字前缀匹配到编译器: {pick.name}")
             return pick
 
@@ -289,8 +442,13 @@ class ConfigManager:
         if compatible_compilers:
             # 按版本号升序，选最接近目标的
             compatible_compilers.sort(key=lambda x: x[0])
-            best = _pick_by_platform([c for _, c in compatible_compilers])
-            logger.info(f"回退匹配到编译器: {best.name} (版本 >= {target_registry_version})")
+            best = self._select_by_platform([c for _, c in compatible_compilers], platform)
+            logger.warning(
+                "未找到 Delphi %s 的精确编译器，回退到更高版本 %s；"
+                "如需严格匹配请配置项目 delphi_version",
+                target_registry_version,
+                best.name,
+            )
             return best
 
         logger.warning(f"未找到匹配版本 {target_registry_version} 的编译器,使用最新编译器")

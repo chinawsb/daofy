@@ -1112,12 +1112,33 @@ async def _handle_create(
     if not project_version:
         try:
             from ..services.config_manager import ConfigManager
+            from ..services.project_settings import load_project_settings
             from ..utils.delphi_env import get_delphi_version
-            from ..utils.delphi_versions import registry_to_project_version
+            from ..utils.delphi_versions import (
+                normalize_version_key,
+                registry_to_project_version,
+            )
+            # 工作区/父目录的项目配置优先：在旧版 Delphi 工程目录下新建工程，
+            # 不应默认写成最新安装版本的 ProjectVersion。
+            settings = load_project_settings(str(Path(project_path).parent))
+            if settings and settings.delphi_version:
+                project_version = registry_to_project_version(settings.delphi_version)
             cm = ConfigManager()
-            newest = cm.get_newest_compiler()
-            if newest and newest.registry_version:
-                project_version = registry_to_project_version(newest.registry_version)
+            if not project_version and settings and settings.compiler_version:
+                compiler = cm.get_compiler(settings.compiler_version)
+                if not compiler:
+                    # compiler_version 也可能是版本号/产品名
+                    version_hint = normalize_version_key(settings.compiler_version)
+                    if version_hint:
+                        compiler = cm.get_compiler_by_registry_version(version_hint)
+                if compiler and compiler.registry_version:
+                    project_version = registry_to_project_version(
+                        compiler.registry_version
+                    )
+            if not project_version:
+                newest = cm.get_newest_compiler()
+                if newest and newest.registry_version:
+                    project_version = registry_to_project_version(newest.registry_version)
             if not project_version:
                 registry_version = get_delphi_version()
                 if registry_version:

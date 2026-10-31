@@ -25,9 +25,11 @@ from ..models.compile_request import ProjectCompileRequest, FileCompileRequest, 
 from ..models.compile_result import CompileResult, CompileStatus
 from ..models.command_args import CommandArgs
 from ..models.compile_history import CompileHistoryEntry
+from ..models.compiler_config import CompilerConfig
 from .args_generator import ArgsGenerator
 from .process_manager import ProcessManager
 from .config_manager import ConfigManager
+from .project_settings import ProjectSettings, load_project_settings
 from ..utils import get_console_encoding
 from ..utils.delphi_env import (
     EnvOptionsLibraryStatus,
@@ -38,6 +40,8 @@ from ..utils.delphi_env import (
 )
 from ..utils.delphi_versions import (
     detect_registry_version_from_compiler,
+    normalize_registry_version,
+    normalize_version_key,
     project_version_to_registry_version,
 )
 from ..utils.parser import OutputParser
@@ -65,24 +69,295 @@ class CompilerService:
         self.validator = Validator()
         self.history: list = []
         
-        # MSBuild 路径
+        # MSBuild 路径（初始化时先做一次通用探测；编译时再按工程版本重新探测）
         self.msbuild_path = self._find_msbuild()
+        self._msbuild_auto_cache: dict[str, Optional[str]] = {}
         
         logger.info("编译服务初始化完成")
 
-    def _find_msbuild(self) -> Optional[str]:
+    def _lookup_compiler_by_version(
+        self,
+        version: str,
+        platform: TargetPlatform,
+    ) -> Optional[CompilerConfig]:
+        """按 Delphi 版本查找编译器配置，兼容测试中的裁剪版 config_manager。"""
+        config_manager = getattr(self, "config_manager", None)
+        getter = getattr(config_manager, "get_compiler_by_registry_version", None)
+        if not callable(getter) or not version:
+            return None
+        try:
+            return getter(version, platform.value)
+        except TypeError:
+            # 兼容只接受一个位置参数的旧签名/桩对象
+            try:
+                return getter(version)
+            except Exception:
+                logger.warning("按版本查找编译器失败: %s", version, exc_info=True)
+                return None
+        except Exception:
+            logger.warning("按版本查找编译器失败: %s", version, exc_info=True)
+            return None
+
+    def _compiler_from_registry_version(
+        self,
+        version: str,
+        platform: TargetPlatform,
+    ) -> Optional[CompilerConfig]:
+        """按版本从注册表定位编译器，返回可用于编译的配置对象。"""
+        path = self._find_compiler_from_registry(platform, version)
+        if not path:
+            return None
+        return CompilerConfig(
+            name=f"Delphi {version}",
+            path=path,
+            registry_version=version,
+        )
+
+    def _lookup_compiler_by_name_or_version(
+        self,
+        value: str,
+        platform: TargetPlatform,
+    ) -> Optional[CompilerConfig]:
+        """先按编译器名称查找；找不到时把 value 当作 Delphi 版本再查。
+
+        这样 ``compiler_version="11.0"`` / ``"XE4"`` 也能命中 XE4 的编译器，
+        而不是直接报“编译器不存在”。
         """
-        查找 MSBuild 可执行文件。
-        
+        config_manager = getattr(self, "config_manager", None)
+        if config_manager is None or not value:
+            return None
+
+        getter = getattr(config_manager, "get_compiler", None)
+        if callable(getter):
+            try:
+                compiler = getter(value)
+            except Exception:
+                logger.warning("查找编译器配置失败: %s", value, exc_info=True)
+                compiler = None
+            if compiler:
+                return compiler
+
+        version = normalize_version_key(value)
+        if version:
+            return self._lookup_compiler_by_version(version, platform)
+        return None
+
+    def _warn_conflicting_project_versions(
+        self,
+        project_settings: Optional[ProjectSettings],
+    ) -> None:
+        """项目同时配置 compiler_version 与 delphi_version 且版本不一致时告警。"""
+        if not project_settings:
+            return
+        if not project_settings.compiler_version or not project_settings.delphi_version:
+            return
+        compiler = self._lookup_compiler_by_name_or_version(
+            project_settings.compiler_version,
+            TargetPlatform.WIN32,
+        )
+        if not compiler or not compiler.registry_version:
+            return
+        actual = normalize_registry_version(compiler.registry_version)
+        if actual and actual != project_settings.delphi_version:
+            logger.warning(
+                "项目配置 %s 中 compiler_version=%r 对应 Delphi %s，"
+                "与 delphi_version=%s 不一致；将以 compiler_version 为准",
+                project_settings.source,
+                project_settings.compiler_version,
+                actual,
+                project_settings.delphi_version,
+            )
+
+    def _warn_if_direct_compile_version_mismatch(
+        self,
+        project_path: str,
+        compiler: Optional[CompilerConfig],
+    ) -> None:
+        """直接编译时提示 .dproj 推断版本与实际编译器不一致。"""
+        if not compiler or not compiler.registry_version:
+            return
+        dproj = project_path
+        if Path(dproj).suffix.lower() in (".dpr", ".dpk"):
+            dproj = str(Path(dproj).with_suffix(".dproj"))
+        if not Path(dproj).exists():
+            return
+        try:
+            parser = DprojParser(dproj)
+            if not parser.parse():
+                return
+            project_version = parser.get_project_version()
+        except Exception:
+            logger.debug("读取 .dproj ProjectVersion 失败: %s", dproj, exc_info=True)
+            return
+        target = (
+            project_version_to_registry_version(project_version)
+            if project_version
+            else None
+        )
+        actual = normalize_registry_version(compiler.registry_version)
+        if target and actual and target != actual:
+            logger.warning(
+                "工程 %s 的 .dproj ProjectVersion=%s 对应 Delphi %s，"
+                "但直接编译将使用编译器 %s（Delphi %s）；"
+                "如需严格匹配，请在工程目录配置 .daofy/project.json 的 delphi_version",
+                Path(dproj).name,
+                project_version,
+                target,
+                compiler.name,
+                actual,
+            )
+
+    def _resolve_project_compiler(
+        self,
+        project_path: str,
+        explicit_name: Optional[str],
+        platform: TargetPlatform,
+        project_settings: Optional[ProjectSettings] = None,
+    ) -> tuple[Optional[CompilerConfig], Optional[str], Optional[str]]:
+        """解析工程实际使用的编译器。
+
+        优先级：工具显式参数 > 项目配置 ``compiler_version`` > 项目配置
+        ``delphi_version`` > 默认编译器。项目配置指定了版本
+        但该版本不可用时返回错误，不回退到其它 Delphi 版本。
+
+        Returns:
+            ``(compiler_config, compiler_path, error_message)``；正常时
+            ``error_message`` 为 None。只有路径没有注册表配置时
+            ``compiler_config`` 为 None、``compiler_path`` 有值。
+        """
+        settings = (
+            project_settings
+            if project_settings is not None
+            else load_project_settings(project_path)
+        )
+        if settings and settings.error:
+            return None, None, settings.error
+        self._warn_conflicting_project_versions(settings)
+        name = explicit_name or (settings.compiler_version if settings else None)
+
+        if name:
+            compiler = self._lookup_compiler_by_name_or_version(name, platform)
+            if compiler:
+                if settings is None:
+                    self._warn_if_direct_compile_version_mismatch(
+                        project_path, compiler
+                    )
+                return compiler, None, None
+            version_hint = normalize_version_key(name)
+            if version_hint:
+                path = self._find_compiler_from_registry(platform, version_hint)
+                if path:
+                    return None, path, None
+            if not explicit_name and settings and settings.delphi_version:
+                logger.warning(
+                    "项目配置的 compiler_version=%r 不可用，改用 delphi_version=%s",
+                    name,
+                    settings.delphi_version,
+                )
+            elif version_hint:
+                return None, None, (
+                    f"指定的 Delphi 版本 {name!r} 未安装"
+                    f"（找不到 {platform.value} 编译器）；不会回退到其它版本"
+                )
+            else:
+                return None, None, (
+                    f"指定的编译器 {name!r} 不存在；不会回退到其它 Delphi 版本"
+                )
+
+        if settings and settings.delphi_version:
+            compiler = self._lookup_compiler_by_version(settings.delphi_version, platform)
+            if compiler:
+                return compiler, None, None
+            path = self._find_compiler_from_registry(platform, settings.delphi_version)
+            if path:
+                return None, path, None
+            return None, None, (
+                f"项目配置指定 Delphi {settings.delphi_version}"
+                f"（{settings.source}），但未找到该版本的编译器；"
+                "不会回退到其它 Delphi 版本"
+            )
+
+        config_manager = getattr(self, "config_manager", None)
+        getter = getattr(config_manager, "get_effective_compiler", None)
+        if callable(getter):
+            try:
+                compiler = getter(None, platform.value)
+            except TypeError:
+                compiler = getter(None)
+            except Exception:
+                logger.warning("获取生效编译器失败", exc_info=True)
+                compiler = None
+            if compiler:
+                if settings is None:
+                    self._warn_if_direct_compile_version_mismatch(
+                        project_path, compiler
+                    )
+                return compiler, None, None
+
+        path = self._find_compiler_from_registry(platform)
+        return None, path, None
+
+    def _find_msbuild(self, version: Optional[str] = None) -> Optional[str]:
+        """查找 MSBuild 可执行文件（自动探测）。
+
         搜索优先级：
-        1. vswhere.exe（VS 2017+ 官方工具，最准确）
-        2. %ProgramFiles(x86)%/Microsoft Visual Studio/Installer/vswhere.exe
-        3. 常见 VS 安装路径列表（回退方案）
-        
+        1. 老版本 Delphi 对应的 .NET Framework MSBuild（指定版本时）
+        2. vswhere.exe（VS 2017+ 官方工具，最准确）
+        3. %ProgramFiles(x86)%/Microsoft Visual Studio/Installer/vswhere.exe
+        4. 常见 VS 安装路径列表（回退方案）
+        5. Delphi 安装目录自带的 MSBuild（指定版本优先）
+        6. PATH 中的 msbuild.exe
+
+        Args:
+            version: Delphi 注册表版本号，用于优先匹配该版本自带的 MSBuild
+
+        Returns:
+            MSBuild 路径,如果未找到则返回 None
+        """
+        return self._auto_find_msbuild(version)
+
+    def _auto_find_msbuild(self, version: Optional[str] = None) -> Optional[str]:
+        """自动探测 MSBuild（不含显式配置）。
+
+        Args:
+            version: Delphi 注册表版本号，用于优先匹配该版本自带的 MSBuild
+
         Returns:
             MSBuild 路径,如果未找到则返回 None
         """
         import subprocess
+
+        # 方法0: 老版本 Delphi 依赖 .NET Framework 自带的 MSBuild。
+        # XE4 及更早使用 v3.5，XE5–10 Seattle 使用 v4.0.30319；
+        # 让 VS2019/2022 的 MSBuild 编译这些工程通常会失败。
+        preferred_version = version
+        preferred_target = (
+            normalize_registry_version(preferred_version) if preferred_version else None
+        )
+        if preferred_target:
+            major = int(preferred_target.split(".")[0])
+            if major <= 17:
+                framework_version = "v3.5" if major <= 11 else "v4.0.30319"
+                windir = os.environ.get("WINDIR", r"C:\Windows")
+                framework_msbuild = (
+                    Path(windir) / "Microsoft.NET" / "Framework"
+                    / framework_version / "MSBuild.exe"
+                )
+                if framework_msbuild.is_file():
+                    logger.info(
+                        "Delphi %s 对应 .NET Framework %s，使用 MSBuild: %s",
+                        preferred_target,
+                        framework_version,
+                        framework_msbuild,
+                    )
+                    return str(framework_msbuild)
+                logger.warning(
+                    "Delphi %s 通常需要 .NET Framework %s 的 MSBuild，"
+                    "但未找到 %s；将继续尝试其它 MSBuild（可能不兼容）",
+                    preferred_target,
+                    framework_version,
+                    framework_msbuild,
+                )
 
         # 方法1: 使用 vswhere.exe 查询最新 VS 的 MSBuild 路径
         vswhere_candidates = []
@@ -141,44 +416,33 @@ class CompilerService:
         # 无 VS 的机器上 vswhere / VS 路径列表都为空时，检查 Delphi 安装目录
         # 是否随附 MSBuild，避免 .dproj 因找不到 MSBuild 而无法编译。
         try:
-            bds_key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                REG_KEY_EMBARCADERO_BDS,
-                0,
-                winreg.KEY_READ | winreg.KEY_WOW64_32KEY
+            delphi_roots = self._read_delphi_roots_from_hive(
+                winreg.HKEY_CURRENT_USER, "HKCU"
             )
-            idx = 0
-            delphi_roots = []
-            while True:
-                try:
-                    version_key = winreg.EnumKey(bds_key, idx)
-                    idx += 1
-                    ver_key = winreg.OpenKey(bds_key, version_key)
-                    try:
-                        root_dir, _ = winreg.QueryValueEx(ver_key, "RootDir")
-                        if root_dir and Path(root_dir).exists():
-                            delphi_roots.append(Path(root_dir))
-                    except OSError:
-                        pass
-                    finally:
-                        winreg.CloseKey(ver_key)
-                except OSError:
-                    break
-            winreg.CloseKey(bds_key)
+            delphi_roots.extend(
+                self._read_delphi_roots_from_hive(winreg.HKEY_LOCAL_MACHINE, "HKLM")
+            )
 
-            for root_dir in delphi_roots:
+            # 指定版本优先，避免 XE4 工程误用其它版本目录里的 MSBuild
+            preferred_version = version
+            if preferred_version:
+                preferred_target = normalize_registry_version(preferred_version)
+                delphi_roots.sort(
+                    key=lambda item: normalize_registry_version(item[0]) != preferred_target
+                )
+
+            for _version_key, root_dir in delphi_roots:
+                root_path = Path(root_dir)
                 candidates = [
-                    root_dir / "bin" / "MSBuild.exe",
-                    root_dir / "bin" / "MSBuild" / "Current" / "Bin" / "MSBuild.exe",
-                    root_dir / "MSBuild.exe",
-                    root_dir / "msbuild" / "Current" / "Bin" / "MSBuild.exe",
+                    root_path / "bin" / "MSBuild.exe",
+                    root_path / "bin" / "MSBuild" / "Current" / "Bin" / "MSBuild.exe",
+                    root_path / "MSBuild.exe",
+                    root_path / "msbuild" / "Current" / "Bin" / "MSBuild.exe",
                 ]
                 for cand in candidates:
                     if cand.exists():
                         logger.info(f"通过 Delphi 安装目录找到 MSBuild: {cand}")
                         return str(cand)
-        except OSError:
-            pass
         except Exception as e:
             logger.debug(f"Delphi 自带 MSBuild 搜索失败: {e}")
 
@@ -195,61 +459,200 @@ class CompilerService:
         logger.warning("未找到 MSBuild，将回退到直接编译")
         return None
 
-    def _get_delphi_root_from_registry(self, version: Optional[str] = None) -> Optional[str]:
-        """
-        从注册表获取 Delphi 安装根目录
-        
+    def _resolve_msbuild_path(
+        self,
+        version: Optional[str] = None,
+        project_settings: Optional[ProjectSettings] = None,
+    ) -> tuple[Optional[str], str, bool]:
+        """按优先级解析本次编译应使用的 MSBuild，并返回来源说明。
+
+        优先级（显式配置命中但路径无效时直接失败，不静默换用其它版本）：
+        1. 项目配置 ``.daofy/project.json`` / ``daofy.project.json`` 的 ``msbuild_path``
+        2. ``compilers.json`` 的 ``msbuild_by_delphi_version[<版本>]``
+        3. 自动探测（按工程 Delphi 版本优先 → vswhere → VS → Delphi → PATH）
+
         Args:
-            version: Delphi 版本号(如 "22.0")，如果为 None 则使用最新版本
-            
+            version: 本次编译解析出的 Delphi 注册表版本号
+            project_settings: 项目级配置（可选）
+
         Returns:
-            Delphi 安装根目录，如果未找到则返回 None
+            ``(msbuild_path, source, explicit_error)``；显式配置无效时 path 为
+            None、explicit_error 为 True，调用方应直接失败而不是回退到其它
+            MSBuild/直接编译。
+        """
+        explicit: list[tuple[str, str]] = []
+
+        if project_settings and project_settings.msbuild_path:
+            explicit.append(
+                (project_settings.msbuild_path, f"项目配置 {project_settings.source}")
+            )
+
+        config_manager = getattr(self, "config_manager", None)
+        version_getter = getattr(config_manager, "get_msbuild_for_version", None)
+        if callable(version_getter) and version:
+            try:
+                mapped = version_getter(version)
+            except Exception:
+                logger.warning("读取 msbuild_by_delphi_version 失败", exc_info=True)
+                mapped = None
+            if mapped:
+                explicit.append(
+                    (
+                        mapped,
+                        f"compilers.json msbuild_by_delphi_version[{version}]",
+                    )
+                )
+
+        for raw_path, source in explicit:
+            path = Path(raw_path).expanduser()
+            if path.is_file():
+                logger.info("使用配置指定的 MSBuild (%s): %s", source, path)
+                return str(path), source, False
+            logger.error(
+                "配置的 MSBuild 路径不存在 (%s): %s；"
+                "请修正该配置，或删除它以恢复自动探测",
+                source,
+                raw_path,
+            )
+            return None, f"{source} 指向的路径不存在: {raw_path}", True
+
+        # 没有任何显式配置时才自动探测。必须按本次工程的 Delphi 版本
+        # 重新探测：初始化时缓存的 msbuild_path 是通用探测结果，直接复用
+        # 会让另一个版本的工程仍然用错 MSBuild。
+        fallback = getattr(self, "msbuild_path", None)
+        if fallback and not Path(fallback).is_absolute():
+            # 裸文件名（如测试注入的 "MSBuild.exe"）视为调用方显式指定，交给 PATH
+            return fallback, "自动探测", False
+
+        version_key = normalize_registry_version(version) if version else None
+        if version_key:
+            found = self._auto_find_msbuild_cached(version_key)
+            if found:
+                return found, f"自动探测（按 Delphi {version_key} 优先）", False
+
+        if fallback:
+            return fallback, "自动探测", False
+
+        # 初始化时未探测到（或对象由测试直接构造）时再尝试一次
+        found = self._auto_find_msbuild_cached(version_key)
+        if found:
+            return found, "自动探测", False
+        return None, "自动探测未找到 MSBuild", False
+
+    def _auto_find_msbuild_cached(self, version_key: Optional[str]) -> Optional[str]:
+        """按版本缓存自动探测结果，避免每次编译都启动 vswhere。"""
+        cache = getattr(self, "_msbuild_auto_cache", None)
+        if cache is None:
+            cache = {}
+            try:
+                self._msbuild_auto_cache = cache
+            except AttributeError:  # pragma: no cover - 防御 __slots__ 子类
+                pass
+        key = version_key or ""
+        if key in cache:
+            return cache[key]
+        found = self._auto_find_msbuild(version_key)
+        # 只缓存成功结果：用户后续安装 MSBuild 后无需重启服务
+        if found:
+            cache[key] = found
+        return found
+
+    @staticmethod
+    def _version_sort_key(version_key: str) -> tuple:
+        """将 ``"11.0"`` 这类注册表版本键转为可比较的数值元组。
+
+        直接按字符串排序会把 ``"9.0"`` 排到 ``"37.0"`` 之后，导致“最新版本”
+        选错，因此必须按数值比较。
         """
         try:
-            # 打开 Delphi 注册表项
+            return tuple(int(part) for part in str(version_key).split("."))
+        except (TypeError, ValueError):
+            return (0,)
+
+    def _read_delphi_roots_from_hive(self, hive, hive_name: str) -> list:
+        """读取单个注册表根下的 Delphi 安装（版本, RootDir）。"""
+        roots: list = []
+        try:
             key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
+                hive,
                 REG_KEY_EMBARCADERO_BDS,
                 0,
-                winreg.KEY_READ | winreg.KEY_WOW64_32KEY
+                winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
             )
-            
-            versions = []
+        except FileNotFoundError:
+            logger.debug("注册表 %s\\%s 不存在,跳过", hive_name, REG_KEY_EMBARCADERO_BDS)
+            return roots
+        except OSError as exc:
+            logger.warning("打开注册表 %s\\%s 失败: %s", hive_name, REG_KEY_EMBARCADERO_BDS, exc)
+            return roots
+
+        try:
             index = 0
             while True:
                 try:
                     version_key = winreg.EnumKey(key, index)
                     index += 1
-                    
-                    # 打开版本子项
-                    version_path_key = winreg.OpenKey(key, version_key)
-                    try:
-                        root_dir, _ = winreg.QueryValueEx(version_path_key, "RootDir")
-                        if root_dir and Path(root_dir).exists():
-                            versions.append((version_key, root_dir))
-                    except OSError:
-                        pass
-                    finally:
-                        winreg.CloseKey(version_path_key)
-                        
                 except OSError:
                     break
-            
+
+                try:
+                    version_path_key = winreg.OpenKey(key, version_key)
+                except OSError as exc:
+                    logger.debug(
+                        "打开 %s\\%s\\%s 失败: %s",
+                        hive_name, REG_KEY_EMBARCADERO_BDS, version_key, exc,
+                    )
+                    continue
+
+                try:
+                    root_dir, _ = winreg.QueryValueEx(version_path_key, "RootDir")
+                    if root_dir and Path(root_dir).exists():
+                        roots.append((version_key, root_dir))
+                except OSError:
+                    logger.debug("Delphi %s 没有可用的 RootDir", version_key)
+                finally:
+                    winreg.CloseKey(version_path_key)
+        finally:
             winreg.CloseKey(key)
-            
+        return roots
+
+    def _get_delphi_root_from_registry(self, version: Optional[str] = None) -> Optional[str]:
+        """
+        从注册表获取 Delphi 安装根目录
+
+        HKCU 优先、HKLM 兜底。指定版本未安装时返回 None，不再静默回退到
+        最新版本——否则指定 XE4 时会拿到 Tokyo/XE8 的安装目录。
+
+        Args:
+            version: Delphi 版本号(如 "22.0")，如果为 None 则使用最新版本
+
+        Returns:
+            Delphi 安装根目录，如果未找到则返回 None
+        """
+        try:
+            versions = self._read_delphi_roots_from_hive(winreg.HKEY_CURRENT_USER, "HKCU")
+            versions.extend(
+                self._read_delphi_roots_from_hive(winreg.HKEY_LOCAL_MACHINE, "HKLM")
+            )
+
             if not versions:
+                logger.warning("注册表 HKCU/HKLM 均未找到 Delphi 安装")
                 return None
-            
-            # 如果指定了版本，查找对应版本
+
             if version:
-                for v, root in versions:
-                    if v == version:
-                        return root
-            
-            # 返回最新版本（版本号最大的）
-            versions.sort(key=lambda x: x[0], reverse=True)
+                target = normalize_registry_version(version)
+                for registered_version, root_dir in versions:
+                    if normalize_registry_version(registered_version) == target:
+                        return root_dir
+                logger.warning("注册表中未找到 Delphi %s，不回退到其它版本", version)
+                return None
+
+            versions.sort(
+                key=lambda item: self._version_sort_key(item[0]),
+                reverse=True,
+            )
             return versions[0][1]
-            
+
         except Exception as e:
             logger.warning(f"从注册表获取 Delphi 路径失败: {e}")
             return None
@@ -257,18 +660,36 @@ class CompilerService:
     def _get_rsvars_path(self, version: Optional[str] = None) -> Optional[str]:
         """
         获取 rsvars.bat 路径
-        
+
         Args:
-            version: Delphi 版本号，如果为 None 则使用最新版本
-            
+            version: Delphi 版本号；为 None 时使用最新安装版本
+
         Returns:
             rsvars.bat 完整路径，如果未找到则返回 None
         """
         root_dir = self._get_delphi_root_from_registry(version)
+        if not root_dir and version:
+            # 注册表缺失时，用 compilers.json 中该版本的编译器路径反推根目录
+            config_manager = getattr(self, "config_manager", None)
+            getter = getattr(config_manager, "get_compiler_by_registry_version", None)
+            compiler = None
+            if callable(getter):
+                try:
+                    compiler = getter(version)
+                except Exception:
+                    logger.debug("按版本查找编译器配置失败: %s", version, exc_info=True)
+            if compiler and compiler.path:
+                root_dir = str(Path(compiler.path).parent.parent)
+                logger.info(
+                    "注册表未找到 Delphi %s，改用编译器配置推断根目录: %s",
+                    version,
+                    root_dir,
+                )
+
         if not root_dir:
             logger.error("无法从注册表获取 Delphi 安装路径")
             return None
-        
+
         rsvars_path = Path(root_dir) / "bin" / "rsvars.bat"
         if rsvars_path.exists():
             logger.info(f"找到 rsvars.bat: {rsvars_path}")
@@ -276,6 +697,43 @@ class CompilerService:
         else:
             logger.error(f"rsvars.bat 不存在: {rsvars_path}")
             return None
+
+    def _get_effective_delphi_root(self, version: Optional[str] = None) -> Optional[str]:
+        """获取当前生效的 Delphi 安装根目录。
+
+        Args:
+            version: 指定 Delphi 注册表版本（如 ``"11.0"``）；为 None 时使用
+                最新安装版本。包安装/ BPL 查找传入项目配置的版本即可避免与
+                其它版本混用。
+
+        Returns:
+            Delphi 安装根目录，未找到时返回 None
+        """
+        root_dir = self._get_delphi_root_from_registry(version)
+        if root_dir:
+            return root_dir
+
+        # 注册表不可用（手动配置编译器/绿色版）时，从编译器路径反推根目录
+        config_manager = getattr(self, "config_manager", None)
+        compiler = None
+        if version:
+            compiler = self._lookup_compiler_by_version(version, TargetPlatform.WIN32)
+        else:
+            getter = getattr(config_manager, "get_effective_compiler", None)
+            if callable(getter):
+                try:
+                    compiler = getter(None, "win32")
+                except Exception:
+                    logger.warning("获取生效编译器失败", exc_info=True)
+        if compiler and compiler.path:
+            inferred = str(Path(compiler.path).parent.parent)
+            logger.info(
+                "注册表未找到 Delphi %s，改用编译器配置推断根目录: %s",
+                version or "默认版本",
+                inferred,
+            )
+            return inferred
+        return None
 
     def _check_process_running(self, process_name: str) -> Optional[dict]:
         """
@@ -557,10 +1015,17 @@ class CompilerService:
             # 解析 registry_version（与 RTL 库搜索路径共用同一策略），
             # 使第三方库路径按同一 Delphi 版本过滤注册表，避免跨版本混入。
             from ..utils.delphi_versions import resolve_registry_version
+            project_settings = load_project_settings(project_path)
+            resolver_compiler = options.compiler_version
+            if not resolver_compiler and project_settings:
+                resolver_compiler = project_settings.compiler_version
             resolver_version = resolve_registry_version(
-                options.compiler_version,
+                resolver_compiler,
                 parser.get_project_version(),
                 self.config_manager,
+                override_version=(
+                    project_settings.delphi_version if project_settings else None
+                ),
             )
             
             # 传入用户显式指定的路径，resolver 会判断是否跳过智能分析
@@ -668,25 +1133,35 @@ class CompilerService:
             # 确保输出目录存在
             Path(output_base).mkdir(parents=True, exist_ok=True)
 
-            # 3. 获取编译器配置
-            compiler_config = self.config_manager.get_compiler(request.options.compiler_version)
-            if not compiler_config:
-                # 尝试自动查找 dcc32
-                dcc32_path = self._find_dcc32_from_registry()
-                if dcc32_path:
-                    logger.info(f"自动找到 dcc32: {dcc32_path}")
-                    compiler_path = dcc32_path
-                else:
-                    error_msg = "未配置默认编译器且无法自动查找"
-                    logger.error(error_msg)
-                    return CompileResult(
-                        status=CompileStatus.FAILED,
-                        error_code="COMPILER_NOT_FOUND",
-                        error_message=error_msg,
-                        duration=int((time.time() - start_time) * 1000)
-                    )
-            else:
+            # 3. 获取编译器配置（显式版本 > 项目配置 > 默认编译器）
+            # 项目级配置（.daofy/project.json）优先，保证同一台机器上不同工程
+            # 使用各自声明的 Delphi 版本，且项目指定版本缺失时直接失败不静默回退。
+            project_settings = load_project_settings(request.project_path)
+            compiler_config, compiler_path, compiler_error = self._resolve_project_compiler(
+                request.project_path,
+                request.options.compiler_version,
+                request.options.target_platform,
+                project_settings,
+            )
+            if compiler_error:
+                logger.error(compiler_error)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="COMPILER_NOT_FOUND",
+                    error_message=compiler_error,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+            if compiler_config:
                 compiler_path = compiler_config.path
+            if not compiler_path:
+                error_msg = "未配置默认编译器且无法自动查找"
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="COMPILER_NOT_FOUND",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
 
             # 4. 根据目标平台选择编译器
             target_platform = request.options.target_platform
@@ -698,8 +1173,16 @@ class CompilerService:
                     compiler_path = target_compiler
                     logger.info(f"切换到 {target_platform.value} 编译器: {compiler_path}")
                 else:
-                    # 跨平台编译器不存在，回退查找
-                    found = self._find_compiler_from_registry(target_platform)
+                    # 跨平台编译器不存在，回退查找（优先使用当前编译器版本）
+                    fallback_version = (
+                        compiler_config.registry_version
+                        if compiler_config
+                        else (project_settings.delphi_version if project_settings else None)
+                    )
+                    found = self._find_compiler_from_registry(
+                        target_platform,
+                        fallback_version,
+                    )
                     if found:
                         compiler_path = found
                         logger.info(f"从注册表找到 {target_platform.value} 编译器: {compiler_path}")
@@ -903,11 +1386,27 @@ class CompilerService:
             # 获取编译器对应的 Delphi 版本号（registry_version），用于读取该版本的搜索路径
             # 与第三方库路径解析共用 resolve_registry_version，保证两处版本过滤策略一致
             from ..utils.delphi_versions import resolve_registry_version
+            settings = load_project_settings(project_path)
+            resolver_compiler = options.compiler_version
+            if not resolver_compiler and settings:
+                resolver_compiler = settings.compiler_version
             registry_version = resolve_registry_version(
-                options.compiler_version,
+                resolver_compiler,
                 project_version,
                 self.config_manager,
+                override_version=settings.delphi_version if settings else None,
             )
+            # 手动配置的编译器可能没有 registry_version：从安装路径/编译器输出推断
+            if not registry_version and compiler_path:
+                for parent in Path(compiler_path).parents:
+                    inferred = project_version_to_registry_version(parent.name)
+                    if inferred:
+                        registry_version = inferred
+                        break
+                if not registry_version:
+                    registry_version = detect_registry_version_from_compiler(
+                        compiler_path
+                    )
             delphi_lib_paths = get_delphi_library_paths(version=registry_version, platform=platform)
             # 展开路径中的宏变量
             for p in delphi_lib_paths:
@@ -1005,9 +1504,18 @@ class CompilerService:
         }
         return _PLATFORM_COMPILER_MAP.get(platform, 'dcc32.exe')
 
-    def _find_compiler_from_registry(self, platform: TargetPlatform) -> Optional[str]:
-        """从注册表查找指定平台的编译器路径"""
-        root_dir = self._get_delphi_root_from_registry()
+    def _find_compiler_from_registry(
+        self,
+        platform: TargetPlatform,
+        version: Optional[str] = None,
+    ) -> Optional[str]:
+        """从注册表查找指定平台的编译器路径
+
+        Args:
+            platform: 目标平台
+            version: Delphi 注册表版本号；为 None 时使用最新安装版本
+        """
+        root_dir = self._get_delphi_root_from_registry(version)
         if not root_dir:
             return None
 
@@ -1043,11 +1551,35 @@ class CompilerService:
         request: ProjectCompileRequest,
         parser: DprojParser,
         project_parsed: bool,
+        project_settings: Optional[ProjectSettings] = None,
     ) -> Optional[str]:
-        """Resolve the one Delphi registry version used by an MSBuild run."""
-        compiler_version = request.options.compiler_version
+        """Resolve the one Delphi registry version used by an MSBuild run.
+
+        Priority: explicit compiler version > project settings (compiler_version /
+        delphi_version) > .dproj ProjectVersion inference.
+        """
+        if project_settings is None:
+            project_settings = load_project_settings(request.project_path)
+
+        if project_settings and project_settings.error:
+            logger.error(project_settings.error)
+            return None
+
+        self._warn_conflicting_project_versions(project_settings)
+        explicit_compiler = request.options.compiler_version
+        project_compiler = project_settings.compiler_version if project_settings else None
+        compiler_version = explicit_compiler or project_compiler
+
         if compiler_version:
-            compiler = self.config_manager.get_compiler(compiler_version)
+            compiler = None
+            compiler_getter = getattr(self.config_manager, "get_compiler", None)
+            if callable(compiler_getter):
+                try:
+                    compiler = compiler_getter(compiler_version)
+                except Exception:
+                    logger.warning(
+                        "查找编译器配置失败: %s", compiler_version, exc_info=True
+                    )
             if compiler and compiler.registry_version:
                 return compiler.registry_version
             if compiler and compiler.path:
@@ -1068,11 +1600,46 @@ class CompilerService:
                         registry_version,
                     )
                     return registry_version
+
+            # 兼容把版本号/产品名直接写进 compiler_version（如 "11.0"、"XE4"）
+            version_hint = normalize_version_key(compiler_version)
+            if version_hint:
+                logger.info(
+                    "compiler_version=%r 按 Delphi 版本解释为 registry_version=%s",
+                    compiler_version,
+                    version_hint,
+                )
+                return version_hint
+
+            # 项目配置里的 compiler_version 写错时，delphi_version 仍可作为
+            # 明确的版本声明；工具调用显式传入的错误值则直接失败，避免掩盖问题。
+            if (
+                not explicit_compiler
+                and project_settings
+                and project_settings.delphi_version
+            ):
+                logger.warning(
+                    "项目配置的 compiler_version=%r 无法解析，改用 delphi_version=%s",
+                    compiler_version,
+                    project_settings.delphi_version,
+                )
+                return project_settings.delphi_version
+
             logger.error(
                 "无法确定显式编译器 %s 的 registry_version，拒绝回退到其他 Delphi 版本",
                 compiler_version,
             )
             return None
+
+        if project_settings and project_settings.delphi_version:
+            project_version = parser.get_project_version() if project_parsed else None
+            logger.info(
+                "使用项目配置 %s 的 delphi_version=%s（忽略 .dproj ProjectVersion=%s）",
+                project_settings.source,
+                project_settings.delphi_version,
+                project_version or "未知",
+            )
+            return project_settings.delphi_version
 
         if project_parsed:
             project_version = parser.get_project_version()
@@ -1137,18 +1704,7 @@ class CompilerService:
         env_options_overlay: Optional[str] = None
         
         try:
-            # 1. 检查 MSBuild 是否可用
-            if not self.msbuild_path:
-                error_msg = "未找到 MSBuild,无法使用 MSBuild 编译"
-                logger.error(error_msg)
-                return CompileResult(
-                    status=CompileStatus.FAILED,
-                    error_code="MSBUILD_NOT_FOUND",
-                    error_message=error_msg,
-                    duration=int((time.time() - start_time) * 1000)
-                )
-            
-            # 2. 验证项目路径
+            # 1. 验证项目路径
             is_valid, error_msg = self.validator.validate_project_path(request.project_path)
             if not is_valid:
                 logger.error(f"项目路径验证失败: {error_msg}")
@@ -1184,6 +1740,10 @@ class CompilerService:
                     duration=int((time.time() - start_time) * 1000)
                 )
             
+            # 3. 加载项目级配置（.daofy/project.json / daofy.project.json）
+            # 每个工程可独立指定 Delphi 版本与 MSBuild，避免多版本机器上互相串用。
+            project_settings = load_project_settings(dproj_path)
+
             # 4. 提取并执行编译事件
             _PLATFORM_MSBUILD_MAP = {
                 TargetPlatform.WIN32: "Win32",
@@ -1243,11 +1803,20 @@ class CompilerService:
                 request,
                 parser,
                 project_parsed,
+                project_settings,
             )
-            if request.options.compiler_version and not registry_version:
+            if (
+                request.options.compiler_version
+                or (project_settings and project_settings.compiler_version)
+                or (project_settings and project_settings.error)
+            ) and not registry_version:
                 error_msg = (
-                    "无法确定指定编译器的 Delphi 注册表版本，"
-                    "为避免混用其他 Delphi 版本，已停止编译"
+                    project_settings.error
+                    if project_settings and project_settings.error
+                    else (
+                        "无法确定指定编译器/项目配置的 Delphi 注册表版本，"
+                        "为避免混用其他 Delphi 版本，已停止编译"
+                    )
                 )
                 return CompileResult(
                     status=CompileStatus.FAILED,
@@ -1267,6 +1836,44 @@ class CompilerService:
                     platform,
                     config,
                 )
+
+            # 3.5 按工程解析 MSBuild（项目配置 > 版本映射 > 自动探测）
+            msbuild_path, msbuild_source, msbuild_explicit_error = (
+                self._resolve_msbuild_path(registry_version, project_settings)
+            )
+            if not msbuild_path:
+                error_msg = f"未找到可用的 MSBuild（{msbuild_source}）"
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code=(
+                        "MSBUILD_CONFIG_INVALID"
+                        if msbuild_explicit_error
+                        else "MSBUILD_NOT_FOUND"
+                    ),
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000),
+                )
+
+            # 3.6 先确认目标 Delphi 版本的 rsvars.bat 可用，再执行编译事件。
+            # 否则版本未安装时 PreBuildEvent 仍会用错误的 BDS 环境运行。
+            if registry_version:
+                logger.info("定位 Delphi %s 的 rsvars.bat", registry_version)
+            rsvars_path = self._get_rsvars_path(registry_version)
+            if not rsvars_path:
+                error_msg = (
+                    f"无法找到 Delphi {registry_version or '默认版本'} 的 rsvars.bat，"
+                    "请检查该版本是否已安装"
+                )
+                logger.error(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="RSVARS_NOT_FOUND",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000),
+                )
+            if not selected_bds:
+                selected_bds = str(Path(rsvars_path).parent.parent)
             
             project_dir = str(Path(dproj_path).parent)
             project_path = str(Path(dproj_path).parent)
@@ -1416,22 +2023,7 @@ class CompilerService:
                     error_message=error_msg,
                     duration=int((time.time() - start_time) * 1000)
                 )
-            # 5. 获取 rsvars.bat 路径
-            # 必须按 compiler_version（或 .dproj ProjectVersion 回退）定位对应版本的 rsvars.bat，
-            # 否则总是加载注册表中最新的 Delphi，指定的 compiler_version 不生效
-            if registry_version:
-                logger.info("定位 Delphi %s 的 rsvars.bat", registry_version)
-            rsvars_path = self._get_rsvars_path(registry_version)
-            if not rsvars_path:
-                error_msg = "无法找到 rsvars.bat，请检查 Delphi 安装"
-                logger.error(error_msg)
-                return CompileResult(
-                    status=CompileStatus.FAILED,
-                    error_code="RSVARS_NOT_FOUND",
-                    error_message=error_msg,
-                    duration=int((time.time() - start_time) * 1000)
-                )
-
+            # 5. rsvars.bat 已在执行编译事件前定位并校验（见 3.6）
             explicit_env_properties = {
                 "bds",
                 "bdsappdatabasedir",
@@ -1478,9 +2070,9 @@ class CompilerService:
             args.extend(request.options.extra_args)
 
             # 记录完整编译参数到日志
-            # 使用 self.msbuild_path 绝对路径，而非裸 msbuild（依赖 PATH），
+            # 使用解析出的 MSBuild 绝对路径，而非裸 msbuild（依赖 PATH），
             # 避免 rsvars.bat 未将 VS MSBuild 加入 PATH 时找不到 msbuild.exe。
-            msbuild_cmd = f'"{self.msbuild_path}" {" ".join(args)}'
+            msbuild_cmd = f'"{msbuild_path}" {" ".join(args)}'
             logger.info(f"MSBuild 参数: {msbuild_cmd}")
             
             # 6. 创建临时批处理文件来设置环境并执行 MSBuild
@@ -1497,7 +2089,7 @@ class CompilerService:
                                              encoding=batch_encoding) as f:
                 f.write('@echo off\n')
                 f.write('call "%s"\n' % rsvars_path)
-                f.write('"%s" %s\n' % (self.msbuild_path, ' '.join(quoted_args)))
+                f.write('"%s" %s\n' % (msbuild_path, ' '.join(quoted_args)))
                 batch_file = f.name
             
             logger.info("创建批处理文件: %s", batch_file)
@@ -1847,19 +2439,16 @@ class CompilerService:
 
         # Delphi 工程 (.dproj) 使用 MSBuild 编译
         if is_dproj:
-            if not self.msbuild_path:
-                error_msg = ("MSBuild 未安装，无法编译 .dproj 文件。"
-                             "请安装 Visual Studio 或 Build Tools，"
-                             "或改用 .dpr 文件编译。")
-                logger.error(error_msg)
-                return CompileResult(
-                    status=CompileStatus.FAILED,
-                    error_code="MSBUILD_REQUIRED_FOR_DPROJ",
-                    error_message=error_msg,
-                    duration=0
-                )
             logger.info("使用 MSBuild 编译 .dproj 文件")
-            return await self.compile_project_with_msbuild(request)
+            # MSBuild 的可用性由 compile_project_with_msbuild 按工程配置解析，
+            # 这里不再用初始化时探测到的全局路径做前置判断（多版本机器上可能不同）。
+            result = await self.compile_project_with_msbuild(request)
+            if result.error_code in ("MSBUILD_NOT_FOUND", "MSBUILD_CONFIG_INVALID"):
+                logger.error(
+                    "MSBuild 不可用，无法编译 .dproj 文件: %s",
+                    result.error_message,
+                )
+            return result
 
         # 检查是否存在 .dproj 文件
         dproj_exists = False
@@ -1869,10 +2458,17 @@ class CompilerService:
             if not dproj_exists:
                 logger.info(f"未找到 .dproj 文件，将使用 dcc32 直接编译{ext} 文件")
 
-        # .dpr/.dpk 有 .dproj 且 MSBuild 可用 → 用 MSBuild；否则 dcc 直编
-        if dproj_exists and self.msbuild_path:
+        # .dpr/.dpk 有 .dproj → 优先 MSBuild；MSBuild 不可用时回退 dcc 直编。
+        # 但显式配置的 MSBuild 路径无效时必须直接失败，不能悄悄换直编掩盖配置错误。
+        if dproj_exists:
             logger.info("使用 MSBuild 编译")
-            return await self.compile_project_with_msbuild(request)
+            result = await self.compile_project_with_msbuild(request)
+            if result.error_code != "MSBUILD_NOT_FOUND":
+                return result
+            logger.warning(
+                "MSBuild 不可用，回退到 dcc 直接编译: %s",
+                result.error_message,
+            )
 
         logger.info(f"使用 dcc 直接编译 {ext} 文件")
         return await self.compile_dpr_direct(request)
@@ -1902,14 +2498,63 @@ class CompilerService:
                     duration=int((time.time() - start_time) * 1000)
                 )
 
-            # 2. 获取编译器配置（优先使用传入版本，默认用最新安装的）
-            compiler_config = (
-                self.config_manager.get_compiler(request.compiler_version)
-                if request.compiler_version
-                else self.config_manager.get_newest_compiler()
-            )
+            # 2. 获取编译器配置（显式版本 > 项目配置 > 最新安装的）
+            # 文件可能属于某个使用旧版 Delphi 的工程，项目级配置优先，
+            # 避免用最新安装版本做语法检查导致误报/漏报。
+            settings = load_project_settings(request.file_path)
+            if settings and settings.error:
+                logger.error(settings.error)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="PROJECT_CONFIG_INVALID",
+                    error_message=settings.error,
+                    duration=int((time.time() - start_time) * 1000),
+                )
+            compiler_config = None
+            if request.compiler_version:
+                compiler_config = self._lookup_compiler_by_name_or_version(
+                    request.compiler_version,
+                    TargetPlatform.WIN32,
+                )
+            elif settings and settings.compiler_version:
+                compiler_config = self._lookup_compiler_by_name_or_version(
+                    settings.compiler_version,
+                    TargetPlatform.WIN32,
+                )
+                if not compiler_config and settings.delphi_version:
+                    # compiler_version 写错/不可用时，delphi_version 仍是明确声明
+                    compiler_config = (
+                        self._lookup_compiler_by_version(
+                            settings.delphi_version,
+                            TargetPlatform.WIN32,
+                        )
+                        or self._compiler_from_registry_version(
+                            settings.delphi_version,
+                            TargetPlatform.WIN32,
+                        )
+                    )
+            elif settings and settings.delphi_version:
+                compiler_config = (
+                    self._lookup_compiler_by_version(
+                        settings.delphi_version,
+                        TargetPlatform.WIN32,
+                    )
+                    or self._compiler_from_registry_version(
+                        settings.delphi_version,
+                        TargetPlatform.WIN32,
+                    )
+                )
+            else:
+                compiler_config = self.config_manager.get_newest_compiler()
             if not compiler_config:
-                error_msg = "未找到可用的编译器"
+                if settings and (settings.compiler_version or settings.delphi_version):
+                    error_msg = (
+                        f"项目配置指定的 Delphi 版本不可用"
+                        f"（{settings.compiler_version or settings.delphi_version}）；"
+                        "不会回退到其它版本"
+                    )
+                else:
+                    error_msg = "未找到可用的编译器"
                 logger.error(error_msg)
                 return CompileResult(
                     status=CompileStatus.FAILED,
@@ -2095,13 +2740,25 @@ class CompilerService:
         """
         logger.info(f"生成命令行参数: {request.project_path}")
 
-        # 获取编译器配置
-        compiler_config = self.config_manager.get_compiler(request.options.compiler_version)
-        if not compiler_config:
-            raise ValueError(f"编译器配置不存在: {request.options.compiler_version or '默认编译器'}")
+        # 获取编译器配置（显式版本 > 项目配置 > 默认编译器）
+        settings = load_project_settings(request.project_path)
+        compiler_config, compiler_path, compiler_error = self._resolve_project_compiler(
+            request.project_path,
+            request.options.compiler_version,
+            request.options.target_platform,
+            settings,
+        )
+        if compiler_error:
+            raise ValueError(compiler_error)
+        if compiler_config:
+            compiler_path = compiler_config.path
+        if not compiler_path:
+            raise ValueError(
+                f"编译器配置不存在: "
+                f"{request.options.compiler_version or '默认编译器'}"
+            )
 
         # 根据目标平台选择编译器
-        compiler_path = compiler_config.path
         if request.options.target_platform == TargetPlatform.WIN64:
             # 大小写不敏感匹配 dcc32 可执行文件名（兼容 DCC32.EXE / Dcc32.exe 等手动配置）
             lower_path = compiler_path.lower()

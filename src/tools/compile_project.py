@@ -10,6 +10,7 @@ from mcp.types import CallToolResult
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
 from ..models.compile_result import CompileResult
 from ..services.compiler_service import CompilerService
+from ..services.project_settings import load_project_settings
 from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import resolve_target_platform_from_dproj
@@ -296,6 +297,59 @@ def _detect_compiler_from_project(project_path: str, target_platform: str) -> Op
         logger.warning(f"未找到 .dproj 文件: {dproj_path}")
         return None
 
+    # 项目级配置优先：同一台机器上不同工程可能使用不同 Delphi 版本，
+    # 工程目录下的 .daofy/project.json 声明的版本必须先于 .dproj 推断。
+    settings = load_project_settings(dproj_path)
+    if settings and _compiler_service and _compiler_service.config_manager:
+        manager = _compiler_service.config_manager
+        if settings.compiler_version:
+            compiler = manager.get_compiler(settings.compiler_version)
+            if not compiler:
+                # 兼容把版本号/产品名写进 compiler_version（如 "11.0"、"XE4"）
+                lookup = getattr(
+                    _compiler_service,
+                    "_lookup_compiler_by_name_or_version",
+                    None,
+                )
+                if callable(lookup):
+                    compiler = lookup(
+                        settings.compiler_version,
+                        TargetPlatform(target_platform),
+                    )
+            if compiler:
+                logger.info(
+                    "按项目配置使用编译器: %s（来源 %s）",
+                    compiler.name,
+                    settings.source,
+                )
+                return compiler.name
+            if settings.delphi_version:
+                logger.warning(
+                    "项目配置的 compiler_version=%r 不可用，改用 delphi_version=%s"
+                    "（来源 %s）",
+                    settings.compiler_version,
+                    settings.delphi_version,
+                    settings.source,
+                )
+                return None
+            logger.error(
+                "项目配置指定的编译器 %r 不存在（来源 %s）",
+                settings.compiler_version,
+                settings.source,
+            )
+            return None
+        if settings.delphi_version:
+            # 不要在工具层把项目版本“翻译”成某个编译器名再回传：
+            # 那会被编译服务当成显式 compiler_version，反而覆盖项目声明的
+            # delphi_version（compilers.json 里该编译器的 registry_version
+            # 若配错就会串版本）。留空交给编译服务按项目版本解析。
+            logger.info(
+                "项目配置指定 Delphi %s（来源 %s），交由编译服务按该版本解析",
+                settings.delphi_version,
+                settings.source,
+            )
+            return None
+
     parser = DprojParser(dproj_path)
     if not parser.parse():
         logger.error(f"解析 .dproj 文件失败: {dproj_path}")
@@ -558,7 +612,9 @@ async def compile_project(
                 compiler_version = detected
                 logger.info(f"自动检测到编译器: {compiler_version}")
             else:
-                logger.info("未自动检测到编译器,将使用默认编译器")
+                logger.info(
+                    "未自动检测到编译器,将由编译服务按项目配置/默认编译器解析"
+                )
 
         # 检查资源文件是否变更（自动清理缓存，强制重新编译）
         _check_and_clean_stale_resources(project_path, build_configuration, target_platform)

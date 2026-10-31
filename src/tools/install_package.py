@@ -5,17 +5,25 @@
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from mcp.types import CallToolResult
 from ..constants import REG_KEY_EMBARCADERO_BDS
+from ..models.compile_request import TargetPlatform
 from ..services.compiler_service import CompilerService
+from ..services.project_settings import load_project_settings
 from ..utils.delphi_env import (
     get_delphi_bpl_dir,
     get_delphi_version as detect_delphi_version,
 )
+from ..utils.delphi_versions import (
+    normalize_version_key,
+    project_version_to_registry_version,
+)
+from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,6 +35,58 @@ def set_compiler_service(service: CompilerService):
     """设置编译服务实例"""
     global _compiler_service
     _compiler_service = service
+
+
+def _resolve_target_version(project_path: Optional[str]) -> Optional[str]:
+    """解析某个包工程应使用的 Delphi 注册表版本。
+
+    优先级与编译服务一致：项目配置 ``compiler_version`` > 项目配置
+    ``delphi_version`` > ``.dproj ProjectVersion``。返回 None
+    表示无法确定，由调用方回退到当前生效编译器/最新安装版本。
+    """
+    if not project_path or _compiler_service is None:
+        return None
+    settings = load_project_settings(project_path)
+    if settings and settings.error:
+        logger.error(settings.error)
+        return None
+
+    if settings and settings.compiler_version:
+        lookup = getattr(
+            _compiler_service,
+            "_lookup_compiler_by_name_or_version",
+            None,
+        )
+        if callable(lookup):
+            compiler = lookup(
+                settings.compiler_version,
+                TargetPlatform.WIN32,
+            )
+            if compiler and compiler.registry_version:
+                return compiler.registry_version
+            if compiler is None:
+                version_hint = normalize_version_key(settings.compiler_version)
+                if version_hint:
+                    return version_hint
+    if settings and settings.delphi_version:
+        return settings.delphi_version
+
+    dproj = project_path
+    if Path(dproj).suffix.lower() in (".dpr", ".dpk"):
+        dproj = str(Path(dproj).with_suffix(".dproj"))
+    if not Path(dproj).exists():
+        return None
+    try:
+        parser = DprojParser(dproj)
+        if not parser.parse():
+            return None
+        project_version = parser.get_project_version()
+    except Exception:
+        logger.debug("读取 .dproj ProjectVersion 失败: %s", dproj, exc_info=True)
+        return None
+    if not project_version:
+        return None
+    return project_version_to_registry_version(project_version)
 
 
 async def install_package(
@@ -166,7 +226,7 @@ async def _install_dpk_package(
     install: bool
 ) -> CallToolResult:
     """处理 dpk 包 - 转为 dproj"""
-    dproj_path = dpk_path.replace('.dpk', '.dproj')
+    dproj_path = str(Path(dpk_path).with_suffix('.dproj'))
     
     if not Path(dproj_path).exists():
         return CallToolResult(
@@ -188,7 +248,13 @@ async def _compile_single_package(
     """编译单个包项目"""
     from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform
     
-    existing_bpl = _find_bpl_file(project_path, target_platform, build_configuration)
+    target_version = _resolve_target_version(project_path)
+    existing_bpl = _find_bpl_file(
+        project_path,
+        target_platform,
+        build_configuration,
+        version=target_version,
+    )
     
     if not extra_args and existing_bpl and Path(existing_bpl).exists():
         return {
@@ -217,7 +283,12 @@ async def _compile_single_package(
     
     output_file = None
     if result.status.value == "success":
-        output_file = _find_bpl_file(project_path, target_platform, build_configuration)
+        output_file = _find_bpl_file(
+            project_path,
+            target_platform,
+            build_configuration,
+            version=target_version,
+        )
     
     return {
         "success": result.status.value == "success",
@@ -244,7 +315,19 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             "duration": 0
         }
     
-    rsvars_path = _compiler_service._get_rsvars_path()
+    target_version = _resolve_target_version(dpk_path)
+    package_settings = load_project_settings(dpk_path)
+    if package_settings and package_settings.error:
+        logger.error(package_settings.error)
+        return {
+            "success": False,
+            "output_file": None,
+            "errors": [{"message": package_settings.error}],
+            "warnings": [],
+            "log": "",
+            "duration": 0
+        }
+    rsvars_path = _compiler_service._get_rsvars_path(target_version)
     if not rsvars_path:
         return {
             "success": False,
@@ -255,7 +338,7 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             "duration": 0
         }
     
-    delphi_root = _compiler_service._get_delphi_root_from_registry()
+    delphi_root = _compiler_service._get_effective_delphi_root(target_version)
     if not delphi_root:
         return {
             "success": False,
@@ -266,7 +349,19 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             "duration": 0
         }
     
-    version_key = Path(delphi_root).name
+    version_key = target_version or Path(delphi_root).name
+    if not re.fullmatch(r"\d+\.\d+", version_key):
+        return {
+            "success": False,
+            "output_file": None,
+            "errors": [{
+                "message": f"无法确定 Delphi 版本号（{version_key!r}），"
+                           "已停止写入 BPL/DCP 目录，避免与其它版本混用"
+            }],
+            "warnings": [],
+            "log": "",
+            "duration": 0
+        }
     public_doc = Path.home() / "Documents" / "Embarcadero" / "Studio" / version_key
     bpl_dir = public_doc / "Bpl" / _platform_to_dir(target_platform)
     dcp_dir = public_doc / "Dcp"
@@ -337,18 +432,34 @@ async def _compile_dpk(dpk_path: str, target_platform: str, output_dir: str, tim
             pass
 
 
-def _get_delphi_version() -> Optional[str]:
-    """从注册表获取 Delphi 版本号"""
+def _get_delphi_version(version: Optional[str] = None) -> Optional[str]:
+    """获取 Delphi 版本号（优先使用调用方指定的项目版本）。"""
+    if version:
+        return version
     if _compiler_service:
-        root_dir = _compiler_service._get_delphi_root_from_registry()
+        root_dir = _compiler_service._get_effective_delphi_root()
         if root_dir:
-            return Path(root_dir).name
+            version_key = Path(root_dir).name
+            # RootDir 通常以版本号结尾，但部分安装是 "...\Studio"，不能直接当版本用
+            if re.fullmatch(r"\d+\.\d+", version_key):
+                return version_key
+        config_manager = getattr(_compiler_service, "config_manager", None)
+        getter = getattr(config_manager, "get_effective_compiler", None)
+        if callable(getter):
+            compiler = getter(platform="win32")
+            if compiler and compiler.registry_version:
+                return compiler.registry_version
     return detect_delphi_version()
 
 
-def _find_bpl_file(project_path: str, target_platform: str, build_configuration: str) -> Optional[str]:
+def _find_bpl_file(
+    project_path: str,
+    target_platform: str,
+    build_configuration: str,
+    version: Optional[str] = None,
+) -> Optional[str]:
     """查找编译生成的 BPL 文件"""
-    version = _get_delphi_version()
+    version = _get_delphi_version(version)
     if not version:
         return None
     
@@ -450,7 +561,17 @@ def _format_group_results(results: List[tuple], install: bool, target_platform: 
         output += "\n"
     
     if install and all_success:
-        install_result = _format_install_guide(design_bpl_files, results)
+        install_version = None
+        for proj_path, _is_runtime, result in results:
+            if result.get("success"):
+                install_version = _resolve_target_version(proj_path)
+                if install_version:
+                    break
+        install_result = _format_install_guide(
+            design_bpl_files,
+            results,
+            version=install_version,
+        )
         output += install_result
     
     return CallToolResult(
@@ -459,13 +580,17 @@ def _format_group_results(results: List[tuple], install: bool, target_platform: 
     )
 
 
-def _format_install_guide(bpl_files: List[str], results: List[tuple]) -> str:
+def _format_install_guide(
+    bpl_files: List[str],
+    results: List[tuple],
+    version: Optional[str] = None,
+) -> str:
     """生成安装指南"""
     output = "=" * 50 + "\n"
     output += "IDE 安装指南\n"
     output += "=" * 50 + "\n\n"
     
-    version = _get_delphi_version()
+    version = _get_delphi_version(version)
     
     if bpl_files:
         output += "已找到以下 BPL 文件:\n"
@@ -480,7 +605,7 @@ def _format_install_guide(bpl_files: List[str], results: List[tuple]) -> str:
     else:
         output += "未找到预编译的 BPL 文件\n"
         output += "编译后请手动安装:\n"
-        for proj_path, result in results:
+        for proj_path, _is_runtime, result in results:
             if result.get("success"):
                 project_name = Path(proj_path).stem.replace('GR32_', 'GR32')
                 output += f"  - {project_name}_R.bpl (运行时)\n"
@@ -497,10 +622,19 @@ def _format_install_guide(bpl_files: List[str], results: List[tuple]) -> str:
     return output
 
 
-def _register_packages_to_ide(bpl_files: List[str], version: str) -> bool:
+def _register_packages_to_ide(bpl_files: List[str], version: Optional[str]) -> bool:
     """将组件包注册到 IDE"""
     import winreg
-    
+
+    # 版本号无效时绝不能写注册表：否则会创建 ...\Studio\Known Packages
+    # 之类的错误键，包实际没有安装到任何 IDE，却显示成功。
+    if not version or not re.fullmatch(r"\d+\.\d+", str(version)):
+        logger.error(
+            "无法确定 Delphi 版本号（%r），已跳过自动安装，避免写入错误的 IDE 版本",
+            version,
+        )
+        return False
+
     try:
         key_path = f"{REG_KEY_EMBARCADERO_BDS}\\{version}\\Known Packages"
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)

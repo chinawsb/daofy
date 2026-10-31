@@ -41,6 +41,9 @@ class ConfigFile:
     compilers: List[CompilerConfig] = field(default_factory=list)
     default_compiler: Optional[str] = None
     show_timing: bool = False  # 工具返回中是否包含 timing 字段
+    # 按 Delphi 版本指定 MSBuild，如 {"11.0": "C:\\...\\v3.5\\MSBuild.exe"}
+    # 这是版本映射，不会把工程钉到同一版本；单个工程的覆盖请用 .daofy/project.json
+    msbuild_by_delphi_version: Dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -48,16 +51,25 @@ class ConfigFile:
             "compilers": [c.to_dict() for c in self.compilers],
             "default_compiler": self.default_compiler,
             "show_timing": self.show_timing,
+            "msbuild_by_delphi_version": dict(self.msbuild_by_delphi_version or {}),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ConfigFile':
         """从字典创建实例"""
         compilers = [CompilerConfig.from_dict(c) for c in data.get('compilers', [])]
+        raw_map = data.get('msbuild_by_delphi_version') or {}
+        msbuild_map: Dict[str, str] = {}
+        if isinstance(raw_map, dict):
+            for key, value in raw_map.items():
+                if value is None:
+                    continue
+                msbuild_map[str(key)] = str(value)
         return cls(
             compilers=compilers,
             default_compiler=data.get('default_compiler'),
             show_timing=data.get('show_timing', False),
+            msbuild_by_delphi_version=msbuild_map,
         )
 
     def get_compiler(self, name: str) -> Optional[CompilerConfig]:

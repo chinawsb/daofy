@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **项目级 Delphi/MSBuild 配置**: 支持在工程目录（或最多 8 层父目录）放置
+  `.daofy/project.json` / `daofy.project.json`，用 `delphi_version`、
+  `compiler_version`、`msbuild_path` 为**单个工程**指定工具链。同一台机器上
+  不同工程可使用不同 Delphi/MSBuild，互不影响。`delphi_version` 支持注册表
+  版本号、产品名（`XE4`）以及 `.dproj ProjectVersion`（`14.6`/`18.2`/`19.2`
+  自动映射到注册表 14.0/18.0/19.0）
+- **按 Delphi 版本指定 MSBuild**: `compilers.json` 新增 `msbuild_by_delphi_version`，
+  键支持注册表版本号（`"11.0"`）、产品名（`"XE4"`）与 `.dproj ProjectVersion`（`"14.6"`）
+- `check_environment(action="check")` 输出按版本映射的 MSBuild 路径（含文件是否存在），
+  并提示项目级配置入口
+
+### Removed
+
+- **机器级 Delphi/MSBuild 覆盖**: 移除 `compilers.json` 的 `msbuild_path`、
+  `default_registry_version` 以及 `DAOFY_MSBUILD` / `DAOFY_DELPHI_VERSION`
+  环境变量。它们会影响所有没有项目配置的工程，与多版本并存场景冲突。
+  替代方案：项目级 `.daofy/project.json` 的 `delphi_version` / `msbuild_path`，
+  或 `msbuild_by_delphi_version` 按版本映射
+- `ConfigFile` 不再序列化上述已移除字段；旧 `compilers.json` 中的这些键会被忽略
+
+### Fixed
+
+- **Delphi 注册表版本排序**: 改为数值比较，修复 `"9.0"` 按字符串排序高于 `"37.0"` 导致"最新版本"选错
+- **指定版本未安装时静默回退**: `_get_delphi_root_from_registry(version)` 在请求版本不存在时返回
+  `None` 而非回退到最新版本，避免指定 XE4 却拿到 Tokyo/XE8 的安装目录
+- **注册表读取**: 同时读取 HKCU 与 HKLM，注册表项缺失时不再抛异常
+- **配置的 MSBuild 路径无效时**: 项目配置/版本映射路径无效时直接报错而非继续自动探测其它 MSBuild
+- **多版本工程串用 MSBuild**: 自动探测改为按每个工程的 Delphi 版本重新选择；
+  旧版 Delphi 优先 `.NET Framework v3.5`（XE4 及更早）/ `v4.0.30319`（XE5–10 Seattle），
+  不再一律使用初始化时缓存的 VS2019/2022 MSBuild
+- **版本映射键被静默忽略**: `msbuild_by_delphi_version` 的键现在兼容产品名与
+  `.dproj ProjectVersion`；配置了映射但没有命中时会输出警告而不是静默自动探测
+- **编译器名回退误匹配**: `"Delphi XE"`（8.0）不再误命中 `"Delphi XE8"`（16.0），
+  `"Delphi 12"` 也不会跨版本误匹配
+- **包安装/部署的版本一致性**: `install_package` 的 rsvars、BPL/DCP 目录、IDE
+  注册表项与 `deploy` 的 MSBuild 均按工程配置的 Delphi 版本解析；根目录不以
+  版本号结尾时不再把 `Studio` 当作版本写入注册表
+- **无 BPL 时的安装指南崩溃**: 修正 `_format_install_guide` 对 3 元组结果的错误解包
+- **项目配置中的版本写法**: `delphi_version` 支持 `"XE4"` 等产品名；
+  `msbuild_path` 的相对路径按配置文件所在目录解析；无法识别的
+  `delphi_version` 或非法 JSON 不再静默忽略，而是让编译直接失败
+- **`.dpr` 回退掩盖配置错误**: 显式 MSBuild 配置无效时返回
+  `MSBUILD_CONFIG_INVALID` 并停止，不再回退到 dcc 直接编译
+- **编译事件执行时机**: 在运行 PreBuildEvent 之前先校验目标版本的
+  `rsvars.bat`，避免版本未安装时用错误的 BDS 环境执行编译事件
+
 ## [2026.09.16] - 2026-09-16
 
 ### Added

@@ -301,6 +301,71 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 如果需要手动配置或添加自定义编译器,可以直接编辑 `config/compilers.json` 文件,或使用 `check_environment` 工具的 `detect` action 重新检测。
 
+#### 指定 MSBuild 与 Delphi 版本（按工程 / 按版本）
+
+多版本 Delphi 并存时，**推荐把配置放在工程目录**：同一台机器上的不同工程可以各自使用不同的 Delphi/MSBuild，互不影响。
+
+**项目级配置（推荐）**：在工程目录（或任意父目录，最多向上 8 层）放置 `.daofy/project.json` 或 `daofy.project.json`：
+
+```json
+{
+  "delphi_version": "11.0",
+  "msbuild_path": "C:\\Windows\\Microsoft.NET\\Framework\\v3.5\\MSBuild.exe",
+  "compiler_version": "Delphi XE4 Win32"
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `delphi_version` | 该工程使用的 Delphi 版本：注册表版本号（`"11.0"`）、产品名（`"XE4"`）或 `.dproj ProjectVersion`（`"14.6"`→XE6、`"18.2"`→Berlin、`"19.2"`→Tokyo） |
+| `msbuild_path` | 该工程使用的 `MSBuild.exe`；相对路径按配置文件所在目录解析 |
+| `compiler_version` | `compilers.json` 中的编译器名称；也可直接写版本号（`"11.0"`） |
+
+- 就近命中：离工程最近的配置文件生效；未配置的字段继续按下一级规则查找
+- 项目级配置同时作用于编译、`install_package`（BPL/DCP/IDE 注册）和 `deploy`
+- 工程配置可以指定任意可执行文件路径，**只应在可信工程中使用**
+
+**按版本配置（`compilers.json`，可选）**：
+
+| 配置项 | 说明 |
+|--------|------|
+| `msbuild_by_delphi_version` | 按 Delphi 版本分别指定 MSBuild，如 `{"11.0": "...\\v3.5\\MSBuild.exe", "23.0": "...\\MSBuild.exe"}` |
+
+```json
+{
+  "compilers": [ ... ],
+  "default_compiler": "Delphi XE4 Win32",
+  "msbuild_by_delphi_version": {
+    "11.0": "C:\\Windows\\Microsoft.NET\\Framework\\v3.5\\MSBuild.exe",
+    "23.0": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\MSBuild\\Current\\Bin\\MSBuild.exe"
+  }
+}
+```
+
+`msbuild_by_delphi_version` 的键支持注册表版本号（`"11.0"`）、产品名（`"XE4"`）或 `.dproj ProjectVersion`（如 `"14.6"`）。映射值中的相对路径按 `compilers.json` 所在目录解析。
+
+> 全局 `msbuild_path`、`default_registry_version` 以及 `DAOFY_MSBUILD` / `DAOFY_DELPHI_VERSION` 环境变量已移除。旧配置中的这些键会被忽略；请改用项目级 `.daofy/project.json`（单个工程）或 `msbuild_by_delphi_version`（按版本）。
+
+**选择优先级**：
+
+- Delphi 版本：工具参数 `compiler_version` > 项目配置 `compiler_version` > 项目配置 `delphi_version` > `.dproj ProjectVersion` 推断
+- MSBuild：项目配置 `msbuild_path` > `msbuild_by_delphi_version[版本]` > 自动探测
+
+行为说明：
+
+- 项目配置的版本同时作用于 MSBuild 的 `rsvars.bat`、编译器自动匹配、`dcc32` 直接编译、RTL/第三方库搜索路径，避免"用 XE4 的 dcc32 却找 Delphi 12 的 dcu"
+- 显式配置的 MSBuild 路径不存在、或指定版本未安装时**直接报错，不会静默回退**到其它 MSBuild / Delphi 版本
+- `.dpr/.dpk` 有对应 `.dproj` 时优先 MSBuild；只有"自动探测不到 MSBuild"才回退 dcc 直编，**显式配置错误不会**被直编掩盖
+- 自动探测会按工程版本优先选择：XE4 及更早优先 `.NET Framework\v3.5\MSBuild.exe`，XE5–10 Seattle 优先 `v4.0.30319`
+- 未配置项目版本时，若 `.dproj` 对应版本的编译器不在 `compilers.json` 中，自动匹配仍可能按原有策略回退到更高版本编译器（日志会输出警告）；需要**严格版本**时请配置项目 `delphi_version`，版本未安装会直接失败
+- 项目配置中的 `delphi_version` 无法识别（如拼写错误）时会直接报错，不会静默改用 `.dproj ProjectVersion` 推断
+- 版本号支持 `"11"`、`"11.0"`、`"XE4"`、`"Delphi XE4"` 等写法
+- 修改配置后需**重启 Daofy MCP 服务/IDE** 才会生效
+
+可用 `check_environment(action="check")` 确认按版本映射的 MSBuild 路径及文件是否存在。
+
+> **pip 安装场景**：`compilers.json` 位于 `<Python 环境>/Lib/site-packages/src/config/compilers.json`，升级会覆盖。项目级 `.daofy/project.json` 不受升级影响，推荐用它固定单个工程的工具链。
+
 ### 通用配置（pip 安装）
 
 如果通过 `pip install daofy-for-delphi` 安装，配置最简：

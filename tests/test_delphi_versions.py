@@ -228,7 +228,7 @@ def test_all_project_versions_have_registry_mapping():
         assert reg_ver in DELPHI_VERSION_NAMES, f"registry_version {reg_ver} 不在已知版本中"
 
 
-def _make_fake_config(default_registry_version="23.0", newest_registry_version="37.0"):
+def _make_fake_config(default_compiler_version="23.0", newest_registry_version="37.0"):
     """构造一个 config_manager 假对象：默认编译器 = default，最新编译 = newest。
 
     模拟多 Delphi 并存时默认编译器不是最新版本（Delphi 12 + Delphi 13）的场景。
@@ -241,7 +241,7 @@ def _make_fake_config(default_registry_version="23.0", newest_registry_version="
 
     class FakeConfig:
         def __init__(self):
-            self._default = FakeCompiler("default", default_registry_version)
+            self._default = FakeCompiler("default", default_compiler_version)
             self._newest = FakeCompiler("newest", newest_registry_version)
             self._by_name = {
                 "Delphi 12": FakeCompiler("Delphi 12", "23.0"),
@@ -266,7 +266,7 @@ def test_resolve_registry_version_uses_default_compiler_when_not_specified():
     compile_dpr_direct 实际调用 config.get_compiler(None)=默认编译器(12)，但 resolve 曾返回
     None 使 -U 库路径取最新(13)，导致 dcc32(12) 找不到 v13 .dcu 而编译失败。
     """
-    cfg = _make_fake_config(default_registry_version="23.0", newest_registry_version="37.0")
+    cfg = _make_fake_config(default_compiler_version="23.0", newest_registry_version="37.0")
     # 默认编译器 get_compiler(None) 的 registry_version 应为 23.0(Delphi 12)
     assert cfg.get_compiler(None).registry_version == "23.0"
     assert resolve_registry_version(None, None, cfg) == "23.0"
@@ -274,7 +274,7 @@ def test_resolve_registry_version_uses_default_compiler_when_not_specified():
 
 def test_resolve_registry_version_explicit_version_wins():
     """显式指定编译器版本时，用该版本的 registry_version，而非默认编译器。"""
-    cfg = _make_fake_config(default_registry_version="23.0", newest_registry_version="37.0")
+    cfg = _make_fake_config(default_compiler_version="23.0", newest_registry_version="37.0")
     assert resolve_registry_version("Delphi 13", None, cfg) == "37.0"
     assert resolve_registry_version("Delphi 12", None, cfg) == "23.0"
 

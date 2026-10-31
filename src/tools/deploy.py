@@ -15,6 +15,13 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..services.project_settings import ProjectSettings, load_project_settings
+from ..utils.delphi_versions import (
+    normalize_version_key,
+    project_version_to_registry_version,
+    resolve_registry_version,
+)
+from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -290,7 +297,7 @@ class DeployService:
         需要 PAServer (Platform Assistant Server) 运行在 Mac 上。
         """
         # 查找 MSBuild
-        msbuild_path = self._find_msbuild()
+        msbuild_path = self._find_msbuild(dproj_path)
         if not msbuild_path:
             return {
                 "status": "failed",
@@ -373,7 +380,7 @@ class DeployService:
         使用 MSBuild 的 Deploy 目标进行部署。
         需要 Android SDK 和 ADB。
         """
-        msbuild_path = self._find_msbuild()
+        msbuild_path = self._find_msbuild(dproj_path)
         if not msbuild_path:
             return {
                 "status": "failed",
@@ -491,15 +498,102 @@ class DeployService:
         """查找 iosdeploy 工具"""
         return shutil.which("iosdeploy")
 
-    def _find_msbuild(self) -> Optional[str]:
-        """查找 MSBuild 工具"""
-        # 复用 compiler_service 的逻辑
+    def _resolve_project_delphi_version(
+        self,
+        project_path: Optional[str],
+        settings: Optional[ProjectSettings] = None,
+    ) -> Optional[str]:
+        """解析工程使用的 Delphi 注册表版本（供部署时选 MSBuild）。"""
+        if not project_path:
+            return None
+
+        if settings is None:
+            settings = load_project_settings(project_path)
+
+        config_manager = None
         try:
             from .compile_project import _compiler_service
-            if _compiler_service and _compiler_service.msbuild_path:
-                return _compiler_service.msbuild_path
+            if _compiler_service:
+                config_manager = getattr(_compiler_service, "config_manager", None)
+        except ImportError:
+            config_manager = None
+
+        # 与编译服务的优先级一致：compiler_version > delphi_version
+        if settings and settings.compiler_version:
+            resolved = resolve_registry_version(
+                settings.compiler_version,
+                None,
+                config_manager,
+            )
+            if resolved:
+                return resolved
+            version_hint = normalize_version_key(settings.compiler_version)
+            if version_hint:
+                return version_hint
+            logger.warning(
+                "无法解析项目配置的编译器 %r，改用 delphi_version/自动探测",
+                settings.compiler_version,
+            )
+
+        if settings and settings.delphi_version:
+            return settings.delphi_version
+
+        dproj = project_path
+        if Path(dproj).suffix.lower() in (".dpr", ".dpk"):
+            dproj = str(Path(dproj).with_suffix(".dproj"))
+        if not Path(dproj).exists():
+            return None
+        parser = DprojParser(dproj)
+        if not parser.parse():
+            return None
+        project_version = parser.get_project_version()
+        if not project_version:
+            return None
+        return project_version_to_registry_version(project_version)
+
+    def _find_msbuild(self, project_path: Optional[str] = None) -> Optional[str]:
+        """查找 MSBuild 工具（按工程配置解析版本，避免多版本机器上串用）"""
+        # 复用 compiler_service 的解析逻辑：项目配置 > 版本映射 > 自动探测；
+        # 不同工程可以使用不同 MSBuild。
+        try:
+            from .compile_project import _compiler_service
+            if _compiler_service:
+                settings = (
+                    load_project_settings(project_path) if project_path else None
+                )
+                if settings and settings.error:
+                    logger.error(settings.error)
+                    return None
+                version = self._resolve_project_delphi_version(
+                    project_path, settings
+                )
+                if settings and settings.compiler_version and not version:
+                    logger.error(
+                        "项目配置的 compiler_version=%r 无法解析，"
+                        "部署已停止（不会改用其它 Delphi 版本）",
+                        settings.compiler_version,
+                    )
+                    return None
+                resolved, source, explicit_error = (
+                    _compiler_service._resolve_msbuild_path(
+                        version,
+                        settings,
+                    )
+                )
+                if resolved:
+                    logger.info("部署使用 MSBuild（%s）: %s", source, resolved)
+                    return resolved
+                if explicit_error:
+                    logger.error(
+                        "配置的 MSBuild 无效，部署已停止（不回退其它版本）: %s",
+                        source,
+                    )
+                    return None
+                logger.warning("未能解析 MSBuild: %s", source)
         except ImportError:
             pass
+        except Exception:
+            logger.warning("通过编译服务解析 MSBuild 失败", exc_info=True)
 
         # 回退: 查找 vswhere
         program_files_x86 = os.environ.get("ProgramFiles(x86)", "")

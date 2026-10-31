@@ -33,6 +33,23 @@ DELPHI_VERSION_NAMES: dict[str, str] = {
     "3.0": "Delphi 2005",
 }
 
+# 产品名（去掉 "Delphi " 前缀、小写）→ 注册表版本号
+# 用于项目配置/版本映射中允许写 "XE4"、"12 Athens" 等易读写法
+_VERSION_NAME_ALIASES: dict[str, str] = {}
+for _registry_version, _product_name in DELPHI_VERSION_NAMES.items():
+    _alias = _product_name.lower()
+    if _alias.startswith("delphi "):
+        _alias = _alias[len("delphi "):]
+    _VERSION_NAME_ALIASES[_alias.strip()] = _registry_version
+
+# .dproj ProjectVersion → 注册表版本号（反向映射）
+# 多数版本两者相同，此处仅记录有差异的
+PROJECT_VERSION_TO_REGISTRY: dict[str, str] = {
+    "14.6": "14.0",   # Delphi XE6：.dproj 14.6 → 注册表 14.0
+    "18.2": "18.0",   # Delphi 10.1 Berlin：.dproj 18.2 → 注册表 18.0
+    "19.2": "19.0",   # Delphi 10.2 Tokyo：.dproj 19.2 → 注册表 19.0
+}
+
 # .dproj 版本前缀(整数部分) → 产品名称
 # 用于 get_compiler_for_project 匹配编译器
 PROJECT_VERSION_PREFIX_MAP: dict[str, str] = {
@@ -58,6 +75,80 @@ PROJECT_VERSION_PREFIX_MAP: dict[str, str] = {
 def get_version_name(version_key: str) -> str:
     """根据版本号键获取 Delphi 产品名称"""
     return DELPHI_VERSION_NAMES.get(version_key, f"Delphi {version_key}")
+
+
+def normalize_registry_version(value: Optional[str]) -> Optional[str]:
+    """将用户输入的 Delphi 版本号规范化为 ``major.minor`` 形式。
+
+    接受 ``"11"`` / ``"11.0"`` / ``" 11.0 "`` 等写法，统一返回 ``"11.0"``。
+    无法识别（非数字、超出合理范围）时返回 ``None``。
+
+    Args:
+        value: 用户输入的版本号，如 ``"11"``、``"11.0"``
+
+    Returns:
+        规范化后的版本号（如 ``"11.0"``），无法识别时返回 ``None``
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    match = re.fullmatch(r"(\d+)(?:\.(\d+))?", text)
+    if not match:
+        return None
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    if not 1 <= major <= 99 or not 0 <= minor <= 99:
+        return None
+    return f"{major}.{minor}"
+
+
+def normalize_version_key(value: Optional[str]) -> Optional[str]:
+    """将“Delphi 版本标识”规范化为注册表版本号（``major.minor``）。
+
+    与 :func:`normalize_registry_version` 相比，额外接受产品名写法，
+    便于在项目配置/版本→MSBuild 映射中直接写 ``"XE4"``、``"Delphi XE4"``
+    或 ``"Delphi 12 Athens"``：
+
+    - ``"11"`` / ``"11.0"`` / ``" 11.0 "`` → ``"11.0"``
+    - ``"XE4"`` / ``"Delphi XE4"`` → ``"11.0"``
+    - ``"14.6"`` / ``"18.2"`` / ``"19.2"``（.dproj ProjectVersion）→ ``"14.0"`` / ``"18.0"`` / ``"19.0"``
+    - ``"Delphi 12 Athens"`` → ``"23.0"``
+
+    纯数字仍按注册表版本解释（``"12"`` → ``"12.0"`` = XE5），仅对已知的
+    ``.dproj ProjectVersion`` 差异（14.6/18.2/19.2）做映射；非数字写法按产品名匹配。
+
+    Args:
+        value: 版本号或 Delphi 产品名
+
+    Returns:
+        规范化后的注册表版本号，无法识别时返回 None
+    """
+    numeric = normalize_registry_version(value)
+    if numeric:
+        return PROJECT_VERSION_TO_REGISTRY.get(numeric, numeric)
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    if not text:
+        return None
+
+    alias = _VERSION_NAME_ALIASES.get(text)
+    if alias:
+        return alias
+    if text.startswith("delphi "):
+        alias = _VERSION_NAME_ALIASES.get(text[len("delphi "):].strip())
+        if alias:
+            return alias
+
+    # 允许产品名后带平台后缀，如 "XE4 Win32"、"Delphi 12 Athens Win64"
+    for name, registry in _VERSION_NAME_ALIASES.items():
+        for suffix in (" win32", " win64", " 32-bit", " 64-bit"):
+            if text == name + suffix:
+                return registry
+    return None
 
 
 def get_version_name_from_path(delphi_path: str) -> str:
@@ -158,7 +249,9 @@ def detect_registry_version_from_compiler(compiler_path: str, timeout: int = 10)
 # 注册表版本(registry_version) → .dproj ProjectVersion 映射
 # 多数版本两者相同，此处仅记录有差异的
 REGISTRY_TO_PROJECT_VERSION: dict[str, str] = {
+    "14.0": "14.6",   # Delphi XE6：注册表 14.0，但 .dproj 格式标记为 14.6
     "18.0": "18.2",   # Delphi 10.1 Berlin：注册表 18.0，但 .dproj 格式标记为 18.2
+    "19.0": "19.2",   # Delphi 10.2 Tokyo：注册表 19.0，但 .dproj 格式标记为 19.2
 }
 
 
@@ -179,16 +272,14 @@ def registry_to_project_version(registry_ver: str) -> str:
 
 
 # .dproj ProjectVersion → 注册表版本号（反向映射）
-# 多数版本两者相同，此处仅记录有差异的
-PROJECT_VERSION_TO_REGISTRY: dict[str, str] = {
-    "18.2": "18.0",   # Delphi 10.1 Berlin：.dproj 18.2 → 注册表 18.0
-}
+# 定义在文件顶部（normalize_version_key 需要用到）
 
 
 def resolve_registry_version(
     compiler_version: Optional[str],
     project_version: Optional[str] = None,
     config_manager: Optional[object] = None,
+    override_version: Optional[str] = None,
 ) -> Optional[str]:
     """
     从 compiler_version（或 .dproj ProjectVersion 回退）解析注册表版本号。
@@ -200,6 +291,8 @@ def resolve_registry_version(
         compiler_version: 用户/配置指定的编译器版本名称
         project_version: .dproj ProjectVersion（可选，compiler_version 未指定时回退）
         config_manager: 配置管理器实例（可选，未提供时仅能依靠 project_version 回退）
+        override_version: 项目级配置指定的注册表版本号（如 ``"11.0"``），
+            仅用于单工程配置，不影响其它工程
 
     Returns:
         注册表版本号如 "23.0"，无法解析返回 None
@@ -214,7 +307,10 @@ def resolve_registry_version(
                     registry_version = compiler_cfg.registry_version
         except Exception:
             registry_version = None
-    elif config_manager is not None:
+
+    if not registry_version and override_version:
+        registry_version = normalize_version_key(override_version)
+    if not registry_version and config_manager is not None:
         # 未显式指定编译器时，回退到"默认编译器"——与 compile_dpr_direct 实际
         # 调用的 config_manager.get_compiler(None) 保持一致。若此处直接返回 None,
         # 调用方 get_delphi_library_paths(None) 会取"最新已安装版本"的库路径,
