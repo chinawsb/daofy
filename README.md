@@ -570,7 +570,15 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.09.16 (最新)
+### v2026.10.31 (最新)
+
+- **项目级 Delphi/MSBuild 配置**: 新增 `.daofy/project.json` / `daofy.project.json`，按工程指定 `delphi_version`、`compiler_version`、`msbuild_path`；同一台机器上不同工程可使用不同 Delphi/MSBuild，互不影响
+- **移除机器级覆盖**: 移除 `compilers.json` 的 `msbuild_path`、`default_registry_version` 以及 `DAOFY_MSBUILD` / `DAOFY_DELPHI_VERSION` 环境变量；保留 `msbuild_by_delphi_version` 按版本映射
+- **按工程版本解析工具链**: MSBuild 自动探测按工程 Delphi 版本重选（XE4 及更早优先 `.NET Framework v3.5`，XE5–10 Seattle 优先 `v4.0.30319`）；`rsvars.bat`、RTL/第三方库路径、包安装 BPL/DCP 与 IDE 注册、部署 MSBuild 均按工程版本解析
+- **严格失败**: 项目配置/版本映射的 MSBuild 路径无效、指定版本未安装时直接报错，不再静默回退；`.dpr` 不再用直编掩盖配置错误；PreBuildEvent 前先校验 `rsvars.bat`
+- **版本匹配修复**: 修复 `Delphi XE`/`XE8`、`Delphi 12`/`12 Athens` 等前缀误匹配；`delphi_version` 支持 `14.6`/`18.2`/`19.2` 等 `.dproj ProjectVersion` 写法
+
+### v2026.09.16
 
 - **_SafeStderrHandler 安全 stderr 处理器**: 客户端不排空 stderr 导致管道写满时，日志 `emit` 不再阻塞（可写空间足够才直写，否则入队、满则丢弃），后台消化线程可取消（`CancelSynchronousIo` 看门狗 + 30s 冷却重试）；`setup_logger` 文件处理器先挂且与 `console_logging` 解耦——修复客户现场 stderr 管道写满卡死服务（连 MCP `initialize` 都无法响应）的故障
 - **示例知识库进度日志格式串修复**: `example_knowledge_base._scan_directory` 日志 4 个占位符仅传 3 个参数，全量测试下被 pytest 日志捕获器冒泡为 `TypeError`（24 个用例失败）
