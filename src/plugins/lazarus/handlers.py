@@ -645,7 +645,7 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
         "properties": {
             "project_path": {
                 "type": "string",
-                "description": ".lpi 或 .lpr 文件路径",
+                "description": ".lpi 或 .lpr 文件绝对路径",
             },
             "target_platform": {
                 "type": "string",
@@ -673,7 +673,7 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
         "properties": {
             "project_path": {
                 "type": "string",
-                "description": ".lpi 或 .lpr 文件路径",
+                "description": ".lpi 或 .lpr 文件绝对路径",
             },
             "action": {
                 "type": "string",
@@ -704,7 +704,7 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
             },
             "file_path": {
                 "type": "string",
-                "description": "源码文件路径（action=read 时必需）",
+                "description": "源码文件绝对路径（action=read 时必需）",
             },
             "content_type": {
                 "type": "string",
@@ -723,7 +723,7 @@ LAZARUS_TOOL_SCHEMAS: dict[str, dict] = {
             },
             "file_path": {
                 "type": "string",
-                "description": "文件路径",
+                "description": "文件绝对路径",
             },
             "edits": {
                 "type": "array",

@@ -6,10 +6,29 @@ AI Agent 不确定某工具用法时，调用此工具按需获取全量帮助�
 """
 
 from typing import Any
+from src.utils.path_guard import TOOL_PATH_FIELDS
 from ..tool_docs import TOOL_HELP_DOCS
 
 import logging
 logger = logging.getLogger(__name__)
+
+_PATH_POLICY_TEXT = (
+    "⚠️ 路径参数规则: 本工具的文件系统路径参数必须传绝对路径"
+    "（MCP 服务端无法获取客户端当前工作目录，相对路径会被拒绝）。"
+    "文档示例中的相对路径仅作占位，实际调用请替换为绝对路径，如 C:\\project\\Unit1.pas。"
+)
+
+
+def _is_path_tool(tool_name: str) -> bool:
+    return tool_name in TOOL_PATH_FIELDS
+
+
+def _path_policy_text(tool_name: str) -> str:
+    fields = TOOL_PATH_FIELDS.get(tool_name, ())
+    if not fields:
+        return _PATH_POLICY_TEXT
+    return _PATH_POLICY_TEXT + " 路径参数: " + ", ".join(fields) + "。"
+
 
 
 def get_tool_help(tool_name: str, action: str = "") -> dict:
@@ -43,6 +62,9 @@ def get_tool_help(tool_name: str, action: str = "") -> dict:
 
         desc = act_info.get("description", "")
         lines = [f"📘 {tool_name} — action: {action}", ""]
+        if _is_path_tool(tool_name):
+            lines.append(_path_policy_text(tool_name))
+            lines.append("")
         lines.append(f"  ▶ {action}: {desc}")
         req = act_info.get("required", [])
         if req:
@@ -61,6 +83,9 @@ def get_tool_help(tool_name: str, action: str = "") -> dict:
 
     # 格式化为可读文本
     lines = [f"📘 {tool_name} — {docs.get('description', '')}", ""]
+    if _is_path_tool(tool_name):
+        lines.append(_path_policy_text(tool_name))
+        lines.append("")
 
     if docs.get("triggers"):
         triggers = "; ".join(docs["triggers"])

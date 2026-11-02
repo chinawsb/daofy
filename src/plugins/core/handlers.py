@@ -394,7 +394,7 @@ CORE_TOOL_SCHEMAS: dict[str, dict] = {
             },
             "file_path": {
                 "type": "string",
-                "description": "文件路径（read/set/search必需）",
+                "description": "文件绝对路径（read/set/search必需）",
             },
             "path": {
                 "type": "string",
@@ -418,7 +418,7 @@ CORE_TOOL_SCHEMAS: dict[str, dict] = {
             },
             "proto_file": {
                 "type": "string",
-                "description": "ProtoBuf模式时传入 .proto 文件路径",
+                "description": "ProtoBuf模式时传入 .proto 文件绝对路径",
             },
             "message_name": {
                 "type": "string",

@@ -69,7 +69,7 @@ TOOL_HELP_DOCS: dict = {
             "dry_run": {
                 "description": "预览编译参数，不实际执行",
                 "optional": {
-                    "project_path": "项目文件路径",
+                    "project_path": "项目文件绝对路径",
                     "target_platform": "目标平台",
                     "build_configuration": "构建配置",
                     "compiler_version": "编译器版本",
@@ -177,7 +177,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "运行 50+ 条静态分析规则",
                 "optional": {
                     "base_dir": "审计基准目录",
-                    "file_path": "单文件审计",
+                    "file_path": "单文件绝对路径",
                     "rules": "规则集 P0/P1，默认 P0",
                     "severity": "最低严重级别 suggestion/warning/critical",
                     "output_format": "report/json，默认 report",
@@ -191,7 +191,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "⭐ 代码骨架提取，最省 token",
                 "required": ["base_dir"],
                 "optional": {
-                    "file_path": "单文件解析",
+                    "file_path": "单文件绝对路径",
                 },
                 "examples": [
                     'delphi_project(action="ast", base_dir="src")',
@@ -211,7 +211,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "静态审计 .dfm 布局质量，包括可调整窗口应优先使用 Align 或设置父容器最小尺寸。",
                 "optional": {
                     "base_dir": "递归扫描目录下的 .dfm 文件",
-                    "file_path": "单个 .dfm 文件",
+                    "file_path": "单个 .dfm 文件绝对路径",
                     "output_format": "report/json，默认 report",
                 },
                 "examples": [
@@ -223,7 +223,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "枚举连接的设备列表（iOS/Android/Windows）",
                 "optional": {
                     "target_platform": "目标平台 (iosdevice64/iossimulator/android64/androidarm64/win32/win64)，不传则推断",
-                    "project_path": "项目文件路径（可选，用于推断目标平台）",
+                    "project_path": "项目文件绝对路径（可选，用于推断目标平台）",
                 },
                 "examples": [
                     'delphi_project(action="devices")',
@@ -288,7 +288,7 @@ TOOL_HELP_DOCS: dict = {
                     "kb_type": "知识库类型: all/delphi/project/thirdparty/document/example",
                     "search_type": "搜索类型: class/function/unit/semantic/reference/all 等",
                     "top_k": "最大返回结果数（默认200，最大500）",
-                    "project_path": "项目路径（搜索 project/thirdparty 时需要）",
+                    "project_path": "项目绝对路径（搜索 project/thirdparty 时需要）",
                 },
             },
             "stats": {
@@ -301,12 +301,12 @@ TOOL_HELP_DOCS: dict = {
                 "required": [],
                 "optional": {
                     "kb_type": "知识库类型: all/delphi/project/thirdparty/document/example",
-                    "project_path": "项目路径",
+                    "project_path": "项目绝对路径",
                     "version": "Delphi版本",
                     "rebuild": "是否强制重建",
                     "incremental": "是否增量更新",
                     "async_mode": "是否异步执行（默认 true）",
-                    "directory": "扫描目录（document KB 时使用）",
+                    "directory": "扫描目录绝对路径（document KB 时使用）",
                     "extensions": "文件扩展名过滤",
                     "max_pages": "最大抓取页数",
                     "max_depth": "最大抓取深度",
@@ -323,7 +323,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "扫描目录添加文档",
                 "required": [],
                 "optional": {
-                    "directory": "扫描目录",
+                    "directory": "扫描目录绝对路径",
                     "extensions": "文件扩展名过滤",
                     "max_workers": "最大工作进程数",
                     "show_progress": "是否显示进度",
@@ -345,7 +345,7 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "url": "文档 URL",
                     "doc_id": "文档 ID",
-                    "file_path": "文件路径",
+                    "file_path": "文件绝对路径",
                     "offset": "读取偏移量",
                     "limit": "读取字节数限制",
                 },
@@ -434,7 +434,7 @@ TOOL_HELP_DOCS: dict = {
                     "show_line_numbers": "是否显示 1-indexed 行号前缀（默认 false）",
                     "search_type": "读取模式: path/class/function/record",
                     "search_in": "搜索范围 all/delphi/project/thirdparty；project 需要 project_path",
-                    "project_path": "项目文件路径，用于 search_in=project 或限制写入路径",
+                    "project_path": "项目文件绝对路径，用于 search_in=project 或限制写入路径",
                     "type_name": "类名/接口名",
                     "function_name": "函数/过程名",
                     "class_name": "类名（search_type=class 时使用，与 type_name 等效）",
@@ -502,11 +502,11 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "mode": "格式化模式: file/code/check，默认 file",
                     "code": "mode=code 时待格式化的代码文本",
-                    "config_path": "pasfmt 配置文件路径",
+                    "config_path": "pasfmt 配置文件绝对路径",
                     "uses_style": "uses子句风格: compact/pasfmt_default",
                     "dry_run": "true=仅检查格式不修改文件",
                     "backup": "是否创建备份，默认 true",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
             },
             "encode": {
@@ -516,7 +516,7 @@ TOOL_HELP_DOCS: dict = {
                     "from_encoding": "源编码（auto=自动检测，推荐始终用 auto；如需显式指定，请确保编码名称准确无误，否则会导致解码失败或乱码）",
                     "backup": "转换前是否备份到 __history（默认 true）",
                     "dry_run": "预览模式: 只输出转换信息不写盘（默认 false）",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="encode", file_path="Unit1.pas", to_encoding="utf-8-sig")',
@@ -532,7 +532,7 @@ TOOL_HELP_DOCS: dict = {
                     "auto_format": "添加后自动 pasfmt 格式化（默认 false）",
                     "backup": "是否创建备份（默认 true）",
                     "encoding": "写入编码 auto/utf-8/gbk/utf-16（默认 auto）",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")',
@@ -545,7 +545,7 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "backup_action": "子操作: create（默认）/ list / restore",
                     "version": "备份版本号（restore 时需要，不传则恢复最新）",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="backup", file_path="Unit1.pas")',
@@ -557,7 +557,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "正则搜索 + 多级过滤 + 替换。file_path 自动检测：文件路径→单文件搜索，目录路径→递归搜索。也支持多 pattern OR 搜索（patterns）。",
                 "required": [],
                 "optional": {
-                    "file_path": "文件路径、目录路径或路径数组。字符串自动检测文件/目录；数组逐项解析",
+                    "file_path": "文件绝对路径、目录绝对路径或路径数组。字符串自动检测文件/目录；数组逐项解析",
                     "include": "glob 包含模式（仅 file_path 为目录时有效），如 **/*.pas",
                     "exclude": "glob 排除模式（仅 file_path 为目录时有效）",
                     "pattern": "单模式正则，支持行内 /expr/flags 语法",
@@ -568,7 +568,7 @@ TOOL_HELP_DOCS: dict = {
                     "dry_run": "替换模式预览开关，默认 True（仅预览不写盘）",
                     "context": "上下文行数，默认 0",
                     "count": "最大返回结果数，默认 200",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="grep", file_path="Unit1.pas", pattern="/TMyClass/i")',
@@ -584,7 +584,7 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "backup": "是否创建备份，默认 True",
                     "target_encoding": "目标编码，默认 utf-8-sig（带 BOM 的 UTF-8）",
-                    "project_path": "项目路径（可选）",
+                    "project_path": "项目绝对路径（可选）",
                 },
                 "examples": [
                     'delphi_file(action="fix_garbled", file_path="Unit1.pas")',
@@ -630,7 +630,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "向现有 DFM 添加子组件",
                 "required": ["target_dfm"],
                 "optional": {
-                    "target_pas": "PAS 文件路径（可选，自动同步声明）",
+                    "target_pas": "PAS 文件绝对路径（可选，自动同步声明）",
                     "parent_name": "父组件名称（可选，默认添加到根）",
                     "new_component_class": "新组件类名，如 TButton",
                     "new_component_name": "新组件实例名（可选，自动生成）",
@@ -642,14 +642,14 @@ TOOL_HELP_DOCS: dict = {
                 "description": "从 DFM 删除组件（含子树）",
                 "required": ["target_dfm", "component_name"],
                 "optional": {
-                    "target_pas": "PAS 文件路径（可选，自动同步删除）",
+                    "target_pas": "PAS 文件绝对路径（可选，自动同步删除）",
                 },
             },
             "modify": {
                 "description": "修改 DFM 中组件属性",
                 "required": ["target_dfm", "component_name"],
                 "optional": {
-                    "target_pas": "PAS 文件路径（可选，自动同步事件）",
+                    "target_pas": "PAS 文件绝对路径（可选，自动同步事件）",
                     "properties": "组件属性字典",
                 },
             },
@@ -687,14 +687,14 @@ TOOL_HELP_DOCS: dict = {
                 "description": "下载并安装 pasfmt 格式化工具",
                 "required": [],
                 "optional": {
-                    "install_dir": "安装目录",
+                    "install_dir": "安装目录绝对路径",
                 },
             },
             "format_install": {
                 "description": "安装 pasfmt RAD Studio 插件",
                 "required": [],
                 "optional": {
-                    "install_dir": "安装目录",
+                    "install_dir": "安装目录绝对路径",
                     "delphi_version": "Delphi 版本号，如 11、12",
                 },
             },
@@ -1258,8 +1258,8 @@ TOOL_HELP_DOCS: dict = {
                 "required": [],
                 "optional": {
                     "doc_type": "文档类型: all/source/manual/summary，默认 all",
-                    "output_dir": "输出目录（可选，默认 docs/copyright）",
-                    "project_path": "项目路径（可选，默认当前工作目录）",
+                    "output_dir": "输出目录绝对路径（可选，默认 docs/copyright）",
+                    "project_path": "项目绝对路径（可选，默认当前工作目录）",
                 },
             },
             "validate": {
@@ -1353,7 +1353,7 @@ TOOL_HELP_DOCS: dict = {
                 "description": "比较两张截图，找出视觉差异区域",
                 "required": ["baseline", "current"],
                 "optional": {"threshold": "像素差异阈值 0-255（默认 10）",
-                             "output_dir": "差异图输出目录（可选）"},
+                             "output_dir": "差异图输出目录绝对路径（可选）"},
                 "examples": [
                     'ocr(action="diff", baseline="before.png", current="after.png")',
                     'ocr(action="diff", baseline="100%.png", current="150%.png", threshold=5)',
@@ -1679,7 +1679,7 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["app_path"],
                 "optional": {
                     "script": "JSON 脚本（文件路径、JSON 字符串、步骤数组、或完整脚本对象）",
-                    "snapshots_dir": "截图输出目录（可选，默认 docs/copyright/snapshots）",
+                    "snapshots_dir": "截图输出目录绝对路径（可选，默认 docs/copyright/snapshots）",
                     "wait_timeout": "等待 Delphi 管道就绪的超时秒数（默认 10s）",
                     "keep_alive": "True=执行完后保持进程运行供后续复用",
                     "stop_on_failure": "True=首个失败后停止执行后续依赖步骤（默认 true）",
@@ -1916,7 +1916,7 @@ TOOL_HELP_DOCS: dict = {
                     "path": "JSONPath 路径，默认 $（根）",
                     "format": "强制格式：dfm/lfm/fmx/xml/json/msgpack/protobuf（默认从扩展名检测）",
                     "output": "输出格式：json(默认)/schema/both",
-                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件绝对路径",
                     "message_name": "ProtoBuf 模式时传入消息名",
                 },
                 "examples": [
@@ -1930,7 +1930,7 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["file_path"],
                 "optional": {
                     "format": "强制格式（默认从扩展名检测）",
-                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件绝对路径",
                     "message_name": "ProtoBuf 模式时传入消息名",
                 },
                 "examples": [
@@ -1943,7 +1943,7 @@ TOOL_HELP_DOCS: dict = {
                 "required": ["file_path", "path", "value"],
                 "optional": {
                     "format": "强制格式（默认从扩展名检测）",
-                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件绝对路径",
                     "message_name": "ProtoBuf 模式时传入消息名",
                 },
                 "examples": [
@@ -1957,7 +1957,7 @@ TOOL_HELP_DOCS: dict = {
                 "optional": {
                     "path": "JSONPath 路径，支持通配符/递归下降/过滤表达式，默认 $",
                     "format": "强制格式（默认从扩展名检测）",
-                    "proto_file": "ProtoBuf 模式时传入 .proto 文件路径",
+                    "proto_file": "ProtoBuf 模式时传入 .proto 文件绝对路径",
                     "message_name": "ProtoBuf 模式时传入消息名",
                 },
                 "examples": [

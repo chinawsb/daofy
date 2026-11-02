@@ -95,6 +95,7 @@ from src.constants import (
     TIMEOUT_GENERATE_COPYRIGHT,
 )
 from src.client_tool_policy import ensure_tool_visible, filter_tools
+from src.utils.path_guard import validate_tool_paths
 
 
 def _get_mcp_client_name(server_obj: Any) -> str | None:
@@ -816,6 +817,9 @@ async def run_server():
 
         try:
             ensure_tool_visible(name, _get_mcp_client_name(server))
+            path_error = validate_tool_paths(name, arguments)
+            if path_error:
+                raise ValueError(path_error)
             handler = _plugin_registry.get_handler(name)
             if handler:
                 # ── MCP 推送通知注入 ──
