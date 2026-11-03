@@ -572,7 +572,13 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.10.31 (最新)
+### v2026.11.03 (最新)
+
+- **MCP 工具路径绝对路径校验**: 在 `server.call_tool` 接口边界统一校验白名单路径字段，拒绝相对路径，避免 MCP 服务 CWD 不一致导致文件读写/编译/部署落到错误位置；JSONPath、项目相对字段不强制
+- **配置说明文档**: 新增 [`docs/configuration.md`](docs/configuration.md)，覆盖项目级/全局参数、优先级、多版本/旧版 Delphi/包安装/部署/CI 场景、错误码与迁移
+- **项目配置错误码统一**: 项目配置 JSON/`delphi_version` 非法时统一返回 `PROJECT_CONFIG_INVALID`
+
+### v2026.10.31
 
 - **项目级 Delphi/MSBuild 配置**: 新增 `.daofy/project.json` / `daofy.project.json`，按工程指定 `delphi_version`、`compiler_version`、`msbuild_path`；同一台机器上不同工程可使用不同 Delphi/MSBuild，互不影响
 - **移除机器级覆盖**: 移除 `compilers.json` 的 `msbuild_path`、`default_registry_version` 以及 `DAOFY_MSBUILD` / `DAOFY_DELPHI_VERSION` 环境变量；保留 `msbuild_by_delphi_version` 按版本映射
